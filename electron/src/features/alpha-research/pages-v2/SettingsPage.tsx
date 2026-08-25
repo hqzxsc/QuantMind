@@ -7,6 +7,7 @@ import { healthCheck, getDataSummary, getUniverses, getLlmConfig, type LlmConfig
 import { apiClient } from '../../../services/aiStrategyClients';
 import { REFERENCE_MINING_DIRECTIONS, getDirectionLabel, type MiningDirectionItem, importFeatureCatalogDirections, fetchMiningDirections } from '../utils-v2/miningDirections';
 import type { DataSummary, UniverseId, UniverseInfo } from '../types-v2';
+import { Modal } from 'antd';
 
 interface SystemConfig {
   // LLM
@@ -139,10 +140,16 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleReset = () => {
-    if (confirm('确定要重置为默认配置吗？')) {
-      setConfig(DEFAULT_CONFIG);
-      setIsDirty(true);
-    }
+    Modal.confirm({
+      title: '重置配置',
+      content: '确定要重置为默认配置吗？',
+      okText: '重置',
+      cancelText: '取消',
+      onOk: () => {
+        setConfig(DEFAULT_CONFIG);
+        setIsDirty(true);
+      },
+    });
   };
 
   const handleImportFeatureCatalog = async () => {

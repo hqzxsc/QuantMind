@@ -5,6 +5,7 @@ import ReactECharts from 'echarts-for-react';
 import { QlibBacktestConfig, QlibStrategyParams } from '../../types/backtest/qlib';
 import { MultiStockCodeInput } from './MultiStockCodeInput';
 import { BACKTEST_CONFIG } from '../../config/backtest';
+import { message } from 'antd';
 
 interface OptimizationResult {
   optimization_id: string;
@@ -169,7 +170,7 @@ export const QlibParameterOptimizer: React.FC = () => {
     } catch (error: any) {
       console.error(error);
       appendLog(`优化失败: ${error.message || '未知错误'}`);
-      alert('优化失败: ' + error.message);
+      message.error('优化失败: ' + error.message);
     } finally {
       setIsRunning(false);
       setTaskId(null);

@@ -34,6 +34,7 @@ import { useBacktestHistory, useDeleteBacktest, useBatchDeleteBacktests, useExpo
 import type { BacktestResult, HistoryFilter } from '../../services/backtestService';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
+import { Modal, message } from 'antd';
 
 interface BacktestHistoryProps {
   userId: string;
@@ -134,42 +135,56 @@ export const BacktestHistory: React.FC<BacktestHistoryProps> = ({
   };
 
   // ========== 删除操作 ==========
-  const handleDelete = async (id: string) => {
-    if (confirm('确定要删除这个回测记录吗？')) {
-      try {
-        // 查找对应记录以获取其真实的 user_id
-        const record = history.find(bt => bt.backtest_id === id);
-        await deleteBacktest.mutateAsync({ id, userId: record?.user_id });
-        setSelectedIds(selectedIds.filter((x) => x !== id));
-        // 删除成功后刷新列表
-        refetch();
-      } catch (err: any) {
-        console.error('删除回测失败:', err);
-        alert(`删除失败: ${err.message || '未知错误'}`);
-      }
-    }
+  const handleDelete = (id: string) => {
+    Modal.confirm({
+      title: '删除回测记录',
+      content: '确定要删除这个回测记录吗？',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          // 查找对应记录以获取其真实的 user_id
+          const record = history.find(bt => bt.backtest_id === id);
+          await deleteBacktest.mutateAsync({ id, userId: record?.user_id });
+          setSelectedIds(selectedIds.filter((x) => x !== id));
+          // 删除成功后刷新列表
+          refetch();
+        } catch (err: any) {
+          console.error('删除回测失败:', err);
+          message.error(`删除失败: ${err.message || '未知错误'}`);
+        }
+      },
+    });
   };
 
   // P1: 批量删除限流 - 并发控制防止服务器过载
-  const handleBatchDelete = async () => {
+  const handleBatchDelete = () => {
     if (selectedIds.length === 0) return;
 
-    if (confirm(`确定要删除选中的 ${selectedIds.length} 个回测记录吗？`)) {
-      const limit = pLimit(3); // 限制并发数为3
-      const deletePromises = selectedIds.map((id) => {
-        const record = history.find(bt => bt.backtest_id === id);
-        return limit(() => deleteBacktest.mutateAsync({ id, userId: record?.user_id }));
-      });
+    Modal.confirm({
+      title: '批量删除回测记录',
+      content: `确定要删除选中的 ${selectedIds.length} 个回测记录吗？`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        const limit = pLimit(3); // 限制并发数为3
+        const deletePromises = selectedIds.map((id) => {
+          const record = history.find(bt => bt.backtest_id === id);
+          return limit(() => deleteBacktest.mutateAsync({ id, userId: record?.user_id }));
+        });
 
-      try {
-        await Promise.all(deletePromises);
-        setSelectedIds([]);
-        refetch(); // 刷新列表
-      } catch (error) {
-        console.error('批量删除失败:', error);
-        alert('部分删除失败，请重试');
-      }
-    }
+        try {
+          await Promise.all(deletePromises);
+          setSelectedIds([]);
+          refetch(); // 刷新列表
+        } catch (error) {
+          console.error('批量删除失败:', error);
+          message.error('部分删除失败，请重试');
+        }
+      },
+    });
   };
 
   // ========== 导出操作 ==========
@@ -180,7 +195,7 @@ export const BacktestHistory: React.FC<BacktestHistoryProps> = ({
         filename: `回测报告_${symbol}_${format(new Date(), 'yyyyMMdd')}.csv`,
       });
     } catch (err: any) {
-      alert(`导出CSV失败: ${err?.message || '未知错误'}`);
+      message.error(`导出CSV失败: ${err?.message || '未知错误'}`);
     }
   };
 
@@ -191,7 +206,7 @@ export const BacktestHistory: React.FC<BacktestHistoryProps> = ({
         filename: `回测原始数据_${symbol}_${format(new Date(), 'yyyyMMdd')}.json`,
       });
     } catch (err: any) {
-      alert(`导出JSON失败: ${err?.message || '未知错误'}`);
+      message.error(`导出JSON失败: ${err?.message || '未知错误'}`);
     }
   };
 

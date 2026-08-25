@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Play, Square, CheckCircle, Activity, Cpu, FileText, RefreshCw, AlertCircle, Settings2, Clock3, TerminalSquare, Undo2 } from 'lucide-react';
-import { Input, Select, message } from 'antd';
+import { Input, Select, message, Modal } from 'antd';
 import { strategyManagementService } from '../../../services/strategyManagementService';
 import { modelTrainingService, UserModelRecord, LatestInferenceRunInfo } from '../../../services/modelTrainingService';
 import type { RealTradingStatus, PreflightCheckItem } from '../../../services/realTradingService';
@@ -568,34 +568,40 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
         return () => clearInterval(timer);
     }, [fetchTodayOrders]);
 
-    const handleCancelOrder = useCallback(async (order: Record<string, any>) => {
+    const handleCancelOrder = useCallback((order: Record<string, any>) => {
         const symbol = String(order.stock_code || '').trim();
         const orderId = String(order.order_id || '').trim();
         const stockName = String(order.stock_name || '').trim();
         if (!symbol || !orderId) return;
-        if (!window.confirm(`确认撤销委托？\n${stockName || symbol} ${String(order.side || '').toUpperCase()} 委托量 ${order.total_volume ?? order.volume ?? '-'} 股`)) {
-            return;
-        }
-        setCancelingId(orderId);
-        try {
-            const res = await fetch(`${apiGatewayBase}/api/v1/tdx/orders/cancel`, {
+        Modal.confirm({
+          title: '撤销委托',
+          content: `确认撤销委托？\n${stockName || symbol} ${String(order.side || '').toUpperCase()} 委托量 ${order.total_volume ?? order.volume ?? '-'} 股`,
+          okText: '撤销',
+          okType: 'danger',
+          cancelText: '取消',
+          onOk: async () => {
+            setCancelingId(orderId);
+            try {
+              const res = await fetch(`${apiGatewayBase}/api/v1/tdx/orders/cancel`, {
                 method: 'POST',
                 headers: authHeader(),
                 body: JSON.stringify({ symbol, order_id: orderId }),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || data.success === false) {
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok || data.success === false) {
                 message.error(data.message || `撤单失败(HTTP ${res.status})`);
                 return;
+              }
+              message.success(data.message || '撤单已受理');
+              fetchTodayOrders();
+            } catch (e) {
+              message.error('桥不可达，撤单失败');
+              console.error('Failed to cancel order', e);
+            } finally {
+              setCancelingId(null);
             }
-            message.success(data.message || '撤单已受理');
-            fetchTodayOrders();
-        } catch (e) {
-            message.error('桥不可达，撤单失败');
-            console.error('Failed to cancel order', e);
-        } finally {
-            setCancelingId(null);
-        }
+          },
+        });
     }, [apiGatewayBase, fetchTodayOrders]);
 
     const selectedStrategy = strategies.find(s => s.id === selectedStrategyId);

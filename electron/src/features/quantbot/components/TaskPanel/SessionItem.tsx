@@ -8,7 +8,7 @@ import { motion } from 'framer-motion';
 import { MessageCircle, MoreVertical, Trash2, Edit, Check, X } from 'lucide-react';
 import { useSessionStore } from '../../store/sessionStore';
 import type { Session } from '../../services/agentApi';
-import { message } from 'antd';
+import { message, Modal } from 'antd';
 
 interface SessionItemProps {
     session: Session;
@@ -35,15 +35,22 @@ const SessionItem: React.FC<SessionItemProps> = ({ session }) => {
         setShowMenu(false);
         if (!sid) return;
         
-        if (window.confirm(`确定要删除对话 "${session.name || '新对话'}" 吗？`)) {
-            try {
-                await deleteSession(sid);
-                message.success('已删除对话');
-            } catch (error) {
-                console.error('Delete failed:', error);
-                message.error('删除失败');
-            }
-        }
+        Modal.confirm({
+            title: '删除对话',
+            content: `确定要删除对话 "${session.name || '新对话'}" 吗？`,
+            okText: '删除',
+            okType: 'danger',
+            cancelText: '取消',
+            onOk: async () => {
+                try {
+                    await deleteSession(sid);
+                    message.success('已删除对话');
+                } catch (error) {
+                    console.error('Delete failed:', error);
+                    message.error('删除失败');
+                }
+            },
+        });
     };
 
     const handleStartEdit = (e: React.MouseEvent) => {

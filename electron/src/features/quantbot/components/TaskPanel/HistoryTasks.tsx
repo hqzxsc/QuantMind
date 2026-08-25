@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { History, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
 import { RootState } from '../../../../store';
 import { clearHistory } from '../../store/taskSlice';
+import { Modal } from 'antd';
 
 const HistoryTasks: React.FC = () => {
   const dispatch = useDispatch();
@@ -19,9 +20,14 @@ const HistoryTasks: React.FC = () => {
   const selectedTask = historyTasks.find(task => task.id === selectedTaskId) || null;
 
   const handleClearAll = () => {
-    if (window.confirm('确定要清空所有历史记录吗？')) {
-      dispatch(clearHistory());
-    }
+    Modal.confirm({
+      title: '清空历史记录',
+      content: '确定要清空所有历史记录吗？',
+      okText: '清空',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => { dispatch(clearHistory()); },
+    });
   };
 
   const formatRelativeTime = (date: string) => {

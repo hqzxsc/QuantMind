@@ -28,6 +28,7 @@ import {
   X,
 } from 'lucide-react';
 import { useOptimizeParameters, useOptimizationResult } from '../../hooks/useBacktestQueries';
+import { message } from 'antd';
 import type { OptimizationConfig, OptimizationResult } from '../../services/backtestService';
 import { Strategy } from '../../state/atoms';
 
@@ -86,12 +87,12 @@ export const ParameterOptimization: React.FC<ParameterOptimizationProps> = ({
   // 启动优化
   const handleStartOptimization = async () => {
     if (!strategy || !config.symbol) {
-      alert('请选择策略并输入股票代码');
+      message.warning('请选择策略并输入股票代码');
       return;
     }
 
     if (paramRanges.length === 0) {
-      alert('请至少添加一个优化参数');
+      message.warning('请至少添加一个优化参数');
       return;
     }
 

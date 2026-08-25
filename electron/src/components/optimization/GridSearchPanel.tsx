@@ -11,6 +11,7 @@ import { useBacktestCenterStore } from '../../stores/backtestCenterStore';
 import { OptimizationProgress, OptimizationTask } from './OptimizationProgress';
 import { OptimizationResults } from './OptimizationResults';
 import { ParameterGrid, GridSearchConfig } from './ParameterGrid';
+import { Modal } from 'antd';
 
 type GridMetrics = {
   annual_return?: number;
@@ -330,30 +331,35 @@ export const GridSearchPanel: React.FC = () => {
     setOptimizationStatus(detail.status);
   }, []);
 
-  const handleClearHistory = useCallback(async () => {
-    if (!window.confirm('确定要清除所有参数优化历史记录吗？\n此操作将从数据库中移除记录并清理相关的服务器物理目录，且无法撤销。')) {
-      return;
-    }
-    
-    setClearingHistory(true);
-    try {
-      const { backtestService } = await import('../../services/backtestService');
-      await backtestService.clearOptimizationHistory();
-      setHistoryItems([]);
-      setSelectedOptimizationId(null);
-      setSelectedDetail(null);
-      setCurrentOptimizationId(null);
-      setCurrentTaskId(null);
-      setCurrentRunInfo(null);
-      // 同时清理当前显示的图表任务
-      setTasks([]);
-      setOptimizationProgress(0);
-      setOptimizationStatus('');
-    } catch (error) {
-      setGlobalError(error instanceof Error ? error.message : '清理优化历史失败');
-    } finally {
-      setClearingHistory(false);
-    }
+  const handleClearHistory = useCallback(() => {
+    Modal.confirm({
+      title: '清除优化历史',
+      content: '确定要清除所有参数优化历史记录吗？\n此操作将从数据库中移除记录并清理相关的服务器物理目录，且无法撤销。',
+      okText: '清除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        setClearingHistory(true);
+        try {
+          const { backtestService } = await import('../../services/backtestService');
+          await backtestService.clearOptimizationHistory();
+          setHistoryItems([]);
+          setSelectedOptimizationId(null);
+          setSelectedDetail(null);
+          setCurrentOptimizationId(null);
+          setCurrentTaskId(null);
+          setCurrentRunInfo(null);
+          // 同时清理当前显示的图表任务
+          setTasks([]);
+          setOptimizationProgress(0);
+          setOptimizationStatus('');
+        } catch (error) {
+          setGlobalError(error instanceof Error ? error.message : '清理优化历史失败');
+        } finally {
+          setClearingHistory(false);
+        }
+      },
+    });
   }, []);
 
   const watchExistingTask = useCallback(

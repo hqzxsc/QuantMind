@@ -9,6 +9,7 @@ import { NotificationSkeleton } from '../common/CardSkeletons';
 import { useNavigate } from 'react-router-dom';
 import { useBacktestCenterStore } from '../../stores/backtestCenterStore';
 import type { BusinessNotification, NotificationRouteTarget } from '../../types/notification';
+import { Modal } from 'antd';
 
 interface NotificationQuickCardProps {
   expanded?: boolean;
@@ -149,9 +150,14 @@ export const NotificationQuickCard: React.FC<NotificationQuickCardProps> = ({
               </motion.button>
               <motion.button
                 onClick={() => {
-                  if (window.confirm('确定要清除最近7天的所有通知吗？')) {
-                    void clearNotifications();
-                  }
+                  Modal.confirm({
+                    title: '清除通知',
+                    content: '确定要清除最近7天的所有通知吗？',
+                    okText: '清除',
+                    okType: 'danger',
+                    cancelText: '取消',
+                    onOk: () => { void clearNotifications(); },
+                  });
                 }}
                 className="p-2 hover:bg-white/60 rounded-xl transition-colors shadow-sm bg-white/30 border border-white/60"
                 whileHover={{ scale: 1.06 }}

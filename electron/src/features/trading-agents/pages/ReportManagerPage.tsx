@@ -19,6 +19,7 @@ import {
   Info,
 } from 'lucide-react';
 import PdfPreview from '../components/PdfPreview';
+import { Modal } from 'antd';
 
 const ENGINE_BASE = '/api/v1/trading-agents';
 
@@ -203,19 +204,27 @@ const ReportManagerPage: React.FC = () => {
     }
   };
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = () => {
     if (selectedForDelete.size === 0) return;
-    if (!window.confirm(`确认删除选中的 ${selectedForDelete.size} 个文件？`)) return;
-    try {
-      await request('/files/delete', {
-        method: 'POST',
-        body: JSON.stringify({ files: Array.from(selectedForDelete) }),
-      });
-      if (selected && selectedForDelete.has(selected)) setSelected(null);
-      await loadFiles();
-    } catch (err: any) {
-      setError(err.message);
-    }
+    Modal.confirm({
+      title: '删除文件',
+      content: `确认删除选中的 ${selectedForDelete.size} 个文件？`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await request('/files/delete', {
+            method: 'POST',
+            body: JSON.stringify({ files: Array.from(selectedForDelete) }),
+          });
+          if (selected && selectedForDelete.has(selected)) setSelected(null);
+          await loadFiles();
+        } catch (err: any) {
+          setError(err.message);
+        }
+      },
+    });
   };
 
   const handleMoveSelected = async (targetOverride?: string) => {
@@ -239,17 +248,25 @@ const ReportManagerPage: React.FC = () => {
   const totalFiles = rootFiles.length + allFolders.reduce((s, f) => s + countFolderFiles(f), 0);
   const showBanner = !bannerDismissed && totalFiles === 0;
 
-  const handleDeleteFolder = async (path: string) => {
-    if (!window.confirm(`确认删除文件夹「${path}」及其中所有文件？`)) return;
-    try {
-      await request('/files/delete-folder', {
-        method: 'POST',
-        body: JSON.stringify({ folder: path }),
-      });
-      await loadFiles();
-    } catch (err: any) {
-      setError(err.message);
-    }
+  const handleDeleteFolder = (path: string) => {
+    Modal.confirm({
+      title: '删除文件夹',
+      content: `确认删除文件夹「${path}」及其中所有文件？`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await request('/files/delete-folder', {
+            method: 'POST',
+            body: JSON.stringify({ folder: path }),
+          });
+          await loadFiles();
+        } catch (err: any) {
+          setError(err.message);
+        }
+      },
+    });
   };
 
   const renderFileItem = (file: ReportFile, indent = 0) => {

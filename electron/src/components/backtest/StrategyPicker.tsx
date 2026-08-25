@@ -23,6 +23,7 @@ import { StrategyFile, StrategyValidationResult } from '../../types/backtest/str
 import { QlibStrategyParams } from '../../types/backtest/qlib';
 import { QLIB_STRATEGY_TEMPLATES, StrategyTemplate } from '../../data/qlibStrategyTemplates';
 import { StrategyTemplateModal } from './StrategyTemplateModal';
+import { Modal, message } from 'antd';
 
 interface StrategyPickerProps {
   onStrategySelected: (
@@ -203,7 +204,7 @@ export const StrategyPicker: React.FC<StrategyPickerProps> = ({
 
     // 检查文件类型
     if (!file.name.endsWith('.py') && !file.name.endsWith('.txt')) {
-      alert('请上传 .py 或 .txt 文件');
+      message.warning('请上传 .py 或 .txt 文件');
       return;
     }
 
@@ -288,7 +289,7 @@ export const StrategyPicker: React.FC<StrategyPickerProps> = ({
   // 保存当前上传的策略
   const handleSaveStrategy = async () => {
     if (!fileContent || !strategyName.trim()) {
-      alert('请填写策略名称');
+      message.warning('请填写策略名称');
       return;
     }
 
@@ -302,7 +303,7 @@ export const StrategyPicker: React.FC<StrategyPickerProps> = ({
         language: validationResult?.is_qlib_format ? 'qlib' : 'python',
       });
 
-      alert('策略保存成功');
+      message.success('策略保存成功');
       setSaveDialogOpen(false);
       setStrategyName('');
       setStrategyDescription('');
@@ -312,20 +313,27 @@ export const StrategyPicker: React.FC<StrategyPickerProps> = ({
         loadPersonalStrategies();
       }
     } catch (error: any) {
-      alert('保存失败: ' + error.message);
+      message.error('保存失败: ' + error.message);
     }
   };
 
   // 删除策略
-  const handleDeleteStrategy = async (strategyId: string) => {
-    if (!confirm('确认删除此策略？')) return;
-
-    try {
-      await strategyManagementService.deleteStrategy(strategyId);
-      loadPersonalStrategies();
-    } catch (error: any) {
-      alert('删除失败: ' + error.message);
-    }
+  const handleDeleteStrategy = (strategyId: string) => {
+    Modal.confirm({
+      title: '删除策略',
+      content: '确认删除此策略？',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await strategyManagementService.deleteStrategy(strategyId);
+          loadPersonalStrategies();
+        } catch (error: any) {
+          message.error('删除失败: ' + error.message);
+        }
+      },
+    });
   };
 
   return (

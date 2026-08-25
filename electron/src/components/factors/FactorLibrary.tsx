@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Save, FolderOpen, Trash2, Download, Upload } from 'lucide-react';
+import { Modal, message } from 'antd';
 
 interface SavedFactor {
   id: string;
@@ -40,7 +41,7 @@ export const FactorLibrary: React.FC<Props> = ({ onLoad }) => {
 
   const saveFactor = () => {
     if (!newFactor.name || !newFactor.expression) {
-      alert('请输入因子名称和表达式');
+      message.warning('请输入因子名称和表达式');
       return;
     }
 
@@ -60,11 +61,18 @@ export const FactorLibrary: React.FC<Props> = ({ onLoad }) => {
   };
 
   const deleteFactor = (id: string) => {
-    if (confirm('确定删除此因子？')) {
-      const updated = savedFactors.filter(f => f.id !== id);
-      setSavedFactors(updated);
-      localStorage.setItem('qlib_factor_library', JSON.stringify(updated));
-    }
+    Modal.confirm({
+      title: '删除因子',
+      content: '确定删除此因子？',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => {
+        const updated = savedFactors.filter(f => f.id !== id);
+        setSavedFactors(updated);
+        localStorage.setItem('qlib_factor_library', JSON.stringify(updated));
+      },
+    });
   };
 
   const exportFactors = () => {
@@ -87,9 +95,9 @@ export const FactorLibrary: React.FC<Props> = ({ onLoad }) => {
         const imported = JSON.parse(e.target?.result as string);
         setSavedFactors([...savedFactors, ...imported]);
         localStorage.setItem('qlib_factor_library', JSON.stringify([...savedFactors, ...imported]));
-        alert('导入成功');
+        message.success('导入成功');
       } catch (error) {
-        alert('导入失败：文件格式错误');
+        message.error('导入失败：文件格式错误');
       }
     };
     reader.readAsText(file);

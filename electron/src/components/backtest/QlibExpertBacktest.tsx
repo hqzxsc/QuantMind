@@ -20,6 +20,7 @@ import { blendBacktestProgress, getBacktestStageMessage } from './progressUtils'
 import { useAppSelector } from '../../store';
 import { selectCurrentMarket } from '../../store/slices/uiSlice';
 import { getMarketConfig } from '../../config/marketConfig';
+import { message } from 'antd';
 
 const MARKET_UNIVERSE_PRESETS: Record<string, { label: string; value: string }[]> = {
   CN: [
@@ -81,7 +82,7 @@ export const QlibExpertBacktest: React.FC = () => {
 
   const handleSaveToCloud = async () => {
     if (!saveName.trim()) {
-      alert('请输入策略名称');
+      message.warning('请输入策略名称');
       return;
     }
 
@@ -103,7 +104,7 @@ export const QlibExpertBacktest: React.FC = () => {
         parameters: extractedParams
       });
       setShowSaveModal(false);
-      alert('策略已成功保存至个人中心（已通过配置合规性验证）');
+      message.success('策略已成功保存至个人中心（已通过配置合规性验证）');
     } catch (err: any) {
       setError(`验证或保存失败: ${err.message}`);
     } finally {

@@ -34,6 +34,7 @@ import { useWebSocket } from '../../utils/websocket';
 import { strategyTemplates, getTemplateById } from '../../constants/strategyTemplates';
 import { blendBacktestProgress, getBacktestStageMessage } from '../backtest/progressUtils';
 import { getStoredTailTradeMode, setStoredTailTradeMode, getTailTradeDealPrice, getTailTradeSignalLagDays, ALLOW_FEATURE_SIGNAL_FALLBACK } from '../../shared/qlib/tailTradeMode';
+import { Modal } from 'antd';
 
 const DEFAULT_TEMPLATE_ID = 'standard_topk';
 
@@ -215,10 +216,18 @@ export const EnhancedQuickBacktest: React.FC = () => {
   };
 
   const handleDeleteConfig = (configId: string) => {
-    if (!window.confirm('确定要删除这个配置吗？')) return;
-    const updated = savedConfigs.filter(c => c.id !== configId);
-    setSavedConfigs(updated);
-    localStorage.setItem('backtest_configs', JSON.stringify(updated));
+    Modal.confirm({
+      title: '删除配置',
+      content: '确定要删除这个配置吗？',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => {
+        const updated = savedConfigs.filter(c => c.id !== configId);
+        setSavedConfigs(updated);
+        localStorage.setItem('backtest_configs', JSON.stringify(updated));
+      },
+    });
   };
 
   const handleSelectTemplate = (templateId: string) => {

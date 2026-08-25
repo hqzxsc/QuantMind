@@ -27,7 +27,11 @@ const ENV: Record<string, any> = typeof import.meta !== 'undefined' ? (import.me
 
 // 动态服务器配置（桌面端用户设置）
 let dynamicServerUrl: string | null = null;
-const SERVER_URL_STORAGE_KEY = 'quantmind_server_url';
+const SERVER_URL_STORAGE_KEY = 'quantmind_server_url_v2';
+const LEGACY_SERVER_URL_STORAGE_KEY = 'quantmind_server_url';
+
+// Electron 桌面端兜底地址：OSS 本地 Docker 后端（api 网关 8000）
+const DEFAULT_ELECTRON_API_BASE = 'http://127.0.0.1:8000';
 
 function readPersistedServerUrl(): string | null {
   if (typeof window === 'undefined') return null;
@@ -38,11 +42,21 @@ function readPersistedServerUrl(): string | null {
   }
 }
 
+function readLegacyPersistedServerUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(LEGACY_SERVER_URL_STORAGE_KEY)?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 function persistServerUrl(url: string | null): void {
   if (typeof window === 'undefined') return;
   try {
     if (url) {
       localStorage.setItem(SERVER_URL_STORAGE_KEY, url);
+      localStorage.removeItem(LEGACY_SERVER_URL_STORAGE_KEY);
     } else {
       localStorage.removeItem(SERVER_URL_STORAGE_KEY);
     }
@@ -59,24 +73,94 @@ export function isElectronEnv(): boolean {
 }
 
 /**
+ * 校验服务器地址是否可达（通过 /health 端点）
+ */
+export async function isServerReachable(url: string, timeoutMs = 2500): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`${url.replace(/\/+$/, '')}/health`, {
+      signal: controller.signal,
+      // 不携带凭据，仅做连通性探测
+      cache: 'no-store',
+    });
+    clearTimeout(timer);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 清理失效的服务器配置（本地缓存 + 桌面端配置文件）
+ */
+async function clearStaleServerUrl(reason: string): Promise<void> {
+  console.warn(`[services] 服务器地址失效，清除缓存配置: ${reason}`);
+  persistServerUrl(null);
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.setServerUrl) {
+    try {
+      await (window as any).electronAPI.setServerUrl('');
+    } catch (e) {
+      console.warn('[services] 清除桌面配置文件失败（忽略）:', e);
+    }
+  }
+}
+
+/**
  * 初始化动态服务器配置（桌面端启动时调用）
+ * 优先级：持久化配置（已校验） > Electron 配置文件（已校验） > 桌面端默认本地地址
  */
 export async function initDynamicServerUrl(): Promise<void> {
+  // 1. 新 key 持久化配置，先做连通性校验，失效则清除
   const persisted = readPersistedServerUrl();
   if (persisted) {
-    dynamicServerUrl = persisted;
-    return;
+    const ok = await isServerReachable(persisted);
+    if (ok) {
+      dynamicServerUrl = persisted;
+      return;
+    }
+    await clearStaleServerUrl(persisted);
+  }
+
+  // 2. 旧 key（quantmind_server_url）遗留缓存迁移：同样校验，失效则清除
+  const legacy = readLegacyPersistedServerUrl();
+  if (legacy) {
+    const ok = await isServerReachable(legacy);
+    if (ok) {
+      dynamicServerUrl = legacy;
+      persistServerUrl(legacy);
+      return;
+    }
+    try {
+      localStorage.removeItem(LEGACY_SERVER_URL_STORAGE_KEY);
+    } catch { /* ignore */ }
+    console.warn(`[services] 旧版服务器地址失效，清除缓存: ${legacy}`);
   }
 
   if (isElectronEnv()) {
     try {
       const url = await (window as any).electronAPI.getServerUrl();
       if (url && typeof url === 'string') {
-        dynamicServerUrl = url.replace(/\/+$/, '');
-        persistServerUrl(dynamicServerUrl);
+        const normalized = url.replace(/\/+$/, '');
+        const ok = await isServerReachable(normalized);
+        if (ok) {
+          dynamicServerUrl = normalized;
+          persistServerUrl(normalized);
+          return;
+        }
+        await clearStaleServerUrl(normalized);
       }
     } catch (e) {
       console.warn('[services] Failed to get server URL from config:', e);
+    }
+
+    // 3. 兜底：本地 OSS Docker 后端
+    if (!dynamicServerUrl) {
+      const ok = await isServerReachable(DEFAULT_ELECTRON_API_BASE);
+      if (ok) {
+        dynamicServerUrl = DEFAULT_ELECTRON_API_BASE;
+        persistServerUrl(DEFAULT_ELECTRON_API_BASE);
+      }
     }
   }
 }
@@ -122,6 +206,13 @@ function getBaseUrl(): string {
   const persisted = readPersistedServerUrl();
   if (persisted) {
     return persisted;
+  }
+  if (API_BASE) {
+    return API_BASE;
+  }
+  // Electron 桌面端兜底：本地 OSS Docker 后端（避免 file:// 下相对路径请求全部失败）
+  if (isElectronEnv()) {
+    return DEFAULT_ELECTRON_API_BASE;
   }
   return API_BASE;
 }

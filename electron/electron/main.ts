@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, nativeTheme, Menu, MenuItemConstructorOptions, ipcMain, dialog, Notification } from 'electron';
+import { app, BrowserWindow, shell, nativeTheme, Menu, MenuItemConstructorOptions, ipcMain, dialog, Notification, session } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { spawnSync } from 'child_process';
@@ -406,8 +406,18 @@ app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 
 // Electron 应用准备就绪后执行
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   console.log('[main] app.whenReady() called');
+
+  // 生产模式清除 Chromium 磁盘缓存，避免升级后旧资源（旧 index.html/哈希 chunk）被复用导致白屏或 JS 报错
+  if (!isDev) {
+    try {
+      await session.defaultSession.clearCache();
+      console.log('[main] 生产模式已清除 Chromium 磁盘缓存');
+    } catch (e) {
+      console.warn('[main] 清除缓存失败（忽略）:', e);
+    }
+  }
 
   // 注册 Auth IPC handlers (本地离线认证支持)
   registerAuthHandlers();

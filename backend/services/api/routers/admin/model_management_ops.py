@@ -154,6 +154,18 @@ async def scan_model_directories(
             detail="模型目录扫描超时（>15s），请检查磁盘 I/O 或 models/ 目录下是否有大量超大文件",
         )
 
+    # 按最近更新倒序：最新训练的模型排最前（否则新模型埋在 148 个目录末尾，
+    # 前端 10 条/页要翻十几页才看得到）。updated_at 缺失/空排最后。
+    def _sort_key(m):
+        v = m.get("updated_at")
+        if v is None:
+            return ""
+        if hasattr(v, "isoformat"):
+            return v.isoformat()
+        return str(v)
+
+    results.sort(key=_sort_key, reverse=True)
+
     payload = {
         "total": len(results),
         "models": results,

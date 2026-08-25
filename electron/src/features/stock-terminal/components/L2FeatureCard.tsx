@@ -78,7 +78,7 @@ export function L2FeatureCard({ l2, signalDate }: Props) {
   }));
 
   return (
-    <div className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/90 shadow-xs px-4 py-2.5">
+    <div className="bg-white/70 rounded-2xl border border-slate-100 px-4 py-2.5">
       <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100">
         <div className="flex items-center gap-1.5">
           <Layers className="w-3 h-3 text-rose-500" />

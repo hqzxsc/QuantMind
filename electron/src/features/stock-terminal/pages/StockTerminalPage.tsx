@@ -13,10 +13,11 @@ import { ScoreCalendar } from '../components/ScoreCalendar';
 import { IndexMaCard } from '../components/IndexMaCard';
 import { KlineWorkspace } from '../components/kline/KlineWorkspace';
 import { OverviewTab } from '../components/OverviewTab';
+import { L2FeatureCard } from '../components/L2FeatureCard';
 import { FinancialsTab, ValuationTab, ChipFlowTab, MarginTab, SentimentTab, HoldersTab } from '../components/tabs/P2Tabs';
 import { NewsTab } from '../components/tabs/NewsTab';
 
-type InfoTab = 'overview' | 'financials' | 'valuation' | 'chipflow' | 'margin' | 'sentiment' | 'holders' | 'news';
+type InfoTab = 'overview' | 'financials' | 'valuation' | 'chipflow' | 'margin' | 'sentiment' | 'holders' | 'news' | 'l2';
 
 const TAB_META: { id: InfoTab; label: string }[] = [
   { id: 'overview', label: '概况' },
@@ -27,6 +28,7 @@ const TAB_META: { id: InfoTab; label: string }[] = [
   { id: 'sentiment', label: '技术形态' },
   { id: 'holders', label: '股东分红' },
   { id: 'news', label: '个股资讯' },
+  { id: 'l2', label: 'L2特征' },
 ];
 
 export default function StockTerminalPage() {
@@ -38,7 +40,7 @@ export default function StockTerminalPage() {
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
   const [onlyWatchlist, setOnlyWatchlist] = useState(false);
   const [tagFilter, setTagFilter] = useState<{ id: string; name: string } | null>(null);
-  const [listFilters, setListFilters] = useState<ListFilters>({});
+  const [listFilters, setListFilters] = useState<ListFilters>({ excludeSt: true });
   const [listTotal, setListTotal] = useState(0);
   const [fullTotal, setFullTotal] = useState(0);
   const [listModels, setListModels] = useState<{ model_id: string; display_name?: string }[]>([]);
@@ -332,6 +334,9 @@ export default function StockTerminalPage() {
               {infoTab === 'sentiment' && selected && <SentimentTab symbol={selected.symbol} asof={signalDate} />}
               {infoTab === 'holders' && selected && <HoldersTab symbol={selected.symbol} asof={signalDate} />}
               {infoTab === 'news' && selected && <NewsTab symbol={selected.symbol} />}
+              {infoTab === 'l2' && selected && (
+                <L2FeatureCard l2={profile?.l2_features ?? null} signalDate={profile?.signal_date ?? null} />
+              )}
             </div>
           </motion.div>
         </div>

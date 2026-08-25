@@ -55,6 +55,8 @@ async def lifespan(app: FastAPI):
     sandbox_signal_task = None
     tdx_account_sync_task = None
     tdx_quote_feed_task = None
+    tdx_l2_capture_task = None
+    tdx_l2_realtime_task = None
     t1_unlock_task = None
 
     try:
@@ -149,6 +151,15 @@ async def lifespan(app: FastAPI):
             run_simulation_t1_unlock_task(),
             name="simulation-t1-unlock",
         )
+        from backend.services.trade.services.tdx_l2_capture_task import run_tdx_l2_capture_task
+        from backend.services.trade.services.tdx_l2_realtime import run_tdx_l2_realtime_task
+
+        tdx_l2_capture_task = asyncio.create_task(
+            run_tdx_l2_capture_task(), name="tdx-l2-capture"
+        )
+        tdx_l2_realtime_task = asyncio.create_task(
+            run_tdx_l2_realtime_task(), name="tdx-l2-realtime"
+        )
     except Exception as e:
         app.state.startup_healthy = False
         logger.error("trade background scanners start failed: %s", e, exc_info=True)
@@ -206,7 +217,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (scanner_task, margin_task, snapshot_task, ledger_settlement_task, manual_execution_task, sandbox_signal_task, tdx_account_sync_task, tdx_quote_feed_task, t1_unlock_task):
+    for task in (scanner_task, margin_task, snapshot_task, ledger_settlement_task, manual_execution_task, sandbox_signal_task, tdx_account_sync_task, tdx_quote_feed_task, tdx_l2_capture_task, tdx_l2_realtime_task, t1_unlock_task):
         if task is None:
             continue
         task.cancel()
@@ -285,9 +296,11 @@ app.include_router(replay_router)
 
 from backend.services.trade.routers.tdx_config import router as tdx_config_router
 from backend.services.trade.routers.tdx_quote_feed import router as tdx_quote_feed_router
+from backend.services.trade.routers.tdx_l2 import router as tdx_l2_router
 
 app.include_router(tdx_config_router, prefix="/api/v1", tags=["TDX-Bridge"])
 app.include_router(tdx_quote_feed_router, prefix="/api/v1", tags=["TDX-Bridge"])
+app.include_router(tdx_l2_router, prefix="/api/v1", tags=["TDX-L2"])
 
 app.add_middleware(
     CORSMiddleware,

@@ -304,6 +304,20 @@ main() {
     require_root
     require_ubuntu
     require_url "$OFFLINE_BASE_URL" QUANTMIND_OFFLINE_BASE_URL
+    echo "========================================================================="
+    echo " 🚀 QuantMind 离线部署即将开始"
+    echo " -------------------------------------------------------------------------"
+    echo " ⏱️  预计耗时（依服务器性能与网络波动）:"
+    echo "     1. 安装依赖与 Docker        ~2-5 分钟"
+    echo "     2. 下载离线包（约 5GB）     ~5-20 分钟"
+    echo "     3. 导入 Docker 镜像         ~3-10 分钟"
+    echo "     4. 下载最新代码             ~1-3 分钟"
+    echo "     5. 恢复业务数据与数据库     ~2-5 分钟"
+    echo "     6. 构建并启动服务           ~10-30 分钟"
+    echo "     合计                       约 25-75 分钟"
+    echo " -------------------------------------------------------------------------"
+    echo " 💡 网络较慢时请耐心等待；已下载的离线包会自动校验并复用。"
+    echo "========================================================================="
     install_runtime
     download_offline_package
     import_images
@@ -318,13 +332,13 @@ main() {
     echo "========================================================================="
     echo " 🎉 QuantMind 离线部署成功！"
     echo " -------------------------------------------------------------------------"
-    echo " 🌐 Web 控制台  : http://<服务器 IP>:3000"
+    echo " 🖥️  桌面客户端: https://oss.quantmindai.cn/desktop-download.html"
     echo " 📖 API 文档    : http://<服务器 IP>:8000/docs"
     echo " 👤 默认账号    : admin / admin123"
     echo " -------------------------------------------------------------------------"
     echo " 💡 【数据更新与扩展提示】"
     echo " 1. QuantDB 在线下载及日常增量更新（推荐）："
-    echo "    在 Web 端【个人中心】->【数据平台】配置 API Key，"
+    echo "    在客户端【个人中心】->【数据平台】配置 API Key，"
     echo "    或在终端执行: docker exec quantmind python backend/scripts/quantdb_daily_sync.py"
     echo " 2. 百度网盘完整历史数据包（备选）："
     echo "    链接: https://pan.baidu.com/s/5IT4p5nFlglZ7zu_0H_fA8Q"

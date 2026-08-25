@@ -493,12 +493,70 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
             except Exception:
                 pass
 
+        # Docker-in-Docker：api 容器本身未挂载 GPU（无 nvidia-smi / 驱动），
+        # 但宿主机 daemon 可能已配置 nvidia runtime（训练容器以 --gpus all 启动）。
+        # 用训练镜像临时起一个容器实测 GPU，避免把真实 GPU 机器误报成 CPU 训练模式。
+        if not gpus and result.get("docker_available") and result.get("image_installed"):
+            gpus = await cls._probe_gpu_via_docker(client, training_image)
+
         result["gpus"] = gpus
         if not gpus:
             result["gpu_error"] = "未检测到独立 GPU (将使用 CPU 训练)"
 
         result = cls.assess_readiness(result)
         return result
+
+    # GPU 容器探测 TTL 缓存（秒）：避免前端轮询时频繁起探针容器
+    _gpu_probe_cache: tuple[float, list[dict[str, Any]]] | None = None
+    _GPU_PROBE_TTL_SEC = 60
+
+    @classmethod
+    async def _probe_gpu_via_docker(
+        cls, client: Any, image: str
+    ) -> list[dict[str, Any]]:
+        """通过宿主机 daemon 起一个带 --gpus all 的一次性容器执行 nvidia-smi。
+
+        返回与本地探测相同结构的 GPU 列表；探测失败或宿主机不支持 GPU 时返回空列表。
+        """
+        import time
+
+        now = time.monotonic()
+        if cls._gpu_probe_cache and now - cls._gpu_probe_cache[0] < cls._GPU_PROBE_TTL_SEC:
+            return cls._gpu_probe_cache[1]
+
+        gpus: list[dict[str, Any]] = []
+        try:
+            import docker as docker_sdk
+
+            out = await asyncio.to_thread(
+                client.containers.run,
+                image,
+                command=[
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name",
+                    "--format=csv,noheader,nounits",
+                ],
+                device_requests=[
+                    docker_sdk.types.DeviceRequest(count=-1, capabilities=[["gpu"]])
+                ],
+                remove=True,
+            )
+            if isinstance(out, bytes):
+                out = out.decode(errors="replace")
+            for line in str(out).splitlines():
+                parts = [p.strip() for p in line.split(",") if p.strip()]
+                if len(parts) >= 5:
+                    gpus.append({
+                        "util": int(parts[0]) if parts[0].isdigit() else 0,
+                        "mem_used_mb": int(parts[1]) if parts[1].isdigit() else 0,
+                        "mem_total_mb": int(parts[2]) if parts[2].isdigit() else 0,
+                        "temp_c": int(parts[3]) if parts[3].isdigit() else 0,
+                        "name": parts[4],
+                    })
+        except Exception as exc:
+            logger.warning("docker GPU probe failed: %s", exc)
+        cls._gpu_probe_cache = (now, gpus)
+        return gpus
 
     @staticmethod
     def assess_readiness(status: dict[str, Any]) -> dict[str, Any]:

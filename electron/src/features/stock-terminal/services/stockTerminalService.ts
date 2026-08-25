@@ -46,6 +46,8 @@ class StockTerminalService {
     with_counts?: boolean;
     /** 定位股票（600519.SH），返回当前排序中的名次（find_rank）供列表跳转 */
     find_symbol?: string;
+    /** 自选股列表（逗号分隔，prefix/suffix/纯代码均可），按当前排序保留分数降序 */
+    symbols?: string;
   }): Promise<StockListResponse> {
     const resp = await this.client.get('/stock-terminal/list', { params });
     return resp.data?.data ?? { total: 0, page: 1, page_size: 100, trade_date: '', items: [] };

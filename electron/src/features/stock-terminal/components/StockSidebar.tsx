@@ -12,6 +12,8 @@ interface Props {
   selected: string | null;
   onSelect: (item: StockListItem) => void;
   watchlistSymbols: Set<string>;   // prefix 格式（SH600519）
+  /** 行内星标点击：加/移自选（watchlistSymbols 只读，页面持有真实状态） */
+  onToggleWatch?: (item: StockListItem, watched: boolean) => void;
   /** 持仓来源映射（prefix -> 模拟/实盘/BOTH，自选列表「持仓」标记，实时推导） */
   positions?: Map<string, PositionKind>;
   onlyWatchlist: boolean;
@@ -98,7 +100,7 @@ export function positionToneOf(v: number | null | undefined): { cls: string; txt
 
 const MARKETS: [string, string][] = [['ALL', '全部'], ['SH', '沪市'], ['SZ', '深市'], ['BJ', '北交']];
 
-export function StockSidebar({ selected, onSelect, watchlistSymbols, positions = new Map<string, PositionKind>(), onlyWatchlist, onOnlyWatchlist, filters, onFiltersChange, onModels, models: modelOptions = [], onTotals, onSignalDate, fullTotal = 0 }: Props) {
+export function StockSidebar({ selected, onSelect, watchlistSymbols, positions = new Map<string, PositionKind>(), onlyWatchlist, onOnlyWatchlist, onToggleWatch, filters, onFiltersChange, onModels, models: modelOptions = [], onTotals, onSignalDate, fullTotal = 0 }: Props) {
   const [market, setMarket] = useState('ALL');
   const [q, setQ] = useState('');
   const [data, setData] = useState<StockListResponse | null>(null);
@@ -134,10 +136,12 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
       index_code: filters.indexCode,
       side: filters.side,
       exclude_st: filters.excludeSt || undefined,
+      // 只看自选：把全量自选传给后端过滤（保留分数序），否则前端只过滤已加载页导致列表不全
+      symbols: onlyWatchlist && watchlistSymbols.size ? [...watchlistSymbols].join(',') : undefined,
       ...(withCounts ? { with_counts: true } : {}),
       ...(withCounts && selectedRef.current ? { find_symbol: selectedRef.current } : {}),
     };
-  }, [market, q, filters]);
+  }, [market, q, filters, onlyWatchlist, watchlistSymbols]);
 
   const fetchList = useCallback(async (page = 1, append = false) => {
     setLoading(true);
@@ -413,7 +417,20 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
                 <span className="flex flex-col min-w-0 gap-0.5">
                   <span className="flex items-center justify-between gap-1">
                     <span className="text-xs font-bold text-slate-700 truncate flex items-center gap-0.5 min-w-0">
-                      {watchlistSymbols.has(toPrefix(it.symbol)) && <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400 shrink-0" />}
+                      {(() => {
+                        const watched = watchlistSymbols.has(toPrefix(it.symbol));
+                        return (
+                          <span
+                            role="button"
+                            tabIndex={-1}
+                            title={watched ? '移出自选' : '加入自选'}
+                            onClick={(e) => { e.stopPropagation(); onToggleWatch?.(it, watched); }}
+                            className="flex items-center shrink-0 cursor-pointer rounded hover:bg-amber-50 p-0.5 -m-0.5"
+                          >
+                            <Star className={`w-2.5 h-2.5 transition-colors ${watched ? 'text-amber-400 fill-amber-400' : 'text-slate-300 hover:text-amber-400'}`} />
+                          </span>
+                        );
+                      })()}
                       {(() => {
                         const kind = positions.get(toPrefix(it.symbol));
                         if (!kind) return null;

@@ -1376,6 +1376,7 @@ async def list_stocks(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=10, le=6000),
     find_symbol: str | None = Query(None, description="定位股票（600519.SH 或纯代码），返回当前排序中的名次与页数"),
+    symbols: str | None = Query(None, description="自选股列表（逗号分隔，prefix/suffix/纯代码均可），按当前排序保留分数降序"),
     current_user: dict = Depends(get_current_user),
 ):
     _ = current_user
@@ -1567,6 +1568,21 @@ async def list_stocks(
     elif trend:
         # 趋势筛选但该模型数据不足算趋势：返回空集（不能静默回退成全量）
         df = df.iloc[0:0]
+
+    # 自选股列表（切「只看自选」时前端传全量自选）：过滤发生在排序后，自选股仍按分数降序展示；
+    # 兼容 prefix(SH600519) / suffix(600519.SH) / 纯代码(600519) 三种写法
+    if symbols:
+        wanted = {s.strip().upper() for s in symbols.split(",") if s.strip()}
+        if wanted:
+            norm: set[str] = set()
+            for s in wanted:
+                if "." in s:
+                    norm.add(s)
+                elif s[:2] in ("SH", "SZ", "BJ"):
+                    norm.add(f"{s[2:]}.{s[:2]}")
+                else:
+                    norm |= {f"{s}.{ex}" for ex in ("SH", "SZ", "BJ")}
+            df = df[df["Symbol"].isin(norm)]
 
     total = len(df)
 

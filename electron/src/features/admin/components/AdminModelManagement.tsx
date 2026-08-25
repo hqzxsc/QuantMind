@@ -171,8 +171,15 @@ export const AdminModelManagement: React.FC = () => {
     const [detailModel, setDetailModel] = useState<ModelDirectoryInfo | null>(null);
     const [detailVisible, setDetailVisible] = useState(false);
 
-    // 不再 mount 时自动扫描；改为用户主动点击"扫描模型"按钮
-    // 后端已加 5 分钟 Redis 缓存，命中时秒级返回
+    // 首次进入页面自动扫描（后端有 5 分钟 Redis 缓存 + 15s 超时保护，代价低）
+    // 避免用户看到空表误以为没有模型；仍保留手动"重新扫描/强制刷新"按钮
+    const autoScanned = React.useRef(false);
+    React.useEffect(() => {
+        if (!autoScanned.current) {
+            autoScanned.current = true;
+            handleScan(false);
+        }
+    }, []);
 
     const handleScan = async (refresh = false) => {
         setScanning(true);

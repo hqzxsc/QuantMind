@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI):
     manual_execution_task = None
     sandbox_signal_task = None
     tdx_account_sync_task = None
+    tdx_quote_feed_task = None
 
     try:
         await init_unified_config(service_name="quantmind-trade")
@@ -125,6 +126,12 @@ async def lifespan(app: FastAPI):
             run_tdx_account_sync_task(interval_seconds=30),
             name="tdx-account-sync",
         )
+        from backend.services.trade.services.tdx_quote_feed import run_tdx_quote_feed_task
+
+        tdx_quote_feed_task = asyncio.create_task(
+            run_tdx_quote_feed_task(),
+            name="tdx-quote-feed",
+        )
     except Exception as e:
         app.state.startup_healthy = False
         logger.error("trade background scanners start failed: %s", e, exc_info=True)
@@ -166,7 +173,6 @@ async def lifespan(app: FastAPI):
         logger.error("trade sandbox signal consumer start failed: %s", e, exc_info=True)
 
     # 启动模拟盘定时调度器
-    simulation_scheduler_task = None
     try:
         enabled = os.getenv("ENABLE_SIMULATION_SCHEDULER", "false").lower() in {"1", "true", "yes", "on"}
         if enabled:
@@ -183,7 +189,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (scanner_task, margin_task, snapshot_task, ledger_settlement_task, manual_execution_task, sandbox_signal_task):
+    for task in (scanner_task, margin_task, snapshot_task, ledger_settlement_task, manual_execution_task, sandbox_signal_task, tdx_account_sync_task, tdx_quote_feed_task):
         if task is None:
             continue
         task.cancel()
@@ -261,8 +267,10 @@ app.include_router(internal_strategy.router)
 app.include_router(replay_router)
 
 from backend.services.trade.routers.tdx_config import router as tdx_config_router
+from backend.services.trade.routers.tdx_quote_feed import router as tdx_quote_feed_router
 
 app.include_router(tdx_config_router, prefix="/api/v1", tags=["TDX-Bridge"])
+app.include_router(tdx_quote_feed_router, prefix="/api/v1", tags=["TDX-Bridge"])
 
 app.add_middleware(
     CORSMiddleware,

@@ -17,7 +17,7 @@ from backend.shared.database_manager_v2 import get_session
 
 logger = logging.getLogger(__name__)
 
-TDX_BRIDGE_URL = os.getenv("TDX_BRIDGE_URL", "http://192.168.31.22:8550")
+TDX_BRIDGE_URL = os.getenv("TDX_BRIDGE_URL", "http://192.168.31.31:8550")
 TDX_BRIDGE_TOKEN = os.getenv("TDX_BRIDGE_TOKEN", "")
 TIMEOUT = 10.0
 
@@ -156,6 +156,18 @@ class TdxPushService:
         """拉取通达信当日委托."""
         data = await self._post("/api/v1/orders/query", {"stock_code": stock_code})
         return data.get("orders", [])
+
+    async def tdx_call(self, method: str, params: dict | None = None) -> dict:
+        """通用 JSON-RPC 透传（桥 /api/v1/tdx/call，白名单方法）。
+
+        用于实时行情（get_market_snapshot 等）拉取。返回桥 result 字典。
+        """
+        resp = await self._post("/api/v1/tdx/call", {
+            "method": method,
+            "params": params or {},
+        })
+        result = resp.get("result") if isinstance(resp, dict) else resp
+        return result if isinstance(result, dict) else {"result": result}
 
     async def pull_order_status(self, wtbh: str) -> dict:
         """按委托编号查单笔委托状态."""

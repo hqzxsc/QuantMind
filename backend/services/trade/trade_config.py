@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     SERVICE_VERSION: str = "1.0.0"
     HOST: str = "0.0.0.0"
     PORT: int = 8002
-    
+
     # AI / LLM
     DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
 
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     MIN_ORDER_SIZE: float = 100.0  # min order value
 
     # 通达信 (TDX) 交易桥配置
-    TDX_BRIDGE_URL: str = os.getenv("TDX_BRIDGE_URL", "http://192.168.31.22:8550")
+    TDX_BRIDGE_URL: str = os.getenv("TDX_BRIDGE_URL", "http://192.168.31.31:8550")
     TDX_BRIDGE_TOKEN: str = os.getenv("TDX_BRIDGE_TOKEN", "")
     TDX_ACCOUNT: str = os.getenv("TDX_ACCOUNT", "")
     TDX_ACCOUNT_TYPE: str = os.getenv("TDX_ACCOUNT_TYPE", "stock")

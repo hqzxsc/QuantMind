@@ -148,6 +148,13 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
   const [rollingCfgMsg, setRollingCfgMsg] = useState('');
   const [activeTab, setActiveTab] = useState<'credentials' | 'tdx'>('credentials');
 
+  // 持仓股止损止盈提醒配置（/tdx/sltp-config，仅提醒不下单）
+  const [sltpStopLoss, setSltpStopLoss] = useState('8');
+  const [sltpTakeProfit, setSltpTakeProfit] = useState('');
+  const [sltpTrailing, setSltpTrailing] = useState('');
+  const [sltpEnabled, setSltpEnabled] = useState(true);
+  const [sltpMsg, setSltpMsg] = useState('');
+
   const handleCopy = async (text: string, key: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(key);
@@ -308,6 +315,66 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
     }
   };
 
+  const fetchSltpConfig = async () => {
+    try {
+      const res = await fetch(`${apiGatewayBase}/api/v1/tdx/sltp-config`, {
+        headers: authHeader(),
+      });
+      if (res.status === 403) {
+        // 会员门控：实时提醒仅 QuantDB 付费会员在期可用
+        setSltpMsg('⛔ 实时行情提醒为 QuantDB 付费会员专属功能，请保持会员在期');
+        setSltpEnabled(false);
+        return;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        setSltpStopLoss(String((data.stop_loss_pct ?? 0.08) * 100));
+        setSltpTakeProfit(data.take_profit_pct != null ? String(data.take_profit_pct * 100) : '');
+        setSltpTrailing(data.trailing_stop_pct != null ? String(data.trailing_stop_pct * 100) : '');
+        setSltpEnabled(Boolean(data.enabled));
+        setSltpMsg('');
+      }
+    } catch (e) {
+      console.error('Failed to fetch sltp config', e);
+    }
+  };
+
+  const saveSltpConfig = async () => {
+    setSltpMsg('');
+    const parsePct = (v: string): number | null => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    const stopLoss = parsePct(sltpStopLoss);
+    const takeProfit = parsePct(sltpTakeProfit);
+    const trailing = parsePct(sltpTrailing);
+    if (!stopLoss && !takeProfit && !trailing) {
+      setSltpMsg('❌ 至少填写止损、止盈、移动止损中的一项（%）');
+      return;
+    }
+    try {
+      const res = await fetch(`${apiGatewayBase}/api/v1/tdx/sltp-config`, {
+        method: 'PUT',
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stop_loss_pct: stopLoss != null ? stopLoss / 100 : 0,
+          take_profit_pct: takeProfit != null ? takeProfit / 100 : null,
+          trailing_stop_pct: trailing != null ? trailing / 100 : null,
+          enabled: sltpEnabled,
+        }),
+      });
+      if (res.ok) {
+        setSltpMsg('✅ 已保存，盘中现价触发即提醒（站内通知 + 通达信预警）');
+        await fetchSltpConfig();
+      } else {
+        const detail = await extractApiError(res);
+        setSltpMsg(`❌ 保存失败: ${detail || `HTTP ${res.status}`}`);
+      }
+    } catch (e) {
+      setSltpMsg(`❌ 保存失败: ${e}`);
+    }
+  };
+
   const saveRollingConfig = async () => {
     setRollingCfgMsg('');
     const threshold = parseFloat(rollingThreshold);
@@ -379,6 +446,7 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
     fetchTdxConfig();
     fetchTdxOverview();
     fetchRollingConfig();
+    fetchSltpConfig();
     const timer = setInterval(fetchTdxOverview, 8000);
     return () => clearInterval(timer);
   }, [isActive, userId]);
@@ -683,6 +751,80 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
                       规则：分数 {'>'} 阈值 → 买入；持仓分数 ≤ 阈值 → 卖出；大盘低于 MA20 → 只卖不买。推历史日期时跳过当日大盘过滤。开「真实委托」后信号直接生成下单（卖先买后）。
                     </div>
                   </div>
+
+                  {/* 止损止盈实时提醒配置（仅限持仓股，盘中现价触发即提醒） */}
+                  <div className="px-4 py-3 border-b border-slate-200/70 bg-white/50 space-y-2">
+                    <div className="text-[11px] font-bold text-slate-600 flex items-center gap-1.5">
+                      <ShieldCheck size={12} className="text-rose-600" />
+                      止损止盈实时提醒（仅持仓股 · 现价触发即推送，不下自动单）
+                    </div>
+                    <div className="flex flex-wrap items-end gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] text-slate-400 font-medium">止损幅度 %（现价 ≤ 成本×(1-x%)）</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max="50"
+                          value={sltpStopLoss}
+                          onChange={(e) => setSltpStopLoss(e.target.value)}
+                          className="w-24 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-mono font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-400/40"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] text-slate-400 font-medium">止盈幅度 %（留空不启用）</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max="100"
+                          value={sltpTakeProfit}
+                          onChange={(e) => setSltpTakeProfit(e.target.value)}
+                          placeholder="如 10"
+                          className="w-24 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-400/40"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] text-slate-400 font-medium">移动止损 %（离持仓最高价回撤）</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max="50"
+                          value={sltpTrailing}
+                          onChange={(e) => setSltpTrailing(e.target.value)}
+                          placeholder="如 5"
+                          className="w-24 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-400/40"
+                        />
+                      </label>
+                      <button
+                        onClick={saveSltpConfig}
+                        className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+                      >
+                        保存提醒
+                      </button>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={sltpEnabled}
+                        onChange={(e) => setSltpEnabled(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-rose-600"
+                      />
+                      <span className="text-[11px] font-bold text-slate-700">
+                        启用实时止损止盈提醒
+                        <span className="text-slate-400 font-medium">（触发时站内通知 + 通达信预警弹窗；通达信守护进程负责真实止损单）</span>
+                      </span>
+                    </label>
+                    {sltpMsg && (
+                      <div className={`text-[11px] font-medium ${sltpMsg.startsWith('✅') ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {sltpMsg}
+                      </div>
+                    )}
+                    <div className="text-[10px] text-slate-400 leading-relaxed">
+                      行情链路：通达信实时快照 → 行情 Feed → Redis → WebSocket；每 3s 校验一次持仓股现价，触发后 5 分钟内同股不重复提醒。
+                    </div>
+                  </div>
                   {rollingResult && (
                     <div className={`px-4 py-2.5 text-[11px] border-b ${rollingResult.ok ? 'border-emerald-100 bg-emerald-50/60 text-emerald-700' : 'border-red-100 bg-red-50/60 text-red-700'}`}>
                       {rollingResult.ok ? (
@@ -840,7 +982,7 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
                     type="text"
                     value={tdxNewUrl}
                     onChange={(e) => setTdxNewUrl(e.target.value)}
-                    placeholder="http://192.168.31.22:8550"
+                    placeholder="http://192.168.31.31:8550"
                     className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>

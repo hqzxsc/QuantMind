@@ -265,6 +265,22 @@ class TdxRollingTradeService:
             )
         return normalized, ""
 
+    async def pull_today_orders(self, stock_code: str = "") -> list:
+        """拉取通达信当日委托（含已成交/在途/废单）。
+
+        返回桥规范化后的委托列表: order_id/stock_code/side/status/
+        order_price/filled_price/filled_volume/total_volume。
+        """
+        return await tdx_pusher.pull_orders(stock_code)
+
+    async def cancel_order(self, stock_code: str, order_id: str) -> dict:
+        """撤单。返回 {"success": bool, "message": str}。
+
+        撤单可能撤销失败或"撤销前已成交", 调用方需随后 pull_today_orders
+        复核最终状态, 不能仅凭 success 判断结果。
+        """
+        return await tdx_pusher.cancel_order(stock_code, order_id)
+
     async def load_positions_from_paper(
         self, tenant_id: str, user_id: str
     ) -> tuple[list[dict[str, Any]], str]:
@@ -495,6 +511,7 @@ class TdxRollingTradeService:
                         {
                             **item,
                             "side": side,
+                            "plan_id": plan_id,
                             "order_id": str(first.get("order_id") or ""),
                             "status": order_status,
                             "message": str(first.get("message") or ""),

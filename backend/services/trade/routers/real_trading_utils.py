@@ -107,6 +107,11 @@ def _build_real_account_contract(
 ) -> dict[str, Any]:
     payload = payload_json if isinstance(payload_json, dict) else {}
     positions = payload.get("positions") or []
+    # 桥可能返回已清仓残留（volume=0），过滤后仅统计真实持仓
+    if isinstance(positions, list):
+        positions = [
+            p for p in positions if float(p.get("volume") or 0) > 0
+        ]
 
     daily_pnl = (
         total_asset - day_open_equity if day_open_equity > 0 else broker_today_pnl_raw
@@ -122,6 +127,22 @@ def _build_real_account_contract(
     total_pnl = cumulative_pnl
     broker_total_pnl = float(total_pnl_raw or 0.0)
     floating_pnl = float(floating_pnl_raw or 0.0)
+    # 桥不回报浮动盈亏(raw=0)时按持仓兜底: Σ(现价−成本价)×持仓量
+    if abs(floating_pnl) < 1e-9 and isinstance(positions, list):
+        computed = 0.0
+        for p in positions:
+            vol = float(p.get("volume") or 0)
+            if vol <= 0:
+                continue
+            price = float(p.get("price") or 0)
+            cost = float(p.get("cost_price") or 0)
+            if price <= 0:
+                mv = float(p.get("market_value") or 0)
+                price = mv / vol if mv > 0 else 0
+            if price > 0 and cost > 0:
+                computed += (price - cost) * vol
+        if computed:
+            floating_pnl = round(computed, 2)
     realized_pnl = cumulative_pnl - floating_pnl
 
     daily_return_pct = (

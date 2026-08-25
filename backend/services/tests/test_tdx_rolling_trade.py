@@ -354,3 +354,60 @@ class TestRunRollingPushExecuteMode:
         assert result["success"] is True
         assert result["execute_mode"] == "off"
         check_member.assert_not_called()
+
+
+# ============ 桥交互方法回归（曾因方法插入错位导致 body 错乱） ============
+
+class TestTdxBridgeInteraction:
+    @pytest.mark.asyncio
+    async def test_load_positions_from_tdx_normalizes_bridge_payload(self):
+        svc = TdxRollingTradeService()
+        fake_tdx = MagicMock()
+        fake_tdx.pull_positions = AsyncMock(return_value=[
+            {"stock_code": "600206.SH", "total_volume": 2400, "available_volume": 1000,
+             "cost_price": 50.745, "market_value": 126048.0, "stock_name": "有研新材"},
+            {"stock_code": "688783.SH", "total_volume": 0, "available_volume": 0,
+             "cost_price": 0.0, "market_value": 0.0, "stock_name": "空仓残留"},
+        ])
+        with patch(f"{ROLLING_MODULE}.tdx_pusher", fake_tdx):
+            positions, error = await svc.load_positions_from_tdx()
+
+        assert error == ""
+        assert len(positions) == 1  # 已清仓残留(total_volume=0)被过滤
+        assert positions[0]["symbol"] == "600206.SH"
+        assert positions[0]["volume"] == 2400
+
+    @pytest.mark.asyncio
+    async def test_load_positions_from_tdx_returns_error_on_bridge_failure(self):
+        svc = TdxRollingTradeService()
+        fake_tdx = MagicMock()
+        fake_tdx.pull_positions = AsyncMock(side_effect=Exception("bridge down"))
+        with patch(f"{ROLLING_MODULE}.tdx_pusher", fake_tdx):
+            positions, error = await svc.load_positions_from_tdx()
+
+        assert positions == []
+        assert "通达信桥持仓拉取失败" in error
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_proxies_bridge_and_returns_result(self):
+        svc = TdxRollingTradeService()
+        fake_tdx = MagicMock()
+        fake_tdx.cancel_order = AsyncMock(
+            return_value={"success": True, "message": "已撤"}
+        )
+        with patch(f"{ROLLING_MODULE}.tdx_pusher", fake_tdx):
+            result = await svc.cancel_order("SH600206", "160356")
+
+        assert result["success"] is True
+        fake_tdx.cancel_order.assert_awaited_once_with("SH600206", "160356")
+
+    @pytest.mark.asyncio
+    async def test_pull_today_orders_proxies_bridge(self):
+        svc = TdxRollingTradeService()
+        fake_tdx = MagicMock()
+        fake_tdx.pull_orders = AsyncMock(return_value=[{"order_id": "160356"}])
+        with patch(f"{ROLLING_MODULE}.tdx_pusher", fake_tdx):
+            orders = await svc.pull_today_orders("SH600206")
+
+        assert orders == [{"order_id": "160356"}]
+        fake_tdx.pull_orders.assert_awaited_once_with("SH600206")

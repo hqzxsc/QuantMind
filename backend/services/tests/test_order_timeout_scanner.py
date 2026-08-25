@@ -115,3 +115,80 @@ async def test_bridge_ack_timeout_skips_already_flagged_order(monkeypatch):
 
     assert count == 0
     assert notifications == []
+
+
+class _FilterSession(_FakeSession):
+    """模拟 SQL 的桥订单排除条件（remarks 含 通达信桥委托 的行不返回）。"""
+
+    async def execute(self, stmt):
+        kept = [
+            o
+            for o in self.orders
+            if (o.remarks is None or "通达信桥委托" not in (o.remarks or ""))
+        ]
+        return _ScalarResult(kept)
+
+
+@pytest.mark.asyncio
+async def test_scan_once_skips_bridge_managed_orders(monkeypatch):
+    # 桥管理的委托（成交回报由桥每 30s 同步）不得被本地超时启发式过期
+    bridge_order = SimpleNamespace(
+        order_id=uuid4(),
+        tenant_id="default",
+        user_id=1001,
+        symbol="SH600206",
+        side=OrderSide.BUY,
+        trading_mode=TradingMode.REAL,
+        status=OrderStatus.SUBMITTED,
+        submitted_at=datetime.now() - timedelta(minutes=40),
+        exchange_order_id="160356",
+        remarks="通达信桥委托",
+    )
+    normal_order = SimpleNamespace(
+        order_id=uuid4(),
+        tenant_id="default",
+        user_id=1001,
+        symbol="SH600000",
+        side=OrderSide.BUY,
+        trading_mode=TradingMode.REAL,
+        status=OrderStatus.SUBMITTED,
+        submitted_at=datetime.now() - timedelta(minutes=40),
+        exchange_order_id=None,
+        remarks=None,
+    )
+    session = _FilterSession([bridge_order, normal_order])
+
+    monkeypatch.setattr(
+        "backend.services.trade.services.order_timeout_scanner.get_session",
+        lambda: _FakeSessionContext(session),
+    )
+    monkeypatch.setattr(order_timeout_scanner, "_TIMEOUT_MINUTES", 30)
+
+    count = await order_timeout_scanner._scan_once()
+
+    assert count == 1
+    assert bridge_order.status == OrderStatus.SUBMITTED
+    assert normal_order.status == OrderStatus.EXPIRED
+
+
+@pytest.mark.asyncio
+async def test_scan_once_query_excludes_bridge_remarks(monkeypatch):
+    """SQL 层面必须带排除条件，防止真实执行把桥委托误标过期。"""
+    captured = {}
+
+    class _CaptureSession(_FakeSession):
+        async def execute(self, stmt):
+            captured["stmt"] = stmt
+            return _ScalarResult([])
+
+    session = _CaptureSession([])
+    monkeypatch.setattr(
+        "backend.services.trade.services.order_timeout_scanner.get_session",
+        lambda: _FakeSessionContext(session),
+    )
+
+    await order_timeout_scanner._scan_once()
+
+    sql = str(captured["stmt"].compile(compile_kwargs={"literal_binds": True}))
+    assert "通达信桥委托" in sql
+    assert "LIKE" in sql or "like" in sql

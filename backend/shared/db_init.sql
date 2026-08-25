@@ -1026,6 +1026,50 @@ CREATE TABLE IF NOT EXISTS real_account_snapshots (
     payload_json    JSONB NOT NULL DEFAULT '{}'
 );
 
+-- 账户快照统一展示视图：最新快照 + 日/月/累计基线
+--   initial_equity    = 该账户首条快照（累计基线）
+--   day_open_equity   = 上一交易日最后一条快照（无则退回当日首条）
+--   month_open_equity = 当月首条快照
+CREATE OR REPLACE VIEW real_account_snapshot_overview_v AS
+ SELECT s.id,
+    s.tenant_id,
+    s.user_id,
+    s.account_id,
+    s.snapshot_at,
+    s.snapshot_date,
+    s.snapshot_month,
+    s.total_asset,
+    s.cash,
+    s.market_value,
+    s.today_pnl_raw,
+    s.total_pnl_raw,
+    s.floating_pnl_raw,
+    s.source,
+    s.payload_json,
+    COALESCE(( SELECT ras.total_asset
+           FROM real_account_snapshots ras
+          WHERE ((ras.tenant_id)::text = (s.tenant_id)::text AND (ras.user_id)::text = (s.user_id)::text AND (ras.account_id)::text = (s.account_id)::text)
+          ORDER BY ras.snapshot_at
+         LIMIT 1), s.total_asset) AS initial_equity,
+    COALESCE(
+        ( SELECT ras.total_asset
+           FROM real_account_snapshots ras
+          WHERE ((ras.tenant_id)::text = (s.tenant_id)::text AND (ras.user_id)::text = (s.user_id)::text AND (ras.account_id)::text = (s.account_id)::text AND ras.snapshot_date < s.snapshot_date)
+          ORDER BY ras.snapshot_at DESC
+         LIMIT 1),
+        ( SELECT ras.total_asset
+           FROM real_account_snapshots ras
+          WHERE ((ras.tenant_id)::text = (s.tenant_id)::text AND (ras.user_id)::text = (s.user_id)::text AND (ras.account_id)::text = (s.account_id)::text AND ras.snapshot_date = s.snapshot_date)
+          ORDER BY ras.snapshot_at
+         LIMIT 1),
+        s.total_asset) AS day_open_equity,
+    COALESCE(( SELECT ras.total_asset
+           FROM real_account_snapshots ras
+          WHERE ((ras.tenant_id)::text = (s.tenant_id)::text AND (ras.user_id)::text = (s.user_id)::text AND (ras.account_id)::text = (s.account_id)::text AND (ras.snapshot_month)::text = (s.snapshot_month)::text)
+          ORDER BY ras.snapshot_at
+         LIMIT 1), s.total_asset) AS month_open_equity
+   FROM real_account_snapshots s;
+
 -- ========================
 -- 40. REAL_TRADING_PREFLIGHT_SNAPSHOTS
 -- ========================

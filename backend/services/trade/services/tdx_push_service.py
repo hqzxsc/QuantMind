@@ -21,6 +21,22 @@ TDX_BRIDGE_URL = os.getenv("TDX_BRIDGE_URL", "http://192.168.31.31:8550")
 TDX_BRIDGE_TOKEN = os.getenv("TDX_BRIDGE_TOKEN", "")
 TIMEOUT = 10.0
 
+# A股费用估算（桥委托不含费用字段，按标准费率估算用于交易记录统计）
+COMMISSION_RATE = 0.00025  # 佣金 万2.5，双边收取
+COMMISSION_MIN = 5.0  # 佣金最低 5 元/笔
+STAMP_TAX_RATE = 0.0005  # 印花税 万5，仅卖出单边（2023-08-28 起）
+TRANSFER_FEE_RATE = 0.00001  # 过户费 万0.1，双边收取
+
+
+def estimate_order_fee(filled_value: float, side: str = "buy") -> float:
+    """估算 A股单笔委托总费用 = 佣金 + 印花税(仅卖出) + 过户费。"""
+    if filled_value <= 0:
+        return 0.0
+    commission = max(filled_value * COMMISSION_RATE, COMMISSION_MIN)
+    stamp_tax = filled_value * STAMP_TAX_RATE if side == "sell" else 0.0
+    transfer_fee = filled_value * TRANSFER_FEE_RATE
+    return round(commission + stamp_tax + transfer_fee, 2)
+
 
 class TdxPushError(Exception):
     """通达信推送失败"""
@@ -156,6 +172,17 @@ class TdxPushService:
         """拉取通达信当日委托."""
         data = await self._post("/api/v1/orders/query", {"stock_code": stock_code})
         return data.get("orders", [])
+
+    async def cancel_order(self, stock_code: str, order_id: str) -> dict:
+        """撤单（桥 /api/v1/orders/cancel → 通达信 cancel_order_stock）。
+
+        返回 {"success": bool, "message": str}；撤单成功不代表原委托一定未成交,
+        调用方应随后 query 一次当日委托确认最终状态。
+        """
+        return await self._post("/api/v1/orders/cancel", {
+            "stock_code": stock_code,
+            "order_id": order_id,
+        })
 
     async def tdx_call(self, method: str, params: dict | None = None) -> dict:
         """通用 JSON-RPC 透传（桥 /api/v1/tdx/call，白名单方法）。
@@ -322,7 +349,10 @@ class TdxPushService:
     ) -> None:
         """把通达信当日委托同步到 orders 表（REAL 模式交易记录展示）。
 
-        幂等：按 exchange_order_id（桥的委托编号）去重，已存在则跳过。
+        幂等 + 增量修正：按 exchange_order_id（桥的委托编号）去重；
+        已存在的行用桥的最新状态/成交回报刷新。桥是真实成交的权威来源，
+        若只插不更新，订单会永远停在 SUBMITTED，随后被超时扫描器误判为
+        EXPIRED（表现为"交易记录全部已过期、成交为 0"）。
         """
         try:
             from sqlalchemy import select, text
@@ -340,11 +370,11 @@ class TdxPushService:
                 return
 
             # 桥委托的 order_id 是字符串（如 "160356"），映射为 exchange_order_id
-            existing_ids = {
-                str(r[0])
+            existing = {
+                str(r[0]): str(r[1])
                 for r in (
                     await db.execute(
-                        select(Order.exchange_order_id).where(
+                        select(Order.exchange_order_id, Order.order_id).where(
                             Order.exchange_order_id.is_not(None),
                             Order.tenant_id == tenant_id,
                             Order.user_id == str(user_id),
@@ -353,9 +383,20 @@ class TdxPushService:
                 ).fetchall()
             }
 
+            def _map_bridge_status(status: str) -> OrderStatus:
+                if status in ("filled",):
+                    return OrderStatus.FILLED
+                if status in ("partial", "partial_fill", "partially_filled"):
+                    return OrderStatus.PARTIALLY_FILLED
+                if status in ("cancel", "cancelled", "partial_cancelled"):
+                    return OrderStatus.CANCELLED
+                if status in ("rejected",):
+                    return OrderStatus.REJECTED
+                return OrderStatus.SUBMITTED
+
             for o in orders:
                 exchange_id = str(o.get("order_id") or "").strip()
-                if not exchange_id or exchange_id in existing_ids:
+                if not exchange_id:
                     continue
                 symbol = str(o.get("stock_code") or "").strip()
                 if not symbol:
@@ -364,14 +405,7 @@ class TdxPushService:
                 status = str(o.get("status") or "pending").strip().lower()
                 # 桥已修复方向解析: buy/sell/cancel(方向未知, 保守默认 buy)
                 order_side = OrderSide.SELL if side == "sell" else OrderSide.BUY
-                if status == "filled":
-                    order_status = OrderStatus.FILLED
-                elif status in ("partial", "partially_filled"):
-                    order_status = OrderStatus.PARTIALLY_FILLED
-                elif status in ("cancel", "cancelled"):
-                    order_status = OrderStatus.CANCELLED
-                else:
-                    order_status = OrderStatus.SUBMITTED
+                order_status = _map_bridge_status(status)
 
                 time_hhmm = str(o.get("time") or "").strip()
                 submitted_at = now
@@ -394,8 +428,42 @@ class TdxPushService:
                 filled_volume = float(o.get("filled_volume") or 0)
                 price = float(o.get("order_price") or 0)
                 filled_price = float(o.get("filled_price") or price)
+                filled_value = round(filled_volume * filled_price, 2)
+                fee = estimate_order_fee(filled_value, side)
+                filled_at = (
+                    submitted_at if order_status == OrderStatus.FILLED else None
+                )
 
-                await db.execute(
+                existing_id = existing.get(exchange_id)
+                if existing_id:
+                    # 已存在 → 用桥最新状态刷新（成交回报追平，避免被超时扫描器误标过期）
+                    await db.execute(
+                        text(
+                            """
+                            UPDATE orders SET
+                                status = :status,
+                                filled_quantity = :filled_quantity,
+                                average_price = :average_price,
+                                filled_value = :filled_value,
+                                filled_at = :filled_at,
+                                commission = :commission,
+                                remarks = '通达信桥委托'
+                            WHERE order_id = :order_id
+                            """
+                        ),
+                        {
+                            "status": order_status.value,
+                            "filled_quantity": filled_volume,
+                            "average_price": filled_price if filled_volume > 0 else None,
+                            "filled_value": filled_value,
+                            "filled_at": filled_at,
+                            "commission": fee,
+                            "order_id": existing_id,
+                        },
+                    )
+                    continue
+
+                result = await db.execute(
                     text(
                         """
                         INSERT INTO orders (
@@ -411,10 +479,11 @@ class TdxPushService:
                             :side, :trade_action, :position_side, FALSE,
                             :order_type, :trading_mode, :status,
                             :quantity, :filled_quantity, :price, :average_price,
-                            :order_value, :filled_value, 0,
+                            :order_value, :filled_value, :commission,
                             :submitted_at, :filled_at,
                             :client_order_id, :exchange_order_id, :remarks
                         )
+                        RETURNING order_id
                         """
                     ),
                     {
@@ -436,17 +505,18 @@ class TdxPushService:
                         "price": price if price > 0 else None,
                         "average_price": filled_price if filled_volume > 0 else None,
                         "order_value": round(total_volume * price, 2),
-                        "filled_value": round(filled_volume * filled_price, 2),
+                        "filled_value": filled_value,
+                        "commission": fee,
                         "submitted_at": submitted_at,
-                        "filled_at": submitted_at
-                        if order_status == OrderStatus.FILLED
-                        else None,
+                        "filled_at": filled_at,
                         "client_order_id": f"tdx-{exchange_id}",
                         "exchange_order_id": exchange_id,
                         "remarks": "通达信桥委托",
                     },
                 )
-                existing_ids.add(exchange_id)
+                new_id = result.scalar()
+                if new_id:
+                    existing[exchange_id] = str(new_id)
             logger.info("[TdxSync] 通达信委托落库 %d 笔 (user=%s)", len(orders), user_id)
         except Exception as exc:
             logger.warning("[TdxSync] 通达信委托落库失败: %s", exc)

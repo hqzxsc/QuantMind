@@ -16,7 +16,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 
 from backend.services.trade.models.enums import OrderStatus
 from backend.services.trade.models.order import Order, TradingMode
@@ -46,6 +46,12 @@ async def _scan_once() -> int:
                     Order.status == OrderStatus.SUBMITTED,
                     Order.trading_mode == TradingMode.REAL,
                     Order.submitted_at <= cutoff,
+                    # 通达信桥委托由桥每 30s 同步真实状态（已报/部成/已成/废单），
+                    # 桥才是权威来源，本地超时启发式不得越权覆盖
+                    or_(
+                        Order.remarks.is_(None),
+                        ~Order.remarks.like("%通达信桥委托%"),
+                    ),
                 )
             )
             .limit(200)

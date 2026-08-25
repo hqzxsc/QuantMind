@@ -139,6 +139,24 @@ def _filter_untradable(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _coerce_feature_columns(
+    day_df: pd.DataFrame, feature_cols: list[str]
+) -> pd.DataFrame:
+    """统一特征列为 float64，兼容不同年份 parquet 的 dtype 差异。
+
+    历史年份快照（如 2025）个别特征列是 nullable Int64 掩码数组，
+    直接 fillna(浮点补值) 会抛 TypeError: Invalid value '...' for dtype 'Int64'。
+    这里全部转 float64（NA 保留，由 fill_values/fillna(0.0) 兜底），
+    缺失列补 0.0。
+    """
+    for c in feature_cols:
+        if c not in day_df.columns:
+            day_df[c] = 0.0
+        else:
+            day_df[c] = pd.to_numeric(day_df[c], errors="coerce").astype("float64")
+    return day_df
+
+
 def _dt_int_to_date(dt_int: int) -> date:
     return date(dt_int // 10000, (dt_int % 10000) // 100, dt_int % 100)
 
@@ -268,10 +286,9 @@ class ReplaySignalGenerator:
             if day_df.empty:
                 continue
 
-            # 补缺失列 + fillna
-            for c in feature_cols:
-                if c not in day_df.columns:
-                    day_df[c] = 0.0
+            # 补缺失列 + 统一数值类型：历史年份 parquet 特征列可能是
+            # Int64 掩码数组，fillna(浮点) 会抛 TypeError（见 _coerce_feature_columns）
+            day_df = _coerce_feature_columns(day_df, feature_cols)
             for c, val in fill_values.items():
                 if c in day_df.columns:
                     day_df[c] = day_df[c].fillna(val)

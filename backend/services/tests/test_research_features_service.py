@@ -496,8 +496,13 @@ def test_projected_batch_does_not_scale_market_cap(monkeypatch):
     assert values["liqAmount"] == pytest.approx(22.24)
 
 
-def test_projected_batch_fills_return_from_momentum_fallback(monkeypatch):
-    """technical_indicators.return_* 全为 NaN 时，用 mom_ret_*d ×100 兜底。"""
+def test_projected_batch_does_not_fill_return_from_momentum(monkeypatch):
+    """return_* 全为 NaN 时，不再用 mom_ret_*d ×100 兜底。
+
+    投研平台的 return 系列语义是“推理日后 N 日真实收益”，必须来自 features_daily
+    的 return_* 标签；mom_ret_*d 是过去动量，混用会把历史收益冒充未来收益。
+    未来交易日未走完时 return_* 为 NaN，应返回空由前端显示“-”。
+    """
     _install_hub(
         monkeypatch,
         _FakeHub(
@@ -515,7 +520,7 @@ def test_projected_batch_fills_return_from_momentum_fallback(monkeypatch):
     result = asyncio.run(
         svc.get_batch_full_features(["600036.SH"], fields=["return5d"])
     )
-    assert result["data"]["items"][0]["values"]["return5d"] == pytest.approx(1.742)
+    assert "return5d" not in result["data"]["items"][0]["values"]
 
 
 def test_projected_batch_prefers_real_return_over_fallback(monkeypatch):

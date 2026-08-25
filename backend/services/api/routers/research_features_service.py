@@ -267,16 +267,12 @@ def _camel_name(column: str, view: str) -> str:
 
 
 # 投影兜底：目标字段缺失时，用替代列换算填充。
-# technical_indicators.return_* 自 2018 年起全为 NaN，而 l1_factors.mom_ret_*d 持续更新；
-# 前者以百分数表示、后者为小数，因此需要 ×100 才能与 UI 的“%”语义一致。
-#
-# 只兜底 1d/3d/5d：在最新交易日全市场 5185 只股票中，mom_ret_1d/3d/5d 无一例 |x|>1，
-# 而 mom_ret_10d/20d/60d 各有约 35% 的值 |x|>1（即“涨幅超 100%”），上游明显失真，
-# 换算后会污染筛选与排序，因此宁缺勿滥——这些列留空由前端显示“-”。
+# 注意：return1d/3d/5d 不再兜底到 l1_factors.mom_ret_*d（过去收益）——
+# 投研平台的 return 系列是“推理日后 N 日真实收益”，语义上必须来自
+# features_daily 按推理日读取的 return_* 标签；mom_ret_*d 是历史动量（过去收益），
+# 用它会污染“未来收益”展示。features_daily 的 return_* 在推理日后未满 N 个交易日
+# 时为 NaN，投影路径返回空由前端显示“-”，待未来行情生成后自然回填。
 _DERIVED_FALLBACKS: dict[str, tuple[str, float]] = {
-    "return1d": ("momRet1d", 100.0),
-    "return3d": ("momRet3d", 100.0),
-    "return5d": ("momRet5d", 100.0),
     # UI 的 rsi / atr 字段在 PG 里分别来自 rsi_6 与 vol_atr_14，
     # QuantDB 同名列是 rsi_6 / vol_atr_14，这里补上映射避免这两列取不到值。
     "rsi": ("rsi6", 1.0),

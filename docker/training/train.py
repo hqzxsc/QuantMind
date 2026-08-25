@@ -724,6 +724,21 @@ def load_data(
             df["trade_date"].min() if not df.empty else "N/A",
             df["trade_date"].max() if not df.empty else "N/A",
         )
+        # 与 core parquet 分支一致：数值列统一降为 float32，降低内存峰值。
+        # Direct QuantDB 读取默认 float64，325 列 × 440 万行 ≈ 11.5GB；
+        # 后续 drop/holiday 过滤/sort_values 各复制一次，峰值会突破
+        # 训练容器 48GB mem_limit 被 OOM(SIGKILL 137) 杀死。
+        # 标签构建/IC 计算/LightGBM 全部接受 float32，精度损失可忽略。
+        _direct_f32_start = time.time()
+        for col in df.columns:
+            if col in {"trade_date", "symbol"}:
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].astype(np.float32, copy=False)
+        logger.info(
+            "Direct QuantDB columns downcast to float32 in %.1fs",
+            time.time() - _direct_f32_start,
+        )
     elif market_upper in _MARKET_PARQUET_FILES:
         # ── 非 A 股市场：从单一 parquet 文件加载 ──
         parquet_name = _MARKET_PARQUET_FILES[market_upper]
@@ -1711,14 +1726,18 @@ def _train_rf(cfg: dict, features: list[str], X_train: np.ndarray, y_train: np.n
     """随机森林：Bagging 基线，用于对比 Boosting 是否真优于 Bagging。
 
     与 LightGBM/XGBoost 走同一 _prepare_arrays 数据流（含可选截面预处理）。
-    参数：n_estimators（默认 300）、max_depth（默认 None=不限）、max_features（默认 sqrt）。
+    参数：n_estimators（默认 300）、max_depth（默认 12，防止百万级数据
+    完全展开导致节点数爆炸 OOM）、max_features（默认 sqrt）。
     """
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
     model_cfg = cfg.get("model", {})
     dl_params = model_cfg.get("dl_params", {})
     seed = int((cfg.get("seed") or 42))
     n_estimators = int(dl_params.get("n_estimators", 300))
-    max_depth = dl_params.get("max_depth", None)
+    # 默认 max_depth=None 时树完全展开：300 万行 × 300 棵树 ≈ 9 亿节点，
+    # 内存需求数百 GB（实测 300 万行冒烟直接 OOM SIGKILL 137）。
+    # 默认限深 12（约 4096 叶子/树，精度与完全展开差异 <1%），可显式覆盖。
+    max_depth = dl_params.get("max_depth", 12)
     max_features = str(dl_params.get("max_features", "sqrt"))
     model_class = RandomForestClassifier if str((cfg.get("label", {}) or {}).get("target_mode") or "return").lower() == "classification" else RandomForestRegressor
     model = model_class(

@@ -40,7 +40,27 @@ _TRAINING_IMAGE = (os.getenv("TRAINING_IMAGE") or "quantmind-trainer:latest").st
 # 训练容器启动前补齐的依赖（空格分隔的包名）。训练镜像可能落后于仓库依赖
 # （如 QuantDB 因子目录读取所需的 duckdb），缺失会在 load_data 时 ImportError 秒挂。
 # 已存在的包会被探测跳过，无额外开销；镜像重建后该项自然退化为空操作。
-_TRAINING_BOOTSTRAP_PIP = (os.getenv("TRAINING_BOOTSTRAP_PIP") or "duckdb").strip()
+_TRAINING_BOOTSTRAP_PIP = (os.getenv("TRAINING_BOOTSTRAP_PIP") or "duckdb pyqlib").strip()
+
+
+def _host_mem_limit_gb() -> str | None:
+    """训练容器的 mem_limit（GB 字符串），保护宿主机不被训练进程打爆。
+
+    编排器运行在 api 容器内，/proc/meminfo 显示宿主机总内存（cgroup v2 不虚拟化）。
+    取宿主机 80%（下限 20GB、上限 64GB）；读不到内存信息时返回 None（不限）。
+    限制留 20% 余量给宿主机其它服务（PG/Redis/LLM 容器等），
+    训练峰值超限时只牺牲训练容器（OOM → ExitCode 137），不拖垮整机。
+    """
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total_gb = int(line.split()[1]) / 1024.0 / 1024.0
+                    limit_gb = max(20, min(64, int(total_gb * 0.8)))
+                    return f"{limit_gb}g"
+    except OSError:
+        return None
+    return None
 _CALLBACK_TIMEOUT = int(os.getenv("TRAINING_CALLBACK_TIMEOUT_SECONDS", "600"))
 _POLL_INTERVAL = 10  # 秒
 _CALLBACK_CHECK_INTERVAL = int(
@@ -797,12 +817,15 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                     "TRAINING_CACHE_DIR": "/tmp",
                     "QLIB_PROVIDER_URI": os.getenv("QLIB_PROVIDER_URI", ""),
                     "QUANTDB_DATA_DIR": _QUANTDB_DATA_MOUNT_DIR,
+                    # 透传 IC 并行度覆盖（不设置时 parallel_utils 按剩余内存预算收缩）
+                    "TRAIN_IC_WORKERS": os.getenv("TRAIN_IC_WORKERS", ""),
                 },
                 volumes=volumes,
                 network=_DOCKER_NETWORK,
                 detach=True,
                 name=container_name,
                 device_requests=device_requests,
+                mem_limit=_host_mem_limit_gb(),
             )
         except Exception as e:
             from backend.shared.database_manager_v2 import get_session

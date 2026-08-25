@@ -64,7 +64,8 @@ RUN pip install --no-cache-dir \
       requests \
       psutil \
       shap \
-      duckdb
+      duckdb \
+      pyqlib
 
 # 拷贝后端包（QuantDB 因子直读等训练依赖 backend 模块）
 COPY backend /app/backend

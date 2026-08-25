@@ -784,8 +784,10 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
             container = await asyncio.to_thread(
                 self.docker.containers.run,
                 _TRAINING_IMAGE,
+                # 显式覆盖镜像 ENTRYPOINT（train.py）：bootstrap 需要真正的 shell 环境，
+                # 否则 sh -c 会被 train.py 当作 CLI 参数忽略（旧镜像无 ENTRYPOINT 也兼容）。
+                entrypoint=["sh", "-c"],
                 command=[
-                    "sh", "-c",
                     f"{bootstrap_cmd} && exec python /app/train.py --config /workspace/config.yaml",
                 ],
                 environment={

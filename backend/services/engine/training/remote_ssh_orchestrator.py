@@ -744,7 +744,7 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
             f"-v {self.work_dir}/templates:/app/backend/services/engine/inference/templates:ro "
             + (f"-v {self.work_dir}/modules/quantdb_factor_reader.py:/app/backend/services/engine/data_platform/quantdb_factor_reader.py:ro " if direct_source else "")
             + (f"-v {self.work_dir}/modules/quantdb_hub.py:/app/backend/services/engine/data_platform/quantdb_hub.py:ro " if direct_source else "")
-            + f"{self.docker_image} sh -c \"{bootstrap_cmd} && exec python /app/train.py --config /workspace/config.yaml\""
+            + f"--entrypoint sh {self.docker_image} -c \"{bootstrap_cmd} && exec python /app/train.py --config /workspace/config.yaml\""
         )
 
     def _resolve_train_script(self) -> str | None:

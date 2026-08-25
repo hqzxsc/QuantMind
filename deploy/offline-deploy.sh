@@ -72,7 +72,7 @@ download_offline_package() {
         images.tar.zst data-system.tar.zst postgres-all.sql.zst \
         quantmind_qwenpaw-data.tar.zst quantmind_qwenpaw-secrets.tar.zst \
         quantmind_qwenpaw-backups.tar.zst quantmind_qwenpaw-shared.tar.zst \
-        README.txt; do
+        images.list README.txt; do
         grep -Eq "^[0-9a-f]{64}  ${file}$" "$PACKAGE_DIR/SHA256SUMS" \
             || die "离线包校验清单缺少: $file"
         download "$OFFLINE_BASE_URL/$file" "$PACKAGE_DIR/$file" \

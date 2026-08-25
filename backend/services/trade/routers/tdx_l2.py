@@ -118,3 +118,96 @@ async def get_l2_status(auth: AuthContext = Depends(get_auth_context)):
         "realtime": realtime_status,
         "pg_counts": pg_counts,
     }
+
+
+# ============ 委托查询 / 撤单（全自动实盘控制台） ============
+
+class CancelOrderRequest(BaseModel):
+    symbol: str = Field(..., description="股票代码（前缀或后缀均可）")
+    order_id: str = Field(..., description="委托编号（桥 orders/query 的 order_id）")
+
+
+@router.get("/tdx/orders")
+async def get_tdx_orders(auth: AuthContext = Depends(get_auth_context)):
+    """拉取通达信当日委托 + 合并本系统在途重挂记录 + 委托时点行情。
+
+    orders: 桥当日委托（含已成交/在途/废单, filled_price=实际成交均价）
+    inflight: 未成交在途单（本系统重挂逻辑接管中）
+    order_quotes: {order_id: 决策时点行情 + 成交后并入的实际成交价}
+    quotes: {symbol: 每只最近一次委托行情}
+    """
+    from backend.services.trade.services.tdx_rolling_trade_service import (
+        TdxRollingTradeService,
+    )
+    from backend.services.trade.services.tdx_l2_realtime import (
+        _FILLED_STATUSES,
+        list_inflight,
+        load_order_quotes,
+        load_symbol_quotes,
+    )
+
+    svc = TdxRollingTradeService()
+    try:
+        orders = await svc.pull_today_orders()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"委托查询失败(桥不可达): {exc}")
+    inflight = list_inflight()
+    order_quotes = load_order_quotes()
+    # 当日委托优先于 Redis 缓存覆盖（成交价以桥为准）
+    for o in orders:
+        rec = order_quotes.get(str(o.get("order_id") or ""))
+        if rec:
+            rec["status"] = o.get("status") or rec.get("status")
+            rec["filled_price"] = o.get("filled_price") or rec.get("filled_price")
+            rec["filled_volume"] = o.get("filled_volume") or rec.get("filled_volume")
+    return {
+        "success": True,
+        "orders": orders,
+        "inflight": inflight,
+        "order_quotes": order_quotes,
+        "quotes": load_symbol_quotes(),
+    }
+
+
+@router.post("/tdx/orders/cancel")
+async def cancel_tdx_order(
+    data: CancelOrderRequest,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    """一键撤单：撤掉通达信当日委托。
+
+    撤单成功后复核一次当日委托, 返回该委托的最终状态
+    （撤单可能失败或"撤销前已成交"）。
+    """
+    from backend.services.trade.services.tdx_rolling_trade_service import (
+        TdxRollingTradeService,
+    )
+
+    svc = TdxRollingTradeService()
+    try:
+        resp = await svc.cancel_order(data.symbol, data.order_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"撤单失败(桥不可达): {exc}")
+    ok = bool(resp.get("success"))
+    final_status = None
+    if ok:
+        try:
+            orders = await svc.pull_today_orders(data.symbol)
+            final_status = next(
+                (o for o in orders if str(o.get("order_id")) == data.order_id), None
+            )
+        except Exception:
+            final_status = None
+    return {
+        "success": ok,
+        "message": resp.get("message") or ("撤单已受理" if ok else "撤单失败"),
+        "final_status": final_status,
+    }
+
+
+@router.get("/tdx/inflight")
+async def get_tdx_inflight(auth: AuthContext = Depends(get_auth_context)):
+    """读取未成交在途单（本系统重挂逻辑接管中的订单）。"""
+    from backend.services.trade.services.tdx_l2_realtime import list_inflight
+
+    return {"success": True, "inflight": list_inflight()}

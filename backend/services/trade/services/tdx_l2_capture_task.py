@@ -64,13 +64,18 @@ FACTOR_ICIR = {
 
 l2_status: dict[str, Any] = {
     "running": False,
+    "started_at": None,
     "last_cycle_at": None,
     "last_error": None,
     "rate_limited": False,
     "watchlist_size": 0,
     "symbols": [],
     "snapshots_saved": 0,
+    "bridge_ok": True,
 }
+
+# 上次成功解析出的候选池；engine 拉分失败时兜底沿用, 不让采集周期空转
+_last_watchlist: list[str] = []
 
 
 def _env_int(name: str, default: int) -> int:
@@ -538,6 +543,7 @@ async def run_tdx_l2_capture_task(interval_sec: int = 0) -> None:
     base_interval = float(interval_sec or _env_int("TDX_L2_INTERVAL_SEC", DEFAULT_INTERVAL_SEC))
     states: dict[str, L2SeriesState] = {}
     l2_status["running"] = True
+    l2_status["started_at"] = datetime.now().isoformat(timespec="seconds")
     logger.info("[TdxL2] L2 因子采集任务启动, base_interval=%.0fs", base_interval)
 
     while True:
@@ -553,12 +559,33 @@ async def run_tdx_l2_capture_task(interval_sec: int = 0) -> None:
             if pool_size > 20:
                 interval = max(base_interval, pool_size * 3)
 
-            run_id, scores, _ = await svc.load_latest_scores(
-                tenant_id="default", user_id="00000001"
-            )
-            tdx_positions, _ = await svc.load_positions_from_tdx()
-            paper_positions, _ = await svc.load_positions_from_paper("default", "00000001")
-            watchlist = _resolve_watchlist(scores or {}, tdx_positions, paper_positions, pool_size)
+            # 周期起点三类输入独立容错：engine/桥/模拟盘任一故障只降级, 不拖垮采集
+            scores = {}
+            try:
+                _, scores, _ = await svc.load_latest_scores(
+                    tenant_id="default", user_id="00000001"
+                )
+            except Exception as exc:
+                logger.warning("[TdxL2] 拉取推理分数失败(用缓存候选池): %s", exc)
+            scores = scores or {}
+            tdx_positions: list[dict[str, Any]] = []
+            try:
+                tdx_positions, _ = await svc.load_positions_from_tdx()
+            except Exception as exc:
+                l2_status["bridge_ok"] = False
+                l2_status["last_error"] = f"桥持仓查询失败(跳过持仓轮询): {exc}"
+                logger.warning("[TdxL2] %s", l2_status["last_error"])
+            paper_positions: list[dict[str, Any]] = []
+            try:
+                paper_positions, _ = await svc.load_positions_from_paper("default", "00000001")
+            except Exception as exc:
+                logger.warning("[TdxL2] 模拟盘持仓查询失败: %s", exc)
+            watchlist = _resolve_watchlist(scores, tdx_positions, paper_positions, pool_size)
+            if not watchlist and _last_watchlist:
+                watchlist = list(_last_watchlist)  # 兜底：沿用上次候选池
+                logger.info("[TdxL2] 候选池为空, 沿用上次 %d 只", len(watchlist))
+            if watchlist:
+                _last_watchlist = list(watchlist)
             l2_status["watchlist_size"] = len(watchlist)
             l2_status["symbols"] = watchlist
 

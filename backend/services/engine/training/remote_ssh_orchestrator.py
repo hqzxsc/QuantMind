@@ -725,6 +725,14 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
             if direct_source else
             f"-v {self.work_dir}/feature_snapshots:/tmp/feature_snapshots:ro "
         )
+        # 与本地编排器一致：镜像 bake 的依赖可能落后于仓库（如 QuantDB 直读所需
+        # 的 duckdb），启动前探测补齐；包已存在时探测跳过、零开销。
+        _bootstrap_pkgs = _env_or("TRAINING_BOOTSTRAP_PIP", "duckdb").split()
+        bootstrap_cmd = " && ".join(
+            f"python -c 'import importlib,sys; importlib.import_module(sys.argv[1])' {pkg} 2>/dev/null "
+            f"|| python -m pip install -q --disable-pip-version-check {pkg} || exit 1"
+            for pkg in _bootstrap_pkgs
+        ) if _bootstrap_pkgs else "true"
         return (
             f"docker run -d --name {container_name} "
             f"{gpus_flag}"
@@ -736,7 +744,7 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
             f"-v {self.work_dir}/templates:/app/backend/services/engine/inference/templates:ro "
             + (f"-v {self.work_dir}/modules/quantdb_factor_reader.py:/app/backend/services/engine/data_platform/quantdb_factor_reader.py:ro " if direct_source else "")
             + (f"-v {self.work_dir}/modules/quantdb_hub.py:/app/backend/services/engine/data_platform/quantdb_hub.py:ro " if direct_source else "")
-            + f"{self.docker_image} python /app/train.py --config /workspace/config.yaml"
+            + f"{self.docker_image} sh -c \"{bootstrap_cmd} && exec python /app/train.py --config /workspace/config.yaml\""
         )
 
     def _resolve_train_script(self) -> str | None:

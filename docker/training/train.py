@@ -2485,7 +2485,11 @@ def _predict_dl(
     if model_cls is None:
         raise ValueError(f"Cannot find Qlib model class: {cls_name}")
 
-    model_params["GPU"] = -1  # CPU for inference
+    infer_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logger.info("DL inference device: %s", infer_device)
+    # 推理设备跟随可用算力：有 GPU 就用 cuda（本路径不调用 qlib 高层 API，
+    # GPU 参数仅保持语义一致，实际前向由下方手写循环驱动）
+    model_params["GPU"] = 0 if torch.cuda.is_available() else -1
     model_obj = model_cls(**model_params)
 
     # 加载权重
@@ -2537,12 +2541,14 @@ def _predict_dl(
             inner_model = getattr(model_obj, attr_name, None)
             if inner_model is not None:
                 break
-        inner_model.eval() if inner_model is not None else None
+        if inner_model is not None:
+            inner_model.eval()
+            inner_model = inner_model.to(infer_device)
         preds = []
         is_tcn = "TCN" in cls_name
         for batch in loader:
             data = batch[0] if isinstance(batch, (list, tuple)) else batch
-            feature = data[:, :, 0:-1]
+            feature = data[:, :, 0:-1].to(infer_device)
             # TCN 期望 channels-first [batch, d_feat, seq]（训练时 qlib 内部 transpose，
             # 推理需手动补）；GRU/LSTM/ALSTM batch_first，Transformer 内部自处理。
             if is_tcn:
@@ -2583,7 +2589,7 @@ def _predict_dl(
             logger.warning("DL flat predict: 特征含 %d NaN/%d Inf，填 0",
                            int(np.isnan(X_values).sum()), int(np.isinf(X_values).sum()))
             X_values = np.nan_to_num(X_values, nan=0.0, posinf=0.0, neginf=0.0)
-        X_tensor = torch.from_numpy(X_values)
+        X_tensor = torch.from_numpy(X_values).to(infer_device)
         inner_model = None
         for attr_name in ("model", "GRU_model", "gru_model", "LSTM_model", "lstm_model",
                           "ALSTM_model", "alstm_model", "TCN_model", "tcn_model",
@@ -2591,7 +2597,9 @@ def _predict_dl(
             inner_model = getattr(model_obj, attr_name, None)
             if inner_model is not None:
                 break
-        inner_model.eval() if inner_model is not None else None
+        if inner_model is not None:
+            inner_model.eval()
+            inner_model = inner_model.to(infer_device)
         is_tabnet = "Tabnet" in cls_name
         preds = []
         for i in range(0, len(X_tensor), batch_size):
@@ -2599,7 +2607,7 @@ def _predict_dl(
             with torch.no_grad():
                 if is_tabnet:
                     # qlib TabNet.forward(x, priors) 需要 priors 参数（训练时 qlib 内部构造）
-                    priors = torch.ones(batch.shape[0], batch.shape[1], dtype=batch.dtype)
+                    priors = torch.ones(batch.shape[0], batch.shape[1], dtype=batch.dtype, device=infer_device)
                     pred = inner_model(batch.float(), priors)
                 else:
                     pred = inner_model(batch.float())
@@ -2671,11 +2679,13 @@ def _predict_nativetft(
             h = self.grn(h[:, -1, :])
             return self.output_layer(h).squeeze(-1)
 
-    model = _NativeTFTNet()
+    infer_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logger.info("NativeTFT inference device: %s", infer_device)
+    model = _NativeTFTNet().to(infer_device)
     model_path = model_dir / "model.pth"
     if not model_path.exists():
         raise FileNotFoundError(f"model.pth not found at {model_path}")
-    state_dict = torch.load(str(model_path), map_location="cpu")
+    state_dict = torch.load(str(model_path), map_location=infer_device)
     model.load_state_dict(state_dict)
     model.eval()
 
@@ -2707,7 +2717,7 @@ def _predict_nativetft(
     with torch.no_grad():
         for batch in loader:
             data = batch[0] if isinstance(batch, (list, tuple)) else batch
-            feature = data[:, :, 0:-1].float()
+            feature = data[:, :, 0:-1].float().to(infer_device)
             pred = model(feature)
             preds.append(pred.cpu().numpy())
     raw_pred = np.concatenate(preds)
@@ -4388,7 +4398,9 @@ def load_model(model_dir, meta):
             import importlib
             mod_path, cls_name = _QLIB_MAP[model_class_name]
             mod = importlib.import_module(mod_path); ModelCls = getattr(mod, cls_name)
-            mp = dict(meta.get("model_params", {})); mp["GPU"] = -1
+            infer_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            logger.info("DL 推理模型 %s device: %s", cls_name, infer_device)
+            mp = dict(meta.get("model_params", {})); mp["GPU"] = 0 if torch.cuda.is_available() else -1
             model_obj = ModelCls(**mp)
             sd = torch.load(str(model_path), map_location="cpu", weights_only=True)
             inner = getattr(model_obj, "model", None)
@@ -4396,10 +4408,16 @@ def load_model(model_dir, meta):
                 for a in ("gru_model","lstm_model","alstm_model","transformer_model","tcn_model","tabnet_model"):
                     inner = getattr(model_obj, a, None)
                     if inner is not None: break
-            if inner is not None and sd is not None: inner.load_state_dict(sd); inner.eval()
+            if inner is not None and sd is not None:
+                inner.load_state_dict(sd); inner.eval(); inner.to(infer_device)
+            model_obj.device = infer_device  # 供调用方前向搬张量
             model_obj.fitted = True; return ("torch_qlib", model_obj)
         m = torch.load(str(model_path), map_location="cpu", weights_only=False)
         if hasattr(m, "eval"): m.eval()
+        infer_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            m.to(infer_device)
+        m.device = infer_device  # 供调用方前向搬张量
         return ("torch", m)
     else:
         if lgb is None: logger.error("LightGBM 未安装"); sys.exit(1)

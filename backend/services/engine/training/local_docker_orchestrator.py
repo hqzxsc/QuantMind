@@ -37,6 +37,10 @@ from backend.services.api.training_explain import DEFAULT_EXPLAIN_CFG
 logger = logging.getLogger(__name__)
 
 _TRAINING_IMAGE = (os.getenv("TRAINING_IMAGE") or "quantmind-trainer:latest").strip()
+# 训练容器启动前补齐的依赖（空格分隔的包名）。训练镜像可能落后于仓库依赖
+# （如 QuantDB 因子目录读取所需的 duckdb），缺失会在 load_data 时 ImportError 秒挂。
+# 已存在的包会被探测跳过，无额外开销；镜像重建后该项自然退化为空操作。
+_TRAINING_BOOTSTRAP_PIP = (os.getenv("TRAINING_BOOTSTRAP_PIP") or "duckdb").strip()
 _CALLBACK_TIMEOUT = int(os.getenv("TRAINING_CALLBACK_TIMEOUT_SECONDS", "600"))
 _POLL_INTERVAL = 10  # 秒
 _CALLBACK_CHECK_INTERVAL = int(
@@ -675,6 +679,26 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
             "bind": "/app/parallel_utils.py",
             "mode": "ro",
         }
+        # backend 代码同步挂载：训练镜像内 bake 的 backend 落后于仓库时会缺新模块
+        # （如 quantdb_factor_reader → 训练容器 load_data ImportError 秒挂）。
+        # 与 train.py 挂载同理；/app/backend 是 compose bind mount，API 容器内
+        # 可直接感知其存在（宿主机路径由 HOST_PROJECT_PATH 换算）。
+        if Path("/app/backend").exists():
+            volumes[str(_HOST_PROJECT_PATH / "backend")] = {
+                "bind": "/app/backend",
+                "mode": "ro",
+            }
+            logger.info(
+                "[%s] Backend code mounted: %s -> /app/backend",
+                run_id,
+                _HOST_PROJECT_PATH / "backend",
+            )
+        else:
+            logger.warning(
+                "[%s] /app/backend is not a bind mount; training container will use "
+                "baked-in backend code (may be stale)",
+                run_id,
+            )
         logger.info(
             "[%s] Local train.py override mounted: %s -> /app/train.py",
             run_id,
@@ -749,10 +773,21 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
             device_requests = [
                 docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])
             ]
+            # 启动前探测并补齐缺失依赖：镜像 bake 的依赖落后于仓库时自动 pip 补齐，
+            # 避免 train.py 一进 load_data 就 ImportError。包已存在则直接跳过。
+            bootstrap_cmds = [
+                f"python -c 'import importlib,sys; importlib.import_module(sys.argv[1])' {pkg} 2>/dev/null || "
+                f"python -m pip install -q --disable-pip-version-check {pkg} || exit 1"
+                for pkg in _TRAINING_BOOTSTRAP_PIP.split()
+            ]
+            bootstrap_cmd = " && ".join(bootstrap_cmds) if bootstrap_cmds else "true"
             container = await asyncio.to_thread(
                 self.docker.containers.run,
                 _TRAINING_IMAGE,
-                command=["python", "/app/train.py", "--config", "/workspace/config.yaml"],
+                command=[
+                    "sh", "-c",
+                    f"{bootstrap_cmd} && exec python /app/train.py --config /workspace/config.yaml",
+                ],
                 environment={
                     "INTERNAL_CALL_SECRET": self.internal_secret,
                     "USE_LOCAL_DATA": "true",

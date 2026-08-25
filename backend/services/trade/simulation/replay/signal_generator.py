@@ -83,9 +83,11 @@ def _load_model(model_dir: Path, meta: dict[str, Any]) -> Any:
 
         return xgb.Booster(model_file=str(model_path))
     elif framework in ("catboost", "cat"):
-        from catboost import CatBoostModel
+        from catboost import CatBoost
 
-        return CatBoostModel().load_model(str(model_path))
+        model = CatBoost()
+        model.load_model(str(model_path), format="cbm")
+        return model
     else:
         import pickle
 

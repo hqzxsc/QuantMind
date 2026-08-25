@@ -1,10 +1,10 @@
 {
   "year": 2026,
   "output_start_date": "2026-01-05",
-  "output_end_date": "2026-08-20",
-  "trading_days": 153,
-  "row_count": 840861,
-  "symbol_count": 5546,
+  "output_end_date": "2026-08-24",
+  "trading_days": 155,
+  "row_count": 846433,
+  "symbol_count": 5552,
   "implemented_feature_count": 220,
   "feature_columns": [
     "open",
@@ -229,5 +229,5 @@
     "gtja_158"
   ],
   "source": "quantdb (daily_forward + features_daily + l1_factors + l2_factors)",
-  "generated_at": "2026-08-20T23:25:12.686835"
+  "generated_at": "2026-08-24T22:52:48.596572"
 }

@@ -10,7 +10,7 @@ StockListManager），抓取港股 CCASS 机构持股，直接落盘 parquet 分
 
 落盘格式:
   {quanthk}/2_base_sector/ccass_top50/dt=YYYYMMDD/data.parquet
-  stock_code 保持 5 位（如 00700），不加 .HK 后缀。
+  stock_code 统一为 4位+.HK（主板，如 0700.HK）/ 5位+.HK（创业板 8 开头，如 80001.HK）。
 
 用法:
   python backend/scripts/quanthk_ccass_sync.py --days 5
@@ -34,6 +34,8 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.shared.stock_utils import StockCodeUtil
 
 logging.basicConfig(
     level=logging.INFO,
@@ -109,12 +111,14 @@ def _existing_partitions() -> set[str]:
 
 
 def _existing_stocks(partition: str) -> set[str]:
-    """某分区已有的股票代码集合。"""
+    """某分区已有的股票代码集合（归一为 5 位，与 hk.csv 的 id 列对齐）。"""
     f = _target_dir() / f"dt={partition}" / "data.parquet"
     if not f.exists():
         return set()
     df = pd.read_parquet(f, columns=["stock_code"])
-    return set(df["stock_code"].astype(str))
+    codes = df["stock_code"].astype(str)
+    # 分区内已是 4位+.HK / 5位+.HK，反归一为 5 位数字以便与股票列表 id 比较
+    return {c.split(".")[0].zfill(5) for c in codes}
 
 
 def _trading_days(end: date, n_days: int, calendar_cls) -> list[date]:
@@ -159,9 +163,9 @@ def _normalise_fetch(
     )
     # 按持股数量降序取 top50
     df = df.sort_values("holding_quantity", ascending=False).head(50).copy()
-    # 代码保持 5 位（00700）——与分区历史标准一致，docstring 明示不加 .HK 后缀。
-    # 此前误用 to_hk_suffix 导致增量过滤/去重失效，每次全量重抓。
-    df["stock_code"] = str(stock_code).strip().split(".")[0].zfill(5)
+    # 代码统一为 4位+.HK（主板）或 5位+.HK（创业板 8 开头）—— 与全库一致。
+    # 此前写 5 位导致与读取端 to_hk_suffix 查询不匹配（fetch_ccass 返回空）。
+    df["stock_code"] = StockCodeUtil.to_hk_suffix(stock_code)
     df["stock_name"] = stock_name
     df["query_date"] = query_date
     return df[OUT_COLS]

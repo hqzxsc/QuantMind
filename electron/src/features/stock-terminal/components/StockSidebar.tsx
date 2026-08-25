@@ -12,8 +12,8 @@ interface Props {
   selected: string | null;
   onSelect: (item: StockListItem) => void;
   watchlistSymbols: Set<string>;   // prefix 格式（SH600519）
-  /** 模拟盘当前持仓 prefix 集合（自选列表「持仓」标记，实时推导） */
-  positionSymbols?: Set<string>;
+  /** 持仓来源映射（prefix -> 模拟/实盘/BOTH，自选列表「持仓」标记，实时推导） */
+  positions?: Map<string, PositionKind>;
   onlyWatchlist: boolean;
   onOnlyWatchlist: (v: boolean) => void;
   /** 筛选条件（页面持有，看板面板在左侧列表上方） */
@@ -29,6 +29,9 @@ interface Props {
   /** 全市场总量（筛选面板命中统计） */
   fullTotal?: number;
 }
+
+/** 持仓来源：REAL=实盘，SIM=模拟盘，BOTH=两处都持仓 */
+export type PositionKind = 'REAL' | 'SIM' | 'BOTH';
 
 const PAGE_SIZE = 100;
 
@@ -53,6 +56,13 @@ const SIDE_COLOR: Record<string, string> = {
   BUY: 'bg-rose-50 text-rose-600',
   SELL: 'bg-emerald-50 text-emerald-600',
   HOLD: 'bg-slate-50 text-slate-400',
+};
+
+/** 持仓来源徽标样式：模拟=蓝、实盘=紫、双持仓=靛蓝 */
+const POSITION_BADGE: Record<PositionKind, { cls: string; label: string; title: string }> = {
+  SIM: { cls: 'bg-sky-100 text-sky-700 border-sky-200', label: '模拟', title: '模拟盘持仓' },
+  REAL: { cls: 'bg-violet-100 text-violet-700 border-violet-200', label: '实盘', title: '实盘持仓' },
+  BOTH: { cls: 'bg-indigo-100 text-indigo-700 border-indigo-200', label: '模拟·实盘', title: '模拟盘+实盘均持仓' },
 };
 
 const TREND_COLOR: Record<string, string> = {
@@ -88,7 +98,7 @@ export function positionToneOf(v: number | null | undefined): { cls: string; txt
 
 const MARKETS: [string, string][] = [['ALL', '全部'], ['SH', '沪市'], ['SZ', '深市'], ['BJ', '北交']];
 
-export function StockSidebar({ selected, onSelect, watchlistSymbols, positionSymbols = new Set<string>(), onlyWatchlist, onOnlyWatchlist, filters, onFiltersChange, onModels, models: modelOptions = [], onTotals, onSignalDate, fullTotal = 0 }: Props) {
+export function StockSidebar({ selected, onSelect, watchlistSymbols, positions = new Map<string, PositionKind>(), onlyWatchlist, onOnlyWatchlist, filters, onFiltersChange, onModels, models: modelOptions = [], onTotals, onSignalDate, fullTotal = 0 }: Props) {
   const [market, setMarket] = useState('ALL');
   const [q, setQ] = useState('');
   const [data, setData] = useState<StockListResponse | null>(null);
@@ -400,7 +410,12 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positionSym
                   <span className="flex items-center justify-between gap-1">
                     <span className="text-xs font-bold text-slate-700 truncate flex items-center gap-0.5 min-w-0">
                       {watchlistSymbols.has(toPrefix(it.symbol)) && <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400 shrink-0" />}
-                      {positionSymbols.has(toPrefix(it.symbol)) && <span title="模拟盘持仓" className="text-[8px] font-bold rounded px-0.5 shrink-0 bg-sky-100 text-sky-700 border border-sky-200">持仓</span>}
+                      {(() => {
+                        const kind = positions.get(toPrefix(it.symbol));
+                        if (!kind) return null;
+                        const badge = POSITION_BADGE[kind];
+                        return <span title={badge.title} className={`text-[8px] font-bold rounded px-0.5 shrink-0 border ${badge.cls}`}>{badge.label}</span>;
+                      })()}
                       {it.is_st && <span className="text-[9px] bg-rose-50 text-rose-500 rounded px-0.5 shrink-0">ST</span>}
                       <span className="truncate">{it.name}</span>
                     </span>

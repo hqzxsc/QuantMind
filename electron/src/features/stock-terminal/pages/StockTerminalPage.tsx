@@ -6,7 +6,7 @@ import { CandlestickChart, Layers, CalendarDays, Activity, ChevronUp } from 'luc
 import { Modal, Tooltip } from 'antd';
 import { StockListItem, StockProfile } from '../types';
 import { stockTerminalService, IndexQuote } from '../services/stockTerminalService';
-import { StockSidebar } from '../components/StockSidebar';
+import { StockSidebar, PositionKind, toPrefix } from '../components/StockSidebar';
 import { TagStrip } from '../components/TagStrip';
 import { ListFilters } from '../components/StockFilterPanel';
 import { ScoreCalendar } from '../components/ScoreCalendar';
@@ -16,6 +16,8 @@ import { OverviewTab } from '../components/OverviewTab';
 import { L2FeatureCard } from '../components/L2FeatureCard';
 import { FinancialsTab, ValuationTab, ChipFlowTab, MarginTab, SentimentTab, HoldersTab } from '../components/tabs/P2Tabs';
 import { NewsTab } from '../components/tabs/NewsTab';
+import { realTradingService, AccountInfo } from '../../../services/realTradingService';
+import { authService } from '../../auth/services/authService';
 
 type InfoTab = 'overview' | 'financials' | 'valuation' | 'chipflow' | 'margin' | 'sentiment' | 'holders' | 'news' | 'l2';
 
@@ -47,6 +49,7 @@ export default function StockTerminalPage() {
   const [quotes, setQuotes] = useState<IndexQuote[]>([]);
   const [signalDate, setSignalDate] = useState<string | undefined>();
   const [calRefresh, setCalRefresh] = useState(0);
+  const [positions, setPositions] = useState<Map<string, PositionKind>>(new Map());
 
   // 概况随日历日期联动：历史日读该日 technical_indicators/valuation 快照
   useEffect(() => {
@@ -63,6 +66,34 @@ export default function StockTerminalPage() {
         if (!cancelled) setWatchlist(new Set(resp.items.map(i => i.symbol)));
       });
     }).catch(() => { if (!cancelled) setWatchlist(new Set()); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 模拟盘 + 实盘持仓 -> prefix 来源映射（列表行「模拟/实盘」徽标；自选视图同样生效）
+  useEffect(() => {
+    let cancelled = false;
+    const extract = (acc: AccountInfo | null | undefined): string[] => {
+      if (!acc || !acc.positions) return [];
+      if (Array.isArray(acc.positions)) {
+        return acc.positions.map(p => p.symbol).filter((s): s is string => !!s);
+      }
+      return Object.keys(acc.positions);
+    };
+    Promise.allSettled([
+      realTradingService.getAccount('current', authService.getTenantId()),
+      realTradingService.getSimulationAccount('current', authService.getTenantId()),
+    ]).then(([real, sim]) => {
+      if (cancelled) return;
+      const map = new Map<string, PositionKind>();
+      for (const s of extract(real.status === 'fulfilled' ? real.value : null)) {
+        map.set(toPrefix(s), 'REAL');
+      }
+      for (const s of extract(sim.status === 'fulfilled' ? sim.value : null)) {
+        const prefix = toPrefix(s);
+        map.set(prefix, map.has(prefix) ? 'BOTH' : 'SIM');
+      }
+      setPositions(map);
+    });
     return () => { cancelled = true; };
   }, []);
 
@@ -138,6 +169,7 @@ export default function StockTerminalPage() {
             selected={selected?.symbol ?? null}
             onSelect={setSelected}
             watchlistSymbols={watchlist}
+            positions={positions}
             onlyWatchlist={onlyWatchlist}
             onOnlyWatchlist={setOnlyWatchlist}
             filters={sideFilters}

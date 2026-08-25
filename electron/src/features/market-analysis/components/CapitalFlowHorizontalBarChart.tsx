@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as echarts from 'echarts';
+import { SERVICE_ENDPOINTS } from '../../../config/services';
+
+const MARKET_ANALYSIS_API = `${SERVICE_ENDPOINTS.USER_SERVICE}/market-analysis`;
 
 export interface FlowItem {
   id: string;
@@ -45,7 +48,7 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
     try {
       const token = localStorage.getItem('access_token') || '';
       const res = await fetch(
-        `/api/v1/market-analysis/money-flow/period?period=${period}&dimension=${dimension}&category=${categoryMode}&limit=25`,
+        `${MARKET_ANALYSIS_API}/money-flow/period?period=${period}&dimension=${dimension}&category=${categoryMode}&limit=25`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.ok) {

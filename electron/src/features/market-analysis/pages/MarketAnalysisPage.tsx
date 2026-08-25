@@ -9,6 +9,9 @@ import { MarketBreadthCard } from '../components/MarketBreadthCard';
 import { TagLookupPanel } from '../components/TagLookupPanel';
 import { CapitalFlowHorizontalBarChart, FlowItem } from '../components/CapitalFlowHorizontalBarChart';
 import { Tag as TagIcon } from 'lucide-react';
+import { SERVICE_ENDPOINTS } from '../../../config/services';
+
+const MARKET_ANALYSIS_API = `${SERVICE_ENDPOINTS.USER_SERVICE}/market-analysis`;
 
 interface MarketBreadthData {
   trade_date: string;
@@ -51,7 +54,7 @@ export const MarketAnalysisPage: React.FC = () => {
   useEffect(() => {
     if (activeTab !== 'flow-bar' || chartViewMode !== 'treemap') return;
     const token = localStorage.getItem('access_token') || '';
-    fetch(`/api/v1/market-analysis/heatmap?category=${categoryMode}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${MARKET_ANALYSIS_API}/heatmap?category=${categoryMode}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
       .then((d) => setTreemapData(d?.items && d.items.length > 0 ? d.items : []))
       .catch(() => setTreemapData([]));
@@ -64,11 +67,11 @@ export const MarketAnalysisPage: React.FC = () => {
 
     try {
       const [resIdx, resStock, resBreadth, resHeatmap, resSankey] = await Promise.all([
-        fetch('/api/v1/market-analysis/indices/overview', { headers }),
-        fetch('/api/v1/market-analysis/money-flow/stocks?limit=20', { headers }),
-        fetch('/api/v1/market-analysis/breadth', { headers }),
-        fetch('/api/v1/market-analysis/heatmap?category=shenwan', { headers }),
-        fetch('/api/v1/market-analysis/money-flow/sankey', { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/indices/overview`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/money-flow/stocks?limit=20`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/breadth`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/heatmap?category=shenwan`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/money-flow/sankey`, { headers }),
       ]);
 
       if (resIdx.ok) {
@@ -119,7 +122,7 @@ export const MarketAnalysisPage: React.FC = () => {
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
-      const res = await fetch('/api/v1/market-analysis/analyze/stream', {
+      const res = await fetch(`${MARKET_ANALYSIS_API}/analyze/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

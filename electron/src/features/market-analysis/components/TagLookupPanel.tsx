@@ -12,6 +12,9 @@ import {
 } from 'lucide-react';
 import { Input, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { SERVICE_ENDPOINTS } from '../../../config/services';
+
+const MARKET_ANALYSIS_API = `${SERVICE_ENDPOINTS.USER_SERVICE}/market-analysis`;
 
 interface HotTagItem {
   name: string;
@@ -55,7 +58,7 @@ export const TagLookupPanel: React.FC = () => {
     setStatsLoading(true);
     try {
       const token = localStorage.getItem('access_token') || '';
-      const res = await fetch('/api/v1/market-analysis/tags/stats?limit=30', {
+      const res = await fetch(`${MARKET_ANALYSIS_API}/tags/stats?limit=30`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -76,7 +79,7 @@ export const TagLookupPanel: React.FC = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('access_token') || '';
-      const res = await fetch(`/api/v1/market-analysis/tags/by-stock?symbol=${encodeURIComponent(q)}`, {
+      const res = await fetch(`${MARKET_ANALYSIS_API}/tags/by-stock?symbol=${encodeURIComponent(q)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -100,7 +103,7 @@ export const TagLookupPanel: React.FC = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('access_token') || '';
-      const res = await fetch(`/api/v1/market-analysis/tags/by-tag?tag=${encodeURIComponent(q)}&limit=50`, {
+      const res = await fetch(`${MARKET_ANALYSIS_API}/tags/by-tag?tag=${encodeURIComponent(q)}&limit=50`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {

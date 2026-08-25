@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card, Divider, Select, Button, InputNumber, Alert, DatePicker, Tag, Typography, Tooltip, Switch } from 'antd';
-import { Target, ArrowRightLeft, Info, CalendarRange, Activity } from 'lucide-react';
+import { Target, ArrowRightLeft, Info, CalendarRange, Activity, RefreshCcw } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
@@ -20,6 +20,18 @@ import { AdminModelFeatureDataCoverage } from '../../features/admin/types';
 
 const { RangePicker } = DatePicker;
 
+interface TrainingNodeInfo {
+  id: string;
+  name: string;
+  type?: string;
+  online?: boolean;
+  readiness?: string;
+  readiness_label?: string;
+  status_desc?: string;
+  gpu_summary?: string;
+  error?: string;
+}
+
 interface TrainingTargetConfigProps {
   target: TrainingTarget;
   timePeriods: TimePeriodMap;
@@ -28,6 +40,14 @@ interface TrainingTargetConfigProps {
   dataCoverage?: AdminModelFeatureDataCoverage | null;
   wfa?: WfaConfig;
   onWfaChange?: (wfa: WfaConfig) => void;
+  // 训练执行配置（训练节点 + 最长训练时长）
+  trainingNodes?: TrainingNodeInfo[];
+  selectedNode?: string;
+  onNodeChange?: (id: string) => void;
+  nodesLoading?: boolean;
+  onRefreshNodes?: () => void;
+  maxTimeMinutes?: number;
+  onMaxTimeChange?: (value: number) => void;
 }
 
 const SectionHeader: React.FC<{ title: string; desc: string; icon?: React.ReactNode }> = ({ title, desc, icon }) => (
@@ -54,9 +74,17 @@ export const TrainingTargetConfig: React.FC<TrainingTargetConfigProps> = ({
   dataCoverage,
   wfa,
   onWfaChange,
+  trainingNodes = [],
+  selectedNode,
+  onNodeChange,
+  nodesLoading = false,
+  onRefreshNodes,
+  maxTimeMinutes,
+  onMaxTimeChange,
 }) => {
   const labelFormula = buildLabelFormula(target);
   const effectiveTradeDate = buildEffectiveTradeDate(target, timePeriods.test[0]);
+  const selectedNodeObj = trainingNodes.find((n) => n.id === selectedNode) || trainingNodes[0];
   
   const trainDays = daysBetween(timePeriods.train);
   const valDays = daysBetween(timePeriods.val);
@@ -304,6 +332,72 @@ export const TrainingTargetConfig: React.FC<TrainingTargetConfigProps> = ({
               </div>
             );
           })}
+        </div>
+
+        {/* ── 训练执行配置：训练节点 + 最长训练时长 ── */}
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+          <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400 mb-3">训练执行配置</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl bg-white p-3 border border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] uppercase font-bold text-slate-400">训练节点</div>
+                <button
+                  type="button"
+                  onClick={onRefreshNodes}
+                  disabled={nodesLoading}
+                  className="text-[10px] text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors disabled:opacity-50"
+                  title="刷新节点就绪状态"
+                >
+                  <RefreshCcw className={clsx('w-2.5 h-2.5', nodesLoading && 'animate-spin')} />
+                  <span>{nodesLoading ? '检测中' : '刷新'}</span>
+                </button>
+              </div>
+              <Select
+                size="small"
+                className="w-full"
+                value={selectedNode}
+                loading={nodesLoading && trainingNodes.length === 0}
+                onChange={onNodeChange}
+                placeholder="选择训练节点"
+                options={trainingNodes.map((node) => ({
+                  value: node.id,
+                  label: `${node.type === 'remote' ? '☁️' : '💻'} ${node.name} · ${node.readiness_label || (node.online ? '就绪' : '离线')}`,
+                }))}
+              />
+              {selectedNodeObj && (
+                <div className="mt-2 text-[10px] text-slate-500 truncate">
+                  {selectedNodeObj.status_desc || selectedNodeObj.gpu_summary || (selectedNodeObj.type === 'remote' ? '远程 GPU 节点' : '本地 Docker 节点')}
+                </div>
+              )}
+              {selectedNodeObj && ['offline', 'warning'].includes(selectedNodeObj.readiness) && (
+                <details className="mt-2 text-[10px] text-amber-700">
+                  <summary className="cursor-pointer select-none hover:text-amber-900">查看节点提示</summary>
+                  <div className="mt-1.5 rounded bg-amber-50 p-2 leading-relaxed">
+                    {selectedNodeObj.readiness === 'offline'
+                      ? selectedNodeObj.error || '请先在云服务商控制台开机或检查连接配置。'
+                      : <>本机训练镜像尚未就绪。<code className="mt-1 block select-all rounded bg-amber-100 px-1 py-0.5 font-mono text-[9px]">docker build -f docker/Dockerfile.trainer -t quantmind-trainer:latest .</code></>}
+                  </div>
+                </details>
+              )}
+            </div>
+            <div className="rounded-xl bg-white p-3 border border-slate-200">
+              <div className="text-[10px] uppercase font-bold text-slate-400 mb-2">最长训练时长</div>
+              <Select
+                size="small"
+                value={maxTimeMinutes}
+                onChange={onMaxTimeChange}
+                style={{ width: '100%' }}
+                options={[
+                  { value: 60, label: '1 小时（快速验证）' },
+                  { value: 120, label: '2 小时（默认）' },
+                  { value: 360, label: '6 小时' },
+                  { value: 720, label: '12 小时（DL 模型推荐）' },
+                  { value: 1440, label: '24 小时（上限）' },
+                ]}
+              />
+              <div className="mt-1.5 text-[10px] text-slate-400">超时后任务会自动停止。</div>
+            </div>
+          </div>
         </div>
       </Card>
 

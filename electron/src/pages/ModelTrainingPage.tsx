@@ -652,63 +652,6 @@ export const ModelTrainingPage: React.FC = () => {
                   <div className="text-xs font-semibold text-slate-700">T+{target.horizonDays} · {target.mode === 'classification' ? '分类' : '回归'}</div>
                   <div className="text-[10px] text-slate-400 mt-1 truncate">{labelFormula}</div>
                </div>
-                <div className="rounded-xl bg-slate-50 p-3 border border-slate-100">
-                   <div className="flex items-center justify-between mb-2">
-                     <div className="text-[10px] uppercase font-bold text-slate-400">训练节点</div>
-                     <button
-                       type="button"
-                       onClick={() => loadNodes()}
-                       disabled={nodesLoading}
-                       className="text-[10px] text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors disabled:opacity-50"
-                       title="刷新节点就绪状态"
-                     >
-                       <RefreshCcw className={clsx("w-2.5 h-2.5", nodesLoading && "animate-spin")} />
-                       <span>{nodesLoading ? '检测中' : '刷新'}</span>
-                     </button>
-                   </div>
-                   <Select
-                     size="small"
-                     className="w-full"
-                     value={selectedNode}
-                     loading={nodesLoading && trainingNodes.length === 0}
-                     onChange={setSelectedNode}
-                     placeholder="选择训练节点"
-                     options={trainingNodes.map((node) => ({
-                       value: node.id,
-                       label: `${node.type === 'remote' ? '☁️' : '💻'} ${node.name} · ${node.readiness_label || (node.online ? '就绪' : '离线')}`,
-                     }))}
-                   />
-                   {selectedNodeObj && <div className="mt-2 text-[10px] text-slate-500 truncate">
-                     {selectedNodeObj.status_desc || selectedNodeObj.gpu_summary || (selectedNodeObj.type === 'remote' ? '远程 GPU 节点' : '本地 Docker 节点')}
-                   </div>}
-                   {selectedNodeObj && ['offline', 'warning'].includes(selectedNodeObj.readiness) && (
-                     <details className="mt-2 text-[10px] text-amber-700">
-                       <summary className="cursor-pointer select-none hover:text-amber-900">查看节点提示</summary>
-                       <div className="mt-1.5 rounded bg-amber-50 p-2 leading-relaxed">
-                         {selectedNodeObj.readiness === 'offline'
-                           ? selectedNodeObj.error || '请先在云服务商控制台开机或检查连接配置。'
-                           : <>本机训练镜像尚未就绪。<code className="mt-1 block select-all rounded bg-amber-100 px-1 py-0.5 font-mono text-[9px]">docker build -f docker/Dockerfile.trainer -t quantmind-trainer:latest .</code></>}
-                       </div>
-                     </details>
-                   )}
-               </div>
-               <div className="rounded-xl bg-slate-50 p-3 border border-slate-100">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 mb-2">最长训练时长</div>
-                  <Select
-                    size="small"
-                    value={maxTimeMinutes}
-                    onChange={(v: number) => setMaxTimeMinutes(v)}
-                    style={{ width: '100%' }}
-                    options={[
-                      { value: 60, label: '1 小时（快速验证）' },
-                      { value: 120, label: '2 小时（默认）' },
-                      { value: 360, label: '6 小时' },
-                      { value: 720, label: '12 小时（DL 模型推荐）' },
-                      { value: 1440, label: '24 小时（上限）' },
-                    ]}
-                  />
-                  <div className="mt-1.5 text-[10px] text-slate-400">超时后任务会自动停止。</div>
-               </div>
                <div className="flex gap-2">
                  <Button size="small" block className="rounded-xl font-bold h-8" onClick={() => message.success('草稿已保存')}>保存草稿</Button>
                  <Button size="small" block className="rounded-xl font-bold h-8" onClick={handleResetAll} disabled={isTrainingInProgress}>重置</Button>
@@ -795,7 +738,7 @@ export const ModelTrainingPage: React.FC = () => {
                 <AnimatePresence mode="wait">
                   <motion.div key={currentStep} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
                     {currentStep === 0 && <FeatureSelector categories={featureCategories} selectedFeatures={selectedFeatures} onChange={(f) => dispatch({ type: 'SET_FEATURES', payload: f })} loading={featureCatalogLoading} />}
-                    {currentStep === 1 && <TrainingTargetConfig target={target} timePeriods={timePeriods} onTargetChange={(t) => dispatch({ type: 'SET_TARGET', payload: t })} onTimeChange={(k, v) => dispatch({ type: 'SET_TIME', key: k, value: v })} dataCoverage={dataCoverage} wfa={wfaConfig} onWfaChange={(w) => dispatch({ type: 'SET_WFA', payload: w })} />}
+                    {currentStep === 1 && <TrainingTargetConfig target={target} timePeriods={timePeriods} onTargetChange={(t) => dispatch({ type: 'SET_TARGET', payload: t })} onTimeChange={(k, v) => dispatch({ type: 'SET_TIME', key: k, value: v })} dataCoverage={dataCoverage} wfa={wfaConfig} onWfaChange={(w) => dispatch({ type: 'SET_WFA', payload: w })} trainingNodes={trainingNodes} selectedNode={selectedNode} onNodeChange={setSelectedNode} nodesLoading={nodesLoading} onRefreshNodes={() => loadNodes()} maxTimeMinutes={maxTimeMinutes} onMaxTimeChange={setMaxTimeMinutes} />}
                     {currentStep === 2 && <ParameterConfig params={params} context={context} onParamsChange={(p) => dispatch({ type: 'SET_PARAMS', payload: p })} onContextChange={(c) => dispatch({ type: 'SET_CONTEXT', payload: c })} displayName={displayName} onDisplayNameChange={(n, m) => dispatch({ type: 'SET_DISPLAY_NAME', payload: { name: n, mode: m } })} autoDisplayName={autoDisplayName} market={currentMarket} />}
                     {currentStep === 3 && <TrainingConsole trainingStatus={trainingStatus} executionStage={executionStage} progress={progress} logs={logs} backendRunStatus={backendRunStatus} result={result} requestPreview={requestPreview} totalDays={totalDays} trainDays={trainDays} valDays={valDays} testDays={testDays} target={target} onGoToResult={() => setCurrentStep(4)} />}
                     {currentStep === 4 && <TrainingResultView result={result} resultError={resultError} settingDefaultModel={settingDefaultModel} onSetDefaultModel={handleSetDefaultModel} onExportConfig={handleExportConfig} trainingStatus={trainingStatus} />}

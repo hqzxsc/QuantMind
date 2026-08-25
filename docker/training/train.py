@@ -724,6 +724,21 @@ def load_data(
             df["trade_date"].min() if not df.empty else "N/A",
             df["trade_date"].max() if not df.empty else "N/A",
         )
+        # 与 core parquet 分支一致：数值列统一降为 float32，降低内存峰值。
+        # Direct QuantDB 读取默认 float64，325 列 × 440 万行 ≈ 11.5GB；
+        # 后续 drop/holiday 过滤/sort_values 各复制一次，峰值会突破
+        # 训练容器 48GB mem_limit 被 OOM(SIGKILL 137) 杀死。
+        # 标签构建/IC 计算/LightGBM 全部接受 float32，精度损失可忽略。
+        _direct_f32_start = time.time()
+        for col in df.columns:
+            if col in {"trade_date", "symbol"}:
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].astype(np.float32, copy=False)
+        logger.info(
+            "Direct QuantDB columns downcast to float32 in %.1fs",
+            time.time() - _direct_f32_start,
+        )
     elif market_upper in _MARKET_PARQUET_FILES:
         # ── 非 A 股市场：从单一 parquet 文件加载 ──
         parquet_name = _MARKET_PARQUET_FILES[market_upper]

@@ -54,7 +54,7 @@ class TdxRollingConfigUpdate(BaseModel):
     fixed_buy_amount: float = Field(..., gt=0, description="每只固定买入金额（元）")
     execute_mode: Literal["off", "tdx", "paper"] | None = Field(
         None,
-        description="执行模式: off=仅预警 / tdx=通达信下单(客户端确认) / paper=模拟盘直接下单(免确认)",
+        description="执行模式: off=仅预警 / tdx=通达信下单(TQ收费账号直接提交免确认) / paper=模拟盘直接下单(免确认)",
     )
     auto_place: bool | None = Field(
         None, description="旧字段兼容: true=通达信下单(tdx) / false=仅预警(off)"

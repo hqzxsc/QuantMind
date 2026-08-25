@@ -25,7 +25,7 @@
 │       │                                                            │
 │       ▼ JSON-RPC                                                   │
 │   通达信客户端 (TdxW.exe, 127.0.0.1:17709)                           │
-│       └─ 下单返回 Wtbh 委托编号, 实盘需用户在客户端确认 (Value=1)      │
+│       └─ 下单返回 Value: 2=直接提交(TQ收费账号) / 1=待确认 / 0=失败   │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -170,7 +170,7 @@ client.configure_sltp([...])                 # 止损配置
 |------|------|------|
 | 桥返回 401 | token 不一致 | 核对 Linux `.env` 与 Windows `setup.bat` 的 token |
 | `TDX_UNAVAILABLE` | Windows 桥没启动/通达信没登录 | Windows 检查 `curl /health` |
-| 下单返回"待确认" | 实盘单需客户端确认 | 通达信客户端点确认 |
+| 下单返回"待确认" | 普通账号需客户端确认 | 通达信客户端点确认；开通 TQ 收费账号后返回 Value=2 直接提交 |
 | Linux 连不上 8550 | 防火墙/桥没监听 0.0.0.0 | Windows `setup.bat` 已自动放行; 检查 `netsh advfirewall` |
 | 模拟盘还是用 PaperTradingBroker | `ENABLE_REAL_TRADING` 未开 | 设 `ENABLE_REAL_TRADING=true` |
 
@@ -180,6 +180,6 @@ client.configure_sltp([...])                 # 止损配置
 
 1. **Token 鉴权**：HTTP 桥用 Bearer token，`TDX_BRIDGE_TOKEN`/`BRIDGE_AUTH_TOKEN` 必须一致且保密
 2. **防火墙**：只放行 8550 到可信内网 IP
-3. **实盘人工确认**：通达信实盘下单默认需客户端确认，不绕开
+3. **实盘人工确认**：普通账号实盘下单返回 Value=1 需客户端确认；**TQ 收费账号（量化会员）返回 Value=2 直接提交，免确认**（实测 2026-08-25: 卖单直接提交成功，无弹窗）
 4. **模拟盘与实盘隔离**：`ENABLE_REAL_TRADING=false` 时完全走模拟盘，零风险
 5. **交易日志**：桥把每次操作追加到 `execution_reports/trade_log.jsonl`，全程可审计

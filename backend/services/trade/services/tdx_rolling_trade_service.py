@@ -9,7 +9,8 @@ TDX Rolling Trade Service - 按分数滚动买卖并推送（三档执行模式�
 
 执行模式（设置页可改，存 Redis，QuantDB 付费会员专属）：
   off   -> 仅推通达信预警（默认，半自动）
-  tdx   -> 买卖信号生成真实委托推给通达信（客户端弹确认框，确认后成交）
+  tdx   -> 买卖信号生成真实委托推给通达信（TQ 收费账号 Value=2 直接提交免确认；
+            普通账号返回 Value=1 由客户端确认后成交）
   paper -> 买卖信号在本地模拟盘账户直接成交（本地撮合，免确认、零风险）
 """
 import asyncio
@@ -43,7 +44,7 @@ _MAX_BUY_WARNINGS = 20
 
 _ROLLING_CONFIG_KEY = "tdx:rolling_config:{tenant_id}:{user_id}"
 
-# 执行模式: off=仅预警 / tdx=通达信下单(客户端确认) / paper=模拟盘直接下单(免确认)
+# 执行模式: off=仅预警 / tdx=通达信下单(收费TQ账号直接提交) / paper=模拟盘直接下单(免确认)
 EXECUTE_MODES = ("off", "tdx", "paper")
 DEFAULT_EXECUTE_MODE = "off"
 
@@ -61,7 +62,7 @@ def load_rolling_config(
     """读取滚动买卖配置 (score_threshold, fixed_buy_amount, execute_mode)。
 
     优先读 Redis（设置页保存），未保存时用环境变量/默认值。
-    execute_mode: off=仅预警 / tdx=通达信下单(客户端确认) / paper=模拟盘直接下单(免确认)。
+    execute_mode: off=仅预警 / tdx=通达信下单(收费TQ账号直接提交) / paper=模拟盘直接下单(免确认)。
     """
     threshold = _env_float("TDX_ROLLING_SCORE_THRESHOLD", DEFAULT_SCORE_THRESHOLD)
     amount = _env_float("TDX_ROLLING_FIXED_BUY_AMOUNT", DEFAULT_FIXED_BUY_AMOUNT)

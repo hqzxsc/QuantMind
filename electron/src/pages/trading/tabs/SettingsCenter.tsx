@@ -741,7 +741,7 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
                       {(
                         [
                           ['off', '仅预警', '只推通达信预警，不下单'],
-                          ['tdx', '通达信下单', '生成真实委托，客户端确认后成交'],
+                          ['tdx', '通达信下单', 'TQ收费账号直接提交免确认，普通账号需客户端确认'],
                           ['paper', '模拟盘直接下单', '本地模拟盘自动成交，免确认、零风险'],
                         ] as const
                       ).map(([mode, label, hint]) => (

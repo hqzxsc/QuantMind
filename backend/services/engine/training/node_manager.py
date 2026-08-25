@@ -420,7 +420,10 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
             pass
 
         # 3. 探测本地 Docker、独立训练镜像与容器
-        training_image = "quantmind-trainer:latest"
+        # 与 local_docker_orchestrator 的 _TRAINING_IMAGE 保持一致（TRAINING_IMAGE 环境变量，
+        # .env 可配置）；只检查硬编码的 quantmind-trainer:latest 会在自定义训练镜像
+        # （如 quantmind-oss-gpu:latest）时误报"未安装"，导致前端禁止开始训练。
+        training_image = (os.getenv("TRAINING_IMAGE") or "quantmind-trainer:latest").strip()
         result["training_image"] = training_image
         result["image_installed"] = False
 
@@ -430,7 +433,7 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
             await asyncio.to_thread(client.ping)
             result["docker_available"] = True
 
-            # 校验是否已安装专用的独立训练容器镜像 quantmind-trainer:latest
+            # 校验是否已安装实际配置的训练容器镜像（TRAINING_IMAGE）
             try:
                 await asyncio.to_thread(client.images.get, training_image)
                 result["image_installed"] = True

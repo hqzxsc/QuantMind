@@ -100,6 +100,13 @@ git push gitee NEXT
 ssh quant-server "cd /root/quantmindoss && git pull && docker compose restart quantmind quantmind-celery"
 ```
 
+### 3. 镜像构建规则（是否需重新打包）
+- **后端代码走 bind mount**（`./backend:/app/backend` 等挂载进容器），镜像只含 Python 依赖环境。
+- **纯代码改动（未新增 pip 依赖、未改 Dockerfile/构建参数）**：只需 `git pull && docker compose restart`，**无需重新打包镜像**。
+- **需要重build 的场景**：①新增了 `requirements.txt` 未收录的 Python 依赖；②升级 torch/qlib/duckdb 等底层库；③全新服务器首次部署无现成镜像。
+- **重build 方式**（利用 Docker build cache，通常仅增量安装新增包）：服务器上执行 `docker compose build quantmind`，再 `docker compose up -d`。
+- 本地 Windows 无法直接构建 linux/amd64 镜像，重build 一律在服务器或 CI 上进行。
+
 ## Key Files
 
 - `backend/main_oss.py` - Unified entry point for all backend services

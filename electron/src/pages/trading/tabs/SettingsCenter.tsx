@@ -143,7 +143,7 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
   } | null>(null);
   const [rollingThreshold, setRollingThreshold] = useState('2.2');
   const [rollingAmount, setRollingAmount] = useState('10000');
-  const [rollingAutoPlace, setRollingAutoPlace] = useState(false);
+  const [rollingExecuteMode, setRollingExecuteMode] = useState<'off' | 'tdx' | 'paper'>('off');
   const [rollingDate, setRollingDate] = useState('');
   const [rollingCfgMsg, setRollingCfgMsg] = useState('');
   const [activeTab, setActiveTab] = useState<'credentials' | 'tdx'>('credentials');
@@ -308,7 +308,13 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
         const data = await res.json();
         setRollingThreshold(String(data.score_threshold ?? '2.2'));
         setRollingAmount(String(data.fixed_buy_amount ?? '10000'));
-        setRollingAutoPlace(Boolean(data.auto_place));
+        setRollingExecuteMode(
+          data.execute_mode === 'tdx' || data.execute_mode === 'paper'
+            ? data.execute_mode
+            : data.auto_place
+              ? 'tdx'
+              : 'off',
+        );
       }
     } catch (e) {
       console.error('Failed to fetch rolling config', e);
@@ -394,7 +400,7 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
         body: JSON.stringify({
           score_threshold: threshold,
           fixed_buy_amount: amount,
-          auto_place: rollingAutoPlace,
+          execute_mode: rollingExecuteMode,
         }),
       });
       if (res.ok) {
@@ -730,25 +736,44 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
                         保存配置
                       </button>
                     </div>
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={rollingAutoPlace}
-                        onChange={(e) => setRollingAutoPlace(e.target.checked)}
-                        className="w-3.5 h-3.5 accent-emerald-600"
-                      />
-                      <span className="text-[11px] font-bold text-slate-700">
-                        把买卖信号生成为真实委托推给通达信
-                        <span className="text-slate-400 font-medium">（通达信客户端弹确认框，你确认后成交；卖单市价、买单收盘价限价）</span>
-                      </span>
-                    </label>
+                    <div className="text-[10px] text-slate-400 font-medium">执行模式（直接下单为 QuantDB 付费会员专属）</div>
+                    <div className="flex items-center gap-1.5">
+                      {(
+                        [
+                          ['off', '仅预警', '只推通达信预警，不下单'],
+                          ['tdx', '通达信下单', '生成真实委托，客户端确认后成交'],
+                          ['paper', '模拟盘直接下单', '本地模拟盘自动成交，免确认、零风险'],
+                        ] as const
+                      ).map(([mode, label, hint]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setRollingExecuteMode(mode)}
+                          title={hint}
+                          className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+                            rollingExecuteMode === mode
+                              ? mode === 'paper'
+                                ? 'bg-violet-600 text-white shadow-sm'
+                                : mode === 'tdx'
+                                  ? 'bg-emerald-600 text-white shadow-sm'
+                                  : 'bg-slate-700 text-white shadow-sm'
+                              : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-slate-400 leading-relaxed">
+                      卖单市价、买单收盘价限价；先卖后买。模拟盘直接下单在 QuantMind 模拟盘账户本地撮合成交，无需通达信客户端确认。
+                    </div>
                     {rollingCfgMsg && (
                       <div className={`text-[11px] font-medium ${rollingCfgMsg.startsWith('✅') ? 'text-emerald-600' : 'text-red-600'}`}>
                         {rollingCfgMsg}
                       </div>
                     )}
                     <div className="text-[10px] text-slate-400 leading-relaxed">
-                      规则：分数 {'>'} 阈值 → 买入；持仓分数 ≤ 阈值 → 卖出；大盘低于 MA20 → 只卖不买。推历史日期时跳过当日大盘过滤。开「真实委托」后信号直接生成下单（卖先买后）。
+                      规则：分数 {'>'} 阈值 → 买入；持仓分数 ≤ 阈值 → 卖出；大盘低于 MA20 → 只卖不买。推历史日期时跳过当日大盘过滤。执行模式选「通达信下单」或「模拟盘直接下单」后，信号直接生成委托（卖先买后）。
                     </div>
                   </div>
 

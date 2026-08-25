@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
     sandbox_signal_task = None
     tdx_account_sync_task = None
     tdx_quote_feed_task = None
+    t1_unlock_task = None
 
     try:
         await init_unified_config(service_name="quantmind-trade")
@@ -88,6 +89,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         app.state.startup_healthy = False
         logger.error("trade redis init failed: %s", e, exc_info=True)
+
+    # 应用 Redis 持久化的通达信桥运行时配置（PUT /tdx/config 跨 respawn 生效）
+    try:
+        from backend.services.trade.routers.tdx_config import apply_runtime_config
+
+        apply_runtime_config()
+    except Exception as e:
+        logger.warning("trade tdx runtime config apply failed: %s", e)
 
     try:
         from backend.services.trade.utils.stock_lookup import warmup_stock_cache
@@ -131,6 +140,14 @@ async def lifespan(app: FastAPI):
         tdx_quote_feed_task = asyncio.create_task(
             run_tdx_quote_feed_task(),
             name="tdx-quote-feed",
+        )
+        from backend.services.trade.services.simulation_t1_unlock_task import (
+            run_simulation_t1_unlock_task,
+        )
+
+        t1_unlock_task = asyncio.create_task(
+            run_simulation_t1_unlock_task(),
+            name="simulation-t1-unlock",
         )
     except Exception as e:
         app.state.startup_healthy = False
@@ -189,7 +206,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (scanner_task, margin_task, snapshot_task, ledger_settlement_task, manual_execution_task, sandbox_signal_task, tdx_account_sync_task, tdx_quote_feed_task):
+    for task in (scanner_task, margin_task, snapshot_task, ledger_settlement_task, manual_execution_task, sandbox_signal_task, tdx_account_sync_task, tdx_quote_feed_task, t1_unlock_task):
         if task is None:
             continue
         task.cancel()

@@ -7,6 +7,7 @@ TDX 桥配置管理路由
 import asyncio
 import logging
 import os
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -51,7 +52,54 @@ class TdxRollingSignalsRequest(BaseModel):
 class TdxRollingConfigUpdate(BaseModel):
     score_threshold: float = Field(..., gt=0, le=10, description="买入分数阈值（>此分数买入）")
     fixed_buy_amount: float = Field(..., gt=0, description="每只固定买入金额（元）")
-    auto_place: bool = Field(False, description="是否把买卖信号生成为真实委托推给通达信（客户端确认）")
+    execute_mode: Literal["off", "tdx", "paper"] | None = Field(
+        None,
+        description="执行模式: off=仅预警 / tdx=通达信下单(客户端确认) / paper=模拟盘直接下单(免确认)",
+    )
+    auto_place: bool | None = Field(
+        None, description="旧字段兼容: true=通达信下单(tdx) / false=仅预警(off)"
+    )
+
+
+RUNTIME_CONFIG_KEY = "trade:tdx_config:runtime"
+
+
+def load_runtime_config() -> dict:
+    """读取运行时桥配置（Redis 持久化，跨子进程 respawn 生效）。"""
+    try:
+        from backend.services.trade.redis_client import get_redis
+
+        saved = get_redis().get(RUNTIME_CONFIG_KEY)
+        return saved if isinstance(saved, dict) else {}
+    except Exception as exc:
+        logger.warning("[TdxConfig] 读取运行时配置失败: %s", exc)
+        return {}
+
+
+def apply_runtime_config() -> None:
+    """把 Redis 持久化的运行时桥配置应用到 settings/env/tdx_pusher。
+
+    在 trade lifespan 启动时调用，使 PUT /tdx/config 的修改跨 respawn 生效。
+    """
+    saved = load_runtime_config()
+    bridge_url = str(saved.get("bridge_url") or "").strip()
+    bridge_token = str(saved.get("bridge_token") or "").strip()
+    if not bridge_url and not bridge_token:
+        return
+    if bridge_url:
+        settings.TDX_BRIDGE_URL = bridge_url
+        os.environ["TDX_BRIDGE_URL"] = bridge_url
+    if bridge_token:
+        settings.TDX_BRIDGE_TOKEN = bridge_token
+        os.environ["TDX_BRIDGE_TOKEN"] = bridge_token
+    from backend.services.trade.services.tdx_push_service import tdx_pusher
+
+    tdx_pusher.bridge_url = str(getattr(settings, "TDX_BRIDGE_URL", "") or "").strip()
+    tdx_pusher.bridge_token = str(getattr(settings, "TDX_BRIDGE_TOKEN", "") or "").strip()
+    logger.info(
+        "[TdxConfig] 已应用运行时桥配置: url=%s token=%s",
+        tdx_pusher.bridge_url, "configured" if tdx_pusher.bridge_token else "missing",
+    )
 
 
 @router.get("/tdx/config", response_model=TdxConfigResponse)
@@ -99,8 +147,22 @@ async def update_tdx_config(
         os.environ["TDX_BRIDGE_TOKEN"] = str(data.bridge_token).strip()
     if data.bridge_url is not None or data.bridge_token is not None:
         from backend.services.trade.services.tdx_push_service import tdx_pusher
+
         tdx_pusher.bridge_url = str(getattr(settings, "TDX_BRIDGE_URL", "")).strip()
         tdx_pusher.bridge_token = str(getattr(settings, "TDX_BRIDGE_TOKEN", "")).strip()
+        # 持久化到 Redis，跨子进程 respawn 生效
+        try:
+            from backend.services.trade.redis_client import get_redis
+
+            get_redis().set(
+                RUNTIME_CONFIG_KEY,
+                {
+                    "bridge_url": tdx_pusher.bridge_url,
+                    "bridge_token": tdx_pusher.bridge_token,
+                },
+            )
+        except Exception as exc:
+            logger.warning("[TdxConfig] 运行时配置持久化失败: %s", exc)
 
     return {"success": True, "message": "通达信桥配置已更新"}
 
@@ -266,19 +328,21 @@ async def push_rolling_signals_to_tdx(
 
 @router.get("/tdx/rolling-config")
 async def get_rolling_config(auth: AuthContext = Depends(get_auth_context)):
-    """读取滚动买卖配置（分数阈值 + 每只固定金额）。"""
+    """读取滚动买卖配置（分数阈值 + 每只固定金额 + 执行模式）。"""
     from backend.services.trade.services.tdx_rolling_trade_service import (
+        DEFAULT_EXECUTE_MODE,
         load_rolling_config,
     )
 
-    threshold, amount, auto_place = load_rolling_config(
+    threshold, amount, execute_mode = load_rolling_config(
         (auth.tenant_id or "default").strip() or "default",
         str(auth.user_id or "00000001").strip() or "00000001",
     )
     return {
         "score_threshold": threshold,
         "fixed_buy_amount": amount,
-        "auto_place": auto_place,
+        "execute_mode": execute_mode,
+        "auto_place": execute_mode != DEFAULT_EXECUTE_MODE,
     }
 
 
@@ -287,21 +351,42 @@ async def update_rolling_config(
     data: TdxRollingConfigUpdate,
     auth: AuthContext = Depends(get_auth_context),
 ):
-    """保存滚动买卖配置（分数阈值 + 每只固定金额），推理自动推送即时生效。"""
+    """保存滚动买卖配置（阈值 + 金额 + 执行模式），推理自动推送即时生效。
+
+    直接下单（tdx 通达信实盘 / paper 模拟盘免确认）为 QuantDB 付费会员专属。
+    """
+    from backend.services.trade.services.member_gate import is_paid_member
     from backend.services.trade.services.tdx_rolling_trade_service import (
+        DEFAULT_EXECUTE_MODE,
         save_rolling_config,
     )
+
+    execute_mode = data.execute_mode
+    if execute_mode is None and data.auto_place is not None:
+        execute_mode = "tdx" if data.auto_place else "off"
+    if execute_mode is None:
+        raise HTTPException(status_code=400, detail="execute_mode 或 auto_place 必填")
+
+    if execute_mode != DEFAULT_EXECUTE_MODE and not await is_paid_member(
+        (auth.tenant_id or "default").strip() or "default",
+        str(auth.user_id or "00000001").strip() or "00000001",
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="直接下单为 QuantDB 付费会员专属功能，请保持会员在期后使用",
+        )
 
     save_rolling_config(
         (auth.tenant_id or "default").strip() or "default",
         str(auth.user_id or "00000001").strip() or "00000001",
         score_threshold=data.score_threshold,
         fixed_buy_amount=data.fixed_buy_amount,
-        auto_place=data.auto_place,
+        execute_mode=execute_mode,
     )
     return {
         "success": True,
         "score_threshold": data.score_threshold,
         "fixed_buy_amount": data.fixed_buy_amount,
-        "auto_place": data.auto_place,
+        "execute_mode": execute_mode,
+        "auto_place": execute_mode != DEFAULT_EXECUTE_MODE,
     }

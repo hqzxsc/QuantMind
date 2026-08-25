@@ -69,6 +69,7 @@ feed_status: dict = {
     "ticks_saved": 0,            # 已落库 tick 行数
     "active_sessions": 0,
     "last_error": None,
+    "rate_limited": False,       # 桥限流避让中（60次/分钟）
     "member_gate": {"enabled": True, "allowed": None, "checked_at": None},
 }
 
@@ -801,6 +802,7 @@ async def run_tdx_quote_feed_task(interval: float = POLL_INTERVAL):
     highest: dict[str, float] = {}
     last_positions_at = 0.0
     last_flush_at = time.monotonic()
+    cycle = 0.0
     while True:
         try:
             # 会员状态周期性重核验（过期立即停喂，续费后 1 分钟内恢复）
@@ -837,6 +839,10 @@ async def run_tdx_quote_feed_task(interval: float = POLL_INTERVAL):
                 await asyncio.sleep(max(1.0, interval))
                 continue
 
+            # 桥限流保护：60次/分钟预算。轮询周期按持仓数自适应
+            # （每只 1.5s → 速率恒定 ≈40次/分钟，留余量给账户同步/健康检查）
+            cycle = max(3.0, min(30.0, len(positions) * 1.5))
+            rate_limited = False
             prices: dict[str, float] = {}
             for p in positions:
                 try:
@@ -844,7 +850,11 @@ async def run_tdx_quote_feed_task(interval: float = POLL_INTERVAL):
                         "get_market_snapshot", {"stock_code": p["suffix"]}
                     )
                 except Exception as exc:
-                    feed_status["last_error"] = f"{p['symbol']}: {exc}"
+                    msg = str(exc)
+                    if "RATE_LIMITED" in msg:
+                        rate_limited = True
+                    else:
+                        feed_status["last_error"] = f"{p['symbol']}: {msg}"
                     continue
                 snap = map_snapshot(result)
                 if snap is None:
@@ -862,8 +872,17 @@ async def run_tdx_quote_feed_task(interval: float = POLL_INTERVAL):
                         snap=snap,
                     )
 
+            if rate_limited:
+                # 桥限流：拉长周期避让，不当作桥故障
+                feed_status["rate_limited"] = True
+                feed_status["bridge_ok"] = False
+                await asyncio.sleep(cycle * 2)
+                continue
+            feed_status["rate_limited"] = False
+
             if prices:
                 feed_status["bridge_ok"] = True
+                feed_status["last_error"] = None
                 feed_status["last_feed_at"] = _now_sh().isoformat(timespec="seconds")
                 feed_status["last_feed_age_sec"] = 0
                 await _check_sltp_alerts(
@@ -885,4 +904,4 @@ async def run_tdx_quote_feed_task(interval: float = POLL_INTERVAL):
         except Exception as exc:
             feed_status["last_error"] = str(exc)
             logger.warning("[TdxFeed] 行情 Feed 循环异常: %s", exc)
-        await asyncio.sleep(max(1.0, interval))
+        await asyncio.sleep(cycle if cycle else max(1.0, interval))

@@ -388,9 +388,13 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
       </div>
 
       {/* 股票列表 */}
-      <div ref={listRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
-        <Spin spinning={loading && !data} size="small">
-          {visibleItems.map((it, i) => {
+      <div ref={listRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-x-auto overflow-y-auto relative">
+        {loading && !data && (
+          <div className="absolute inset-x-0 top-20 flex justify-center">
+            <Spin size="small" />
+          </div>
+        )}
+        {visibleItems.map((it, i) => {
             const isSel = it.symbol === selected;
             const up = (it.pct_change ?? 0) >= 0;
             const rank = pageOffsetRef.current + i + 1;   // 跳页后显示真实名次
@@ -487,7 +491,6 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
           {!loading && visibleItems.length === 0 && (
             <div className="text-center py-8 text-[11px] text-slate-400">无匹配股票</div>
           )}
-        </Spin>
       </div>
     </div>
   );

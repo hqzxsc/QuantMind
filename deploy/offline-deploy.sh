@@ -2,7 +2,7 @@
 # QuantMind 离线镜像一键部署
 #
 # 默认 CDN 地址：
-#   https://cdn.quantmind.cloud/quantmind-offline/
+#   https://www.quantmindai.cn/downloads
 # 可用 QUANTMIND_OFFLINE_BASE_URL 覆盖默认地址。
 # 可选环境变量：
 #   QUANTMIND_MANIFEST_SHA256  SHA256SUMS 清单的 SHA-256（可选）
@@ -24,7 +24,7 @@ REPO_URL="${QUANTMIND_REPO_URL:-https://gitee.com/qusong0627/QuantMind.git}"
 REF="${QUANTMIND_REF:-master}"
 COMPOSE_OVERLAY="${QUANTMIND_COMPOSE_OVERLAY:-}"
 DEPLOY_OVERLAY_DIR="${QUANTMIND_DEPLOY_OVERLAY_DIR:-}"
-OFFLINE_BASE_URL="${QUANTMIND_OFFLINE_BASE_URL:-https://cdn.quantmind.cloud/quantmind-offline}"
+OFFLINE_BASE_URL="${QUANTMIND_OFFLINE_BASE_URL:-https://www.quantmindai.cn/downloads}"
 OFFLINE_BASE_URL="${OFFLINE_BASE_URL%/}"
 MANIFEST_SHA256="${QUANTMIND_MANIFEST_SHA256:-}"
 DOCKER_MIRROR="${QUANTMIND_DOCKER_MIRROR:-https://gpu34ekhgwm14ghgur.xuanyuan.run}"

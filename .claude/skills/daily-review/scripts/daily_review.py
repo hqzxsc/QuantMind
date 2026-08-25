@@ -159,7 +159,59 @@ def load_tech(db: duckdb.DuckDBPyConnection, data_dir: Path, dts: list[str]) -> 
         f" hive_partitioning=true) WHERE dt IN ({dt_in})",
     )
     df["dt"] = df["dt"].astype(str)
+    # 兜底：官方分区缺行时（供应商发布中断），用后复权序列补 pct_change/ma5/ma20。
+    # 后复权相邻收盘比 = 官方涨跌幅（含除权除息口径）。
+    need_days = load_trading_days(db, data_dir, 25, max(dts))
+    if len(need_days) > 1:
+        day_in = ",".join(f"'{d}'" for d in need_days)
+        closes = q(
+            db,
+            f"SELECT symbol, dt, close FROM read_parquet("
+            f"'{data_dir}/1_kline_data/daily_backward/dt=*/data.parquet',"
+            f" hive_partitioning=true) WHERE dt IN ({day_in})",
+        )
+        closes["dt"] = closes["dt"].astype(str)
+        fb = tech_fallback_from_backward(closes, sorted(need_days))
+        fb = fb[fb["dt"].isin(dts)]
+        if not fb.empty:
+            df = df.merge(fb, on=["symbol", "dt"], how="outer", suffixes=("", "_fb"))
+            for col in ("pct_change", "ma5", "ma20"):
+                df[col] = df[col].combine_first(df[f"{col}_fb"])
+            df = df[["symbol", "dt", "pct_change", "ma5", "ma20"]]
     return df
+
+
+def tech_fallback_from_backward(closes: pd.DataFrame, dts: list[str]) -> pd.DataFrame:
+    """用后复权收盘序列兜底 pct_change/ma5/ma20（官方 tech_ind 缺行时）。
+
+    closes: [symbol, dt, close]；dts: 升序交易日列表。
+    返回 [symbol, dt, pct_change, ma5, ma20]，覆盖 dts[1:]（首日无前收 → 剔除）。
+    停牌缺行按 ffill 处理（pct=0 且参与均线）；历史不足 5/20 日 ma 为 NaN。
+    """
+    closes = closes.drop_duplicates(["symbol", "dt"])
+    full = closes.pivot(index="symbol", columns="dt", values="close")
+    full = full.reindex(columns=dts)
+    full = full.ffill(axis=1)
+    pct = full.diff(axis=1) / full.shift(axis=1) * 100.0
+    ma5 = full.T.rolling(5, min_periods=5).mean().T
+    ma20 = full.T.rolling(20, min_periods=20).mean().T
+    rows: list[pd.DataFrame] = []
+    for d in dts:
+        if d not in pct.columns:
+            continue
+        rows.append(
+            pd.DataFrame(
+                {
+                    "symbol": full.index,
+                    "dt": d,
+                    "pct_change": pct[d].to_numpy(),
+                    "ma5": ma5[d].to_numpy(),
+                    "ma20": ma20[d].to_numpy(),
+                }
+            )
+        )
+    out = pd.concat(rows, ignore_index=True)
+    return out[out["pct_change"].notna()]
 
 
 def build_today(
@@ -354,15 +406,8 @@ def load_market_stats(
     limit_today = today[today["category"] == rs.CAT_LIMIT_UP]["symbol"].tolist()
     if limit_today:
         dts12 = load_trading_days(db, data_dir, 12, trade_date)
-        dt_in = ",".join(f"'{d}'" for d in dts12)
-        sym_in = ",".join(f"'{s}'" for s in limit_today)
-        tech12 = q(
-            db,
-            f"SELECT symbol, dt, pct_change FROM read_parquet("
-            f"'{data_dir}/5_technical_derived/technical_indicators/dt=*/data.parquet',"
-            f" hive_partitioning=true) WHERE dt IN ({dt_in}) AND symbol IN ({sym_in})",
-        )
-        tech12["dt"] = tech12["dt"].astype(str)
+        tech12 = load_tech(db, data_dir, dts12)
+        tech12 = tech12[tech12["symbol"].isin(limit_today)]
         trade_dt_obj = pd.Timestamp(trade_date)
         trade_dt_date = trade_dt_obj.date()
         st_map = today.set_index("symbol")["is_st"].to_dict()
@@ -1001,9 +1046,15 @@ def render_facts(stats: dict) -> str:
             L.append(f"### 昨日推理 → 今日验证（推理 {runx['data_trade_date']} → 信号 {runx['prediction_trade_date']}）\n")
             h = runx.get("hit_summary") or {}
             if h.get("n"):
+                excess = h.get("excess_pct")
+                if excess is None:
+                    excess_txt = "（无全市场对照；"
+                else:
+                    win = "跑赢" if excess > 0 else "跑输"
+                    excess_txt = f"（相对全市场超额 {excess:+.3f}%，{win}市场；"
                 L.append(
                     f"- 前 {h['n']} 信号今日平均涨幅 **{h['avg_pct']:+.3f}%**"
-                    f"（全市场 {h['excess_pct']:+.3f}% 超额，跑赢市场；命中率 {h['hit_rate']*100:.0f}%，"
+                    f"{excess_txt}命中率 {h['hit_rate']*100:.0f}%，"
                     f"上涨 {h['up']}/下跌 {h['down']}，涨停 {h['limit_up']} / 跌停 {h['limit_down']}）"
                 )
             L.append("\n| 排名 | 名称 | 代码 | 信号分 | 今日涨跌 | 状态 |")

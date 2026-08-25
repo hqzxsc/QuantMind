@@ -58,6 +58,8 @@ _universe_lock = threading.Lock()
 # 推理模型下拉选项缓存：model JOIN+GROUP BY 2.3s/次，按日频更新，TTL 与 universe 一致
 _model_options_cache: dict[str, Any] = {"v": None, "ts": 0.0}
 _concept_cache: dict[str, Any] = {"ts": 0.0, "symbol_map": {}}
+# 宽基指数归属缓存：全量 7 个权重文件构建 symbol→归属映射，按 TTL 刷新
+_index_membership_cache: dict[str, Any] = {"ts": 0.0, "map": {}}
 
 # 概念板块展示上限：单只股票概念过多时截断（板块成员表全市场概念归属）
 _MAX_CONCEPTS = 24
@@ -207,31 +209,37 @@ _INDEX_NAMES = {
 
 
 def _index_membership(symbol: str) -> list[dict[str, Any]]:
-    """查询个股归属的宽基指数（7 个指数权重文件逐一匹配）。"""
-    out: list[dict[str, Any]] = []
+    """查询个股归属的宽基指数（7 个指数权重文件逐一匹配）。
+
+    权重文件为全市场快照，读取成本固定（与 symbol 无关），按 symbol 缓存结果；
+    切换股票时命中缓存避免重复扫描 7 个 parquet。
+    """
+    now = time.time()
+    if now - _index_membership_cache["ts"] < _SERIES_TTL and _index_membership_cache["map"]:
+        return _index_membership_cache["map"].get(symbol, [])
+    out: dict[str, list[dict[str, Any]]] = {}
     d = _quantdb_dir()
     weights_dir = d / "2_base_sector" / "index_weights"
-    if not weights_dir.exists():
-        return out
-    for file in sorted(weights_dir.glob("*.parquet")):
-        code = file.stem
-        if code == "index_weights" or code not in _INDEX_NAMES:
-            continue
-        try:
-            w = pd.read_parquet(file)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("read index weights %s failed: %s", file.name, exc)
-            continue
-        sym_col = "Symbol" if "Symbol" in w.columns else "symbol"
-        row = w[w[sym_col] == symbol]
-        if not row.empty:
-            weight = _safe_f(row.iloc[0].get("Weight"))
-            out.append({
-                "index_code": code,
-                "index_name": _INDEX_NAMES[code],
-                "weight": weight,
-            })
-    return out
+    if weights_dir.exists():
+        for file in sorted(weights_dir.glob("*.parquet")):
+            code = file.stem
+            if code == "index_weights" or code not in _INDEX_NAMES:
+                continue
+            try:
+                w = pd.read_parquet(file)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("read index weights %s failed: %s", file.name, exc)
+                continue
+            sym_col = "Symbol" if "Symbol" in w.columns else "symbol"
+            for sym in w[sym_col].astype(str).dropna().unique():
+                weight = _safe_f(w.loc[w[sym_col].astype(str) == sym, "Weight"].iloc[0]) if "Weight" in w.columns else None
+                out.setdefault(sym, []).append({
+                    "index_code": code,
+                    "index_name": _INDEX_NAMES[code],
+                    "weight": weight,
+                })
+    _index_membership_cache.update({"ts": now, "map": out})
+    return out.get(symbol, [])
 
 
 def _concepts_of(symbol: str) -> list[str]:
@@ -335,12 +343,22 @@ def _l2_feature_date(signal_date: str | None) -> str | None:
     return None
 
 
-def _l2_features_for(symbol: str, feature_date: str) -> dict[str, Any] | None:
-    """读某股在特征日（YYYYMMDD）的 14 个推荐 L2 因子 + 当日全市场截面百分位。
+# L2 全市场因子表缓存：同一天切多只股票时避免重复读全市场 parquet（实测每次约 0.5~1s）
+_l2_frame_cache: dict[str, tuple[float, pd.DataFrame]] = {}
+_l2_frame_cache_lock = threading.Lock()
+_L2_FRAME_TTL = 300.0
 
-    返回 {feature_date, factors: [{name, value, pct_rank, category, icir}]}；
-    分区缺失/股票缺失时返回 None。百分位用当日全市场排名，0~1，越高越强。
-    """
+
+def _l2_frame_for(feature_date: str) -> pd.DataFrame | None:
+    """读某特征日的全市场 L2 因子表（按日期缓存）。"""
+    now = time.time()
+    with _l2_frame_cache_lock:
+        hit = _l2_frame_cache.get(feature_date)
+        if hit is not None:
+            if now - hit[0] > _L2_FRAME_TTL:
+                _l2_frame_cache.pop(feature_date, None)
+            else:
+                return hit[1]
     import duckdb
 
     d = _quantdb_dir() / "6_ml_datasets" / "l2_factors" / f"dt={feature_date}" / "data.parquet"
@@ -355,11 +373,25 @@ def _l2_features_for(symbol: str, feature_date: str) -> dict[str, Any] | None:
         ).fetchdf()
         con.close()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("read l2 factors %s %s failed: %s", symbol, feature_date, exc)
+        logger.warning("read l2 factors %s failed: %s", feature_date, exc)
         return None
     if df.empty or "symbol" not in df.columns:
         return None
     df = df.replace([float("inf"), float("-inf")], float("nan"))
+    with _l2_frame_cache_lock:
+        _l2_frame_cache[feature_date] = (time.time(), df)
+    return df
+
+
+def _l2_features_for(symbol: str, feature_date: str) -> dict[str, Any] | None:
+    """读某股在特征日（YYYYMMDD）的 14 个推荐 L2 因子 + 当日全市场截面百分位。
+
+    返回 {feature_date, factors: [{name, value, pct_rank, category, icir}]}；
+    分区缺失/股票缺失时返回 None。百分位用当日全市场排名，0~1，越高越强。
+    """
+    df = _l2_frame_for(feature_date)
+    if df is None:
+        return None
     row = df[df["symbol"] == symbol]
     factors = []
     for f in L2_RECOMMENDED_FACTORS:
@@ -460,6 +492,39 @@ _SERIES_GROUPS: dict[str, tuple[str, list[str]]] = {
         "vol_std_20", "vol_atr_14", "beta_20",
     ]),
 }
+
+# /series 进程级缓存：DuckDB 视图基于 read_parquet，每次查询冷扫全分区（technical 组实测
+# 2s/次）。切换股票时各 Tab 高频触发同一 (symbol, group) 查询，加 LRU 命中后毫秒级返回。
+# 数据日频更新，TTL 5 分钟足够；end_date 按日粒度归一，避免同一交易日多 key 击穿。
+_SERIES_TTL = 300.0
+_SERIES_CACHE_MAX = 256
+_series_cache: dict[str, tuple[float, pd.DataFrame]] = {}
+_series_cache_lock = threading.Lock()
+
+
+def _series_cache_key(symbol: str, group: str, years: int, end_date: str | None) -> str:
+    return f"{symbol}|{group}|{years}|{end_date or ''}"
+
+
+def _series_cache_get(key: str) -> pd.DataFrame | None:
+    now = time.time()
+    with _series_cache_lock:
+        hit = _series_cache.get(key)
+        if hit is None:
+            return None
+        if now - hit[0] > _SERIES_TTL:
+            _series_cache.pop(key, None)
+            return None
+        return hit[1]
+
+
+def _series_cache_set(key: str, df: pd.DataFrame) -> None:
+    with _series_cache_lock:
+        _series_cache[key] = (time.time(), df)
+        # LRU 淘汰：超出上限时移除最早写入的条目
+        if len(_series_cache) > _SERIES_CACHE_MAX:
+            oldest = min(_series_cache.items(), key=lambda kv: kv[1][0])[0]
+            _series_cache.pop(oldest, None)
 
 
 def _read_symbol_parquet(ds: str, symbol: str) -> pd.DataFrame:
@@ -1115,26 +1180,32 @@ async def stock_series(
     # dt 为整数 YYYYMMDD
     start_dt = (_date.today() - _timedelta(days=years * 366)).strftime("%Y%m%d")
     end_dt = end_date.replace("-", "") if end_date else ""
-    col_list = ", ".join(cols)
-    sql = (
-        f"SELECT dt, {col_list} FROM {view} "
-        f"WHERE symbol = '{sym}' AND dt >= {start_dt}"
-        + (f" AND dt <= {end_dt}" if end_dt else "")
-        + " ORDER BY dt"
-    )
+    cache_key = _series_cache_key(sym, group, years, end_dt)
+    cached_df = _series_cache_get(cache_key)
+    if cached_df is not None:
+        df = cached_df
+    else:
+        col_list = ", ".join(cols)
+        sql = (
+            f"SELECT dt, {col_list} FROM {view} "
+            f"WHERE symbol = '{sym}' AND dt >= {start_dt}"
+            + (f" AND dt <= {end_dt}" if end_dt else "")
+            + " ORDER BY dt"
+        )
 
-    def _run() -> pd.DataFrame:
-        from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
+        def _run() -> pd.DataFrame:
+            from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
 
-        try:
-            return QuantDBDataHub.get_instance().query(sql)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("series query %s %s failed: %s", group, sym, exc)
-            return pd.DataFrame()
+            try:
+                return QuantDBDataHub.get_instance().query(sql)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("series query %s %s failed: %s", group, sym, exc)
+                return pd.DataFrame()
 
-    import asyncio
+        import asyncio
 
-    df = await asyncio.to_thread(_run)
+        df = await asyncio.to_thread(_run)
+        _series_cache_set(cache_key, df)
     if df.empty:
         return {"success": True, "data": {"dates": [], "columns": {}}}
     dates = [str(v)[:10] for v in df["dt"]]
@@ -1892,37 +1963,49 @@ async def stock_profile(
         return v
 
     # 估值快照（pe_ttm/pb/ps/dividend_rate/float_mv 口径与列表的 DynaPE 互补）；
-    # 指定 date 时读该日或之前最近分区，随日历联动
-    valuation: dict[str, Any] = {}
-    dividend_yield: float | None = None
-    d = _quantdb_dir()
-    v_file = _partition_on(d / "5_technical_derived" / "valuation", date) if date else _latest_partition(d / "5_technical_derived" / "valuation")
-    if v_file is not None:
-        try:
-            vdf = pd.read_parquet(v_file)
-            sym_col = "symbol" if "symbol" in vdf.columns else "Symbol"
-            vrow = vdf[vdf[sym_col] == sym]
-            if not vrow.empty:
-                vr = vrow.iloc[0]
-                for col in ("pe_ttm", "pe_static", "pb", "ps_ttm",
-                            "dividend_rate", "total_mv", "float_mv", "net_profit_ttm",
-                            "revenue_ttm", "equity"):
-                    valuation[col] = _safe_f(vr.get(col))
-                dividend_yield = _norm_dividend(vr.get("dividend_rate"))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("read valuation for %s failed: %s", sym, exc)
-
-    _idx = _index_membership(sym)
-    _concepts = _concepts_of(sym)
+    # 指定 date 时读该日或之前最近分区，随日历联动。
+    # 与宽基归属/概念/L2 并行读取（各自独立 parquet，避免串行累积耗时）
+    def _read_valuation() -> tuple[dict[str, Any], float | None]:
+        valuation: dict[str, Any] = {}
+        dividend_yield: float | None = None
+        d = _quantdb_dir()
+        v_file = _partition_on(d / "5_technical_derived" / "valuation", date) if date else _latest_partition(d / "5_technical_derived" / "valuation")
+        if v_file is not None:
+            try:
+                vdf = pd.read_parquet(v_file)
+                sym_col = "symbol" if "symbol" in vdf.columns else "Symbol"
+                vrow = vdf[vdf[sym_col] == sym]
+                if not vrow.empty:
+                    vr = vrow.iloc[0]
+                    for col in ("pe_ttm", "pe_static", "pb", "ps_ttm",
+                                "dividend_rate", "total_mv", "float_mv", "net_profit_ttm",
+                                "revenue_ttm", "equity"):
+                        valuation[col] = _safe_f(vr.get(col))
+                    dividend_yield = _norm_dividend(vr.get("dividend_rate"))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("read valuation for %s failed: %s", sym, exc)
+        return valuation, dividend_yield
 
     # L2 微观结构因子：预测日（信号日）前一个交易日的 14 个推荐因子
-    # date 参数=日历点选的预测日；缺省取该股最近的推理信号日
-    l2_features: dict[str, Any] | None = None
-    signal_date = date or await _latest_signal_date_for(sym)
-    if signal_date:
-        feat_date = _l2_feature_date(signal_date)
+    # date 参数=日历点选的预测日；缺省取该股最近的推理信号日。
+    # signal_date 查询与其余 parquet 读取并行，避免串行等待 PG。
+    async def _resolve_l2() -> tuple[dict[str, Any] | None, str | None]:
+        sig = date or await _latest_signal_date_for(sym)
+        if not sig:
+            return None, None
+        feat_date = _l2_feature_date(sig)
         if feat_date:
-            l2_features = _l2_features_for(sym, feat_date)
+            return await asyncio.to_thread(_l2_features_for, sym, feat_date), sig
+        return None, sig
+
+    (valuation, dividend_yield), _idx, _concepts, _l2_res = await asyncio.gather(
+        asyncio.to_thread(_read_valuation),
+        asyncio.to_thread(_index_membership, sym),
+        asyncio.to_thread(_concepts_of, sym),
+        _resolve_l2(),
+    )
+
+    l2_features, signal_date = _l2_res if _l2_res is not None else (None, None)
 
     profile = {
         "symbol": sym,

@@ -546,30 +546,39 @@ def get_money_flow_sankey() -> dict[str, Any] | None:
         {"name": "中单 (Medium)"},
         {"name": "小单 (Small)"},
     ]
-    links: list[dict[str, Any]] = []
+    # 固定三层有向无环结构：订单类型 -> 主力/散户资金 -> 行业。
+    # 方向恒为自上而下且取绝对值，避免不同行业方向相反时在
+    # 主力/散户节点形成环（ECharts sankey 要求 DAG，否则抛异常）。
+    # 同一 (source, target) 只保留一条边（跨行业累加），避免金额重复展示。
+    links: dict[tuple[str, str], float] = {}
 
     def yi(v: float) -> float:
-        return round(abs(v) / 1e8, 2)
+        return abs(v) / 1e8
 
     for name, super_net, large_net, medium_net, small_net in top:
         nodes.append({"name": name})
-        main_dir = super_net + large_net
-        retail_dir = medium_net + small_net
-        if main_dir >= 0:
-            links.append({"source": "主力资金 (Net Buy)", "target": "超大单 (Super Large)", "value": yi(super_net)})
-            links.append({"source": "主力资金 (Net Buy)", "target": "大单 (Large)", "value": yi(large_net)})
-        else:
-            links.append({"source": "超大单 (Super Large)", "target": "主力资金 (Net Buy)", "value": yi(super_net)})
-            links.append({"source": "大单 (Large)", "target": "主力资金 (Net Buy)", "value": yi(large_net)})
-        links.append({"source": "超大单 (Super Large)", "target": name, "value": yi(super_net)})
-        links.append({"source": "大单 (Large)", "target": name, "value": yi(large_net)})
-        if retail_dir >= 0:
-            links.append({"source": "散户资金 (Retail)", "target": "中单 (Medium)", "value": yi(medium_net)})
-            links.append({"source": "散户资金 (Retail)", "target": "小单 (Small)", "value": yi(small_net)})
-            links.append({"source": "中单 (Medium)", "target": name, "value": yi(medium_net)})
-            links.append({"source": "小单 (Small)", "target": name, "value": yi(small_net)})
+        links[("超大单 (Super Large)", "主力资金 (Net Buy)")] = (
+            links.get(("超大单 (Super Large)", "主力资金 (Net Buy)"), 0.0) + yi(super_net)
+        )
+        links[("大单 (Large)", "主力资金 (Net Buy)")] = (
+            links.get(("大单 (Large)", "主力资金 (Net Buy)"), 0.0) + yi(large_net)
+        )
+        links[("中单 (Medium)", "散户资金 (Retail)")] = (
+            links.get(("中单 (Medium)", "散户资金 (Retail)"), 0.0) + yi(medium_net)
+        )
+        links[("小单 (Small)", "散户资金 (Retail)")] = (
+            links.get(("小单 (Small)", "散户资金 (Retail)"), 0.0) + yi(small_net)
+        )
+        links[("主力资金 (Net Buy)", name)] = yi(super_net + large_net)
+        links[("散户资金 (Retail)", name)] = yi(medium_net + small_net)
 
-    return {"nodes": nodes, "links": links}
+    return {
+        "nodes": nodes,
+        "links": [
+            {"source": src, "target": dst, "value": round(v, 2)}
+            for (src, dst), v in links.items()
+        ],
+    }
 
 
 def get_market_breadth() -> dict[str, Any]:

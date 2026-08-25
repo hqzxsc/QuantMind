@@ -29,25 +29,20 @@ const QuantBotPage: React.FC = () => {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const embedUrl = useMemo(() => {
+    // Web 环境：页面由服务器（Nginx 等）托管，QwenPaw 一律走当前域名的
+    // /api/v1/qwenpaw-ui/ 反向代理，避免按 hostname 拼 8088 端口导致拒绝连接。
+    if (!isElectronEnv()) {
+      return QWENPAW_UI_PATH;
+    }
+
     // Electron 的页面宿主通常是 localhost，但 QwenPaw 部署在用户配置的
     // 远端服务器。因此桌面端不能根据 window.location.hostname 回退到
     // 127.0.0.1:8088；必须优先使用已配置的 API 网关代理。
     const gateway = SERVICE_URLS.API_GATEWAY;
-    if (isElectronEnv() && gateway) {
+    if (gateway) {
       return `${gateway}${QWENPAW_UI_PATH}`;
     }
 
-    if (typeof window !== 'undefined') {
-      const hostname = window.location.hostname || '127.0.0.1';
-      if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        return QWENPAW_LOCAL_FALLBACK_URL;
-      }
-      // 远程/局域网场景：若有自定义网关且非本地则走代理，否则走对应宿主机的 8088 端口
-      if (gateway && !gateway.includes('localhost') && !gateway.includes('127.0.0.1')) {
-        return `${gateway}${QWENPAW_UI_PATH}`;
-      }
-      return `http://${hostname}:8088/`;
-    }
     return QWENPAW_LOCAL_FALLBACK_URL;
   }, []);
 

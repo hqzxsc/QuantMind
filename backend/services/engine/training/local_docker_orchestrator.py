@@ -40,7 +40,7 @@ _TRAINING_IMAGE = (os.getenv("TRAINING_IMAGE") or "quantmind-trainer:latest").st
 # 训练容器启动前补齐的依赖（空格分隔的包名）。训练镜像可能落后于仓库依赖
 # （如 QuantDB 因子目录读取所需的 duckdb），缺失会在 load_data 时 ImportError 秒挂。
 # 已存在的包会被探测跳过，无额外开销；镜像重建后该项自然退化为空操作。
-_TRAINING_BOOTSTRAP_PIP = (os.getenv("TRAINING_BOOTSTRAP_PIP") or "duckdb").strip()
+_TRAINING_BOOTSTRAP_PIP = (os.getenv("TRAINING_BOOTSTRAP_PIP") or "duckdb qlib").strip()
 
 
 def _host_mem_limit_gb() -> str | None:

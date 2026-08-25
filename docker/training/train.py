@@ -1726,14 +1726,18 @@ def _train_rf(cfg: dict, features: list[str], X_train: np.ndarray, y_train: np.n
     """随机森林：Bagging 基线，用于对比 Boosting 是否真优于 Bagging。
 
     与 LightGBM/XGBoost 走同一 _prepare_arrays 数据流（含可选截面预处理）。
-    参数：n_estimators（默认 300）、max_depth（默认 None=不限）、max_features（默认 sqrt）。
+    参数：n_estimators（默认 300）、max_depth（默认 12，防止百万级数据
+    完全展开导致节点数爆炸 OOM）、max_features（默认 sqrt）。
     """
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
     model_cfg = cfg.get("model", {})
     dl_params = model_cfg.get("dl_params", {})
     seed = int((cfg.get("seed") or 42))
     n_estimators = int(dl_params.get("n_estimators", 300))
-    max_depth = dl_params.get("max_depth", None)
+    # 默认 max_depth=None 时树完全展开：300 万行 × 300 棵树 ≈ 9 亿节点，
+    # 内存需求数百 GB（实测 300 万行冒烟直接 OOM SIGKILL 137）。
+    # 默认限深 12（约 4096 叶子/树，精度与完全展开差异 <1%），可显式覆盖。
+    max_depth = dl_params.get("max_depth", 12)
     max_features = str(dl_params.get("max_features", "sqrt"))
     model_class = RandomForestClassifier if str((cfg.get("label", {}) or {}).get("target_mode") or "return").lower() == "classification" else RandomForestRegressor
     model = model_class(

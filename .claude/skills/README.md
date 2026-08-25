@@ -48,6 +48,7 @@ cat /tmp/qm-skills/.claude/skills/quantmind-deploy/SKILL.md >> AGENTS.md
 | [rd-agent-factor-mining](#rd-agent-factor-mining) | 挖因子、因子挖掘、因子演化、RD-Agent | 自动调用 RD-Agent 进行因子挖掘（多市场） |
 | [quantdb-sdk](#quantdb-sdk) | quantdb、数据key、数据集、查询K线 | QuantDB 数据 SDK：API Key、数据集目录、字段查询 |
 | [simulation-trading](#simulation-trading) | 模拟交易、模拟下单、查持仓、查账户 | 模拟交易：下单买卖、持仓管理、成交查询、模拟盘启动 |
+| [tdx-live-trading](#tdx-live-trading) | 实时推理、自动买卖、实盘下单、挂单、撤单、交易记录、持仓、实时监控、链路状态、TDX、通达信 | 实盘链路操作+全链路实时监控：桥健康、L2 实时推理循环、滚动买卖策略、今日委托/手续费、实盘持仓 |
 | [trading-agents](#trading-agents) | 投研分析、研究报告、多Agent分析、TradingAgents | 多 Agent 投研分析：7 分析师、辩论、风险评估、报告生成 |
 | [quantmind-deploy](#quantmind-deploy) | 部署、一键部署、部署失败、装不上 | QuantMind 部署运维：一键/快速/手动部署、数据库初始化、问题排查 |
 | [news-sentiment-research](#news-sentiment-research) | 新闻情绪、新闻规律、情绪分析、消息面、新闻回测、情绪策略 | 新闻情绪研究方法论：七维深度分析 → 融合规律优化回测 → 研报 MD+PDF |
@@ -160,6 +161,10 @@ curl -X POST $BASE/api/v1/models/run-training \
 ### simulation-trading
 
 **模拟交易 + 实盘/模拟盘切换**。下单买卖、持仓管理、成交查询、账户状态、资金快照、模拟盘启动（real-trading）、组合管理（portfolios）。前端 HeaderBar 右上角 REAL/SIM 拨动开关切换实盘/模拟盘（localStorage 持久化，默认模拟盘）。
+
+### tdx-live-trading
+
+**TDX 实盘链路 + 模拟/实盘全链路实时监控**。覆盖：L2 实时推理循环（`tdx:l2:config`）、滚动买卖策略选择（execute_mode/阈值/上证MA20 只卖不买）、桥下单/挂单/卖出/撤单（代码后缀格式、T+1、盘后废单规则）、交易记录（30s UPSERT 同步 + 手续费估算）、实盘持仓（volume=0 过滤）、桥健康监控。一键状态快照：`docker exec -i -w /app quantmind python - < .claude/skills/tdx-live-trading/scripts/tdx_live_status.py`，AI 按异常判定表巡检。桥源码在 `bridge/windows/`。
 
 ### trading-agents
 

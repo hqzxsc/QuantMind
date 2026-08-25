@@ -515,27 +515,6 @@ services:
     networks:
       - quantmind-net
 
-  # 5. Web 前端 (浏览器访问，无需安装 Electron)
-  web:
-    image: quantmind-web:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.web
-    container_name: quantmind-web
-    depends_on:
-      quantmind:
-        condition: service_healthy
-    ports:
-      - "${WEB_PORT:-3000}:80"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health >/dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped
-    networks:
-      - quantmind-net
-
   # 5a. Data Gateway (多数据源金融数据网关: akshare/eastmoney)
   data-gateway:
     image: quantmind-data-gateway:latest

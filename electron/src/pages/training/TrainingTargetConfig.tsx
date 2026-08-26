@@ -465,11 +465,9 @@ export const TrainingTargetConfig: React.FC<TrainingTargetConfigProps> = ({
             </div>
           </div>
         </div>
-      </Card>
-
       {/* ── WFA 稳定性诊断配置 ── */}
       {onWfaChange && (
-        <Card className="rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
+        <Card className="mt-4 rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
@@ -564,6 +562,7 @@ export const TrainingTargetConfig: React.FC<TrainingTargetConfigProps> = ({
           )}
         </Card>
       )}
+      </Card>
     </div>
   );
 };

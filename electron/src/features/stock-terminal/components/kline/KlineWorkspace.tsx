@@ -31,6 +31,9 @@ const INDEX_OPTIONS = [
 
 const SUBPLOT_META: Record<SubplotType, string> = { vol: 'VOL', macd: 'MACD', kdj: 'KDJ', rsi: 'RSI' };
 
+/** 多模型分数线配色（与 KlineChart 分数轴同族） */
+const SCORE_PALETTE = ['#6366f1', '#f59e0b', '#10b981', '#e11d48', '#0ea5e9', '#0ea5e9', '#a855f7', '#f97316'];
+
 interface Props {
   stock: StockListItem;
   profile?: StockProfile | null;
@@ -59,6 +62,8 @@ export function KlineWorkspace({ stock, profile, height = 460, onSelectStock }: 
   // 推理分数历史（多模型叠加）
   const [scoreModels, setScoreModels] = useState<{ model_id: string; display_name?: string }[]>([]);
   const [scoreSeries, setScoreSeries] = useState<ScoreSeries[]>([]);
+  // 全量模型分数（按模型分组的原始数据）：选中模型不在 top3 时也从这里构造分数序列
+  const [scoreByModel, setScoreByModel] = useState<Map<string, { date: string; fusion: number | null; side: string | null }[]>>(new Map());
   const [scoreLoading, setScoreLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('all');
   // 模拟交易
@@ -220,24 +225,28 @@ export function KlineWorkspace({ stock, profile, height = 460, onSelectStock }: 
           if (!byModel.has(m)) byModel.set(m, []);
           byModel.get(m)!.push({ date: it.trade_date.slice(0, 10), fusion: it.fusion_score, side: it.signal_side });
         }
-        const palette = ['#6366f1', '#f59e0b', '#10b981', '#e11d48', '#0ea5e9', '#0ea5e9', '#a855f7', '#f97316'];
+        // 全量保存：选中模型不在 top3 时也能从全量构造分数序列
+        setScoreByModel(byModel);
         // 全部模型：只保留最近活跃的 3 个模型（点数多的优先），避免 43 条线杂乱
         const sorted = [...byModel.entries()]
           .map(([m, pts]) => ({ m, pts: pts.sort((a, b) => a.date.localeCompare(b.date)) }))
           .sort((a, b) => b.pts.length - a.pts.length);
-        // 默认模型（后端 models 按 is_default 置顶）必须有线：不在 top3 时挤入，避免默认选中后分数线为空
-        const defaultModel = (resp?.models ?? [])[0]?.model_id;
+        // 默认模型：is_default 标记优先（后端 models 已按 is_default 置顶，双保险再显式找一遍）
+        const models = resp?.models ?? [];
+        const defModel = (models.find((m: any) => m.is_default) ?? models[0])?.model_id;
+        // 默认模型必须有线：不在 top3 时挤入，避免默认选中后分数线为空
         let top = sorted.slice(0, 3);
-        if (defaultModel && !top.some(t => t.m === defaultModel)) {
-          const def = sorted.find(t => t.m === defaultModel);
+        if (defModel && !top.some(t => t.m === defModel)) {
+          const def = sorted.find(t => t.m === defModel);
           if (def) top = [def, ...top.slice(0, 2)];
         }
         const out: ScoreSeries[] = top.map(({ m, pts }, i) => ({
-          model: m, color: palette[i % palette.length], points: pts,
+          model: m, color: SCORE_PALETTE[i % SCORE_PALETTE.length], points: pts,
         }));
         setScoreSeries(out);
-        // 默认选中默认模型（不是全部模型），分数轴按当前模型分数紧密贴合
-        if (defaultModel && selectedModel === 'all') setSelectedModel(defaultModel);
+        // 默认选中默认模型（不是全部模型）：分数轴按当前模型分数贴合，
+        // 而不是「全部模型」混合 3.x 与 0.001 量级被撑大
+        if (defModel && selectedModel === 'all') setSelectedModel(defModel);
       });
     }).catch(() => { if (!cancelled) setScoreSeries([]); }).finally(() => { if (!cancelled) setScoreLoading(false); });
     return () => { cancelled = true; };
@@ -277,10 +286,18 @@ export function KlineWorkspace({ stock, profile, height = 460, onSelectStock }: 
   };
 
   // 模型切换：重建分数序列（all=全部模型，否则单模型）
+  // 选中模型不在 top3（活跃序列）时从全量 scoreByModel 构造，保证右侧必有分数线
   const activeScoreSeries = useMemo(() => {
     if (selectedModel === 'all') return scoreSeries;
+    if (!scoreSeries.some(s => s.model === selectedModel)) {
+      const pts = scoreByModel.get(selectedModel);
+      if (pts?.length) {
+        const idx = scoreModels.findIndex(m => m.model_id === selectedModel);
+        return [{ model: selectedModel, color: SCORE_PALETTE[idx % SCORE_PALETTE.length], points: pts }];
+      }
+    }
     return scoreSeries.filter(s => s.model === selectedModel);
-  }, [scoreSeries, selectedModel]);
+  }, [scoreSeries, selectedModel, scoreByModel, scoreModels]);
 
   // 市值分档（与后端 model_training 同阈值：亿）
   const capTier = useMemo(() => {

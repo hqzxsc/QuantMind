@@ -299,6 +299,30 @@ export function KlineWorkspace({ stock, profile, height = 460, onSelectStock }: 
     return scoreSeries.filter(s => s.model === selectedModel);
   }, [scoreSeries, selectedModel, scoreByModel, scoreModels]);
 
+  // 选中模型在全量数据中缺失时（history 接口 DISTINCT ON 每天只留最新批次，部分模型被
+  // 其它模型批次完全挤掉，但下拉来自全量表）按 model_id 单独请求该模型完整历史
+  useEffect(() => {
+    if (selectedModel === 'all' || scoreByModel.has(selectedModel)) return;
+    let cancelled = false;
+    import('../../../../services/modelTrainingService').then(({ modelTrainingService }) => {
+      const code = stock.symbol.split('.')[0];
+      return modelTrainingService.getStockInferenceHistory(code, 500, selectedModel).then(resp => {
+        if (cancelled) return;
+        const pts = (resp?.items ?? [])
+          .filter(it => it.signal_model_id === selectedModel)
+          .map(it => ({ date: it.trade_date.slice(0, 10), fusion: it.fusion_score, side: it.signal_side }))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        if (!pts.length) return;
+        if (scoreByModel.has(selectedModel)) return;
+        const next = new Map(scoreByModel);
+        next.set(selectedModel, pts);
+        setScoreByModel(next);
+      });
+    }).catch(() => { /* 单模型数据缺失时保持无分数,不影响其它功能 */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedModel, stock.symbol, scoreByModel]);
+
   // 市值分档（与后端 model_training 同阈值：亿）
   const capTier = useMemo(() => {
     const mv = profile?.total_mv ?? stock.total_mv;

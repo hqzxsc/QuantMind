@@ -347,8 +347,11 @@ def preset_matched(symbol: str) -> list[dict[str, Any]]:
     return out
 
 
-def _latest_signal_scores() -> dict[str, dict]:
-    """最近有分数交易日 全市场 fusion/side（纯数字 symbol -> {fusion, side, date}）。
+def _latest_signal_scores() -> tuple[dict[str, dict], float, float]:
+    """默认模型最近交易日 全市场 fusion/side（纯数字 symbol -> {fusion, side, date}）。
+
+    返回 (scores, min, max)：min/max 为该模型当日全市场分数极值，供前端
+    按当前模型动态归一化显示（固定 ×100 对分数量级不同的模型失真）。
     同步 psycopg2 直连（本函数在 to_thread 中调用，不可用 async 会话）。
     结果缓存 _TTL：并发 tag 请求共用一次查询，避免连接风暴。
     """
@@ -372,38 +375,50 @@ def _latest_signal_scores() -> dict[str, dict]:
             f"postgresql://{os.getenv('DB_USER')}:{urllib.parse.quote_plus(os.getenv('DB_PASSWORD',''))}"
             f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
         )
+    model_join = (
+        "JOIN qm_model_inference_runs r ON r.run_id = e.run_id "
+        "JOIN qm_user_models u ON u.model_id = r.model_id AND u.is_default = TRUE"
+    )
     conn = psycopg2.connect(db_url, connect_timeout=5)
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT trade_date FROM engine_signal_scores "
-                "WHERE tenant_id='default' GROUP BY trade_date "
-                "ORDER BY trade_date DESC LIMIT 1"
+                f"SELECT MAX(e.trade_date) FROM engine_signal_scores e {model_join} "
+                "WHERE e.tenant_id='default'"
             )
             d0 = cur.fetchone()
-            if d0 is None:
-                return {}
+            if d0 is None or d0[0] is None:
+                return {}, 0.0, 0.0
             d0 = d0[0]
             cur.execute(
-                "SELECT symbol, fusion_score, signal_side FROM engine_signal_scores "
-                "WHERE tenant_id='default' AND trade_date=%s",
+                f"SELECT e.symbol, e.fusion_score, e.signal_side "
+                f"FROM engine_signal_scores e {model_join} "
+                "WHERE e.tenant_id='default' AND e.trade_date=%s",
                 (d0,),
             )
             rows = cur.fetchall()
     finally:
         conn.close()
     out: dict[str, dict] = {}
+    vals: list[float] = []
     for r in rows:
-        out[str(r[0])] = {"fusion": float(r[1]) if r[1] is not None else None,
-                          "side": str(r[2] or "HOLD"), "date": str(d0)[:10]}
-    _scores_cache["v"] = out
+        fv = float(r[1]) if r[1] is not None else None
+        out[str(r[0])] = {"fusion": fv, "side": str(r[2] or "HOLD"), "date": str(d0)[:10]}
+        if fv is not None:
+            vals.append(fv)
+    lo = min(vals) if vals else 0.0
+    hi = max(vals) if vals else 0.0
+    result = (out, lo, hi)
+    _scores_cache["v"] = result
     _scores_cache["ts"] = time.time()
-    return out
+    return result
 
 
-def stocks_for_tag(tag_id: str, limit: int = 50) -> list[dict[str, Any]]:
-    """标签同类股票（全市场匹配后按 sort_key 排序，叠加最近推理分数）。
+def stocks_for_tag(tag_id: str, limit: int = 50) -> dict[str, Any]:
+    """标签同类股票（全市场匹配后按 sort_key 排序，叠加默认模型推理分数）。
 
+    返回 {"items": [...], "score_min": lo, "score_max": hi}：min/max 为
+    默认模型当日全市场分数极值，前端按当前模型动态归一化显示分数。
     结果按 (tag_id, limit) 缓存 _TTL 秒——df.apply 逐行匹配开销大且列表接口
     每次筛选都调用，不缓存会让连续筛选重复全市场扫描。锁内双重检查：
     并发请求同时过期时只执行一次 apply，其余等待后直接取缓存。
@@ -424,14 +439,14 @@ def stocks_for_tag(tag_id: str, limit: int = 50) -> list[dict[str, Any]]:
             raise ValueError(f"未知标签 {tag_id}")
         df = _get_metrics()
         if df.empty:
-            return []
+            return {"items": [], "score_min": None, "score_max": None}
         mask = df.apply(lambda r: tag.match(r)[0], axis=1)
         hit = df[mask].copy()
         if tag.category not in _EXCLUDE_ST_CATEGORIES and "_st" in hit.columns:
             hit = hit[~hit["_st"].fillna(False)]
         if tag.sort_key and tag.sort_key in hit.columns:
             hit = hit.sort_values(tag.sort_key, ascending=tag.sort_asc)
-        scores = _latest_signal_scores()
+        scores, lo, hi = _latest_signal_scores()
         out: list[dict[str, Any]] = []
         for _, r in hit.head(limit).iterrows():
             _, v = tag.match(r)
@@ -450,5 +465,6 @@ def stocks_for_tag(tag_id: str, limit: int = 50) -> list[dict[str, Any]]:
                 "side": sc.get("side"),
                 "signal_date": sc.get("date"),
             })
-        _tag_stocks_cache[(tag_id, limit)] = (time.time(), out)
-        return out
+        result: dict[str, Any] = {"items": out, "score_min": lo, "score_max": hi}
+        _tag_stocks_cache[(tag_id, limit)] = (time.time(), result)
+        return result

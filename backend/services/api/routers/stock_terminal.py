@@ -624,19 +624,19 @@ async def tag_stocks(
 
     import asyncio
 
-    def _run() -> list[dict]:
+    def _run() -> dict:
         from backend.services.engine.data_platform import tag_rules
 
         return tag_rules.stocks_for_tag(tag_id, limit=limit)
 
     try:
-        items = await asyncio.to_thread(_run)
+        result = await asyncio.to_thread(_run)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         logger.warning("tag stocks %s failed: %s", tag_id, exc)
-        items = []
-    return {"success": True, "data": {"items": items}}
+        result = {"items": [], "score_min": None, "score_max": None}
+    return {"success": True, "data": result}
 
 
 @router.get("/presets")

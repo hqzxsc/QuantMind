@@ -222,12 +222,14 @@ class StockTerminalService {
     }
   }
 
-  async getTagStocks(tagId: string, limit = 30): Promise<any[]> {
+  /** 标签同类股票：返回 {items, score_min, score_max}（当前模型全市场分数极值，供动态归一化显示） */
+  async getTagStocks(tagId: string, limit = 30): Promise<{ items: any[]; score_min: number | null; score_max: number | null }> {
     try {
       const resp = await this.client.get(`/stock-terminal/tags/${tagId}/stocks`, { params: { limit }, timeout: 30000 });
-      return resp.data?.data?.items ?? [];
+      const data = resp.data?.data ?? {};
+      return { items: data.items ?? [], score_min: data.score_min ?? null, score_max: data.score_max ?? null };
     } catch {
-      return [];
+      return { items: [], score_min: null, score_max: null };
     }
   }
 

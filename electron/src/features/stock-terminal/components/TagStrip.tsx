@@ -41,7 +41,21 @@ export function TagStrip({ symbol, onSelectStock, vertical = false, onSelectTag,
   const [presets, setPresets] = useState<MatchedPreset[]>([]);
   const [openTag, setOpenTag] = useState<{ id: string; name: string } | null>(null);
   const [similar, setSimilar] = useState<any[]>([]);
+  const [scoreMin, setScoreMin] = useState<number | null>(null);
+  const [scoreMax, setScoreMax] = useState<number | null>(null);
   const [similarLoading, setSimilarLoading] = useState(false);
+
+  // 分数显示：按当前模型全市场 min/max 动态归一化到 0-100（旧逻辑固定 ×100，
+  // 不同模型分数量级差异大时失真——新模型 0.001 分 ×100 后无法区分优劣）
+  const renderScore = (v: number | null) => {
+    if (v == null) return '--';
+    const lo = scoreMin, hi = scoreMax;
+    if (lo == null || hi == null || hi <= lo) {
+      return (Number(v) * 100).toFixed(2); // 接口未带极值时降级旧显示
+    }
+    const norm = ((Number(v) - lo) / (hi - lo)) * 100;
+    return `${norm >= 0 ? '+' : ''}${norm.toFixed(1)}`;
+  };
 
   useEffect(() => {
     if (!symbol) { setTags([]); setPresets([]); return; }
@@ -56,9 +70,13 @@ export function TagStrip({ symbol, onSelectStock, vertical = false, onSelectTag,
     setOpenTag({ id, name });
     setSimilarLoading(true);
     setSimilar([]);
+    setScoreMin(null);
+    setScoreMax(null);
     try {
-      const items = await stockTerminalService.getTagStocks(id, 30);
-      setSimilar(items);
+      const data = await stockTerminalService.getTagStocks(id, 30);
+      setSimilar(data.items);
+      setScoreMin(data.score_min);
+      setScoreMax(data.score_max);
     } catch {
       message.error('同类股票加载失败');
     } finally {
@@ -138,7 +156,7 @@ export function TagStrip({ symbol, onSelectStock, vertical = false, onSelectTag,
               { title: '代码', dataIndex: 'symbol', width: 100, render: v => <span className="font-mono text-slate-500">{v}</span> },
               { title: '行业', dataIndex: 'industry', width: 90, render: v => v || '--' },
               { title: '价格', dataIndex: 'close', width: 70, align: 'right', render: v => v?.toFixed?.(2) ?? '--' },
-              { title: '分数', dataIndex: 'fusion', width: 70, align: 'right', render: (v) => v == null ? '--' : <span className="text-blue-600 font-bold font-mono">{(Number(v) * 100).toFixed(2)}</span> },
+              { title: '分数', dataIndex: 'fusion', width: 70, align: 'right', render: (v) => v == null ? '--' : <span className="text-blue-600 font-bold font-mono">{renderScore(v)}</span> },
               { title: '标签值', dataIndex: 'metric', align: 'right', render: (v) => v == null ? '--' : Number(v).toFixed(2) },
             ]}
           />
@@ -211,7 +229,7 @@ export function TagStrip({ symbol, onSelectStock, vertical = false, onSelectTag,
               { title: '代码', dataIndex: 'symbol', width: 100, render: v => <span className="font-mono text-slate-500">{v}</span> },
               { title: '行业', dataIndex: 'industry', width: 90, render: v => v || '--' },
               { title: '价格', dataIndex: 'close', width: 70, align: 'right', render: v => v?.toFixed?.(2) ?? '--' },
-              { title: '分数', dataIndex: 'fusion', width: 70, align: 'right', render: (v) => v == null ? '--' : <span className="text-blue-600 font-bold font-mono">{(Number(v) * 100).toFixed(2)}</span> },
+              { title: '分数', dataIndex: 'fusion', width: 70, align: 'right', render: (v) => v == null ? '--' : <span className="text-blue-600 font-bold font-mono">{renderScore(v)}</span> },
               { title: '标签值', dataIndex: 'metric', align: 'right', render: (v) => v == null ? '--' : Number(v).toFixed(2) },
             ]}
           />

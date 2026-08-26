@@ -239,6 +239,24 @@ export interface TrainingResult {
     metric: string;
     market?: string;
     generated_at: string;
+    // 因子筛选报告（train.py select_top_factors 产出）：漏斗 + 每特征 IC/ICIR/覆盖/原因
+    factor_selection?: {
+      method?: string;
+      thresholds?: Record<string, number>;
+      stage_counts?: Record<string, number>;
+      train_rows?: number;
+      features?: Array<{
+        name: string;
+        ic: number | null;
+        icir: number | null;
+        ic_positive_rate: number | null;
+        n_days: number;
+        coverage: number;
+        status: string;
+        reason: string;
+      }>;
+      selected?: string[];
+    };
   };
   metrics?: {
     train: { rmse: number; auc: number; ic: number; rank_ic: number; rank_icir: number };
@@ -1014,10 +1032,28 @@ export const buildTrainingRequest = (
   };
 };
 
+export interface TrainingFactorFilterConfig {
+  enabled: boolean;
+  nTop: number;
+  icThreshold: number;
+  icirThreshold: number;
+  correlationThreshold: number;
+}
+
+// 与后端编排器默认注入的 factor_selection 配置保持一致
+// （backend/services/engine/training/local_docker_orchestrator.py）
+export const DEFAULT_FACTOR_FILTER: TrainingFactorFilterConfig = {
+  enabled: true,
+  nTop: 80,
+  icThreshold: 0.01,
+  icirThreshold: 0.15,
+  correlationThreshold: 0.9,
+};
+
 export const buildBackendTrainingPayload = (
   request: TrainingRequestPayload,
   timePeriods: TimePeriodMap,
-  options?: { nodeId?: string; maxTimeMinutes?: number; pauseOthers?: boolean },
+  options?: { nodeId?: string; maxTimeMinutes?: number; pauseOthers?: boolean; factorFilter?: TrainingFactorFilterConfig },
 ): any => {
   const features = Array.from(new Set(request.selectedFeatures));
   const trainStart = dayjs(request.timePeriods.train[0]).format('YYYY-MM-DD');
@@ -1168,6 +1204,23 @@ export const buildBackendTrainingPayload = (
   // true=停其他容器（腾内存给训练，默认）；false=保留其他容器运行
   if (typeof options?.pauseOthers === 'boolean') {
     payload.pause_others = options.pauseOthers;
+  }
+
+  // 因子筛选（IC/ICIR 阈值 + 相关性剪枝）：默认开启。
+  // 开启 = 显式透传 factor_selection，筛选漏斗日志与每特征 IC/ICIR/淘汰原因
+  //        写入训练日志与结果元数据（结果页展示"为什么选/为什么不选"）；
+  // 关闭 = auto_feature_filter=false，编排器不再注入 factor_selection，全部特征直接训练。
+  if (options?.factorFilter) {
+    payload.auto_feature_filter = options.factorFilter.enabled;
+    if (options.factorFilter.enabled) {
+      payload.factor_selection = {
+        method: 'ic_icir',
+        n_top: options.factorFilter.nTop,
+        ic_threshold: options.factorFilter.icThreshold,
+        icir_threshold: options.factorFilter.icirThreshold,
+        correlation_threshold: options.factorFilter.correlationThreshold,
+      };
+    }
   }
 
   return payload;

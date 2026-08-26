@@ -3047,13 +3047,37 @@ def select_top_factors(
     ic_threshold: float = 0.02,
     icir_threshold: float = 0.3,
     correlation_threshold: float = 0.85,
-) -> tuple[list[str], dict[str, dict]]:
+) -> tuple[list[str], dict[str, Any]]:
     """专业因子筛选：IC/ICIR 初筛 → 相关性去冗余 → 稳定性检验。
 
-    返回 (selected_features, ic_results)。
+    返回 (selected, report)：
+    - selected: 入选特征列表
+    - report: 结构化筛选报告（每特征的 IC/ICIR/覆盖率/入选或淘汰原因），
+      写入 result metadata，供前端展示"为什么选/为什么不选"。
+
+    report 结构:
+        {
+          "method": "ic_icir",
+          "thresholds": {"n_top", "ic_threshold", "icir_threshold", "correlation_threshold"},
+          "stage_counts": {"input", "ic_pass", "corr_pass", "stable", "selected"},
+          "train_rows": int,
+          "features": [
+            {"name", "ic", "icir", "ic_positive_rate", "n_days", "coverage", "status", "reason"}
+          ],
+        }
     """
     logger.info("=== Factor Selection: IC/ICIR screening ===")
     logger.info("Input: %d features, target top-%d", len(features), n_top)
+
+    # 覆盖率：训练段特征非空比例（与 NaN 数据洞直接挂钩，如 L2 vpin 系 2024Q4-2025Q1 缺失）
+    coverage_map: dict[str, float] = {}
+    present_cols = [f for f in features if f in df.columns]
+    if present_cols:
+        try:
+            cov_arr = df[present_cols].notna().mean(axis=0)
+            coverage_map = {f: float(cov_arr[f]) for f in present_cols}
+        except Exception:
+            coverage_map = {f: 1.0 for f in present_cols}
 
     # Step 1: 日频 Rank IC 计算（原始 spearmanr 算法，数值 100% 正确）
     # 多进程并行：按特征分片给多个进程同时算（fork，DataFrame 零拷贝共享），
@@ -3098,11 +3122,27 @@ def select_top_factors(
             }
         logger.info("IC/ICIR screening done in %.1fs (%d features)", time.time() - t0_sel, len(ic_results))
 
+    # 逐特征决策原因（status: selected / rejected + reason 说明被哪个门槛淘汰）
+    decisions: dict[str, str] = {}
+    for feat in features:
+        if feat not in ic_results:
+            decisions[feat] = "特征不在训练数据中"
+        elif int(ic_results[feat].get("n_days") or 0) < 20:
+            decisions[feat] = "IC 有效样本天数不足(<20日)"
+        else:
+            decisions[feat] = ""  # 进入阈值判定
+
     # Step 2: IC阈值初筛
-    candidates = {
-        f: r for f, r in ic_results.items()
-        if abs(r["ic_mean"]) >= ic_threshold and abs(r["icir"]) >= icir_threshold
-    }
+    candidates = {}
+    for f, r in ic_results.items():
+        if f not in decisions or decisions[f]:
+            continue
+        if abs(r["ic_mean"]) >= ic_threshold and abs(r["icir"]) >= icir_threshold:
+            candidates[f] = r
+        elif abs(r["ic_mean"]) < ic_threshold:
+            decisions[f] = f"|IC|={abs(r['ic_mean']):.4f} < 阈值 {ic_threshold}"
+        else:
+            decisions[f] = f"|ICIR|={abs(r['icir']):.3f} < 阈值 {icir_threshold}"
     logger.info("After IC/ICIR threshold: %d candidates (|IC|>=%.2f, |ICIR|>=%.1f)",
                 len(candidates), ic_threshold, icir_threshold)
 
@@ -3113,7 +3153,8 @@ def select_top_factors(
     selected: list[str] = []
     for feat in sorted_features:
         if len(selected) >= n_top:
-            break
+            decisions[feat] = "超出 top-N 名额"
+            continue
         if len(selected) == 0:
             selected.append(feat)
             continue
@@ -3123,6 +3164,8 @@ def select_top_factors(
         max_corr = corr_df[feat].drop(feat).abs().max()
         if max_corr < correlation_threshold:
             selected.append(feat)
+        else:
+            decisions[feat] = f"与已选特征相关性 {max_corr:.3f} >= {correlation_threshold}"
 
     logger.info("After correlation pruning (thresh=%.2f): %d selected",
                 correlation_threshold, len(selected))
@@ -3139,10 +3182,17 @@ def select_top_factors(
         mean_ic = abs(float(np.mean(daily_ics)))
         if mean_ic > 0 and rolling_std.mean() / (mean_ic + 1e-9) < 2.0:
             stable.append(feat)
+        else:
+            decisions[feat] = "IC 稳定性不足(滚动60日波动 > 2×|IC均值|)"
 
     if len(stable) >= 30:
         selected = stable[:n_top]
         logger.info("After stability filter: %d stable factors", len(selected))
+    else:
+        # 稳定因子不足 30 个时保留相关性去冗余后的名单（老行为），
+        # 并把被稳定性淘汰的决策回收（它们仍入选）
+        for feat in selected:
+            decisions.pop(feat, None)
 
     # 输出 top-10 供日志
     for i, feat in enumerate(selected[:10]):
@@ -3150,7 +3200,82 @@ def select_top_factors(
         logger.info("  %2d. %-30s IC=%.4f  ICIR=%.3f  IC>0=%.1f%%",
                     i + 1, feat, r["ic_mean"], r["icir"], r["ic_positive_rate"] * 100)
 
-    return selected, ic_results
+    # ── 组装结构化筛选报告 ──
+    selected_set = set(selected)
+    report_features = []
+    for feat in features:
+        r = ic_results.get(feat)
+        if r is None:
+            report_features.append({
+                "name": feat, "ic": None, "icir": None, "ic_positive_rate": None,
+                "n_days": 0, "coverage": round(coverage_map.get(feat, 1.0), 4),
+                "status": "rejected", "reason": decisions.get(feat, "特征不在训练数据中"),
+            })
+            continue
+        report_features.append({
+            "name": feat,
+            "ic": round(float(r.get("ic_mean", 0.0)), 4),
+            "icir": round(float(r.get("icir", 0.0)), 3),
+            "ic_positive_rate": round(float(r.get("ic_positive_rate", 0.0)), 4),
+            "n_days": int(r.get("n_days", 0)),
+            "coverage": round(coverage_map.get(feat, 1.0), 4),
+            "status": "selected" if feat in selected_set else "rejected",
+            "reason": "通过全部筛选" if feat in selected_set else (decisions.get(feat) or "未通过筛选"),
+        })
+    report_features.sort(key=lambda x: (x["status"] != "selected", -(abs(x["icir"] or 0))))
+    report = {
+        "method": "ic_icir",
+        "thresholds": {
+            "n_top": n_top,
+            "ic_threshold": ic_threshold,
+            "icir_threshold": icir_threshold,
+            "correlation_threshold": correlation_threshold,
+        },
+        "stage_counts": {
+            "input": len(features),
+            "ic_pass": len(candidates),
+            "corr_pass": len(selected),
+            "stable": len(stable) if len(stable) >= 30 else len(selected),
+            "selected": len(selected),
+        },
+        "train_rows": int(len(df)),
+        "features": report_features,
+        "selected": selected,
+    }
+    return selected, report
+
+
+def _log_factor_selection_summary(report: dict[str, Any]) -> None:
+    """把筛选报告压缩成可读日志：漏斗 + 淘汰原因统计 + 高 ICIR 但被拒的"可惜"名单。"""
+    sc = report.get("stage_counts") or {}
+    logger.info(
+        "Factor selection funnel: %d -> IC/ICIR %d -> corr %d -> stable %d -> selected %d",
+        sc.get("input", 0), sc.get("ic_pass", 0), sc.get("corr_pass", 0),
+        sc.get("stable", 0), sc.get("selected", 0),
+    )
+    reasons: dict[str, int] = {}
+    for f in report.get("features") or []:
+        if f.get("status") != "selected":
+            r = str(f.get("reason") or "未通过筛选")
+            reasons[r] = reasons.get(r, 0) + 1
+    for r, cnt in sorted(reasons.items(), key=lambda kv: -kv[1]):
+        logger.info("  rejected x%-3d %s", cnt, r)
+    # 高 |ICIR| 却被拒的特征（"可惜"名单：多为稳定性/覆盖率问题）
+    rejected = [
+        f for f in (report.get("features") or [])
+        if f.get("status") != "selected" and f.get("icir")
+    ]
+    notable = sorted(rejected, key=lambda f: -abs(f["icir"]))[:8]
+    if notable:
+        logger.info("Notable rejections (high |ICIR| but dropped):")
+        for f in notable:
+            logger.info(
+                "  %-32s IC=%.4f ICIR=%.3f cov=%.0f%% -> %s",
+                f.get("name", ""), f.get("ic", 0.0), f.get("icir", 0.0),
+                (f.get("coverage") or 0.0) * 100, f.get("reason", ""),
+            )
+
+
 
 
 # ── Optuna 自动超参搜索 ────────────────────────────────────────────────────────
@@ -3860,6 +3985,7 @@ def main() -> int:
         # ── 因子筛选 ──
         factor_selection_cfg = cfg.get("factor_selection", {}) or {}
         factor_selection_method = str(factor_selection_cfg.get("method", "")).strip().lower()
+        factor_selection_report: dict[str, Any] | None = None
         if factor_selection_method in ("ic_icir", "combined") or submitted_features and len(submitted_features) == 1 and submitted_features[0].lower().startswith("auto_top"):
             n_top = int(factor_selection_cfg.get("n_top", 60))
             ic_thresh = float(factor_selection_cfg.get("ic_threshold", 0.02))
@@ -3869,7 +3995,7 @@ def main() -> int:
             # 特征选择属于拟合过程的一部分：只能看到训练段。此前直接把完整
             # train/valid/test df 传入，会让 test 标签影响入选因子及最终样本外指标。
             selection_train_df, _, _ = _split_data(df, cfg)
-            valid_features, ic_results = select_top_factors(
+            valid_features, factor_selection_report = select_top_factors(
                 selection_train_df, valid_features, label_col="label",
                 n_top=n_top, ic_threshold=ic_thresh,
                 icir_threshold=icir_thresh, correlation_threshold=corr_thresh,
@@ -3878,6 +4004,8 @@ def main() -> int:
                 "Selected %d features from training segment only (%d rows)",
                 len(valid_features), len(selection_train_df),
             )
+            if factor_selection_report:
+                _log_factor_selection_summary(factor_selection_report)
 
         # ── WFA 稳定性诊断（可选）：数据就绪后、正式训练前执行 ──
         wfa_result = train_wfa(df, valid_features, cfg)
@@ -4032,6 +4160,7 @@ def main() -> int:
                 "requested_features": submitted_features,
                 "auto_appended_feature_count": len(auto_appended_features),
                 "auto_appended_features": auto_appended_features,
+                "factor_selection": factor_selection_report,
                 "features": valid_features,
                 "feature_columns": valid_features,
                 "fill_values": fill_values,
@@ -4234,6 +4363,7 @@ def main() -> int:
                 "requested_features": submitted_features,
                 "auto_appended_feature_count": len(auto_appended_features),
                 "auto_appended_features": auto_appended_features,
+                "factor_selection": factor_selection_report,
                 "features": valid_features,
                 "feature_columns": valid_features,
                 "fill_values": fill_values,

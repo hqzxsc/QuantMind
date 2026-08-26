@@ -225,11 +225,19 @@ export function KlineWorkspace({ stock, profile, height = 460, onSelectStock }: 
         const sorted = [...byModel.entries()]
           .map(([m, pts]) => ({ m, pts: pts.sort((a, b) => a.date.localeCompare(b.date)) }))
           .sort((a, b) => b.pts.length - a.pts.length);
-        const top = sorted.slice(0, 3);
+        // 默认模型（后端 models 按 is_default 置顶）必须有线：不在 top3 时挤入，避免默认选中后分数线为空
+        const defaultModel = (resp?.models ?? [])[0]?.model_id;
+        let top = sorted.slice(0, 3);
+        if (defaultModel && !top.some(t => t.m === defaultModel)) {
+          const def = sorted.find(t => t.m === defaultModel);
+          if (def) top = [def, ...top.slice(0, 2)];
+        }
         const out: ScoreSeries[] = top.map(({ m, pts }, i) => ({
           model: m, color: palette[i % palette.length], points: pts,
         }));
         setScoreSeries(out);
+        // 默认选中默认模型（不是全部模型），分数轴按当前模型分数紧密贴合
+        if (defaultModel && selectedModel === 'all') setSelectedModel(defaultModel);
       });
     }).catch(() => { if (!cancelled) setScoreSeries([]); }).finally(() => { if (!cancelled) setScoreLoading(false); });
     return () => { cancelled = true; };

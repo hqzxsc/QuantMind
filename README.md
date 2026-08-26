@@ -186,40 +186,46 @@ QuantMind 将日常量化研究工作流整合在同一套现代化、响应灵�
   <img src="docs/images/Dashboard.png" alt="市场看板" width="92%">
 </p>
 
-### 2. AI-IDE 策略开发工作区
+### 2. 市场分析与资金流向 (Market Analysis)
+大盘全景、多周期资金流向、板块/个股资金链、申万行业热力矩形图谱与市场情绪温度计，全面洞察资金走向与未来趋势。
+<p align="center">
+  <img src="docs/images/MarketAnalysis.png" alt="市场分析" width="92%">
+</p>
+
+### 3. 实时舆情与 RSS 资讯监控 (News & RSS Stream)
+汇聚主流财经媒体 7x24 实时快讯、事件标签识别、利好/利空情绪分类与正文实体关联分析。
+<p align="center">
+  <img src="docs/images/RSS.png" alt="RSS 资讯流" width="92%">
+</p>
+
+### 4. AI-IDE 策略开发工作区
 内置代码编辑器与量化 AI Copilot 助手，支持策略编写、语法检查、一键回测与云端发布。
 <p align="center">
   <img src="docs/images/AI-IDE.png" alt="AI-IDE 策略工作区" width="92%">
 </p>
 
-### 3. QuantaAlpha 智能因子挖掘平台
-基于 LLM 驱动自主量化因子演化平台（AutoAlpha 2.0），用自然语言描述量化假设，AI 自动生成表达式与进化回测。
-<p align="center">
-  <img src="docs/images/FactorMining.png" alt="智能因子挖掘" width="92%">
-</p>
-
-### 4. AI 模型训练工场 (Model Training)
-可视化配置训练参数，支持 13 种 ML/DL 算法，内置 Optuna 自动调参、WFA 滚动切分与本地/AutoDL 算力调度。
-<p align="center">
-  <img src="docs/images/ModelTraining.png" alt="模型训练工场" width="92%">
-</p>
-
-### 5. 批量推理与选股信号中心 (Inference Hub)
-支持全市场批量截面排序、Top N 标的推荐、信号动态融合与历史回溯。
-<p align="center">
-  <img src="docs/images/ModelInference.png" alt="批量推理与选股" width="92%">
-</p>
-
-### 6. 微软 Qlib 回测中心 (Backtest Center)
+### 5. 微软 Qlib 回测中心 (Backtest Center)
 基于微软 Qlib 引擎的高性能事件驱动回测，全面评估策略收益与最大回撤风险。
 <p align="center">
   <img src="docs/images/QuickBacktest.png" alt="Qlib 回测中心" width="92%">
 </p>
 
-### 7. 实时舆情与 RSS 资讯监控 (News & RSS Stream)
-汇聚主流财经媒体 7x24 实时快讯、事件标签识别、利好/利空情绪分类与正文实体关联分析。
+### 6. AI 模型训练工场 (Model Training)
+可视化配置训练参数，支持 13 种 ML/DL 算法，内置 Optuna 自动调参、WFA 滚动切分与本地/AutoDL 算力调度。
 <p align="center">
-  <img src="docs/images/RSS.png" alt="RSS 资讯流" width="92%">
+  <img src="docs/images/ModelTraining.png" alt="模型训练工场" width="92%">
+</p>
+
+### 7. 批量推理与选股信号中心 (Inference Hub)
+支持全市场批量截面排序、Top N 标的推荐、信号动态融合与历史回溯。
+<p align="center">
+  <img src="docs/images/ModelInference.png" alt="批量推理与选股" width="92%">
+</p>
+
+### 8. QuantaAlpha 智能因子挖掘平台
+基于 LLM 驱动自主量化因子演化平台（AutoAlpha 2.0），用自然语言描述量化假设，AI 自动生成表达式与进化回测。
+<p align="center">
+  <img src="docs/images/FactorMining.png" alt="智能因子挖掘" width="92%">
 </p>
 
 ---

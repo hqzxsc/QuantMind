@@ -539,7 +539,12 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
             "correlation_threshold": float(raw_fs.get("correlation_threshold", 0.9)),
         }
     if "auto_feature_filter" in payload:
-        normalized["auto_feature_filter"] = str(payload.get("auto_feature_filter") or "true").strip().lower()
+        # 注意：不能用 `payload.get(...) or "true"` —— False 会被 falsy 兜底吞掉
+        # 变成 "true"，导致用户关闭筛选后编排器仍注入 factor_selection。
+        raw_aff = payload.get("auto_feature_filter")
+        normalized["auto_feature_filter"] = str(
+            raw_aff if raw_aff is not None else "true"
+        ).strip().lower()
     if horizons:
         normalized["horizons"] = horizons
     # 训练时长预算（分钟），默认 120
@@ -1031,7 +1036,7 @@ async def get_training_run_for_owner(run_id: str, current_user: dict[str, Any]) 
         effective_status = "failed"
         normalized_result["error"] = normalize_error
 
-    live_snapshot = _training_log_stream.fetch_snapshot(run_id, line_limit=220) or {}
+    live_snapshot = _training_log_stream.fetch_snapshot(run_id, line_limit=600) or {}
     live_status = str(live_snapshot.get("status") or "").strip()
     live_progress_raw = live_snapshot.get("progress")
     live_logs = str(live_snapshot.get("logs") or "").strip()
@@ -1163,6 +1168,25 @@ async def complete_training_run(
 
         callback_logs = str(result.get("logs") or "").strip()
         merged_logs = "\n".join([x for x in [record.logs or "", callback_logs] if x]).strip()
+        # Redis 日志流 TTL 48h 后会消失：完成时把去重后的流日志尾部持久化进 DB，
+        # 保证训练详情页"为什么选这些特征"的筛选日志长期可查。
+        try:
+            stream_logs = str(
+                (_training_log_stream.fetch_snapshot(run_id, line_limit=600) or {}).get("logs") or ""
+            ).strip()
+            existing_lines = set((record.logs or "").splitlines()) | set(
+                merged_logs.splitlines()
+            )
+            extra = [
+                line for line in stream_logs.splitlines()
+                if line and line not in existing_lines
+            ]
+            if extra:
+                merged_logs = "\n".join(
+                    [x for x in [merged_logs, "\n".join(extra)] if x]
+                ).strip()
+        except Exception:
+            pass
         record.logs = merged_logs
         await session.commit()
         _training_log_stream.update_state(

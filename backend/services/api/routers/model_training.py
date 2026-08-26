@@ -3004,21 +3004,29 @@ async def get_stock_inference_history(
         board = "其他"
 
     # 该股历史信号涉及的模型列表（供前端下拉选择）
+    # 过滤已归档模型；默认模型(is_default)排最前，其余按该股最新分数日倒序
     models: list[dict[str, Any]] = []
     try:
-        # 只查该股涉及的去重模型ID（避免 join qm_user_models 大表慢查询）
+        # 只查该股涉及的去重模型ID（避免 join 大表慢查询）
         async with get_session(read_only=True) as s3:
             mrows = (
                 (
                     await s3.execute(
                         text(
                             """
-                        SELECT DISTINCT r.model_id
+                        SELECT r.model_id,
+                               MAX(e.trade_date) AS latest,
+                               MAX(u.is_default::int) AS is_default
                         FROM engine_signal_scores e
                         LEFT JOIN qm_model_inference_runs r ON r.run_id = e.run_id
+                        LEFT JOIN qm_user_models u ON u.model_id = r.model_id
                         WHERE e.symbol = :sym AND e.trade_date >= :cutoff
                           AND e.tenant_id = :tenant_id AND e.user_id = :user_id
                           AND r.model_id IS NOT NULL
+                          AND (u.status IS NULL OR u.status <> 'archived')
+                        GROUP BY r.model_id
+                        ORDER BY MAX(u.is_default::int) DESC NULLS LAST,
+                                 MAX(e.trade_date) DESC
                         """
                         ),
                         {
@@ -3051,7 +3059,8 @@ async def get_stock_inference_history(
             meta_by_id = {
                 str(r["model_id"]): (r.get("metadata_json") or {}) for r in ur
             }
-            for mid in mids:
+            for r in mrows:
+                mid = str(r["model_id"])
                 meta = meta_by_id.get(mid) or {}
                 if not isinstance(meta, dict):
                     meta = {}
@@ -3061,6 +3070,7 @@ async def get_stock_inference_history(
                         "display_name": meta.get("display_name")
                         or meta.get("model_name")
                         or "",
+                        "is_default": bool(r.get("is_default")),
                         "train_start": str(meta.get("train_start") or "")[:10]
                         if meta.get("train_start")
                         else "",
@@ -3069,8 +3079,8 @@ async def get_stock_inference_history(
                         else "",
                     }
                 )
-    except Exception:  # pragma: no cover
-        pass
+    except Exception as exc:  # pragma: no cover
+        logger.warning("stock history models 查询失败: %s", exc)
 
     return {
         "symbol": sym,

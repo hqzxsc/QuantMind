@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { CandlestickChart, Layers, CalendarDays, Activity, ChevronUp } from 'lucide-react';
-import { Modal, Tooltip } from 'antd';
+import { Modal, Tooltip, message } from 'antd';
 import { StockListItem, StockProfile } from '../types';
 import { stockTerminalService, IndexQuote } from '../services/stockTerminalService';
 import { StockSidebar, PositionKind, toPrefix } from '../components/StockSidebar';
@@ -68,6 +68,25 @@ export default function StockTerminalPage() {
     }).catch(() => { if (!cancelled) setWatchlist(new Set()); });
     return () => { cancelled = true; };
   }, []);
+
+  // 行内星标：加/移自选（prefix 存储；自选视图下列表按新集合自动重拉）
+  const onToggleWatch = useCallback(async (item: StockListItem, watched: boolean) => {
+    const prefix = toPrefix(item.symbol);
+    try {
+      const { researchService } = await import('../../../services/researchService');
+      if (watched) {
+        await researchService.removeFromWatchlist(prefix);
+      } else {
+        await researchService.addToWatchlist(prefix, { stockName: item.name });
+      }
+      const next = new Set(watchlist);
+      if (watched) next.delete(prefix); else next.add(prefix);
+      setWatchlist(next);
+      message.success(watched ? `已移出自选：${item.name}` : `已加入自选：${item.name}`);
+    } catch {
+      message.error('自选操作失败，请重试');
+    }
+  }, [watchlist]);
 
   // 模拟盘 + 实盘持仓 -> prefix 来源映射（列表行「模拟/实盘」徽标；自选视图同样生效）
   useEffect(() => {
@@ -169,6 +188,7 @@ export default function StockTerminalPage() {
             selected={selected?.symbol ?? null}
             onSelect={setSelected}
             watchlistSymbols={watchlist}
+            onToggleWatch={onToggleWatch}
             positions={positions}
             onlyWatchlist={onlyWatchlist}
             onOnlyWatchlist={setOnlyWatchlist}
@@ -379,17 +399,17 @@ export default function StockTerminalPage() {
         open={klineOpen}
         onCancel={() => setKlineOpen(false)}
         footer={null}
-        width={1160}
+        width={1440}
         destroyOnHidden
+        centered
         title={null}
-        style={{ top: 16 }}
-        styles={{ body: { height: 560, padding: 0 } }}
+        styles={{ body: { height: 720, padding: 0 } }}
       >
         {selected && klineOpen && (
           <div className="h-full flex">
             {/* 左：K 线主体（周期/指标/指数/回放/信号/回测/多模型分数/模拟交易/参考线） */}
             <div className="flex-1 min-w-0">
-              <KlineWorkspace stock={selected} profile={profile} height={500} onSelectStock={setSelected} />
+              <KlineWorkspace stock={selected} profile={profile} height={640} onSelectStock={setSelected} />
             </div>
             {/* 右：竖排智能标签 */}
             <div className="w-44 shrink-0 border-l border-slate-100 overflow-y-auto">

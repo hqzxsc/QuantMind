@@ -1,6 +1,6 @@
 ---
 name: model-train-infer-backtest-report
-description: "模型训练-推理-组合回测-专业报告 全流程 — 提交T+N周期模型训练、批量推理全年、自定义组合策略回测(分数阈值+大盘MA+止损)、导出研报级MD+PDF报告。在 QuantBot / Claude Code 中训练模型、推理历史、回测策略、对比T+N周期、出专业分析报告时使用。触发词：训练模型、推理全年、回测策略、T+3、T+5、周期对比、止损、大盘过滤、出报告、效益分析"
+description: "模型训练-推理-组合回测-专业报告 全流程 — 提交T+N周期模型训练（13种模型类型：lightgbm/xgboost/catboost/random_forest/linear/mlp/gru/lstm/alstm/transformer/tabnet/tcn/nativetft，GPU训练+GPU推理）、批量推理全年、自定义组合策略回测(分数阈值+大盘MA+止损)、导出研报级MD+PDF报告。在 QuantBot / Claude Code 中训练模型、推理历史、回测策略、对比T+N周期、止损、大盘过滤、出报告、效益分析时使用。触发词：训练模型、模型训练、13种模型、推理全年、回测策略、T+3、T+5、周期对比、止损、大盘过滤、出报告、效益分析"
 ---
 
 # 模型训练-推理-回测-报告（全流程）技能
@@ -11,8 +11,12 @@ description: "模型训练-推理-组合回测-专业报告 全流程 — 提交
 
 ```
 ① 训练模型 (run-training API)
+   ├─ 模型类型 (13 种全支持): lightgbm / xgboost / catboost / random_forest /
+   |  linear / mlp / gru / lstm / alstm / transformer / tabnet / tcn / nativetft
    ├─ T+N 周期选择 (T+1/T+3/T+5...)
    ├─ 特征 (75~182 个来自 QuantDB)
+   ├─ GPU: 训练 GPU 满载; 推理已改 CUDA (train.py _predict_dl/_predict_nativetft, 有算力就用 GPU)
+   ├─ 质量门禁: test_rank_icir<0.05 或 test_rank_ic 非正 → status=candidate (产品逻辑, 非失败)
    |  └─ 训练 2023-2025 → 推理 2026
 ② 推理历史 (批量推理 API)
    ├─ 单日 /models/inference/run
@@ -36,9 +40,21 @@ AUTH="Authorization: Bearer $TOKEN"
 CT="Content-Type: application/json"
 ```
 
+> ⚠️ **token 的 sub 决定模型归属**：登录签发的 JWT `sub=用户表 user_id`（如 admin 登录 → `00000001`），训练提交后模型注册到 `qm_user_models.user_id = sub`。**必须用登录接口拿 token**，不要手工构造 `sub='admin'` 之类的 token —— 否则训练模型归属错位，主栏"模型管理"（按登录用户过滤）看不到，只有后台（扫磁盘）能看到。```
+
 ---
 
-## ① 训练模型（提交 T+N CatBoost/LGB 等）
+## ① 训练模型（提交 T+N 模型训练）
+
+### 1.0 支持的模型类型（13 种，端到端已验证）
+
+| 类别 | 模型 | 说明 |
+|---|---|---|
+| 树模型 | lightgbm / xgboost / catboost / random_forest | 快，CPU/GPU 都行；RF 注意 max_depth 限制 |
+| 线性 | linear | 简单基线，常过不了质量门禁 |
+| 深度学习 | mlp / gru / lstm / alstm / transformer / tabnet / tcn / nativetft | GPU 训练（epoch1 CPU DataLoader 预热 3.5min 正常，之后 GPU 80s/epoch）；推理已走 CUDA |
+
+提交时 `model_type` 传以上字符串，DL 模型用 `dl_params.n_epochs/batch_size`（冒烟建议 n_epochs=10、batch_size=8000，GRU~18min/LSTM~17.5min 跑完）。树模型用 `num_boost_round/early_stopping_rounds`。
 
 ### 1.1 从现有模型复刻（推荐：保特征，只改周期）
 
@@ -89,7 +105,10 @@ asyncio.run(m())"
 
 ### 1.3 训练完成 → model 注册
 
-训练完成 status=completed，模型注册为 `mdl_cn_train_<runId>`。查模型 ID：
+训练完成 status=completed，模型注册为 `mdl_cn_train_<runId>`：
+- 目录：`/app/models/users/default/admin/mdl_cn_train_*`（metadata.json + model.* + config.yaml + result.json + pred.pkl）
+- 数据库：`qm_user_models` 表，`user_id` = 提交时 JWT 的 sub，`status` = ready / candidate（见 1.0 质量门禁）
+- 查模型 ID：
 ```bash
 # 最近注册的模型
 curl -s -H "$AUTH" "$BASE/api/v1/research/models" | python3 -c "
@@ -271,6 +290,10 @@ curl -s -X POST -H "$AUTH" -H "$CT" "$BASE/api/v1/models/inference/batch" \
 | 报告收益异常 | 确认 klines 覆盖区间、涨跌停/停牌处理、cron 时间 |
 | asyncio 冲突 | 混用 load_signals(asyncio) 和 psycopg2 时，加载函数统一用 psycopg2 同步 |
 | 年化离谱 | 短周期外推失真，看累计收益和回撤，别信年化 |
+| 训练完主栏模型管理看不到 | 后台"模型管理"= 扫磁盘目录（148+ 个、按 updated_at 倒序、打开自动扫描）；主栏"模型管理"= 按登录用户查 qm_user_models。看不到先查归属：`SELECT user_id FROM qm_user_models WHERE model_id='mdl_cn_train_...'`，若 user_id ≠ 登录账号的 user_id，需 UPDATE 转移 |
+| 模型 status=candidate | 质量门禁未过（IC 不达标），正常流程非失败；CatBoost/Linear/NativeTFT 常落此档，推理/回测仍可用 |
+| DL 训练慢/卡 epoch1 | epoch1 CPU DataLoader 预热 3.5min 属正常，之后 GPU 满载 80s/epoch；若一直不动看 qm-train 容器日志 |
+| 训练/推理为何 CPU 参与 | epoch1 窗口构造在 CPU；旧版推理全量 CPU 11min，新版 CUDA 推理已优化，勿回退 |
 
 ## 7. 相关技能
 
@@ -279,7 +302,17 @@ curl -s -X POST -H "$AUTH" -H "$CT" "$BASE/api/v1/models/inference/batch" \
 - **[[quantmind-operations]]** — 模型训练/模型管理的运营操作
 - **[[ai-ide-strategy-writing]]** — AI 写策略并执行
 
-## 8. 相关脚本
+## 8. 模型管理（训练完去哪看模型）
+
+| 入口 | 数据源 | 说明 |
+|---|---|---|
+| 后台管理 → 推理引擎 → 模型管理（admin/models/scan） | 扫磁盘 /app/models 目录 | 148+ 个目录，按 updated_at 倒序（最新在前），打开页面自动扫描；5 分钟 Redis 缓存，`?refresh=true` 强刷；列表显示模型类型 + 训练任务名(job_name) |
+| 主栏 → 模型管理（GET /models） | qm_user_models 表按当前登录用户 | 只显示本用户模型；今天新训练的模型需要归属 user_id=登录用户才可见（见认证 ⚠️） |
+
+- 归档：qm_user_models `UPDATE ... SET status='archived'`（每用户唯一 is_default 约束：`uq_qm_user_models_default_per_user`，改默认前先摘旧）
+- 训练任务：admin_training_jobs（request_payload 可复刻、logs、result）
+
+## 9. 相关脚本
 
 - `scripts/submit_t3_training.py` — 复刻 T+5→T+3 训练提交
 - `scripts/backtest_l2_optimized.py` — 优化版组合回测（分数阈值+MA+止损）

@@ -238,12 +238,19 @@ class TrainingRunLogStream:
         except Exception:
             records = []
 
+        # 容器日志经多路消费（docker 轮询 + 内部回调）写入流，同一条日志可能被
+        # 重复 append 多次。连续去重，避免重复行挤占 line_limit 限额、日志显得"空洞"。
+        last_seen: str | None = None
         for _, payload in reversed(records):
             line = self._decode(
                 payload.get(b"line") if isinstance(payload, dict) else ""
             )
-            if line:
-                lines.append(line)
+            if not line:
+                continue
+            if line == last_seen:
+                continue
+            last_seen = line
+            lines.append(line)
             if not last_status:
                 status_val = self._decode(
                     payload.get(b"status") if isinstance(payload, dict) else ""

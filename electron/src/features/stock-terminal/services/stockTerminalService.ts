@@ -46,6 +46,8 @@ class StockTerminalService {
     with_counts?: boolean;
     /** 定位股票（600519.SH），返回当前排序中的名次（find_rank）供列表跳转 */
     find_symbol?: string;
+    /** 自选股列表（逗号分隔，prefix/suffix/纯代码均可），按当前排序保留分数降序 */
+    symbols?: string;
   }): Promise<StockListResponse> {
     const resp = await this.client.get('/stock-terminal/list', { params });
     return resp.data?.data ?? { total: 0, page: 1, page_size: 100, trade_date: '', items: [] };
@@ -220,12 +222,14 @@ class StockTerminalService {
     }
   }
 
-  async getTagStocks(tagId: string, limit = 30): Promise<any[]> {
+  /** 标签同类股票：返回 {items, score_min, score_max}（当前模型全市场分数极值，供动态归一化显示） */
+  async getTagStocks(tagId: string, limit = 30): Promise<{ items: any[]; score_min: number | null; score_max: number | null }> {
     try {
       const resp = await this.client.get(`/stock-terminal/tags/${tagId}/stocks`, { params: { limit }, timeout: 30000 });
-      return resp.data?.data?.items ?? [];
+      const data = resp.data?.data ?? {};
+      return { items: data.items ?? [], score_min: data.score_min ?? null, score_max: data.score_max ?? null };
     } catch {
-      return [];
+      return { items: [], score_min: null, score_max: null };
     }
   }
 

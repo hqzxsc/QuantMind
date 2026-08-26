@@ -171,8 +171,15 @@ export const AdminModelManagement: React.FC = () => {
     const [detailModel, setDetailModel] = useState<ModelDirectoryInfo | null>(null);
     const [detailVisible, setDetailVisible] = useState(false);
 
-    // 不再 mount 时自动扫描；改为用户主动点击"扫描模型"按钮
-    // 后端已加 5 分钟 Redis 缓存，命中时秒级返回
+    // 首次进入页面自动扫描（后端有 5 分钟 Redis 缓存 + 15s 超时保护，代价低）
+    // 避免用户看到空表误以为没有模型；仍保留手动"重新扫描/强制刷新"按钮
+    const autoScanned = React.useRef(false);
+    React.useEffect(() => {
+        if (!autoScanned.current) {
+            autoScanned.current = true;
+            handleScan(false);
+        }
+    }, []);
 
     const handleScan = async (refresh = false) => {
         setScanning(true);
@@ -269,30 +276,50 @@ export const AdminModelManagement: React.FC = () => {
             title: '模型目录',
             dataIndex: 'model_id',
             key: 'model_id',
-            width: 240,
-            render: (id: string, record: ModelDirectoryInfo) => (
-                <Space size={4} className="max-w-full">
-                    <FolderOpenOutlined className="text-amber-500 shrink-0" />
-                    <Tooltip title={id}>
-                        <Text
-                            strong
-                            className="text-slate-700 text-xs"
-                            ellipsis={{ tooltip: false }}
-                            style={{ width: record.is_production ? 120 : 180 }}
-                        >
-                            {id}
-                        </Text>
-                    </Tooltip>
-                    {record.is_production && (
-                        <Tag color="green" className="text-[9px] font-bold px-1 m-0 shrink-0 border-none bg-green-50 text-green-600">
-                            PROD
-                        </Tag>
-                    )}
-                    {record.error && (
-                        <Tag color="red" className="text-[9px] m-0 shrink-0">ERR</Tag>
-                    )}
-                </Space>
-            ),
+            width: 280,
+            render: (id: string, record: ModelDirectoryInfo) => {
+                const meta = record.metadata || {};
+                const qlib = record.qlib_config || {};
+                const jobName = String(meta.job_name || qlib.job_name || '');
+                const modelType = String(meta.model_type || qlib.model?.type || '');
+                return (
+                    <div className="max-w-full">
+                        <Space size={4} className="w-full">
+                            <FolderOpenOutlined className="text-amber-500 shrink-0" />
+                            <Tooltip title={id}>
+                                <Text
+                                    strong
+                                    className="text-slate-700 text-xs"
+                                    ellipsis={{ tooltip: false }}
+                                    style={{ width: record.is_production ? 120 : 200 }}
+                                >
+                                    {id}
+                                </Text>
+                            </Tooltip>
+                            {record.is_production && (
+                                <Tag color="green" className="text-[9px] font-bold px-1 m-0 shrink-0 border-none bg-green-50 text-green-600">
+                                    PROD
+                                </Tag>
+                            )}
+                            {record.error && (
+                                <Tag color="red" className="text-[9px] m-0 shrink-0">ERR</Tag>
+                            )}
+                        </Space>
+                        {(jobName || modelType) && (
+                            <div className="flex items-center gap-1 mt-0.5 pl-4">
+                                {modelType && (
+                                    <Tag color="cyan" className="text-[9px] font-bold m-0">{modelType}</Tag>
+                                )}
+                                {jobName && (
+                                    <Text className="text-[10px] text-slate-400 font-mono" ellipsis style={{ maxWidth: 140 }}>
+                                        {jobName}
+                                    </Text>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                );
+            },
         },
         {
             title: '市场',

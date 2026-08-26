@@ -624,19 +624,19 @@ async def tag_stocks(
 
     import asyncio
 
-    def _run() -> list[dict]:
+    def _run() -> dict:
         from backend.services.engine.data_platform import tag_rules
 
         return tag_rules.stocks_for_tag(tag_id, limit=limit)
 
     try:
-        items = await asyncio.to_thread(_run)
+        result = await asyncio.to_thread(_run)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         logger.warning("tag stocks %s failed: %s", tag_id, exc)
-        items = []
-    return {"success": True, "data": {"items": items}}
+        result = {"items": [], "score_min": None, "score_max": None}
+    return {"success": True, "data": result}
 
 
 @router.get("/presets")
@@ -1376,6 +1376,7 @@ async def list_stocks(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=10, le=6000),
     find_symbol: str | None = Query(None, description="定位股票（600519.SH 或纯代码），返回当前排序中的名次与页数"),
+    symbols: str | None = Query(None, description="自选股列表（逗号分隔，prefix/suffix/纯代码均可），按当前排序保留分数降序"),
     current_user: dict = Depends(get_current_user),
 ):
     _ = current_user
@@ -1568,6 +1569,21 @@ async def list_stocks(
         # 趋势筛选但该模型数据不足算趋势：返回空集（不能静默回退成全量）
         df = df.iloc[0:0]
 
+    # 自选股列表（切「只看自选」时前端传全量自选）：过滤发生在排序后，自选股仍按分数降序展示；
+    # 兼容 prefix(SH600519) / suffix(600519.SH) / 纯代码(600519) 三种写法
+    if symbols:
+        wanted = {s.strip().upper() for s in symbols.split(",") if s.strip()}
+        if wanted:
+            norm: set[str] = set()
+            for s in wanted:
+                if "." in s:
+                    norm.add(s)
+                elif s[:2] in ("SH", "SZ", "BJ"):
+                    norm.add(f"{s[2:]}.{s[:2]}")
+                else:
+                    norm |= {f"{s}.{ex}" for ex in ("SH", "SZ", "BJ")}
+            df = df[df["Symbol"].isin(norm)]
+
     total = len(df)
 
     # 定位选中股票在当前排序中的名次（列表自动跳转：切日期后名次可能掉到几千名）
@@ -1677,8 +1693,12 @@ async def list_stocks(
                                 "SELECT r.model_id, MAX(e.trade_date) AS latest "
                                 "FROM engine_signal_scores e "
                                 "JOIN qm_model_inference_runs r ON r.run_id = e.run_id "
+                                "LEFT JOIN qm_user_models u ON u.model_id = r.model_id "
                                 "WHERE e.tenant_id='default' AND e.trade_date >= :d_from "
-                                "GROUP BY r.model_id ORDER BY latest DESC LIMIT 200"
+                                "AND (u.status IS NULL OR u.status <> 'archived') "
+                                "GROUP BY r.model_id "
+                                "ORDER BY MAX(u.is_default::int) DESC NULLS LAST, "
+                                "MAX(e.trade_date) DESC LIMIT 200"
                             ),
                             {"d_from": _from},
                         )

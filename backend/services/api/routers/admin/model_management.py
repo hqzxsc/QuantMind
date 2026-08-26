@@ -81,17 +81,18 @@ async def create_model(
 async def get_models(
     current_user: dict = Depends(require_admin),
 ):
-    """获取模型列表（从模型目录读取 JSON 文件）"""
+    """获取模型列表：目录 meta.json（历史 qlib 部署模型）+ qm_user_models（用户训练模型）合并"""
     models = []
+    tenant_id = current_user.get("tenant_id", "default")
 
     if not os.path.exists(MODELS_ROOT):
-        # 如果目录不存在，尝试从数据库回退（兼容旧逻辑）
+        # 如果目录不存在，尝试从 admin_models 表回退（兼容旧逻辑）
         async with get_session(read_only=True) as session:
-            stmt = select(ModelRecord).where(ModelRecord.tenant_id == current_user.get("tenant_id", "default"))
+            stmt = select(ModelRecord).where(ModelRecord.tenant_id == tenant_id)
             result = await session.execute(stmt)
             return result.scalars().all()
 
-    # 扫描 .meta.json 文件
+    # 1) 扫描 .meta.json 文件（历史部署模型）
     meta_files = glob.glob(os.path.join(MODELS_ROOT, "*.meta.json"))
 
     for i, meta_path in enumerate(meta_files):
@@ -119,6 +120,56 @@ async def get_models(
                 models.append(model_entry)
         except Exception as e:
             print(f"Error parsing model meta {meta_path}: {e}")
+
+    # 2) 用户训练模型（qm_user_models 表，训练链路注册）
+    try:
+        async with get_session(read_only=True) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT model_id, user_id, status, is_default, storage_path, model_file, "
+                        "metadata_json, metrics_json, created_at, updated_at "
+                        "FROM qm_user_models WHERE tenant_id = :tid "
+                        "ORDER BY updated_at DESC"
+                    ),
+                    {"tid": tenant_id},
+                )
+            ).mappings().all()
+    except Exception as exc:
+        print(f"Error reading qm_user_models: {exc}")
+        rows = []
+
+    for j, row in enumerate(rows):
+        try:
+            meta = row.get("metadata_json") or {}
+            if isinstance(meta, str):
+                meta = json.loads(meta)
+            metrics = row.get("metrics_json") or {}
+            if isinstance(metrics, str):
+                metrics = json.loads(metrics)
+            val_metrics = (metrics.get("val") or {}) if isinstance(metrics, dict) else {}
+            status = str(row.get("status") or "candidate")
+            model_type = str(meta.get("model_type") or meta.get("model_class_name") or "-") if isinstance(meta, dict) else "-"
+            auc = val_metrics.get("auc")
+            auc_txt = f"{auc:.4f}" if isinstance(auc, (int, float)) else "-"
+            models.append({
+                "id": 10000 + j,
+                "name": str(row.get("model_id") or f"trained_{j}"),
+                "description": (
+                    f"训练模型 | type={model_type} | status={status}"
+                    + (f" | val_auc={auc_txt}" if auc_txt != "-" else "")
+                    + (" | 默认" if row.get("is_default") else "")
+                ),
+                "source_type": "training",
+                "start_date": meta.get("train_start") if isinstance(meta, dict) else None,
+                "end_date": meta.get("train_end") if isinstance(meta, dict) else None,
+                "user_id": str(row.get("user_id") or "admin"),
+                "is_active": status == "ready",
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+            })
+        except Exception as exc:
+            print(f"Error building training model entry {row.get('model_id')}: {exc}")
 
     return models
 

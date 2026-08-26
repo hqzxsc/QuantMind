@@ -1,6 +1,6 @@
 import React from 'react';
-import { Card, Divider, Alert, Descriptions, Tag, Space, Typography, Empty, Button } from 'antd';
-import { BarChart, MonitorPlay, Activity, Download } from 'lucide-react';
+import { Card, Divider, Alert, Descriptions, Tag, Space, Typography, Empty, Button, Table, Tooltip as AntTooltip } from 'antd';
+import { BarChart, MonitorPlay, Activity, Download, Filter } from 'lucide-react';
 import { 
   BarChart as ReBarChart, 
   Bar, 
@@ -78,6 +78,152 @@ const renderMetaLabel = (zh: string, en: string): React.ReactNode => (
     <span className="mt-1 text-xs font-normal text-slate-500">{en}</span>
   </div>
 );
+
+interface FactorReportRow {
+  name: string;
+  ic: number | null;
+  icir: number | null;
+  ic_positive_rate: number | null;
+  n_days: number;
+  coverage: number;
+  status: string;
+  reason: string;
+}
+
+/** 因子筛选报告：漏斗 + 每特征 IC/ICIR/覆盖/淘汰原因（train.py select_top_factors 产出）。 */
+const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
+  const sc: Record<string, number> = report?.stage_counts || {};
+  const thr: Record<string, number> = report?.thresholds || {};
+  const features: FactorReportRow[] = Array.isArray(report?.features) ? report.features : [];
+  const maxVal = Math.max(1, Number(sc.input) || 1);
+
+  const funnel = [
+    { label: '输入特征', value: Number(sc.input) || 0, color: 'bg-slate-400' },
+    { label: '|IC|/|ICIR| 通过', value: Number(sc.ic_pass) || 0, color: 'bg-indigo-400' },
+    { label: '相关性剪枝后', value: Number(sc.corr_pass) || 0, color: 'bg-violet-400' },
+    { label: '稳定性通过', value: Number(sc.stable) || 0, color: 'bg-emerald-400' },
+    { label: '最终入选', value: Number(sc.selected) || 0, color: 'bg-emerald-500' },
+  ];
+
+  const columns = [
+    {
+      title: '特征',
+      dataIndex: 'name',
+      key: 'name',
+      width: 260,
+      ellipsis: true,
+      render: (v: string, row: FactorReportRow) => (
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-[11px]">{v}</span>
+          {row.status === 'selected' && <Tag className="m-0" color="green">入选</Tag>}
+        </div>
+      ),
+    },
+    {
+      title: 'IC',
+      dataIndex: 'ic',
+      key: 'ic',
+      width: 70,
+      align: 'right' as const,
+      render: (v: number | null) => (v == null ? '—' : v.toFixed(4)),
+    },
+    {
+      title: 'ICIR',
+      dataIndex: 'icir',
+      key: 'icir',
+      width: 70,
+      align: 'right' as const,
+      render: (v: number | null) => (v == null ? '—' : v.toFixed(3)),
+    },
+    {
+      title: 'IC>0占比',
+      dataIndex: 'ic_positive_rate',
+      key: 'ic_positive_rate',
+      width: 80,
+      align: 'right' as const,
+      render: (v: number | null) => (v == null ? '—' : `${(v * 100).toFixed(0)}%`),
+    },
+    {
+      title: '有效天数',
+      dataIndex: 'n_days',
+      key: 'n_days',
+      width: 70,
+      align: 'right' as const,
+    },
+    {
+      title: '训练段覆盖',
+      dataIndex: 'coverage',
+      key: 'coverage',
+      width: 96,
+      align: 'right' as const,
+      render: (v: number) => {
+        const pct = v * 100;
+        const cls = v >= 0.99 ? 'text-emerald-600' : v >= 0.9 ? 'text-amber-600' : 'text-red-500 font-semibold';
+        return <span className={cls}>{pct.toFixed(1)}%</span>;
+      },
+    },
+    {
+      title: '淘汰原因',
+      dataIndex: 'reason',
+      key: 'reason',
+      ellipsis: true,
+      render: (v: string, row: FactorReportRow) => (
+        <span className={row.status === 'selected' ? 'text-emerald-600' : 'text-slate-500'}>{v}</span>
+      ),
+    },
+  ];
+
+  return (
+    <Card className="rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
+      <SectionHeader
+        title="因子筛选报告"
+        desc="为什么最终是这些特征进入训练：IC/ICIR 初筛 → 相关性剪枝 → 稳定性检验的完整漏斗与逐特征依据。"
+        icon={<Filter size={18} className="text-emerald-500" />}
+      />
+      <Divider className="my-4" />
+
+      {/* 漏斗 */}
+      <div className="flex items-end gap-2">
+        {funnel.map((s) => (
+          <div key={s.label} className="flex flex-1 flex-col items-center gap-1">
+            <div className="text-sm font-bold text-slate-800">{s.value}</div>
+            <div className={`w-full rounded-t-md ${s.color}`} style={{ height: `${Math.max(10, (s.value / maxVal) * 72)}px` }} />
+            <div className="h-8 text-center text-[10px] leading-tight text-slate-500">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+        <span>阈值：top-N ≤ {thr.n_top ?? '—'} · |IC| ≥ {thr.ic_threshold ?? '—'} · |ICIR| ≥ {thr.icir_threshold ?? '—'} · 相关性 &lt; {thr.correlation_threshold ?? '—'}</span>
+        {report?.train_rows != null && <span>筛选基于训练段 {Number(report.train_rows).toLocaleString()} 行（不含验证/测试，防泄漏）</span>}
+        {report?.method ? <span className="font-mono">{report.method}</span> : null}
+      </div>
+
+      {/* 逐特征明细 */}
+      {features.length > 0 ? (
+        <Table<FactorReportRow>
+          className="mt-3"
+          size="small"
+          rowKey="name"
+          columns={columns}
+          dataSource={features}
+          pagination={{ pageSize: 20, showSizeChanger: false, size: 'small' }}
+          scroll={{ y: 380 }}
+          title={() => (
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">共 {features.length} 个特征 · 入选 {features.filter((f) => f.status === 'selected').length} 个</span>
+              <AntTooltip title="训练段覆盖 = 训练窗口内特征非空比例。低于 90% 说明上游数据存在缺失（如 L2 vpin 系 2024Q4-2025Q1 空窗），红色需排查。">
+                <span className="cursor-help text-[11px] text-slate-400">覆盖度说明</span>
+              </AntTooltip>
+            </div>
+          )}
+        />
+      ) : (
+        <Empty description="本次训练未产出因子筛选报告" className="mt-4" />
+      )}
+    </Card>
+  );
+};
 
 /** WFA 诊断解读：基于 IC 均值/标准差/正窗占比/ICIR 组合判断，输出可读结论 */
 const WfaInterpretation: React.FC<{ wfa: any }> = ({ wfa }) => {
@@ -293,6 +439,10 @@ export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
           </div>
         ) : null}
       </Card>
+
+      {result?.metadata?.factor_selection ? (
+        <FactorSelectionReport report={result.metadata.factor_selection} />
+      ) : null}
 
       <Card className="rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
         <SectionHeader

@@ -1341,6 +1341,20 @@ class InferenceScriptRunner:
         return c
 
     @staticmethod
+    def _normalize_signal_symbols(
+        signals_sorted: list[dict],
+    ) -> tuple[list[str], list[str]]:
+        """返回 (raw_symbols, plain_symbols)。
+
+        engine_signal_scores.symbol 约定为纯数字（600519，历史全库一致）。
+        QuantDB 直读模型的 symbol 是前缀（SH600097）或后缀（600097.SH），
+        落库/信号流/position_score 一律用归一后的纯数字；原始格式仅保留
+        给行情 Redis 查价（需要市场前缀定位 stock:{code}.SH）。
+        """
+        raw = [str(s["symbol"]) for s in signals_sorted]
+        return raw, [InferenceScriptRunner._normalize_code(x) for x in raw]
+
+    @staticmethod
     def _is_st_symbol(symbol: str, st_symbols: set[str], st_normalized: set[str] | None = None) -> bool:
         """判断股票代码是否为 ST。"""
         if symbol in st_symbols:
@@ -1460,12 +1474,19 @@ class InferenceScriptRunner:
         """
         # 按分数降序排列，排名越靠前分数越高
         signals_sorted = sorted(signals, key=lambda x: x["score"], reverse=True)
-        symbols = [s["symbol"] for s in signals_sorted]
+        # symbol 统一归一为纯数字（落库/信号流/position_score 约定），
+        # raw 保留原始格式给行情 Redis 查价
+        raw_symbols, symbols = InferenceScriptRunner._normalize_signal_symbols(
+            signals_sorted
+        )
         scores = [s["score"] for s in signals_sorted]
         consensus_list = [s.get("consensus", 0) for s in signals_sorted]
         zfusion_list = [s.get("zfusion", 0.0) for s in signals_sorted]
         detail_list = [s.get("detail", {}) for s in signals_sorted]
         confidence_list = [s.get("confidence") for s in signals_sorted]
+        signal_sides = self._resolve_signal_sides(
+            scores, consensus_list, confidence_list
+        )
         feature_dim = max(1, self._resolve_expected_feature_dim())
         model_name = str(active_model_id or self.primary_model_id or "inference_script")
         feature_version = self._resolve_feature_version(model_name)
@@ -1504,7 +1525,8 @@ class InferenceScriptRunner:
                     model_name=model_name,
                     feature_version=feature_version,
                     inference_date=inference_date,
-                    signal_sides=self._resolve_signal_sides(scores, consensus_list, confidence_list),
+                    signal_sides=signal_sides,
+                    raw_symbols=raw_symbols,
                 )
             # 信号落库后：按当日截面算 position_score（凯利仓位建议）写回 quality JSONB。
             # 失败不影响主流程（信号已落库），仅告警。
@@ -1652,6 +1674,7 @@ class InferenceScriptRunner:
         zfusion_list: list[float] | None = None,
         detail_list: list[dict] | None = None,
         confidence_list: list[float] | None = None,
+        raw_symbols: list[str] | None = None,
     ) -> None:
         """写库逻辑（在 _INFER_PERSIST_LOCK 保护下执行）。
 
@@ -1828,17 +1851,20 @@ class InferenceScriptRunner:
             quality = json.dumps(quality_parts) if quality_parts else None
             if quote_redis:
                 try:
+                    # symbols 已归一为纯数字，行情 Redis 查价需要原始
+                    # 市场前缀定位（stock:{code}.SH），raw_symbols 兜底原样
+                    raw_sym0 = raw_symbols[idx] if raw_symbols else sym
                     raw_sym = (
-                        sym.replace("SH", "").replace("SZ", "").replace("BJ", "")
+                        raw_sym0.replace("SH", "").replace("SZ", "").replace("BJ", "")
                     )
-                    if sym.startswith("SH"):
+                    if raw_sym0.startswith("SH"):
                         redis_key = f"stock:{raw_sym}.SH"
-                    elif sym.startswith("SZ"):
+                    elif raw_sym0.startswith("SZ"):
                         redis_key = f"stock:{raw_sym}.SZ"
-                    elif sym.startswith("BJ") or sym.startswith("920"):
+                    elif raw_sym0.startswith("BJ") or raw_sym.startswith("920"):
                         redis_key = f"stock:{raw_sym}.BJ"
                     else:
-                        redis_key = f"stock:{sym}"
+                        redis_key = f"stock:{raw_sym0}"
                     now_price = quote_redis.hget(redis_key, "Now")
                     if now_price:
                         expected_price = float(now_price)

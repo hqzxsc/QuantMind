@@ -224,6 +224,67 @@ export const TrainingTargetConfig: React.FC<TrainingTargetConfigProps> = ({
             )}
           </div>
 
+          {/* ── 因子筛选（IC/ICIR）── */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <Tooltip title="日频 Rank IC 初筛 → 相关性剪枝 → 稳定性检验。筛选理由与每特征 IC/ICIR/覆盖率在训练日志与结果页展示，不再黑盒。">
+                <div className="text-[10px] uppercase font-bold text-slate-400 cursor-help">因子筛选（IC/ICIR）</div>
+              </Tooltip>
+              <Switch
+                size="small"
+                checked={factorFilter?.enabled ?? DEFAULT_FACTOR_FILTER.enabled}
+                onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, enabled: v })}
+              />
+            </div>
+            {factorFilter?.enabled ?? DEFAULT_FACTOR_FILTER.enabled ? (
+              <>
+                <div className="mt-3 flex flex-wrap items-end gap-3">
+                  <div>
+                    <div className="mb-1 text-[10px] text-slate-500">目标特征数 top-N</div>
+                    <InputNumber
+                      size="small" min={10} max={300}
+                      value={factorFilter?.nTop ?? DEFAULT_FACTOR_FILTER.nTop}
+                      onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, nTop: Number(v ?? DEFAULT_FACTOR_FILTER.nTop) })}
+                      className="w-24"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[10px] text-slate-500">|IC| ≥</div>
+                    <InputNumber
+                      size="small" min={0} max={0.1} step={0.005}
+                      value={factorFilter?.icThreshold ?? DEFAULT_FACTOR_FILTER.icThreshold}
+                      onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, icThreshold: Number(v ?? DEFAULT_FACTOR_FILTER.icThreshold) })}
+                      className="w-24"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[10px] text-slate-500">|ICIR| ≥</div>
+                    <InputNumber
+                      size="small" min={0} max={1} step={0.05}
+                      value={factorFilter?.icirThreshold ?? DEFAULT_FACTOR_FILTER.icirThreshold}
+                      onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, icirThreshold: Number(v ?? DEFAULT_FACTOR_FILTER.icirThreshold) })}
+                      className="w-24"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[10px] text-slate-500">相关性 &lt; </div>
+                    <InputNumber
+                      size="small" min={0.5} max={1} step={0.01}
+                      value={factorFilter?.correlationThreshold ?? DEFAULT_FACTOR_FILTER.correlationThreshold}
+                      onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, correlationThreshold: Number(v ?? DEFAULT_FACTOR_FILTER.correlationThreshold) })}
+                      className="w-24"
+                    />
+                  </div>
+                </div>
+                <div className="mt-1.5 text-[10px] text-slate-400 leading-relaxed">
+                  放松阈值入选更多特征，收紧则更保守。全选 321 个特征时，筛选后实际进入训练的特征数会小于全选数。
+                </div>
+              </>
+            ) : (
+              <div className="mt-2 text-[10px] text-amber-600 leading-relaxed">已关闭：全部选中特征直接进入训练，不做筛选。</div>
+            )}
+          </div>
+
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">标签预览</div>
             <div className="mt-2 text-sm font-medium text-slate-800">{target.mode === 'classification' ? '预测未来 N 日涨跌方向' : `预测未来 ${target.horizonDays} 日收益率`}</div>
@@ -403,65 +464,6 @@ export const TrainingTargetConfig: React.FC<TrainingTargetConfigProps> = ({
                 ]}
               />
               <div className="mt-1.5 text-[10px] text-slate-400">超时后任务会自动停止。</div>
-            </div>
-            <div className="rounded-xl bg-white p-3 border border-slate-200">
-              <div className="mb-2 flex items-center justify-between">
-                <Tooltip title="日频 Rank IC 初筛 → 相关性剪枝 → 稳定性检验。筛选理由与每特征 IC/ICIR/覆盖率在训练日志与结果页展示，不再黑盒。">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 cursor-help">因子筛选（IC/ICIR）</div>
-                </Tooltip>
-                <Switch
-                  size="small"
-                  checked={factorFilter?.enabled ?? DEFAULT_FACTOR_FILTER.enabled}
-                  onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, enabled: v })}
-                />
-              </div>
-              {factorFilter?.enabled ?? DEFAULT_FACTOR_FILTER.enabled ? (
-                <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <div className="mb-1 text-[10px] text-slate-500">目标特征数 top-N</div>
-                      <InputNumber
-                        size="small" min={10} max={300}
-                        value={factorFilter?.nTop ?? DEFAULT_FACTOR_FILTER.nTop}
-                        onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, nTop: Number(v ?? DEFAULT_FACTOR_FILTER.nTop) })}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div>
-                      <div className="mb-1 text-[10px] text-slate-500">|IC| ≥</div>
-                      <InputNumber
-                        size="small" min={0} max={0.1} step={0.005}
-                        value={factorFilter?.icThreshold ?? DEFAULT_FACTOR_FILTER.icThreshold}
-                        onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, icThreshold: Number(v ?? DEFAULT_FACTOR_FILTER.icThreshold) })}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div>
-                      <div className="mb-1 text-[10px] text-slate-500">|ICIR| ≥</div>
-                      <InputNumber
-                        size="small" min={0} max={1} step={0.05}
-                        value={factorFilter?.icirThreshold ?? DEFAULT_FACTOR_FILTER.icirThreshold}
-                        onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, icirThreshold: Number(v ?? DEFAULT_FACTOR_FILTER.icirThreshold) })}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div>
-                      <div className="mb-1 text-[10px] text-slate-500">相关性 &lt; </div>
-                      <InputNumber
-                        size="small" min={0.5} max={1} step={0.01}
-                        value={factorFilter?.correlationThreshold ?? DEFAULT_FACTOR_FILTER.correlationThreshold}
-                        onChange={(v) => onFactorFilterChange?.({ ...DEFAULT_FACTOR_FILTER, ...factorFilter, correlationThreshold: Number(v ?? DEFAULT_FACTOR_FILTER.correlationThreshold) })}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-1.5 text-[10px] text-slate-400 leading-relaxed">
-                    放松阈值入选更多特征，收紧则更保守。全选 321 个特征时，筛选后实际进入训练的特征数会小于全选数。
-                  </div>
-                </>
-              ) : (
-                <div className="text-[10px] text-amber-600 leading-relaxed">已关闭：全部选中特征直接进入训练，不做筛选。</div>
-              )}
             </div>
           </div>
         </div>

@@ -1696,7 +1696,9 @@ async def list_stocks(
                                 "LEFT JOIN qm_user_models u ON u.model_id = r.model_id "
                                 "WHERE e.tenant_id='default' AND e.trade_date >= :d_from "
                                 "AND (u.status IS NULL OR u.status <> 'archived') "
-                                "GROUP BY r.model_id ORDER BY latest DESC LIMIT 200"
+                                "GROUP BY r.model_id "
+                                "ORDER BY MAX(u.is_default::int) DESC NULLS LAST, "
+                                "MAX(e.trade_date) DESC LIMIT 200"
                             ),
                             {"d_from": _from},
                         )

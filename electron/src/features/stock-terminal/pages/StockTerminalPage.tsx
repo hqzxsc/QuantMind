@@ -399,17 +399,17 @@ export default function StockTerminalPage() {
         open={klineOpen}
         onCancel={() => setKlineOpen(false)}
         footer={null}
-        width={1160}
+        width={1440}
         destroyOnHidden
+        centered
         title={null}
-        style={{ top: 16 }}
-        styles={{ body: { height: 560, padding: 0 } }}
+        styles={{ body: { height: 720, padding: 0 } }}
       >
         {selected && klineOpen && (
           <div className="h-full flex">
             {/* 左：K 线主体（周期/指标/指数/回放/信号/回测/多模型分数/模拟交易/参考线） */}
             <div className="flex-1 min-w-0">
-              <KlineWorkspace stock={selected} profile={profile} height={500} onSelectStock={setSelected} />
+              <KlineWorkspace stock={selected} profile={profile} height={640} onSelectStock={setSelected} />
             </div>
             {/* 右：竖排智能标签 */}
             <div className="w-44 shrink-0 border-l border-slate-100 overflow-y-auto">

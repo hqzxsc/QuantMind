@@ -316,7 +316,11 @@ export const ModelDetailPanel: React.FC<{ model: UserModelRecord }> = ({ model }
                     )}>
                       {item.trendLabel === '基线' ? <Activity size={8} /> : item.trendLabel.includes('+') ? <ChevronUp size={8} /> : <ChevronDown size={8} />}
                       <span className="opacity-70">较上段</span>
-                      <span className="font-black">{item.trendLabel.replace(/[+-]/, '').replace('%', '')}{item.trendLabel === '基线' ? '' : '%'}</span>
+                      <span className="font-black">
+                        {item.trendLabel === '基线'
+                          ? '基线'
+                          : `${item.trendLabel.replace(/^较上段\s*/, '').replace(/[+-]/, '').replace('%', '')}%`}
+                      </span>
                     </div>
                   </div>
                 </div>

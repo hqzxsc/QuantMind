@@ -100,13 +100,14 @@ def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None
     result: dict[str, Any] = {"market": "HK", "days": days, "datasets": datasets or []}
 
     if not datasets:
-        # 全量定时路径：雅虎负责估值快照/财务序列/分析师等元数据段，
-        # K线由 akshare 独占写入（见下）。
-        result["yahoo"] = _yahoo_run("HK", days=days, symbols=symbols, fast=fast, skip_kline=True)
+        # 全量定时路径：核心数据(K线→南向→L1→南向因子)先落盘保证每晚必达，
+        # 雅虎元数据段(估值快照/财务序列/分析师)最后执行——任务有 3600s 硬限制，
+        # 若被截断只损失元数据增量，次日续跑；雅虎必须 skip_kline(K线口径铁律)。
         _sync_akshare_kline(result, days=days, symbols=symbols)
         result["sources"] = {"hsgt_south": _south_source_result(days=days)}
         _refresh_l1_dataset(result, days=days)
         _refresh_south_factors(result)
+        result["yahoo"] = _yahoo_run("HK", days=days, symbols=symbols, fast=fast, skip_kline=True)
         return result
 
     # 南向资金（港股通）— 独立爬虫，按数据源勾选控制

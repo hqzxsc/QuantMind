@@ -674,6 +674,21 @@ def _add_price_derived_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _pg_latest_trade_date() -> date | None:
+    """返回 PG stock_daily_latest 已写入的最大交易日；探测失败时返回 None。"""
+    try:
+        engine = _get_engine()
+        from sqlalchemy import text as sql_text
+        with engine.begin() as conn:
+            row = conn.execute(
+                sql_text("SELECT MAX(trade_date) FROM stock_daily_latest")
+            ).scalar()
+        return row
+    except Exception as exc:
+        log.warning("查询 PG MAX(trade_date) 失败: %s", exc)
+        return None
+
+
 def fill_pg_from_parquet(
     symbols: list[str] | None = None,
     *,
@@ -694,7 +709,20 @@ def fill_pg_from_parquet(
     if not hub.available:
         return {"status": "skipped", "reason": "QuantDB data dir not available"}
 
-    start = start_date or QUANTDB_EPOCH
+    # 增量模式（未显式传 start_date）：探测 PG 已写入的最大交易日并往前回溯若干
+    # 自然日作为重灌起点，避免每次都把 QUANTDB_EPOCH(2016) 以来的数据全量重灌。
+    # 重叠部分由 ON CONFLICT DO UPDATE 的 upsert 语义保证幂等安全。
+    if start_date is not None:
+        start = start_date
+    else:
+        latest = _pg_latest_trade_date()
+        if latest is not None:
+            # 回溯 7 自然日（覆盖约 5 个交易日），确保最近批次被重叠重写
+            start = latest - timedelta(days=7)
+            log.info("PG 增量起点: %s（PG 最大 %s，回溯 7 自然日）", start, latest)
+        else:
+            log.info("PG stock_daily_latest 为空或探测失败，PG 阶段从 %s 全量重灌", QUANTDB_EPOCH)
+            start = QUANTDB_EPOCH
     end = end_date or date.today()
     days = _trade_dates(hub, start, end)
     if not days:

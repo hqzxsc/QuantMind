@@ -80,14 +80,20 @@ def _refresh_l1_dataset(result: dict[str, Any], *, days: int) -> None:
         result["l1_dataset"] = {"status": "error", "error": str(exc)}
 
 
-def _refresh_south_factors(result: dict[str, Any]) -> None:
-    """南向持仓更新后重算南向因子日频分区。"""
-    try:
-        from backend.scripts.build_ml_l1_dataset import build_south_factors
+def _refresh_signal_datasets(result: dict[str, Any]) -> None:
+    """本地信号数据集刷新钩子（南向/CCASS 因子等）。
 
-        result["south_factors"] = build_south_factors()
+    对应生成器模块属内部资产、不入库；模块缺失（如新装环境）时优雅跳过。"""
+    try:
+        from backend.scripts.build_ml_signal_datasets import refresh_signal_datasets as _fn
+
+        result["signal_datasets"] = _fn(result)
+    except ModuleNotFoundError as exc:
+        if "build_ml_signal_datasets" not in str(exc):
+            raise
+        result["signal_datasets"] = {"status": "skipped", "reason": "local module absent"}
     except Exception as exc:  # noqa: BLE001
-        result["south_factors"] = {"status": "error", "error": str(exc)}
+        result["signal_datasets"] = {"status": "error", "error": str(exc)}
 
 
 def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None = None,
@@ -106,17 +112,18 @@ def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None
         _sync_akshare_kline(result, days=days, symbols=symbols)
         result["sources"] = {"hsgt_south": _south_source_result(days=days)}
         _refresh_l1_dataset(result, days=days)
-        _refresh_south_factors(result)
         result["yahoo"] = _yahoo_run("HK", days=days, symbols=symbols, fast=fast, skip_kline=True)
+        # 本地信号因子(南向/CCASS)在原始数据全部落盘后统一增量刷新
+        _refresh_signal_datasets(result)
         return result
 
     # 南向资金（港股通）— 独立爬虫，按数据源勾选控制
     if "hsgt_south" in datasets:
         result["sources"] = {"hsgt_south": _south_source_result(days=days)}
 
-    # 南向因子日频分区（训练直连数据集）
-    if "south_factors" in datasets:
-        _refresh_south_factors(result)
+    # 南向/CCASS 等信号数据集（本地可选模块）
+    if "south_factors" in datasets or "ccass_factors" in datasets:
+        _refresh_signal_datasets(result)
 
     # 雅虎负责元数据段；daily_forward 从雅虎清单里剔除（K线口径铁律）
     yahoo_ds = [d for d in datasets if d in _YAHOO_DATASETS and d != "daily_forward"]

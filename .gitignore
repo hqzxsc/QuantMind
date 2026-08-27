@@ -243,3 +243,6 @@ backend/scripts/*north*.py
 backend/scripts/quanthk_*ccass*.py
 backend/scripts/quanthk_import_south.py
 backend/scripts/quanthk_south_sync.py
+
+# 本地信号因子生成器（内部资产）
+backend/scripts/build_ml_signal_datasets.py

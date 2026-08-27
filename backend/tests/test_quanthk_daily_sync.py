@@ -40,13 +40,14 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[dict]]:
         calls["south_src"].append({"days": days})
         return {"checked": 0, "synced": 0}
 
-    def fake_south():
+    def fake_sig(result):
         calls["south"].append({})
-        return {"status": "ok", "partitions_written": 0}
+        result["signal_datasets"] = {"status": "ok"}
+        return {"status": "ok"}
 
     monkeypatch.setattr(qds, "_south_source_result", fake_south_src)
     monkeypatch.setattr(
-        "backend.scripts.build_ml_l1_dataset.build_south_factors", fake_south
+        qds, "_refresh_signal_datasets", fake_sig
     )
     return calls
 
@@ -99,8 +100,8 @@ def test_only_south_selected_skips_other_sections(recorded):
     # Act：仅勾选南向因子数据集
     result = qds.run(days=5, datasets=["south_factors"])
 
-    # Assert：只刷南向因子，不拉雅虎/K线/L1
-    assert result["south_factors"]["status"] == "ok"
+    # Assert：只刷南向信号，不拉雅虎/K线/L1
+    assert result["signal_datasets"]["status"] == "ok"
     assert recorded["yahoo"] == [] and recorded["kline"] == [] and recorded["l1"] == []
 
 
@@ -118,8 +119,8 @@ def test_akshare_kline_failure_does_not_break_full_sync(monkeypatch):
     )
     monkeypatch.setattr(qds, "_south_source_result", lambda days=5: {"checked": 0})
     monkeypatch.setattr(
-        "backend.scripts.build_ml_l1_dataset.build_south_factors",
-        lambda: {"status": "ok"},
+        qds, "_refresh_signal_datasets",
+        lambda result: result.update({"signal_datasets": {"status": "ok"}}),
     )
 
     # Act

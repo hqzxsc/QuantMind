@@ -380,18 +380,14 @@ def _default_datasets(market: str) -> tuple[DatasetSpec, ...]:
                 "本地计算的量价因子日频分区，训练直连读取；随每日同步自动刷新",
             ),
         )
-    if market == "HK":
-        base.append(
-            DatasetSpec(
-                "south_factors",
-                "南向因子(日频)",
-                "6",
-                "ml",
-                "6_ml_datasets/south_factors",
-                "partition",
-                "南向持股占比及其变化/连增/滚动Z，训练直连读取；随南向同步自动刷新",
-            ),
-        )
+    # 本地信号数据集（南向/CCASS 因子等）由内部模块动态提供；模块缺失时跳过
+    try:
+        from backend.scripts.build_ml_signal_datasets import SIGNAL_DATASET_SPECS as _sig_specs
+
+        base.extend(DatasetSpec(**spec) for spec in _sig_specs)
+    except ModuleNotFoundError as exc:
+        if "build_ml_signal_datasets" not in str(exc):
+            raise
     return tuple(base)
 
 

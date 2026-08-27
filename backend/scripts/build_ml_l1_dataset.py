@@ -228,108 +228,9 @@ def materialize_from_snapshot(market: str) -> dict:
     return {"status": "ok", "partitions_written": written}
 
 
-def _load_south_panel(hs_root: Path) -> pd.DataFrame:
-    """合并 dt 分区（近期日更）成日频长表。历史散点期（2024-11~2025-12 的
-    *.HK.parquet 符号文件）数据不连续，暂不参与 Δ 类因子，后续回填任务处理。"""
-    frames: list[pd.DataFrame] = []
-    for f in sorted(hs_root.glob("dt=*/data.parquet")):
-        try:
-            s = pd.read_parquet(f, columns=["symbol", "query_date",
-                                            "holding_percentage", "holding_quantity"])
-        except Exception:  # noqa: BLE001
-            continue
-        frames.append(s)
-    if not frames:
-        return pd.DataFrame()
-    panel = pd.concat(frames, ignore_index=True)
-    panel["date"] = pd.to_datetime(panel["query_date"], errors="coerce")
-    panel = panel.dropna(subset=["date", "symbol"])
-    panel = panel.drop_duplicates(["symbol", "date"], keep="last")
-    return panel
-
-
-_SOUTH_GAP_DAYS = 5
-
-
-def _south_symbol_factors(g: pd.DataFrame) -> pd.DataFrame:
-    """单只标的：按时间排序后计算南向因子。
-
-    断点规则：相邻两次披露间隔 > _SOUTH_GAP_DAYS 自然日视为中断，
-    diff/连增/滚动统计在段内计算，跨段置空，避免把空洞当'无变化'。
-    """
-    g = g.sort_values("date").copy()
-    idx_dt = g["date"]
-    gap_days = idx_dt.diff().dt.days
-    seg_id = (gap_days > _SOUTH_GAP_DAYS).cumsum()
-    pct = g["holding_percentage"].astype(float)
-
-    out = pd.DataFrame(index=g.index)
-    out["sb_pct"] = pct
-    out["sb_quantity"] = g["holding_quantity"].astype(float)
-    d1 = pct.groupby(seg_id).diff()
-    out["sb_pct_d1"] = d1.where(gap_days.fillna(99) <= _SOUTH_GAP_DAYS)
-    d5 = pct.groupby(seg_id).diff(5)
-    out["sb_pct_d5"] = d5.where(gap_days.fillna(99) <= _SOUTH_GAP_DAYS)
-    seg_series = pd.Series(list(seg_id), index=g.index)
-
-    def _z20(values: pd.Series, positions: pd.Series) -> pd.Series:
-        rolled_mean = values.groupby(positions).transform(
-            lambda s: s.shift(1).rolling(20, min_periods=8).mean())
-        rolled_std = values.groupby(positions).transform(
-            lambda s: s.shift(1).rolling(20, min_periods=8).std())
-        z = (values - rolled_mean) / rolled_std.replace(0, float("nan"))
-        return z.where(pd.Series(list(gap_days.fillna(99)), index=values.index) <= _SOUTH_GAP_DAYS)
-
-    out["sb_pct_z20"] = _z20(pct, seg_series)
-    up = (d1 > 0)
-    streak = up.groupby([seg_series, (up != up.shift()).cumsum()]).cumsum()
-    out["sb_consec_up"] = streak.where(gap_days.fillna(99) <= _SOUTH_GAP_DAYS).fillna(0).astype("int64")
-    out["date"] = g["date"]
-    out["symbol"] = g["symbol"]
-    return out.reset_index(drop=True)
-
-
-def build_south_factors(*, incremental: bool = True) -> dict:
-    """生成 6_ml_datasets/south_factors 日频分区（南向资金因子）。"""
-    hub = _hub("hong_kong")
-    hs_root = hub.data_dir / "2_base_sector" / "hsgt_south"
-    out_root = hub.data_dir / "6_ml_datasets"
-    out_root.mkdir(parents=True, exist_ok=True)
-    existing = _existing_partitions(out_root, "south_factors")
-
-    panel = _load_south_panel(hs_root)
-    if panel.empty:
-        return {"status": "no_data"}
-    log.info("[hong_kong/south] 长表 %d 行 (%d 符号)", len(panel), panel.symbol.nunique())
-
-    parts = [_south_symbol_factors(g) for _, g in panel.groupby("symbol")]
-    feats = pd.concat(parts, ignore_index=True)
-    col_order = ["symbol", "date", "sb_quantity", "sb_pct", "sb_pct_d1",
-                 "sb_pct_d5", "sb_pct_z20", "sb_consec_up"]
-
-    written = 0
-    for dt_key, g in feats.groupby(feats["date"].dt.date):
-        dt_str = pd.Timestamp(dt_key).strftime("%Y%m%d")
-        if incremental and existing and dt_str in existing:
-            continue
-        out = g[col_order].sort_values("symbol")
-        target = out_root / "south_factors" / f"dt={dt_str}" / "data.parquet"
-        tmp_path = target.parent / f".tmp-{target.name}"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            out.to_parquet(tmp_path, index=False)
-            tmp_path.replace(target)
-            written += 1
-        finally:
-            tmp_path.unlink(missing_ok=True)
-    return {"status": "ok", "partitions_written": written, "last": max(feats.date.dt.strftime("%Y%m%d"))}
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="市场 L1 因子日频数据集生成")
     parser.add_argument("--market", required=True, choices=["hong_kong", "us_stock"])
-    parser.add_argument("--dataset", choices=["l1", "south"], default="l1",
-                        help="l1=量价因子(按市场)，south=南向因子(仅港股)")
     parser.add_argument("--start-year", type=int, default=None, help="因子计算起始年(默认2019)")
     parser.add_argument("--rebuild", action="store_true",
                         help="重算模式：不跳过已有分区之外的年份限制，重写新窗口分区")
@@ -338,8 +239,6 @@ def main() -> int:
     args, _ = parser.parse_known_args()
     if args.from_model_features:
         result = materialize_from_snapshot(args.market)
-    elif args.dataset == "south":
-        result = build_south_factors()
     else:
         result = build_l1(args.market, start_year=args.start_year, incremental=not args.rebuild)
     print(result)

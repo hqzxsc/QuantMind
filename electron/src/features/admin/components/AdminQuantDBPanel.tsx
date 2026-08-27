@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Alert, Button, Card, Checkbox, Col, Descriptions, Progress, Row, Space,
@@ -41,6 +41,12 @@ export const AdminQuantDBPanel: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [info, setInfo] = useState<QuantDBInfo | null>(null);
     const [previewDataset, setPreviewDataset] = useState<QuantDBDataset | null>(null);
+    const [catalogRefreshSignal, setCatalogRefreshSignal] = useState(0);
+    const refreshCounter = useRef(0);
+    const bumpCatalogRefresh = useCallback(() => {
+        refreshCounter.current += 1;
+        setCatalogRefreshSignal(refreshCounter.current);
+    }, []);
     const [sources, setSources] = useState<Array<{ source: string; label: string; enabled: boolean }>>([]);
     const [sourcesLoading, setSourcesLoading] = useState(false);
 
@@ -250,12 +256,14 @@ export const AdminQuantDBPanel: React.FC = () => {
             <QuantDBCatalogPanel
                 connected={Boolean(info?.connected)}
                 onPreview={setPreviewDataset}
+                refreshSignal={catalogRefreshSignal}
             />
 
-            {/* 数据集抽屉预览 */}
+            {/* 数据集抽屉预览；抽屉内增量同步完成后刷新目录统计 */}
             <QuantDBPreviewDrawer
                 dataset={previewDataset}
                 onClose={() => setPreviewDataset(null)}
+                onSynced={bumpCatalogRefresh}
             />
         </div>
     );

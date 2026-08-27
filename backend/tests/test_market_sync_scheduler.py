@@ -10,6 +10,7 @@ import pytest
 
 from backend.services.engine.tasks.market_sync_scheduler import (
     DEFAULT_SCHEDULE,
+    MARKET_DEFAULT_SCHEDULES,
     get_schedule,
     save_schedule,
 )
@@ -51,13 +52,26 @@ def test_hk_schedule_is_enabled_by_default_without_redis_config(stub_redis):
     assert cfg["datasets"] == []
 
 
-def test_markets_without_override_stay_disabled_by_default(stub_redis):
-    # Act
-    cfg = get_schedule("US")
+def test_markets_in_default_table_are_enabled_with_expected_times(stub_redis):
+    # Arrange / Act：Redis 里没有任何配置时逐一读取
+    got = {m: get_schedule(m) for m in MARKET_DEFAULT_SCHEDULES}
 
-    # Assert：未列入默认表的市场保持关闭，保持全局默认时间
+    # Assert：海外市场全部开箱即定时同步，且互不错峰
+    assert got["HK"]["enabled"] is True and got["HK"]["time"] == "23:50"
+    assert got["US"]["enabled"] is True and got["US"]["time"] == "05:30"
+    assert got["BC"]["enabled"] is True and got["BC"]["time"] == "04:15"
+    assert got["FUTURES"]["enabled"] is True and got["FUTURES"]["time"] == "18:00"
+    times = [cfg["time"] for cfg in got.values()]
+    assert len(times) == len(set(times)), "各市场默认触发时间必须错开"
+
+
+def test_ashare_has_no_market_default_and_stays_disabled_without_config(stub_redis):
+    # Act：A 股不在默认表内（走独立的 daily-data-sync beat 任务）
+    cfg = get_schedule("A")
+
+    # Assert：保持关闭与全局默认时间
     assert cfg["enabled"] is False
-    assert cfg["time"] == "03:00"
+    assert cfg["time"] == DEFAULT_SCHEDULE["time"]
 
 
 def test_explicit_saved_config_overrides_market_default(stub_redis):

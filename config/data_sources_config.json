@@ -11,11 +11,11 @@
     "ccass": true,
     "hsgt_south": true,
     "hsgt_north": true,
-    "yahoo": false,
+    "yahoo": true,
     "paid": true
   },
   "US": {
     "akshare": true,
-    "yahoo": false
+    "yahoo": true
   }
 }

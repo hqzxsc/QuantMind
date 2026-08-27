@@ -38,9 +38,17 @@ DEFAULT_SCHEDULE = {
 
 # 各市场在无 Redis 配置时的默认定时（显式保存的配置总是覆盖这里的值）。
 # 未列入的市场保持 enabled=False，需要在前端手动开启。
-# HK：上游数据（雅虎/akshare/CCASS/南向）晚间陆续就绪，排在 A 股 23:30 同步之后。
+# A 股走独立的 daily-data-sync beat 任务（23:00 后由 quantdb 同步顺带南向），
+# 各海外市场与它错峰：
+#   HK       23:50  雅虎/akshare/CCASS 晚间陆续就绪，排 A 股同步之后
+#   US       05:30  美股收盘(北京约 04:00/05:00)后，EOD 数据已稳定
+#   BC       04:15  加密市场全天候交易，选凌晨低谷时段拉取
+#   FUTURES  18:00  日盘收盘结算发布后、夜盘主力时段前
 MARKET_DEFAULT_SCHEDULES: dict[str, dict[str, Any]] = {
     "HK": {"enabled": True, "time": "23:50"},
+    "US": {"enabled": True, "time": "05:30"},
+    "BC": {"enabled": True, "time": "04:15"},
+    "FUTURES": {"enabled": True, "time": "18:00"},
 }
 
 

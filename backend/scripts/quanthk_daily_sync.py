@@ -2,10 +2,11 @@
 """港股数据同步入口 — 按勾选数据集分发到对应同步脚本。
 
 支持的数据集（与后台 catalog 对应）:
-  daily_forward / index_daily / valuation / sector / f10 / income / balance /
-  cashflow / dividend / splits / 4_analyst 系列   → 雅虎源（global_market_sync）
+  daily_forward                                        → akshare 增量回拉（不复权，与付费历史口径一致）
+  index_daily / valuation / sector / f10 / income /
+  balance / cashflow / splits / 4_analyst 系列          → 雅虎源（skip_kline=True，避免限流）
   akshare_valuation / akshare_financial / akshare_profile → akshare 源
-  index_daily                                        → akshare 指数（akshare_index_sync）
+  index_daily                                          → akshare 指数（akshare_index_sync）
 
 用法:
   python backend/scripts/quanthk_daily_sync.py --days 5
@@ -38,6 +39,19 @@ _YAHOO_DATASETS = {
 }
 
 
+def _sync_akshare_kline(result: dict[str, Any], *, days: int, symbols: str | None = None) -> None:
+    """akshare 港股日线增量回拉（不复权），写入 daily_forward 的唯一来源。"""
+    from backend.scripts.quanthk_akshare_kline import sync as _ak_kline_sync
+
+    try:
+        kwargs: dict[str, Any] = {"days": days}
+        if symbols:
+            kwargs["symbols"] = [s.strip().zfill(5) for s in symbols.split(",") if s.strip()]
+        result["akshare_kline"] = _ak_kline_sync(**kwargs)
+    except Exception as exc:  # noqa: BLE001
+        result["akshare_kline"] = {"error": str(exc)}
+
+
 def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None = None,
         fast: bool = False, **kwargs: Any) -> dict:
     """同步港股数据。datasets 为勾选的数据集名；None 时全量同步雅虎数据。
@@ -45,10 +59,14 @@ def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None
     按数据集分发到对应数据源脚本。hsgt_south（南向资金/港股通）走独立
     爬虫同步脚本，落盘 {quanthk}/2_base_sector/hsgt_south。
     """
-    if not datasets:
-        return _yahoo_run("HK", days=days, symbols=symbols, fast=fast)
+    result: dict[str, Any] = {"market": "HK", "days": days, "datasets": datasets or []}
 
-    result: dict = {"market": "HK", "days": days, "datasets": datasets}
+    if not datasets:
+        # 全量定时路径：雅虎负责估值快照/财务序列/分析师等元数据段，
+        # K线由 akshare 独占写入（见下）。
+        result["yahoo"] = _yahoo_run("HK", days=days, symbols=symbols, fast=fast, skip_kline=True)
+        _sync_akshare_kline(result, days=days, symbols=symbols)
+        return result
 
     # 南向资金（港股通）— 独立爬虫，按数据源勾选控制
     if "hsgt_south" in datasets:
@@ -68,9 +86,14 @@ def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None
         else:
             result["sources"] = {"hsgt_south": {"status": "skipped", "reason": "未勾选南向资金"}}
 
-    yahoo_ds = [d for d in datasets if d in _YAHOO_DATASETS]
+    # 雅虎负责元数据段；daily_forward 从雅虎清单里剔除（K线口径铁律）
+    yahoo_ds = [d for d in datasets if d in _YAHOO_DATASETS and d != "daily_forward"]
     if yahoo_ds:
-        result["yahoo"] = _yahoo_run("HK", days=days, symbols=symbols, fast=fast)
+        result["yahoo"] = _yahoo_run("HK", days=days, symbols=symbols, fast=fast, skip_kline=True)
+
+    # K线（daily_forward）— akshare 增量回拉，不复权口径与付费历史一致
+    if "daily_forward" in datasets:
+        _sync_akshare_kline(result, days=days, symbols=symbols)
 
     # akshare 港股基本面（估值/财务/资料/分红）
     akshare_fields = []

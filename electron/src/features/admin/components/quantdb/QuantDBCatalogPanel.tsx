@@ -47,9 +47,11 @@ const DIFF_STATUS_TAG: Record<string, { color: string; label: string }> = {
 interface QuantDBCatalogPanelProps {
     connected: boolean;
     onPreview: (dataset: QuantDBDataset) => void;
+    /** 外部（如预览抽屉）同步完成后递增，触发目录统计刷新 */
+    refreshSignal?: number;
 }
 
-export function QuantDBCatalogPanel({ connected, onPreview }: QuantDBCatalogPanelProps) {
+export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }: QuantDBCatalogPanelProps) {
     const [groups, setGroups] = useState<QuantDBGroup[]>([]);
     const [datasets, setDatasets] = useState<QuantDBDataset[]>([]);
     const [dataDir, setDataDir] = useState('');
@@ -101,6 +103,13 @@ export function QuantDBCatalogPanel({ connected, onPreview }: QuantDBCatalogPane
         loadCatalog();
         loadLatestJob();
     }, [loadCatalog, loadLatestJob]);
+
+    // 外部同步（预览抽屉等）完成后刷新目录统计
+    useEffect(() => {
+        if (refreshSignal > 0) {
+            loadCatalog();
+        }
+    }, [refreshSignal, loadCatalog]);
 
     // 任务运行期间轮询进度；完成/取消时刷新目录统计
     useEffect(() => {

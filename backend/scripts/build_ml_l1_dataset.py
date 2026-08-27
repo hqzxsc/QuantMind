@@ -47,6 +47,14 @@ def _hub(market: str):
         from backend.services.engine.data_platform.quanthk_hub import QuantHKDataHub
 
         return QuantHKDataHub()
+    if market == "crypto":
+        from backend.services.engine.data_platform.quantbc_hub import QuantBCDataHub
+
+        return QuantBCDataHub()
+    if market == "futures":
+        from backend.services.engine.data_platform.quantfutures_hub import QuantFuturesDataHub
+
+        return QuantFuturesDataHub.get_instance()
     from backend.services.engine.data_platform.quantus_hub import QuantUSDataHub
 
     return QuantUSDataHub()
@@ -78,13 +86,20 @@ def build_l1(market: str, *, start_year: int | None = None, incremental: bool = 
     warm_from_year = start_year or 2019
 
     log.info("[%s] 读日线 parquet (>= %d)", market, warm_from_year)
+    from backend.scripts.update_market_features import (
+        load_crypto_parquet,
+        load_futures_parquet,
+        load_hk_parquet,
+        load_us_parquet,
+    )
+
     if market == "hong_kong":
-        from backend.scripts.update_market_features import load_hk_parquet
-
         kline = load_hk_parquet(start_year=warm_from_year)
+    elif market == "crypto":
+        kline = load_crypto_parquet()
+    elif market == "futures":
+        kline = load_futures_parquet()
     else:
-        from backend.scripts.update_market_features import load_us_parquet
-
         kline = load_us_parquet()
     if kline is None or kline.empty:
         return {"status": "no_data"}
@@ -235,7 +250,8 @@ def materialize_from_snapshot(market: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="市场 L1 因子日频数据集生成")
-    parser.add_argument("--market", required=True, choices=["hong_kong", "us_stock"])
+    parser.add_argument("--market", required=True,
+                        choices=["hong_kong", "us_stock", "futures", "crypto"])
     parser.add_argument("--start-year", type=int, default=None, help="因子计算起始年(默认2019)")
     parser.add_argument("--rebuild", action="store_true",
                         help="重算模式：不跳过已有分区之外的年份限制，重写新窗口分区")

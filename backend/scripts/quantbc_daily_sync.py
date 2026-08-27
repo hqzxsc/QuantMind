@@ -23,13 +23,23 @@ def run(
     minute_days: int | None = None,
 ) -> dict:
     """供后台管理 API 调用的编程接口。"""
-    return _blockchain_run(
+    result = _blockchain_run(
         days=days,
         symbols=symbols,
         skip_valuation=skip_valuation,
         minute_freqs=minute_freqs,
         minute_days=minute_days,
     )
+    if not isinstance(result, dict):
+        result = {"result": result}
+    # L1 因子直读数据集随日K落盘后刷新（与港股同口径）
+    try:
+        from backend.scripts.build_ml_l1_dataset import build_l1
+
+        result["l1_dataset"] = build_l1("crypto")
+    except Exception as exc:  # noqa: BLE001
+        result["l1_dataset"] = {"status": "error", "error": str(exc)}
+    return result
 
 
 def _cli() -> int:

@@ -37,7 +37,7 @@ const TRAINING_MODULES = [
 const TRAINING_PAGE_BOTTOM_SAFE_CLASS = 'pb-[30px]';
 // 直读 ML 数据集训练的市场（数据源选择 + 目录版本门禁），与后端
 // quantdb_factor_reader.MARKET_FACTOR_SOURCES 保持一致。
-const QUANTDB_DIRECT_MARKETS = ['CN', 'HK'];
+const QUANTDB_DIRECT_MARKETS = ['CN', 'HK', 'US', 'FUTURES', 'CRYPTO'];
 const isQuantDBMarket = (market: string) => QUANTDB_DIRECT_MARKETS.includes(market);
 let draftRestoreNoticeShown = false;
 

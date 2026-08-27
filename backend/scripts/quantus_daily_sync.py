@@ -29,11 +29,25 @@ _YAHOO_DATASETS = {
 }
 
 
+def _refresh_l1_dataset(result: dict) -> None:
+    """K线更新后增量重算 L1 因子日频分区（训练直读数据集）。"""
+    try:
+        from backend.scripts.build_ml_l1_dataset import build_l1
+
+        result["l1_dataset"] = build_l1("us_stock")
+    except Exception as exc:  # noqa: BLE001
+        result["l1_dataset"] = {"status": "error", "error": str(exc)}
+
+
 def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None = None,
         fast: bool = False, **kwargs: Any) -> dict:
     """同步美股数据。datasets 为勾选的数据集名；None 时全量同步雅虎数据。"""
     if not datasets:
-        return _yahoo_run("US", days=days, symbols=symbols, fast=fast)
+        result = dict(_yahoo_run("US", days=days, symbols=symbols, fast=fast))
+        result["market"] = "US"
+        # L1 因子直读数据集随日K落盘后刷新（与港股同口径）
+        _refresh_l1_dataset(result)
+        return result
 
     result: dict = {"market": "US", "days": days, "datasets": datasets}
 
@@ -49,6 +63,10 @@ def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None
             result["akshare_index"] = ak_index_sync("US")
         except Exception as exc:  # noqa: BLE001
             result["akshare_index"] = {"error": str(exc)}
+
+    # L1 因子日频分区（训练直读数据集，随 daily_forward 增量刷新）
+    if "daily_forward" in datasets or "l1_factors" in datasets:
+        _refresh_l1_dataset(result)
 
     return result
 

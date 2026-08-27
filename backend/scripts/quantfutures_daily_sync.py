@@ -22,12 +22,27 @@ DATASET_FIELDS: dict[str, list[str]] = {
 }
 
 
+def _refresh_l1_dataset(result: dict) -> None:
+    """K线更新后增量重算 L1 因子日频分区（训练直读数据集）。"""
+    try:
+        from backend.scripts.build_ml_l1_dataset import build_l1
+
+        result["l1_dataset"] = build_l1("futures")
+    except Exception as exc:  # noqa: BLE001
+        result["l1_dataset"] = {"status": "error", "error": str(exc)}
+
+
 def run(*, days: int = 5, datasets: list[str] | None = None, **kwargs: Any) -> dict:
     """同步期货数据。datasets 为勾选的 catalog 数据集名；None 时全量同步。"""
     from backend.scripts.akshare_futures_sync import sync as ak_futures_sync
 
     if not datasets:
-        return ak_futures_sync("all")
+        result = ak_futures_sync("all")
+        if not isinstance(result, dict):
+            result = {"result": result}
+        # L1 因子直读数据集随日K落盘后刷新（与港股同口径）
+        _refresh_l1_dataset(result)
+        return {"market": "futures", "days": days, "result": result}
 
     fields: list[str] = []
     for ds in datasets:
@@ -38,6 +53,10 @@ def run(*, days: int = 5, datasets: list[str] | None = None, **kwargs: Any) -> d
     result = {}
     for field in fields:
         result[field] = ak_futures_sync(field)
+
+    # L1 因子日频分区（训练直读数据集，随 daily_forward 增量刷新）
+    if "daily_forward" in datasets or "l1_factors" in datasets:
+        _refresh_l1_dataset(result)
     return {"market": "futures", "days": days, "datasets": datasets, "result": result}
 
 

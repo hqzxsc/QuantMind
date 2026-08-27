@@ -368,7 +368,7 @@ def _default_datasets(market: str) -> tuple[DatasetSpec, ...]:
                 "港股通南向资金持仓，symbol 4位+.HK",
             ),
         )
-    if market in ("HK", "US"):
+    if market in ("HK", "US", "FUTURES", "BC"):
         base.append(
             DatasetSpec(
                 "l1_factors",

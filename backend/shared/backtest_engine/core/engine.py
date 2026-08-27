@@ -67,6 +67,20 @@ else:
     logger = logging.getLogger(__name__)
 
 
+def get_price_limit_threshold(code: str) -> float:
+    """按股票代码返回 A 股涨跌幅阈值（主板 10%，创业板/科创板 20%，北交所 30%）。"""
+    pure = str(code).upper()
+    for prefix in ("SH", "SZ", "BJ"):
+        if pure.startswith(prefix):
+            pure = pure[len(prefix):]
+            break
+    if pure.startswith("68") or pure.startswith("30"):
+        return 0.20  # 科创板 688 / 创业板 300、301
+    if pure.startswith("4") or pure.startswith("8"):
+        return 0.30  # 北交所
+    return 0.10  # 主板（含 *ST/ST）
+
+
 class BacktestEngine:
     """
     统一回测引擎
@@ -164,36 +178,24 @@ class BacktestEngine:
         )
 
     @log_performance(logger, "set_data")
-    def set_data(self, data: pd.DataFrame) -> None:
+    def set_data(self, data: pd.DataFrame | dict[str, pd.DataFrame]) -> None:
         """
         设置回测数据
 
         Args:
-            data: 包含OHLCV数据的DataFrame
+            data: 单标的 DataFrame，或多标的 dict[symbol, DataFrame]（均需含 open/high/low/close/volume）
         """
-        required_columns = ["open", "high", "low", "close", "volume"]
-        missing_columns = [col for col in required_columns if col not in data.columns]
-
-        if missing_columns:
-            logger.error(
-                "Missing required columns in data",
-                extra={
-                    "missing_columns": missing_columns,
-                    "available_columns": list(data.columns),
-                },
-            )
-            raise ValueError(f"数据缺少必要列: {missing_columns}")
-
-        self.data_feed.set_data(data)
+        self.data_feed.set_data(data)  # DataFeed 内部会对每个标的校验必要列
 
         start_date, end_date = self.data_feed.get_date_range()
+        frames = self.data_feed.get_data()
         logger.info(
             "Backtest data set successfully",
             extra={
-                "data_rows": len(data),
+                "data_rows": sum(len(f) for f in frames.values()),
+                "symbols": list(frames.keys()),
                 "start_date": start_date.isoformat() if start_date else None,
                 "end_date": end_date.isoformat() if end_date else None,
-                "columns": list(data.columns),
             },
         )
 
@@ -432,11 +434,41 @@ class BacktestEngine:
             symbol_data = market_data.get(order.symbol)
             if symbol_data is None:
                 continue
-            if self._can_execute_order(order, symbol_data):
+            prev_close = self._get_prev_close(order.symbol)
+            if self._can_execute_order(order, symbol_data, prev_close):
                 self._execute_order(order, symbol_data)
 
-    def _can_execute_order(self, order: Order, market_data: pd.Series) -> bool:
-        """判断订单是否可以执行"""
+    def _get_prev_close(self, symbol: str) -> float | None:
+        """获取指定标的前一交易日收盘价（用于涨跌停判定）"""
+        df = self.data_feed.get_data().get(symbol)
+        if df is None or self.current_date is None or self.current_date not in df.index:
+            return None
+        pos = df.index.get_loc(self.current_date)
+        if pos <= 0:
+            return None
+        return float(df.iloc[pos - 1]["close"])
+
+    def _can_execute_order(self, order: Order, market_data: pd.Series, prev_close: float | None = None) -> bool:
+        """判断订单是否可以执行（含停牌与涨跌停过滤）"""
+        volume = market_data.get("volume", 0)
+        close = market_data.get("close", 0)
+
+        # 停牌/无成交：当日成交量为 0 或收盘价无效时不可交易
+        if pd.isna(volume) or float(volume) <= 0:
+            return False
+        if pd.isna(close) or float(close) <= 0:
+            return False
+
+        # 涨跌停过滤：买入无法在涨停成交，卖出无法在跌停成交
+        if prev_close is not None and float(prev_close) > 0:
+            threshold = get_price_limit_threshold(order.symbol)
+            limit_up = float(prev_close) * (1 + threshold)
+            limit_down = float(prev_close) * (1 - threshold)
+            if order.side in (OrderSide.BUY, OrderSide.BUY_TO_COVER) and float(close) >= limit_up:
+                return False
+            if order.side in (OrderSide.SELL, OrderSide.SHORT_SELL) and float(close) <= limit_down:
+                return False
+
         # 简单实现：市价单总是可以执行
         if order.order_type == OrderType.MARKET:
             return True

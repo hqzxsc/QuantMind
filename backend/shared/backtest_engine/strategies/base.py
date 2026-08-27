@@ -124,8 +124,8 @@ class BaseStrategy(ABC):
             return abs(qty) if qty < 0 else 0
         return 0
 
-
-        """获取持仓"""
+    def get_position(self, symbol: str) -> int:
+        """获取持仓（负数表示空头持仓）"""
         if self.backtest_engine:
             return self.backtest_engine.portfolio.get_position(symbol)
         return 0

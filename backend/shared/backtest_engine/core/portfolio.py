@@ -157,13 +157,13 @@ class Portfolio:
         self._update_total_value()
         return realized_pnl
 
-
+    def buy(self, symbol: str, quantity: float, price: float, commission: float = 0.0) -> None:
         """买入"""
         total_cost = quantity * price + commission
         if total_cost > self.cash:
             raise ValueError(f"现金不足，需要 {total_cost}，可用 {self.cash}")
 
-            # 更新现金
+        # 更新现金
         self.cash -= total_cost
 
         # 更新持仓

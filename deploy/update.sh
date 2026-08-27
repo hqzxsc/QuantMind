@@ -42,7 +42,7 @@ require_project() {
 }
 
 sync_code() {
-    log "1/4 同步代码：$REF"
+    log "1/5 同步代码：$REF"
     if ! git -C "$PROJECT_DIR" diff --quiet || ! git -C "$PROJECT_DIR" diff --cached --quiet; then
         $FORCE || die '检测到未提交代码改动；确认覆盖请加 --force'
         git -C "$PROJECT_DIR" reset --hard
@@ -52,17 +52,27 @@ sync_code() {
     git -C "$PROJECT_DIR" checkout -B "$REF" "origin/$REF"
 }
 
+prepare_models() {
+    log '2/5 准备离线模型（FinBERT 新闻情感）'
+    # 缺失时系统会静默降级为纯词典法情感，所以这里尽力下载但不阻断更新
+    if command -v python3 >/dev/null; then
+        python3 "$PROJECT_DIR/backend/scripts/download_finbert.py" && return 0
+        log '宿主机 python3 下载失败，改用容器内 python 重试'
+    fi
+    docker run --rm         -v "$PROJECT_DIR/models:/app/models"         -v "$PROJECT_DIR/backend:/app/backend:ro"         "$(docker compose -f "$PROJECT_DIR/docker-compose.yml" config --image quantmind)"         python /app/backend/scripts/download_finbert.py         || log '⚠️ FinBERT 模型下载失败（网络原因），新闻情感将暂用词典法，可重跑 update.sh 补齐'
+}
+
 build_core() {
     if ! $BUILD; then
-        log '2/4 跳过镜像构建'
+        log '3/5 跳过镜像构建'
         return
     fi
-    log '2/4 重建核心后端镜像'
+    log '3/5 重建核心后端镜像'
     docker compose -f "$PROJECT_DIR/docker-compose.yml" build quantmind
 }
 
 restart_services() {
-    log '3/4 重启核心服务'
+    log '4/5 重启核心服务'
     cd "$PROJECT_DIR"
     local services=(quantmind)
     local service
@@ -76,7 +86,7 @@ restart_services() {
 }
 
 health_check() {
-    log '4/4 检查健康状态'
+    log '5/5 检查健康状态'
     local attempt
     for attempt in {1..30}; do
         if curl --fail --silent --max-time 3 http://127.0.0.1:8000/health >/dev/null; then
@@ -94,6 +104,7 @@ main() {
     require_root
     require_project
     sync_code
+    prepare_models
     build_core
     restart_services
     health_check

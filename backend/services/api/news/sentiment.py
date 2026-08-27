@@ -27,6 +27,8 @@ DEFAULT_MODEL = os.getenv(
     "bardsai/finance-sentiment-zh-base",
 )
 USE_FINBERT = os.getenv("NEWS_USE_FINBERT", "true").lower() == "true"
+# 推理设备：-1=CPU。镜像内 torch 换成 CUDA 构建后，设 FINBERT_DEVICE=0 即走 GPU
+DEVICE = int(os.getenv("FINBERT_DEVICE", "-1"))
 # 加载失败后的重试冷却（秒）：transformers 依赖补齐 / 网络恢复后能自动生效，
 # 而不是一次失败永久锁死到下次进程重启
 _RETRY_AFTER = float(os.getenv("FINBERT_RETRY_AFTER", "300"))
@@ -65,7 +67,7 @@ def _try_load() -> None:
             "sentiment-analysis",
             model=DEFAULT_MODEL,
             tokenizer=DEFAULT_MODEL,
-            device=-1,  # CPU
+            device=DEVICE,
             truncation=True,
             max_length=256,
         )
@@ -76,7 +78,11 @@ def _try_load() -> None:
         _model_ready = False
         _model_failed = True
         _last_fail_at = time.monotonic()
-        logger.warning("FinBERT 加载失败（将仅使用字典法情感，%ss 后重试）：%s", _RETRY_AFTER, e)
+        logger.warning(
+            "FinBERT 加载失败（将仅使用字典法情感，%ss 后重试）：%s；"
+            "修复方法：python3 backend/scripts/download_finbert.py",
+            _RETRY_AFTER, e,
+        )
 
 
 def _ensure_loading() -> None:
@@ -125,6 +131,34 @@ def score(text: str) -> Tuple[str | None, float | None]:
     except Exception as e:
         logger.warning("FinBERT 推理失败: %s", str(e)[:120])
         return None, None
+
+
+def score_batch(texts: list[str]) -> list[tuple[str | None, float | None]]:
+    """批量打分（全量重建等离线场景用）。
+
+    输入顺序与输出一一对应；空文本及模型未就绪/失败时对应位置返回 (None, None)。
+    """
+    if not USE_FINBERT or not texts:
+        return [(None, None)] * len(texts)
+    if not _model_ready:
+        _ensure_loading()
+        if not _model_ready:
+            return [(None, None)] * len(texts)
+    clean = [(t or "")[:1000] for t in texts]
+    try:
+        res = _pipeline(clean)
+    except Exception as e:
+        logger.warning("FinBERT 批量推理失败: %s", str(e)[:160])
+        return [(None, None)] * len(texts)
+    out: list[tuple[str | None, float | None]] = []
+    for t, item in zip(clean, res, strict=True):
+        if not t.strip():
+            out.append((None, None))
+            continue
+        raw_label = str(item.get("label") or "").strip()
+        conf = float(item.get("score") or 0.0)
+        out.append((_LABEL_MAP.get(raw_label, "neutral"), conf))
+    return out
 
 
 def is_available() -> bool:

@@ -88,6 +88,7 @@ def enrich_article(
     huntly_page_id: int,
     title: str | None,
     content: str | None,
+    finbert_precomputed: tuple[str | None, float | None] | None = None,
 ) -> EnrichmentResult:
     matcher = get_matcher()
     blob = ((title or "") + "\n" + (content or "")).strip()
@@ -117,8 +118,12 @@ def enrich_article(
     date_entities = matcher.extract_dates(blob, limit=8)
     entity_sentiments = matcher.match_entity_sentiments(blob)
 
-    # FinBERT 在标题上跑一次（标题信号最干净，CPU 也能跑得动）
-    finbert_label, finbert_conf = sentiment_mod.score(title or "")
+    # FinBERT 在标题上跑一次（标题信号最干净；全量重建时由外部批量预计算传入）
+    finbert_label, finbert_conf = (
+        finbert_precomputed
+        if finbert_precomputed is not None
+        else sentiment_mod.score(title or "")
+    )
     if finbert_label and finbert_conf and finbert_conf >= 0.55:
         # 将 finbert label 折算成 [-1,1] 然后与字典法加权融合
         finbert_score = {"bullish": 1.0, "bearish": -1.0, "neutral": 0.0}.get(finbert_label, 0.0)
@@ -428,19 +433,52 @@ def get_rebuild_progress() -> dict:
     return s
 
 
-def _huntly_sqlite_ro() -> sqlite3.Connection:
+def _huntly_sqlite_ro(timeout: float = 30.0) -> sqlite3.Connection:
     uri = f"file:{HUNTLY_SQLITE_PATH}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=10.0, check_same_thread=False)
+    conn = sqlite3.connect(uri, uri=True, timeout=timeout, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def _iter_all_huntly_pages(batch_size: int = 1000):
+def _snapshot_huntly_db(dest_dir: str = "/tmp") -> str:
+    """用 sqlite backup API 把 Huntly 库复制成快照再全量扫描。
+
+    滚动日志模式下长游标会顶住 huntly 写进程、写进程又会反过来
+    锁死我们的读取（曾致 rebuild 卡死/静默失败），先备份成私有
+    快照彻底消除两边互踩。backup API 分页拷贝可感知写锁，不会
+    长时间持锁。
+    """
+    dest = os.path.join(dest_dir, f"huntly_snapshot_{int(time.time())}.sqlite")
+    src_conn = _huntly_sqlite_ro()
+    try:
+        dst = sqlite3.connect(dest)
+        src_conn.backup(dst, pages=4096)
+        dst.close()
+    finally:
+        src_conn.close()
+    logger.info("Huntly 快照完成: %s (%.1f MB)",
+                dest, os.path.getsize(dest) / 1024 / 1024)
+    return dest
+
+
+def _iter_all_huntly_pages(batch_size: int = 1000, db_path: str | None = None):
     """以游标方式分批从 Huntly SQLite 读 (id, title, description, content, page_article_content.content).
 
     使用 connected_at desc 顺序, 优先处理新文章.
+    db_path 给定时读私有快照（rebuild 用），否则直连线上库。
     """
-    with _huntly_sqlite_ro() as conn:
+    if db_path:
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+    else:
+        conn = _huntly_sqlite_ro()
+    try:
+        yield from _iter_pages_from_conn(conn, batch_size)
+    finally:
+        conn.close()
+
+
+def _iter_pages_from_conn(conn: sqlite3.Connection, batch_size: int):
         cur = conn.cursor()
         cur.execute(
             "SELECT p.id, p.title, p.description, p.content, "
@@ -500,6 +538,7 @@ def run_full_rebuild(force: bool = False) -> int:
             scur = sconn.cursor()
             scur.execute("SELECT COUNT(*) FROM page")
             total = int(scur.fetchone()[0])
+            scan_db = None
         with _REBUILD_LOCK:
             _REBUILD_STATE["total"] = total
         logger.info("full rebuild start: total=%d force=%s", total, force)
@@ -518,56 +557,93 @@ def run_full_rebuild(force: bool = False) -> int:
         n_ok = 0
         n_fail = 0
         n_done = 0
-        # PG 长连接, 每 200 条 commit 一次, 既减少事务开销又能让前端看到中间结果
         pg = _db_conn()
         try:
-            for row in _iter_all_huntly_pages(batch_size=2000):
+            # FinBERT 批量推理窗口：标题攒一批一次前向，比逐篇快数倍
+            _BATCH = int(os.getenv("FINBERT_BATCH", "96"))
+            # 预同步加载模型，避免首批 chunk 在懒加载窗口内整批降级 None
+            if os.getenv("NEWS_USE_FINBERT", "true").lower() == "true":
+                t_load = time.time()
+                from . import sentiment as _sent
+                _sent._try_load()
+                logger.info("rebuild: FinBERT 预加载 is_available=%s (%.1fs)",
+                            _sent.is_available(), time.time() - t_load)
+
+            def _flush_pg_error(cur_conn, pid: int, e: Exception, title: str | None):
+                logger.warning("rebuild page=%d 失败: %s", pid, e)
+                try:
+                    _upsert_enrichment(cur_conn, EnrichmentResult(
+                        huntly_page_id=pid,
+                        tickers=[],
+                        industries=[],
+                        event_tags=[],
+                        sentiment_score=None,
+                        sentiment_label=None,
+                        sentiment_confidence=None,
+                        model_version=MODEL_VERSION,
+                        error=str(e)[:500],
+                    ), _title_hash(title), title)
+                except Exception:
+                    pass
+
+            def _flush(chunk_items):
+                nonlocal n_ok, n_fail
+                t_fb = time.time()
+                finberts = sentiment_mod.score_batch([it[1] or "" for it in chunk_items])
+                logger.info("rebuild flush: %d items, finbert %.2fs", len(chunk_items), time.time() - t_fb)
+                for (pid, title, text), finbert in zip(chunk_items, finberts, strict=True):
+                    try:
+                        result = enrich_article(pid, title, text, finbert_precomputed=finbert)
+                        _upsert_enrichment(pg, result, _title_hash(title), title)
+                        n_ok += 1
+                    except Exception as e:
+                        n_fail += 1
+                        _flush_pg_error(pg, pid, e, title)
+
+            buf: list[tuple[int, str | None, str]] = []
+            try:
+                scan_db = _snapshot_huntly_db()
+            except Exception as e:
+                # 快照失败（如磁盘紧张）降级为直读线上库，行为等同旧版
+                logger.warning("Huntly 快照失败，降级直读: %s", e)
+            target_version = MODEL_VERSION + (
+                "+finbert" if sentiment_mod.is_available() else ""
+            )
+            for row in _iter_all_huntly_pages(batch_size=2000, db_path=scan_db):
                 pid = row["id"]
                 n_done += 1
 
-                if not force:
-                    mv = existing_versions.get(pid)
-                    if mv == MODEL_VERSION:
-                        with _REBUILD_LOCK:
-                            _REBUILD_STATE["processed"] = n_done
-                        continue
-
-                title = row["title"]
-                text = _pick_text(row)
-                try:
-                    result = enrich_article(pid, title, text)
-                    _upsert_enrichment(pg, result, _title_hash(title), title)
-                    n_ok += 1
-                except Exception as e:
-                    n_fail += 1
-                    logger.warning("rebuild page=%d 失败: %s", pid, e)
-                    try:
-                        _upsert_enrichment(pg, EnrichmentResult(
-                            huntly_page_id=pid,
-                            tickers=[],
-                            industries=[],
-                            event_tags=[],
-                            sentiment_score=None,
-                            sentiment_label=None,
-                            sentiment_confidence=None,
-                            model_version=MODEL_VERSION,
-                            error=str(e)[:500],
-                        ), _title_hash(title), title)
-                    except Exception:
-                        pass
-
-                if n_done % 200 == 0:
-                    try:
-                        pg.commit()
-                    except Exception:
-                        pass
+                # 目标版本（含 finbert 后缀）已算清的行一律跳过：
+                # 不论 force 与否都断点续跑，重复执行退化为幂等空扫描
+                mv = existing_versions.get(pid)
+                if mv == target_version:
                     with _REBUILD_LOCK:
-                        _REBUILD_STATE.update({
-                            "processed": n_done,
-                            "ok": n_ok,
-                            "failed": n_fail,
-                        })
-                    logger.info("rebuild progress: %d/%d ok=%d fail=%d", n_done, total, n_ok, n_fail)
+                        _REBUILD_STATE["processed"] = n_done
+                    continue
+
+                buf.append((pid, row["title"], _pick_text(row)))
+                if n_done % 5000 == 0:
+                    logger.info("rebuild heartbeat: scanned=%d buffered=%d ok=%d fail=%d",
+                                n_done, len(buf), n_ok, n_fail)
+                if len(buf) < _BATCH:
+                    continue
+
+                _flush(buf)
+                buf = []
+                # 每 批 commit 一次, 既减少事务开销又能让前端看到中间结果
+                try:
+                    pg.commit()
+                except Exception:
+                    pass
+                with _REBUILD_LOCK:
+                    _REBUILD_STATE.update({
+                        "processed": n_done,
+                        "ok": n_ok,
+                        "failed": n_fail,
+                    })
+                logger.info("rebuild progress: %d/%d ok=%d fail=%d", n_done, total, n_ok, n_fail)
+            if buf:
+                _flush(buf)
             try:
                 pg.commit()
             except Exception:
@@ -575,6 +651,12 @@ def run_full_rebuild(force: bool = False) -> int:
         finally:
             try:
                 pg.close()
+            except Exception:
+                pass
+
+        if scan_db:
+            try:
+                os.remove(scan_db)
             except Exception:
                 pass
 

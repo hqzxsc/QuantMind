@@ -24,13 +24,19 @@ from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger("news.matcher")
 
-MODEL_VERSION = "ac-v4+lex-v4+ent+cn"
+MODEL_VERSION = "ac-v5+lex-v4+ent+cn"
 
 # 别名长度 ≤ 此值时要求左右两侧不能再粘中文/字母，
 # 防止 "中"、"国"、"茅台" 之类的二字别名乱命中；
 # 3 字及以上的中文公司名（如 "比亚迪"、"宁德时代"）天然区分度足够，不做严格边界。
 _STRICT_BOUNDARY_MAX_LEN = 2
 _CJK_OR_ALNUM = re.compile(r"[一-鿿A-Za-z0-9]")
+
+# 纯数字词条右邻紧贴这些字符时判定为数值语境而非股票代码，
+# 拒识典型误命中：「2026年」→ 2026.HK、「300750万元」→ 300750.SZ。
+# 带后缀的完整形态（"(2020.HK)"、"600519.SH"）不含此模式，不受影响。
+_DIGIT_QUANTIFIER_REJECT = set("年亿万元月日人名家次股倍届宗吨位点号＋加多逾超近达破万亿％%‰分之")
+
 
 # 日期实体抽取正则 (按优先级排, ISO 优先于中文日期)
 _RE_DATE_ISO = re.compile(r"(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])")
@@ -173,6 +179,8 @@ class NewsMatcher:
         if is_ascii:
             ascii_re = re.compile(r"[A-Za-z0-9]")
             if (left and ascii_re.match(left)) or (right and ascii_re.match(right)):
+                return False
+            if term.isdigit() and right and right in _DIGIT_QUANTIFIER_REJECT:
                 return False
             return True
         if left and _CJK_OR_ALNUM.match(left):

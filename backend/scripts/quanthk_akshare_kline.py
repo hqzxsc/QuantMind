@@ -119,6 +119,10 @@ def _fetch_stock(symbol: str, min_date: str) -> pd.DataFrame | None:
         df["symbol"] = _to_qhk_symbol(symbol)
         for c in ("open", "high", "low", "close"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
+        # 仙股/竞价数据上游噪声：high 可能低于 open/close（反之 low），
+        # 写盘前按行收敛，保证 OHLC 自洽（max/min 自动跳过 NaN）
+        df["high"] = df[["high", "open", "close"]].max(axis=1)
+        df["low"] = df[["low", "open", "close"]].min(axis=1)
         df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0).astype("int64")
         df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
         df["release_id"] = "akshare"

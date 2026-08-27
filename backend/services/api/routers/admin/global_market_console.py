@@ -157,7 +157,7 @@ def _default_datasets(market: str) -> tuple[DatasetSpec, ...]:
             "kline",
             "1_kline_data/daily_forward",
             "partition",
-            "yahoo 日线",
+            "akshare 日线(不复权)"
         ),
         DatasetSpec(
             "index_daily",

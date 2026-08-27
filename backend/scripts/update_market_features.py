@@ -366,10 +366,15 @@ def load_hk_parquet(start_year: int | None = None) -> pd.DataFrame:
 
 
 def _coerce_batch_types(df: pd.DataFrame) -> None:
-    """统一分类列类型，避免 parquet 写入 mixed type 报错（is_st 空串→int）。"""
+    """统一分类列类型，避免 parquet 写入 mixed type 报错（is_st 空串→int、
+    industry 对象混型→str）。"""
     for col in ("is_st", "listing_market"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+    if "industry" in df.columns and df["industry"].dtype == object:
+        mask = df["industry"].notna()
+        df.loc[mask, "industry"] = df.loc[mask, "industry"].astype(str)
+        df.loc[~mask, "industry"] = None
 
 
 def compute_market_features(df: pd.DataFrame, market: str, batch_size: int = 100, final_path: Path | None = None) -> pd.DataFrame:
@@ -666,6 +671,7 @@ def main():
         import pyarrow.parquet as pq_writer
 
         _log(f"  大表 {len(combined):,} 行，用 pyarrow 流式写入...")
+        _coerce_batch_types(combined)
         table = pa.Table.from_pandas(combined, preserve_index=False)
         pq_writer.write_table(table, str(parquet_path), compression="snappy")
         _log(f"已写入: {parquet_path} ({parquet_path.stat().st_size / 1024 / 1024:.1f}MB)")

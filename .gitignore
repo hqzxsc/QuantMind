@@ -235,3 +235,11 @@ docker/training/fonts/NotoSansCJK-*.ttf
 docker/training/fonts/NotoSansCJKSC-*.ttf
 data/images/
 !models_share/*.tar.gz
+
+# 内部数据源爬虫（CCASS/北向/南向）——退出版本库，仅本地保留
+backend/scripts/ccass_*
+backend/scripts/hsgt_*crawler*.py
+backend/scripts/*north*.py
+backend/scripts/quanthk_*ccass*.py
+backend/scripts/quanthk_import_south.py
+backend/scripts/quanthk_south_sync.py

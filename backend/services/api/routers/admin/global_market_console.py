@@ -368,6 +368,30 @@ def _default_datasets(market: str) -> tuple[DatasetSpec, ...]:
                 "港股通南向资金持仓，symbol 4位+.HK",
             ),
         )
+    if market in ("HK", "US"):
+        base.append(
+            DatasetSpec(
+                "l1_factors",
+                "L1因子(日频)",
+                "6",
+                "ml",
+                "6_ml_datasets/l1_factors",
+                "partition",
+                "本地计算的量价因子日频分区，训练直连读取；随每日同步自动刷新",
+            ),
+        )
+    if market == "HK":
+        base.append(
+            DatasetSpec(
+                "south_factors",
+                "南向因子(日频)",
+                "6",
+                "ml",
+                "6_ml_datasets/south_factors",
+                "partition",
+                "南向持股占比及其变化/连增/滚动Z，训练直连读取；随南向同步自动刷新",
+            ),
+        )
     return tuple(base)
 
 
@@ -377,6 +401,7 @@ _GROUPS = [
     {"id": "financial", "name": "财务数据", "category_id": "3"},
     {"id": "analyst", "name": "分析师/持仓/期权", "category_id": "4"},
     {"id": "technical", "name": "技术衍生", "category_id": "5"},
+    {"id": "ml", "name": "ML数据集", "category_id": "6"},
 ]
 
 
@@ -604,6 +629,8 @@ def make_market_router(
             groups = []
             for g in _GROUPS:
                 members = [it for it in items if it["group"] == g["id"]]
+                if not members:
+                    continue  # 该市场没有此类数据集时不渲染空分组
                 groups.append(
                     {
                         **g,

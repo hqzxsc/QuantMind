@@ -52,6 +52,44 @@ def _sync_akshare_kline(result: dict[str, Any], *, days: int, symbols: str | Non
         result["akshare_kline"] = {"error": str(exc)}
 
 
+def _south_source_result(days: int) -> dict[str, Any]:
+    """南向资金原始数据同步（独立爬虫，受数据源勾选控制）。"""
+    try:
+        from backend.shared.data_source_config import is_source_enabled
+
+        enabled = is_source_enabled("HK", "hsgt_south")
+    except Exception:  # noqa: BLE001
+        enabled = True
+    if not enabled:
+        return {"status": "skipped", "reason": "未勾选南向资金"}
+    try:
+        from backend.scripts.quanthk_south_sync import sync as south_sync
+
+        return south_sync(days=days)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": str(exc)}
+
+
+def _refresh_l1_dataset(result: dict[str, Any], *, days: int) -> None:
+    """K线更新后增量重算 L1 因子日频分区（训练直连数据集）。"""
+    try:
+        from backend.scripts.build_ml_l1_dataset import build_l1
+
+        result["l1_dataset"] = build_l1("hong_kong")
+    except Exception as exc:  # noqa: BLE001
+        result["l1_dataset"] = {"status": "error", "error": str(exc)}
+
+
+def _refresh_south_factors(result: dict[str, Any]) -> None:
+    """南向持仓更新后重算南向因子日频分区。"""
+    try:
+        from backend.scripts.build_ml_l1_dataset import build_south_factors
+
+        result["south_factors"] = build_south_factors()
+    except Exception as exc:  # noqa: BLE001
+        result["south_factors"] = {"status": "error", "error": str(exc)}
+
+
 def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None = None,
         fast: bool = False, **kwargs: Any) -> dict:
     """同步港股数据。datasets 为勾选的数据集名；None 时全量同步雅虎数据。
@@ -66,25 +104,18 @@ def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None
         # K线由 akshare 独占写入（见下）。
         result["yahoo"] = _yahoo_run("HK", days=days, symbols=symbols, fast=fast, skip_kline=True)
         _sync_akshare_kline(result, days=days, symbols=symbols)
+        result["sources"] = {"hsgt_south": _south_source_result(days=days)}
+        _refresh_l1_dataset(result, days=days)
+        _refresh_south_factors(result)
         return result
 
     # 南向资金（港股通）— 独立爬虫，按数据源勾选控制
     if "hsgt_south" in datasets:
-        try:
-            from backend.shared.data_source_config import is_source_enabled
+        result["sources"] = {"hsgt_south": _south_source_result(days=days)}
 
-            enabled = is_source_enabled("HK", "hsgt_south")
-        except Exception:  # noqa: BLE001
-            enabled = True
-        if enabled:
-            from backend.scripts.quanthk_south_sync import sync as south_sync
-
-            try:
-                result["sources"] = {"hsgt_south": south_sync(days=days)}
-            except Exception as exc:  # noqa: BLE001
-                result["sources"] = {"hsgt_south": {"status": "error", "error": str(exc)}}
-        else:
-            result["sources"] = {"hsgt_south": {"status": "skipped", "reason": "未勾选南向资金"}}
+    # 南向因子日频分区（训练直连数据集）
+    if "south_factors" in datasets:
+        _refresh_south_factors(result)
 
     # 雅虎负责元数据段；daily_forward 从雅虎清单里剔除（K线口径铁律）
     yahoo_ds = [d for d in datasets if d in _YAHOO_DATASETS and d != "daily_forward"]
@@ -94,6 +125,10 @@ def run(*, days: int = 5, symbols: str | None = None, datasets: list[str] | None
     # K线（daily_forward）— akshare 增量回拉，不复权口径与付费历史一致
     if "daily_forward" in datasets:
         _sync_akshare_kline(result, days=days, symbols=symbols)
+
+    # L1 因子日频分区（训练直连数据集，随 K线 增量刷新）
+    if "l1_factors" in datasets:
+        _refresh_l1_dataset(result, days=days)
 
     # akshare 港股基本面（估值/财务/资料/分红）
     akshare_fields = []

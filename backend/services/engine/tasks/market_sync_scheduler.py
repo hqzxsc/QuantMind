@@ -36,6 +36,13 @@ DEFAULT_SCHEDULE = {
     "with_qlib": False,
 }
 
+# 各市场在无 Redis 配置时的默认定时（显式保存的配置总是覆盖这里的值）。
+# 未列入的市场保持 enabled=False，需要在前端手动开启。
+# HK：上游数据（雅虎/akshare/CCASS/南向）晚间陆续就绪，排在 A 股 23:30 同步之后。
+MARKET_DEFAULT_SCHEDULES: dict[str, dict[str, Any]] = {
+    "HK": {"enabled": True, "time": "23:50"},
+}
+
 
 def _redis():
     import redis
@@ -45,14 +52,14 @@ def _redis():
     )
 
 
-def _normalize(cfg: dict[str, Any] | None) -> dict[str, Any]:
+def _normalize(cfg: dict[str, Any] | None, market: str | None = None) -> dict[str, Any]:
     out = dict(DEFAULT_SCHEDULE)
-    if not cfg:
-        return out
+    if market is not None:
+        out.update(MARKET_DEFAULT_SCHEDULES.get(market, {}))
     for k in out:
-        if k in cfg:
+        if k in (cfg or {}):
             out[k] = cfg[k]
-    # 校验 time 格式 HH:MM
+    # 校验 time 格式 HH:MM；非法时回退到全局默认时间
     t = str(out["time"]).strip()
     try:
         datetime.strptime(t, "%H:%M")
@@ -66,7 +73,7 @@ def get_schedule(market: str) -> dict[str, Any]:
     r = _redis()
     raw = r.get(_SCHEDULE_KEY.format(market=market))
     cfg = json.loads(raw) if raw else None
-    return _normalize(cfg)
+    return _normalize(cfg, market)
 
 
 def get_all_schedules() -> dict[str, dict[str, Any]]:
@@ -74,7 +81,7 @@ def get_all_schedules() -> dict[str, dict[str, Any]]:
 
 
 def save_schedule(market: str, cfg: dict[str, Any]) -> dict[str, Any]:
-    normalized = _normalize(cfg)
+    normalized = _normalize(cfg, market)
     r = _redis()
     r.set(
         _SCHEDULE_KEY.format(market=market),

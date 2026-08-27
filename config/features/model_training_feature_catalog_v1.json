@@ -2,7 +2,7 @@
   "version": "v2.0",
   "version_name": "QM Feature Set v2.1 (L2/microstructure unlocked, 20260820)",
   "description": "完整 QuantDB 特征集 (daily_forward + features_daily + l1_factors + l2_factors), 164 个可用特征",
-  "feature_count": 521,
+  "feature_count": 529,
   "categories": [
     {
       "id": "ohlcv",
@@ -8163,6 +8163,149 @@
           "order_no": 1224,
           "default_selected": false,
           "coverage_ratio": 1.0
+        }
+      ]
+    },
+    {
+      "id": "holding",
+      "name": "持仓结构",
+      "description": "CCASS/南向资金持仓结构因子（本地日频，markets:HK）",
+      "features": [
+        {
+          "feature_id": "feat_holding_001",
+          "key": "ca_n_pis",
+          "description": "Top50参与人数量（少=筹码集中，负向）",
+          "formula": "CCASS Top50 参与人数量",
+          "source": "ccass_factors 日频分区",
+          "enabled": true,
+          "markets": [
+            "HK"
+          ],
+          "order_no": 1,
+          "default_selected": false,
+          "coverage_ratio": 0.9,
+          "measured_ic": -0.0219,
+          "measured_icir": -0.833,
+          "direction": -1
+        },
+        {
+          "feature_id": "feat_holding_002",
+          "key": "ca_hhi_disc",
+          "description": "披露内份额HHI集中度（正向）",
+          "formula": "ca_hhi_disc",
+          "source": "ccass_factors 日频分区",
+          "enabled": true,
+          "markets": [
+            "HK"
+          ],
+          "order_no": 2,
+          "default_selected": false,
+          "coverage_ratio": 0.9,
+          "measured_ic": 0.0196,
+          "measured_icir": 0.768,
+          "direction": 1
+        },
+        {
+          "feature_id": "feat_holding_003",
+          "key": "ca_rank_overlap_20d",
+          "description": "Top50名次20日重叠率（稳定=长线布局）",
+          "formula": "ca_rank_overlap_20d",
+          "source": "ccass_factors 日频分区",
+          "enabled": true,
+          "markets": [
+            "HK"
+          ],
+          "order_no": 3,
+          "default_selected": false,
+          "coverage_ratio": 0.9,
+          "measured_ic": 0.0422,
+          "measured_icir": 0.535,
+          "direction": 1
+        },
+        {
+          "feature_id": "feat_holding_004",
+          "key": "ca_broker_pct",
+          "description": "券商散户线占比（负向）",
+          "formula": "ca_broker_pct",
+          "source": "ccass_factors 日频分区",
+          "enabled": true,
+          "markets": [
+            "HK"
+          ],
+          "order_no": 4,
+          "default_selected": false,
+          "coverage_ratio": 0.9,
+          "measured_ic": -0.0311,
+          "measured_icir": -0.503,
+          "direction": -1
+        },
+        {
+          "feature_id": "feat_holding_005",
+          "key": "ca_disclosed_sum",
+          "description": "披露覆盖度（负向）",
+          "formula": "ca_disclosed_sum",
+          "source": "ccass_factors 日频分区",
+          "enabled": true,
+          "markets": [
+            "HK"
+          ],
+          "order_no": 5,
+          "default_selected": false,
+          "coverage_ratio": 0.9,
+          "measured_ic": -0.0209,
+          "measured_icir": -0.45,
+          "direction": -1
+        },
+        {
+          "feature_id": "feat_holding_006",
+          "key": "ca_cust_share_disc",
+          "description": "大行托管占披露比（外资线，正向）",
+          "formula": "ca_cust_share_disc",
+          "source": "ccass_factors 日频分区",
+          "enabled": true,
+          "markets": [
+            "HK"
+          ],
+          "order_no": 6,
+          "default_selected": false,
+          "coverage_ratio": 0.9,
+          "measured_ic": 0.0217,
+          "measured_icir": 0.332,
+          "direction": 1
+        },
+        {
+          "feature_id": "feat_holding_007",
+          "key": "ca_south_pct",
+          "description": "南向(中国结算双席位)持股占比（负向）",
+          "formula": "ca_south_pct",
+          "source": "ccass_factors 日频分区",
+          "enabled": true,
+          "markets": [
+            "HK"
+          ],
+          "order_no": 7,
+          "default_selected": false,
+          "coverage_ratio": 0.9,
+          "measured_ic": -0.0213,
+          "measured_icir": -0.186,
+          "direction": -1
+        },
+        {
+          "feature_id": "feat_holding_008",
+          "key": "sb_quantity",
+          "description": "南向持股数量（正向）",
+          "formula": "sb_quantity",
+          "source": "south_factors 日频分区",
+          "enabled": true,
+          "markets": [
+            "HK"
+          ],
+          "order_no": 8,
+          "default_selected": false,
+          "coverage_ratio": 0.9,
+          "measured_ic": 0.0226,
+          "measured_icir": 0.216,
+          "direction": 1
         }
       ]
     }

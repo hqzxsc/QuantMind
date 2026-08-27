@@ -383,6 +383,14 @@ def compute_market_features(df: pd.DataFrame, market: str, batch_size: int = 100
     """
     from backend.scripts.update_feature_parquet import compute_features_for_group
 
+    # industry 在部分市场/时段是 object 混型（字符串+数字），统一规整为 str
+    # 再进入 pyarrow 落盘，避免 ArrowTypeError
+    if "industry" in df.columns and df["industry"].dtype == object:
+        df = df.copy()
+        mask = df["industry"].notna()
+        df.loc[mask, "industry"] = df.loc[mask, "industry"].astype(str)
+        df.loc[~mask, "industry"] = None
+
     instruments = df["instrument"].unique()
     total = len(instruments)
     _log(f"  计算特征（{total} 个标的，批大小 {batch_size}）...")

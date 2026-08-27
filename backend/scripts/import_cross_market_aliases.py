@@ -5,7 +5,7 @@
 - /data/quantus/2_base_sector/security_master/data.parquet   (517 只美股, 含 cn_name)
 
 写入 stock_aliases：
-- 港股: ticker=0001.HK, 别名=中文名(name)/5位代码(code)
+- 港股: ticker=0001.HK, 别名=中文名(name)/完整代码(code, 如 "0001.HK")
 - 美股: ticker=AAPL, 别名=中文名(name)/英文ticker(code)
 
 这样 NewsMatcher 加载 stock_aliases 后，新闻标题含"腾讯控股"能匹配到 0001.HK，
@@ -57,7 +57,9 @@ def build_rows() -> list[tuple[str, str, str, int]]:
         if en and len(en) >= 2:
             rows.append((ticker, en, "en_name", 60))
         if code and len(code) >= 4:
-            rows.append((ticker, code, "code", 50))
+            # 只入完整形态 "XXXX.HK"。裸 4 位码会与正文里的年份/数值
+            # 海量误命中（"2026年"→2026.HK、"2007亿元"→碧桂园），禁入。
+            rows.append((ticker, ticker, "code", 50))
 
     # 美股
     us = _read_security_master("US")

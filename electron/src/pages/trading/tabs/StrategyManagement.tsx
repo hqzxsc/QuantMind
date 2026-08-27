@@ -100,8 +100,14 @@ const formatPrice = (v?: number | string | null) => {
 
 const formatTimeHHMMSS = (raw?: string | null) => {
     if (!raw) return '-';
-    const value = new Date(raw);
-    if (Number.isNaN(value.getTime())) return raw;
+    const s = String(raw).trim();
+    // 通达信委托时间为纯 HH:MM:SS 字符串，直接返回（new Date 解析有歧义/失败）
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) {
+        // 00:00:00 是通达信未提供委托时间时的占位值，A股无午夜委托，显示 - 避免误导
+        return s === '00:00:00' ? '-' : s;
+    }
+    const value = new Date(s);
+    if (Number.isNaN(value.getTime())) return s;
     return value.toLocaleTimeString('zh-CN', { hour12: false });
 };
 

@@ -157,6 +157,37 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
             )
         self.log_stream = TrainingRunLogStream()
 
+    # ── GPU 自动检测 ─────────────────────────────────────────────────────────────
+    async def _detect_gpu_available(self) -> bool:
+        """探测训练容器能否拿到 GPU，无 GPU 时回退 CPU 训练。
+
+        三层探测：
+        1. API 容器内 nvidia-smi / torch（裸机直挂或容器直通 GPU 场景）
+        2. Docker-in-Docker：用训练镜像起一次性探针容器实测 --gpus all
+           （api 容器本身无 nvidia-smi，但宿主 daemon 可能已配 nvidia runtime）
+        探针带 60s TTL 缓存，与就绪面板共享，训练启动不会反复起容器。
+        """
+        from backend.services.engine.training.node_manager import NodeStatus
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "nvidia-smi", "-L",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            if await asyncio.wait_for(proc.wait(), timeout=5) == 0:
+                return True
+        except Exception:
+            pass
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return True
+        except Exception:
+            pass
+        gpus = await NodeStatus._probe_gpu_via_docker(self.docker, _TRAINING_IMAGE)
+        return bool(gpus)
+
     # ── 训练期间资源保护 ──────────────────────────────────────────────────────────
     @staticmethod
     def _is_protected(name: str) -> bool:
@@ -789,10 +820,24 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                         run_id, container_name, get_exc,
                     )
 
-            # GPU 设备请求：请求所有可用 GPU
-            device_requests = [
-                docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])
-            ]
+            # GPU 自动选择：有 GPU 请求全部设备，无 GPU 回退 CPU 训练
+            # （train.py 内部按 torch.cuda.is_available() 自行回退 CPU 路径）
+            gpu_available = await self._detect_gpu_available()
+            device_requests = (
+                [docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])]
+                if gpu_available
+                else None
+            )
+            if not gpu_available:
+                self.log_stream.append_log(
+                    run_id=run_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    line="[SYSTEM] 未检测到可用 GPU，改用 CPU 训练（DL 模型耗时显著增加）",
+                    status="provisioning",
+                    progress=5,
+                )
+                logger.info("[%s] GPU not detected, running in CPU mode", run_id)
             # 启动前探测并补齐缺失依赖：镜像 bake 的依赖落后于仓库时自动 pip 补齐，
             # 避免 train.py 一进 load_data 就 ImportError。包已存在则直接跳过。
             bootstrap_cmds = [
@@ -883,6 +928,14 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
             container_id=container.id[:12],
         )
 
+        # 训练时长预算在 launch 作用域计算后透传给轮询循环。
+        # （_poll_container 作用域内无 payload，此前直接引用触发 NameError
+        # 被 except 兜底吞掉，用户选 12 小时也会在 120 分钟被杀）
+        try:
+            max_time_minutes = max(10, int(payload.get("max_time_minutes") or 120))
+        except Exception:
+            max_time_minutes = 120
+
         REGISTRY.register(
             self._poll_container(
                 run_id,
@@ -890,6 +943,7 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                 tenant_id=tenant_id,
                 user_id=user_id,
                 work_dir=container_work_dir,
+                max_time_minutes=max_time_minutes,
             )
         )
 
@@ -902,6 +956,7 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
         tenant_id: str,
         user_id: str,
         work_dir: Path | None = None,
+        max_time_minutes: int = 120,
     ) -> None:
         from backend.services.api.routers.admin.db import TrainingJobRecord
         from backend.shared.database_manager_v2 import get_session
@@ -928,12 +983,7 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
             except Exception as exc:
                 logger.warning("[%s] resume others failed: %s", run_id, exc)
 
-        # 训练时长预算：默认 120 分钟，可通过 payload.max_time_minutes 配置
-        max_time_minutes = 120
-        try:
-            max_time_minutes = max(10, int(payload.get("max_time_minutes") or 120))
-        except Exception:
-            max_time_minutes = 120
+        # 训练时长预算：由 launch_training_job 透传（默认 120 分钟）
         deadline = time.time() + max_time_minutes * 60
         log_cursor_ts = max(0.0, time.time() - 2)
         last_log_sig = ""
@@ -990,72 +1040,10 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                 tail_logs = c.logs(tail=100).decode("utf-8", errors="replace")
 
                 if exit_code == 0:
-                    # 容器成功退出：将训练产物复制到模型注册目录，
-                    # 供 complete_training_run → register_model_from_training_run 使用。
-                    try:
-                        import shutil
-                        from backend.shared.model_registry import model_registry_service
-
-                        user_models_root = Path(model_registry_service.user_models_root)
-                        internal_models_root = (
-                            user_models_root
-                            if user_models_root.is_absolute()
-                            else Path("/app") / user_models_root
-                        )
-                        internal_model_dir = (
-                            internal_models_root / tenant_id / user_id / model_id
-                        )
-                        internal_model_dir.mkdir(parents=True, exist_ok=True)
-
-                        # 从训练工作目录复制产物到模型注册目录
-                        # 支持多框架模型文件：model.lgb (LightGBM), model.xgb (XGBoost),
-                        # model.cbm (CatBoost), model.pkl (sklearn/Linear), model.pth (PyTorch)
-                        for artifact in ("model.lgb", "model.xgb", "model.cbm", "model.pkl",
-                                         "model.pth", "metadata.json", "pred.parquet",
-                                         "pred.pkl", "config.yaml", "result.json",
-                                         "inference.py", "shap_summary.csv"):
-                            src = container_work_dir / artifact
-                            if src.exists():
-                                shutil.copy2(str(src), str(internal_model_dir / artifact))
-
-                        logger.info(
-                            "[%s] Training artifacts copied to %s",
-                            run_id,
-                            internal_model_dir,
-                        )
-
-                        # 可选：同步到生产模型目录（系统内置模型）
-                        if payload.get("deploy_to_production"):
-                            try:
-                                prod_models_root = Path(
-                                    model_registry_service.production_models_root
-                                )
-                                if not prod_models_root.is_absolute():
-                                    prod_models_root = Path("/app") / prod_models_root
-                                prod_model_dir = prod_models_root / model_id
-                                prod_model_dir.mkdir(parents=True, exist_ok=True)
-
-                                for artifact in ("model.lgb", "model.xgb", "model.cbm", "model.pkl",
-                                                 "model.pth", "metadata.json", "pred.parquet",
-                                                 "pred.pkl", "config.yaml", "result.json",
-                                                 "inference.py", "shap_summary.csv"):
-                                    src = container_work_dir / artifact
-                                    if src.exists():
-                                        shutil.copy2(str(src), str(prod_model_dir / artifact))
-
-                                logger.info(
-                                    "[%s] Production model artifacts copied to %s",
-                                    run_id,
-                                    prod_model_dir,
-                                )
-                            except Exception as prod_err:
-                                logger.warning(
-                                    "[%s] Failed to copy production artifacts: %s",
-                                    run_id, prod_err,
-                                )
-                    except Exception as copy_err:
-                        logger.warning("[%s] Failed to copy artifacts: %s", run_id, copy_err)
-
+                    # 产物同步由 complete_training_run →
+                    # register_model_from_training_run._sync_candidate_artifacts 完成
+                    # （源目录 /data/training_jobs/{run_id}，含非 CN 市场分段路径），
+                    # 此处不重复复制（此前的复制块引用未定义变量恒 NameError 静默失败）。
                     async with get_session() as db:
                         r = await db.get(TrainingJobRecord, run_id)
                         if r:

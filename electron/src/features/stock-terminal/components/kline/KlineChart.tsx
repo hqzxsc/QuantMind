@@ -173,11 +173,17 @@ export function KlineChart({
       const allScores = scoreSeries.flatMap(sr => sr.points.map(p => p.fusion).filter((f): f is number => f != null));
       const lo = allScores.length ? Math.min(...allScores) : -1;
       const hi = allScores.length ? Math.max(...allScores) : 1;
-      const pad = Math.max(0.05, (hi - lo) * 0.15);
+      // 分数轴按当前模型分数跨度自适应：原 min pad 0.05 对新模型（0.001 量级）过大，
+      // 把轴撑到 ±0.06 刻度显得很大——改为纯比例 padding；
+      // 单点/全等分数（span=0）时按分数绝对值比例兜底（0.002 下限），不再用 0.05
+      const span = hi - lo;
+      const pad = span > 1e-9 ? span * 0.15 : Math.max(0.002, Math.abs(hi) * 0.3);
+      // 刻度小数位随量级收紧：跨度过小时 toFixed(2) 会全部显示 0.00
+      const digits = span < 0.01 ? 4 : span < 0.1 ? 3 : 2;
       yAxes.push({
         type: 'value', gridIndex: 0, position: 'right', scale: false,
         min: lo - pad, max: hi + pad,
-        axisLabel: { ...AXIS_LABEL, formatter: (v: number) => v.toFixed(2) },
+        axisLabel: { ...AXIS_LABEL, formatter: (v: number) => v.toFixed(digits) },
         axisLine: { lineStyle: { color: '#6366f1' } },
         splitLine: { show: false },
         name: '分数', nameTextStyle: { fontSize: 9, color: '#6366f1' },

@@ -531,8 +531,11 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
             out = await asyncio.to_thread(
                 client.containers.run,
                 image,
+                # 覆盖镜像 ENTRYPOINT（默认训练镜像为 python /app/train.py）：
+                # 否则 nvidia-smi 命令会被 train.py 当作 CLI 参数吞掉，
+                # config 缺失秒退，探针永远返回空 → GPU 机器被误判为 CPU。
+                entrypoint=["nvidia-smi"],
                 command=[
-                    "nvidia-smi",
                     "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name",
                     "--format=csv,noheader,nounits",
                 ],

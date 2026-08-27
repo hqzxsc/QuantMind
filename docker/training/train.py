@@ -647,6 +647,14 @@ _MARKET_PARQUET_FILES: dict[str, str] = {
     "CRYPTO": "model_features_crypto.parquet",
     "FUTURES": "model_features_futures.parquet",
 }
+# 各市场 6_ml_datasets 数据根目录（训练容器内环境变量，由编排器挂载设置）
+_MARKET_DATA_DIR_ENV: dict[str, str] = {
+    "CN": "QUANTDB_DATA_DIR",
+    "HK": "QUANTHK_DATA_DIR",
+    "US": "QUANTUS_DATA_DIR",
+    "CRYPTO": "QUANTBC_DATA_DIR",
+    "FUTURES": "QUANTFUTURES_DATA_DIR",
+}
 
 
 def load_data(
@@ -698,11 +706,16 @@ def load_data(
     range_end = pd.Timestamp(upper_bound) + pd.Timedelta(days=max(7, horizon + 3))
 
     direct_factor_source = str(factor_source or "").strip()
-    if market_upper == "CN" and direct_factor_source:
+    if direct_factor_source and market_upper in _MARKET_DATA_DIR_ENV:
         # Direct QuantDB mode: one factor source only, never materialise or merge snapshots.
+        # 与 A 股一致：直接读该市场 6_ml_datasets 下的因子分区
+        # （HK: l1_factors/ccass_factors/south_factors）。
         from backend.services.engine.data_platform.quantdb_factor_reader import QuantDBFactorReader
 
-        reader = QuantDBFactorReader(quantdb_dir or os.getenv("QUANTDB_DATA_DIR") or None)
+        reader = QuantDBFactorReader(
+            quantdb_dir or os.getenv(_MARKET_DATA_DIR_ENV[market_upper]) or None,
+            market=market_upper,
+        )
         # 标签构建缓冲(range_start)可能早于数据可用起点(如 train_start 恰为数据首日)。
         # 数据缺失部分无法提供，钳制到数据起点即可，避免 assert_ready 越界抛错。
         _status = reader.describe(direct_factor_source)
@@ -907,15 +920,19 @@ def load_data(
     # ── 丢弃 features_daily.return_Nd：这些列是【未来 N 日收益】 ──
     # return_1d[T] == pct_change[T+1]，当特征使用会直接泄漏标签。
     # 历史上曾把它们重命名为 mom_ret_Nd，导致 RankIC 虚高到 0.7+。
+    # 仅旧快照 parquet（A 股 features_daily 血统）携带该列；直读因子源
+    # （l1/l2/ccass/south）的 return_Nd 为过去收益（pct_change 口径），
+    # 不适用此剔除（HK l1_factors 的 return_1d 即过去 1 日收益）。
     _LEAKY_RETURN_COLS = (
         "return_1d", "return_3d", "return_5d", "return_10d", "return_20d", "return_60d",
     )
-    _leaky_present = [c for c in _LEAKY_RETURN_COLS if c in df.columns]
-    if _leaky_present:
-        df = df.drop(columns=_leaky_present, errors="ignore")
-        logger.warning(
-            "Dropped forward-looking return columns (label leakage): %s", _leaky_present
-        )
+    if not direct_factor_source:
+        _leaky_present = [c for c in _LEAKY_RETURN_COLS if c in df.columns]
+        if _leaky_present:
+            df = df.drop(columns=_leaky_present, errors="ignore")
+            logger.warning(
+                "Dropped forward-looking return columns (label leakage): %s", _leaky_present
+            )
 
     # 如果仍缺 mom_ret_1d，尝试从 pct_change 或 close 构建
     if "mom_ret_1d" not in df.columns:

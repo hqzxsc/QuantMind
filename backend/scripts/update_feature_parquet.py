@@ -612,6 +612,18 @@ def compute_features_for_group(g: pd.DataFrame) -> pd.DataFrame:
             return _add_nan_features(g)  # 数据太少，特征全部填 NaN
         feat = _compute_features_core(valid)
         result = g.copy()
+        # 特征回写前的类型对齐：部分市场以空串填充 is_st/listing_market
+        # （str 列），而特征计算会输出数值列，直接回写会触发 arrow-string
+        # 类型错误。仅当 feat 侧为数值且 result 侧为字符串时规整。
+        for col in set(feat.columns) & set(result.columns):
+            if (
+                col in ("is_st", "listing_market")
+                and pd.api.types.is_numeric_dtype(feat[col])
+                and not pd.api.types.is_numeric_dtype(result[col])
+            ):
+                result[col] = (
+                    pd.to_numeric(result[col], errors="coerce").fillna(0).astype(int)
+                )
         # Add missing feature columns in one batch to avoid fragmentation
         missing = [c for c in feat.columns if c not in result.columns]
         if missing:

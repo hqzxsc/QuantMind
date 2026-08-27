@@ -33,6 +33,12 @@ import yaml
 from backend.services.engine.training.training_log_stream import TrainingRunLogStream
 from backend.services.engine.training.orchestrator_base import TrainingOrchestrator, REGISTRY
 from backend.services.api.training_explain import DEFAULT_EXPLAIN_CFG
+from backend.services.engine.data_platform.quantdb_factor_reader import (
+    MARKET_DATA_DIR_ENV as _MARKET_DATA_DIR_ENV,
+    MARKET_DATA_DIR_DEFAULT as _MARKET_DATA_DIR_DEFAULT,
+    market_data_dir,
+    normalize_market,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +84,22 @@ _DOCKER_NETWORK = os.getenv("TRAINING_DOCKER_NETWORK", "quantmind-network")
 
 _LOCAL_DATA_MOUNT_DIR = "/tmp/feature_snapshots"
 _QUANTDB_DATA_MOUNT_DIR = "/tmp/quantdb_data"
+# 非 CN 市场的数据目录挂载（与 QUANTDB_DATA_MOUNT_DIR 语义一致）
+_MARKET_DATA_MOUNT_DIRS = {
+    "CN": _QUANTDB_DATA_MOUNT_DIR,
+    "HK": "/tmp/quanthk_data",
+    "US": "/tmp/quantus_data",
+    "CRYPTO": "/tmp/quantbc_data",
+    "FUTURES": "/tmp/quantfutures_data",
+}
+# 训练容器内环境变量名（train.py 按市场选择数据根目录）
+_MARKET_MOUNT_ENV_VARS = {
+    "CN": "QUANTDB_DATA_DIR",
+    "HK": "QUANTHK_DATA_DIR",
+    "US": "QUANTUS_DATA_DIR",
+    "CRYPTO": "QUANTBC_DATA_DIR",
+    "FUTURES": "QUANTFUTURES_DATA_DIR",
+}
 
 # ── 训练资源保护：训练期间临时停止其它容器，把内存腾给训练任务 ───────────────────
 # 通过 TRAINING_PAUSE_OTHERS=false 可关闭该行为
@@ -133,6 +155,30 @@ elif _qdb_path.is_absolute():
     _QUANTDB_DATA_HOST_PATH = str(_qdb_path)
 else:
     _QUANTDB_DATA_HOST_PATH = str(_HOST_PROJECT_PATH / _qdb_path)
+
+
+def _market_host_path(container_dir: str) -> str:
+    """把容器内数据目录（/data/quanthk 等）换算为宿主机绝对路径。"""
+    p = Path(container_dir)
+    if p.is_relative_to("/data"):
+        return str(_HOST_PROJECT_PATH / "data" / p.relative_to("/data"))
+    if p.is_relative_to("/app"):
+        return str(_HOST_PROJECT_PATH / p.relative_to("/app"))
+    if p.is_absolute():
+        return str(p)
+    return str(_HOST_PROJECT_PATH / p)
+
+
+def _market_data_mount(market: str) -> tuple[str, str]:
+    """返回 (宿主机数据目录, 训练容器挂载目录)；CN 复用既有 QuantDB 常量。"""
+    market = normalize_market(market)
+    if market == "CN":
+        return _QUANTDB_DATA_HOST_PATH, _QUANTDB_DATA_MOUNT_DIR
+    container_dir = (
+        os.getenv(_MARKET_DATA_DIR_ENV[market], "").strip()
+        or _MARKET_DATA_DIR_DEFAULT[market]
+    )
+    return _market_host_path(container_dir), _MARKET_DATA_MOUNT_DIRS[market]
 
 # 训练脚本：./docker/training/train.py 挂载到容器内 /app/docker/training/
 _TRAINING_SCRIPT_HOST_PATH = str(_HOST_PROJECT_PATH / "docker" / "training" / "train.py")
@@ -416,13 +462,17 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
 
         # 直读模式按选定的单一 QuantDB 因子源过滤；旧模型仍走快照兼容路径。
         requested_features = payload.get("features", [])
+        market = normalize_market(context.get("market") or "CN")
+        _, market_mount_dir = _market_data_mount(market)
         if factor_source:
             try:
                 from backend.services.engine.data_platform.quantdb_factor_reader import QuantDBFactorReader
 
                 source_start = payload.get("train_start") or "2023-01-11"
                 source_end = payload.get("test_end") or payload.get("valid_end") or payload.get("train_end") or ""
-                source_status = QuantDBFactorReader(_qdb_dir).assert_ready(
+                # 容器内数据根目录（api 容器 /data 挂载可见），与训练容器
+                # 挂载的 market_mount_dir 同源。
+                source_status = QuantDBFactorReader(market=market).assert_ready(
                     factor_source,
                     start=str(source_start) or None,
                     end=str(source_end) or None,
@@ -463,7 +513,7 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                 "train_end": payload.get("train_end", "2024-12-31"),
                 "features": valid_features,
                 "source_mode": data_source_mode,
-                "local_dir": _QUANTDB_DATA_MOUNT_DIR if factor_source else (
+                "local_dir": market_mount_dir if factor_source else (
                     _LOCAL_DATA_MOUNT_DIR if data_source_mode == "LOCAL" else None
                 ),
                 "factor_source": factor_source or None,
@@ -472,7 +522,7 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                 "factor_field_sources": dict(payload.get("factor_field_sources") or {}),
                 "factor_catalog_published_at": str(payload.get("factor_catalog_published_at") or "") or None,
                 "factor_coverage": dict(payload.get("factor_coverage") or {}),
-                "quantdb_dir": _QUANTDB_DATA_MOUNT_DIR if factor_source else None,
+                "quantdb_dir": market_mount_dir if factor_source else None,
             },
             "model": {
                 "type": payload.get("model_type", "lightgbm"),
@@ -704,6 +754,24 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                 run_id,
                 _qdb_dir,
             )
+        # 非 CN 市场：挂载该市场数据根目录（quanthk/quantus/…），训练直读
+        # 6_ml_datasets 因子源；CN 复用上方 QuantDB 挂载。
+        _train_market = normalize_market(
+            str((payload.get("context") or {}).get("market") or "CN")
+        )
+        if _train_market != "CN":
+            _mk_host, _mk_mount = _market_data_mount(_train_market)
+            if Path(market_data_dir(_train_market)).exists():
+                volumes[_mk_host] = {"bind": _mk_mount, "mode": "ro"}
+                logger.info(
+                    "[%s] %s data mounted: %s (host) -> %s",
+                    run_id, _train_market, _mk_host, _mk_mount,
+                )
+            else:
+                logger.warning(
+                    "[%s] %s data dir not visible at %s; factor source will be unavailable",
+                    run_id, _train_market, market_data_dir(_train_market),
+                )
         logger.info(
             "[%s] Training workspace mounted: %s (host) -> /workspace (container writes to %s)",
             run_id,
@@ -861,7 +929,8 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                     "TRAINING_LOCAL_DATA_DIR": _LOCAL_DATA_MOUNT_DIR,
                     "TRAINING_CACHE_DIR": "/tmp",
                     "QLIB_PROVIDER_URI": os.getenv("QLIB_PROVIDER_URI", ""),
-                    "QUANTDB_DATA_DIR": _QUANTDB_DATA_MOUNT_DIR,
+                    # 市场数据根目录（train.py 按 context.market 选择读哪个 env）
+                    _MARKET_MOUNT_ENV_VARS[_train_market]: _market_data_mount(_train_market)[1],
                     # 透传 IC 并行度覆盖（不设置时 parallel_utils 按剩余内存预算收缩）
                     "TRAIN_IC_WORKERS": os.getenv("TRAIN_IC_WORKERS", ""),
                 },

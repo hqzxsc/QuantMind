@@ -29,6 +29,7 @@ from backend.services.api.routers.admin.quantdb_factor_catalog import (
     load_quantdb_training_catalog,
     load_quantdb_training_sources,
 )
+from backend.services.engine.data_platform.quantdb_factor_reader import DEFAULT_FACTOR_SOURCE
 from backend.services.api.training_shap_summary import read_shap_summary_rows, to_int_or
 from backend.services.api.user_app.middleware.auth import get_current_user
 from backend.services.engine.inference.batch_aggregator import aggregate_batch
@@ -580,7 +581,7 @@ async def list_system_models(
 @router.get("/feature-catalog", summary="获取模型训练特征字典（用户态）")
 async def get_model_feature_catalog(
     market: str | None = None,
-    factor_source: str = Query("l1_l2_factors", description="QuantDB 因子源"),
+    factor_source: str | None = Query(None, description="QuantDB 因子源（市场直读训练）"),
     include_coverage: bool = Query(
         False, description="是否附带 parquet 数据覆盖统计（默认 false，加速首屏）"
     ),
@@ -593,7 +594,12 @@ async def get_model_feature_catalog(
         # 绝不能回退到旧 DB/文件目录，否则页面看到的字段会和实际数据源不一致。
         # 覆盖信息来自同步时的缓存 manifest，不在请求期间扫描 parquet。
         _ = include_coverage  # Retained for older clients; coverage is always cached.
-        return await load_quantdb_training_catalog(factor_source)
+        return await load_quantdb_training_catalog(factor_source or DEFAULT_FACTOR_SOURCE, market="CN")
+    # 非 A 股市场：显式携带 factor_source 时走该市场的 QuantDB 直读目录
+    # （港股 l1_factors/ccass_factors/south_factors 等）；未携带时兼容
+    # 旧前端，回退到传统 DB/文件特征字典（快照训练路径）。
+    if factor_source:
+        return await load_quantdb_training_catalog(factor_source, market=market)
     try:
         catalog = await _load_feature_catalog_from_db(market=market)
     except Exception:
@@ -616,11 +622,12 @@ async def get_model_feature_catalog(
 
 @router.get("/training-sources", summary="获取可选 QuantDB 训练数据源（用户态）")
 async def get_quantdb_training_sources(
+    market: str | None = Query(None, description="市场（CN/HK/US/FUTURES…），默认 CN"),
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     """Return backend-defined source choices and published/readiness state."""
     _ = current_user
-    return await load_quantdb_training_sources()
+    return await load_quantdb_training_sources(market or "CN")
 
 
 @router.get("/qlib-data-range", summary="获取 Qlib 数据日期范围")

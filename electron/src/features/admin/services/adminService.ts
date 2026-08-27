@@ -196,8 +196,10 @@ class AdminService {
     }
 
     // Versioned direct QuantDB training-factor catalog (admin only).
-    async getQuantDBFactorSources(): Promise<any> {
-        const resp = await this.axiosInstance.get('/admin/training-data/sources');
+    async getQuantDBFactorSources(market = 'CN'): Promise<any> {
+        const resp = await this.axiosInstance.get('/admin/training-data/sources', {
+            params: { market },
+        });
         return resp.data;
     }
 
@@ -206,35 +208,35 @@ class AdminService {
         return resp.data;
     }
 
-    async refreshQuantDBFactorSources(): Promise<any> {
+    async refreshQuantDBFactorSources(market = 'CN'): Promise<any> {
         const resp = await this.axiosInstance.post(
             '/admin/training-data/sources/refresh',
             undefined,
-            { timeout: 120_000 },
+            { params: { market }, timeout: 120_000 },
         );
         return resp.data;
     }
 
-    async getQuantDBFactorFields(sourceDataset: string): Promise<any> {
+    async getQuantDBFactorFields(sourceDataset: string, market = 'CN'): Promise<any> {
         const resp = await this.axiosInstance.get('/admin/training-data/fields', {
-            params: { source_dataset: sourceDataset },
+            params: { source_dataset: sourceDataset, market },
         });
         return resp.data;
     }
 
-    async getQuantDBFactorCatalog(sourceDataset: string, versionId?: string): Promise<any | null> {
+    async getQuantDBFactorCatalog(sourceDataset: string, versionId?: string, market = 'CN'): Promise<any | null> {
         const resp = await this.axiosInstance.get('/admin/training-data/catalog', {
-            params: { source_dataset: sourceDataset, version_id: versionId },
+            params: { source_dataset: sourceDataset, version_id: versionId, market },
         });
         // 未发布目录是正常的初始状态，后端以 catalog: null 表示。
         return resp.data?.catalog === null ? null : resp.data;
     }
 
-    async createQuantDBFactorDraft(versionName: string, sourceDataset: string): Promise<any> {
+    async createQuantDBFactorDraft(versionName: string, sourceDataset: string, market = 'CN'): Promise<any> {
         const resp = await this.axiosInstance.post('/admin/training-data/versions', {
             version_name: versionName,
             source_dataset: sourceDataset,
-        });
+        }, { params: { market } });
         return resp.data;
     }
 

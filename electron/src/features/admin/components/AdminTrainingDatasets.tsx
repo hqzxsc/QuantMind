@@ -10,18 +10,37 @@ import { adminService } from '../services/adminService';
 
 const { Title, Text } = Typography;
 
-const SOURCE_OPTIONS = [
-  { value: 'l1_l2_factors', label: 'L1 + L2 合并宽表（默认）' },
-  { value: 'l1_factors', label: 'L1 因子' },
-  { value: 'l2_factors', label: 'L2 因子' },
+// 市场切换（数据源选项以后端 /sources labels 为准，此表仅作加载前的占位）
+const MARKET_OPTIONS = [
+  { value: 'CN', label: 'A股' },
+  { value: 'HK', label: '港股' },
+  { value: 'US', label: '美股' },
+  { value: 'CRYPTO', label: '区块链' },
+  { value: 'FUTURES', label: '期货' },
 ];
+
+const MARKET_SOURCE_FALLBACK: Record<string, { value: string; label: string }[]> = {
+  CN: [
+    { value: 'l1_l2_factors', label: 'L1 + L2 合并宽表（默认）' },
+    { value: 'l1_factors', label: 'L1 因子' },
+    { value: 'l2_factors', label: 'L2 因子' },
+  ],
+  HK: [
+    { value: 'l1_factors', label: 'L1 因子（默认）' },
+    { value: 'ccass_factors', label: 'CCASS 持仓结构' },
+    { value: 'south_factors', label: '南向资金结构' },
+  ],
+  US: [{ value: 'l1_factors', label: 'L1 因子（默认）' }],
+  CRYPTO: [{ value: 'l1_factors', label: 'L1 因子（默认）' }],
+  FUTURES: [{ value: 'l1_factors', label: 'L1 因子（默认）' }],
+};
 
 const CATEGORY_OPTIONS = [
   ['momentum', '动量'], ['volatility', '波动与风险'], ['money_flow', '成交额与资金'],
   ['turnover', '换手与流动性'], ['volume_turnover', '成交量与换手率'], ['technical', '技术指标'], ['fundamental', '基本面与估值'],
   ['style', '截面风格'], ['industry', '行业轮动'], ['chip', '筹码分布'],
   ['concept', '概念板块'], ['money_flow_l2', '逐笔资金流'], ['order_flow', '撤单与委托流'],
-  ['toxicity', '信息不对称与毒性'], ['microstructure', '价差与微观结构'], ['other', '其他因子'],
+  ['toxicity', '信息不对称与毒性'], ['microstructure', '价差与微观结构'], ['holding_structure', '持仓结构'], ['other', '其他因子'],
 ].map(([value, label]) => ({ value, label }));
 
 type Mapping = {
@@ -57,8 +76,10 @@ function unavailableSourceAction(status: Record<string, any>): string {
 }
 
 export const AdminTrainingDatasets: React.FC = () => {
+  const [market, setMarket] = useState('CN');
   const [source, setSource] = useState('l1_l2_factors');
   const [sources, setSources] = useState<Record<string, any>>({});
+  const [sourceLabels, setSourceLabels] = useState<Record<string, string>>({});
   const [fields, setFields] = useState<any[]>([]);
   const [published, setPublished] = useState<any | null>(null);
   const [draft, setDraft] = useState<any | null>(null);
@@ -67,6 +88,24 @@ export const AdminTrainingDatasets: React.FC = () => {
   const [editing, setEditing] = useState<Mapping | null>(null);
   const [keyword, setKeyword] = useState('');
   const [form] = Form.useForm();
+
+  const sourceOptions = useMemo(() => {
+    const ids = Object.keys(sources);
+    if (ids.length > 0 && sourceLabels[ids[0]]) {
+      return ids.map((id) => ({ value: id, label: sourceLabels[id] }));
+    }
+    return MARKET_SOURCE_FALLBACK[market] || MARKET_SOURCE_FALLBACK.CN;
+  }, [sources, sourceLabels, market]);
+
+  // 市场切换时重置数据源为后端默认
+  const handleMarketChange = (next: string) => {
+    setMarket(next);
+    setSources({});
+    setSourceLabels({});
+    setFields([]);
+    setDraft(null);
+    setPublished(null);
+  };
 
   const mappings = useMemo<Mapping[]>(
     () => (draft?.categories || []).flatMap((category: any) => category.features || []), [draft],
@@ -106,29 +145,43 @@ export const AdminTrainingDatasets: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [sourceResult, fieldsResult] = await Promise.all([
-        adminService.getQuantDBFactorSources(), adminService.getQuantDBFactorFields(source),
-      ]);
-      setSources(sourceResult.sources || {});
+      const sourceResult = await adminService.getQuantDBFactorSources(market);
+      const statuses = sourceResult.sources || {};
+      setSources(statuses);
+      setSourceLabels(sourceResult.labels || {});
+      const ids = Object.keys(statuses);
+      let activeSource = source;
+      if (ids.length > 0 && !ids.includes(activeSource)) {
+        // 当前数据源不属于该市场：切到市场默认源，由 source 变化重新触发加载
+        activeSource = sourceResult.default_source && ids.includes(sourceResult.default_source)
+          ? sourceResult.default_source : ids[0];
+        setSource(activeSource);
+        setFields([]);
+        setDraft(null);
+        setPublished(null);
+        setLoading(false);
+        return;
+      }
+      const fieldsResult = await adminService.getQuantDBFactorFields(activeSource, market);
       setFields(fieldsResult.fields || []);
       try {
-        setPublished(await adminService.getQuantDBFactorCatalog(source));
+        setPublished(await adminService.getQuantDBFactorCatalog(activeSource, undefined, market));
       } catch { setPublished(null); }
       if (draft) {
-        try { setDraft(await adminService.getQuantDBFactorCatalog(source, draft.version_id)); }
+        try { setDraft(await adminService.getQuantDBFactorCatalog(activeSource, draft.version_id, market)); }
         catch { setDraft(null); }
       }
     } catch (error: any) {
-      message.error(error?.response?.data?.detail || error?.message || '加载 QuantDB 训练数据集失败');
+      message.error(error?.response?.data?.detail || error?.message || '加载训练数据集失败');
     } finally { setLoading(false); }
-  }, [source, draft?.version_id]);
+  }, [source, market, draft?.version_id]);
 
   useEffect(() => { load(); }, [load]);
 
   const refreshDiscovery = async () => {
     setLoading(true);
     try {
-      await adminService.refreshQuantDBFactorSources();
+      await adminService.refreshQuantDBFactorSources(market);
       message.success('字段发现已刷新');
       await load();
     } catch (error: any) {
@@ -140,11 +193,11 @@ export const AdminTrainingDatasets: React.FC = () => {
     try {
       const values = await form.validateFields();
       setCreating(true);
-      const created = await adminService.createQuantDBFactorDraft(values.version_name, source);
+      const created = await adminService.createQuantDBFactorDraft(values.version_name, source, market);
       await adminService.seedQuantDBFactorDraft(created.version_id);
-      setDraft(await adminService.getQuantDBFactorCatalog(source, created.version_id));
+      setDraft(await adminService.getQuantDBFactorCatalog(source, created.version_id, market));
       setCreating(false);
-      message.success('草稿已创建：全部字段已默认启用，其中 48 个核心因子已默认勾选');
+      message.success('草稿已创建：全部字段已默认启用，核心因子已默认勾选');
     } catch (error: any) {
       setCreating(false);
       if (error?.errorFields) return;
@@ -215,14 +268,17 @@ export const AdminTrainingDatasets: React.FC = () => {
   return <div className="p-6 space-y-4">
     <div className="flex items-center justify-between">
       <div><Title level={4} className="!mb-0"><DatabaseOutlined /> 模型训练数据集</Title>
-        <Text type="secondary">仅读取 QuantDB 原始因子；映射草稿发布后才影响新的训练任务。</Text></div>
-      <Space><Select value={source} options={SOURCE_OPTIONS} style={{ width: 240 }} onChange={value => { setSource(value); setDraft(null); }} />
+        <Text type="secondary">仅读取各市场 ML 数据集原始因子；映射草稿发布后才影响新的训练任务。</Text></div>
+      <Space wrap>
+        <Select value={market} options={MARKET_OPTIONS} style={{ width: 100 }} onChange={handleMarketChange} />
+        <Select value={source} options={sourceOptions} style={{ width: 220 }} loading={loading && !sourceOptions.length} onChange={value => { setSource(value); setDraft(null); }} />
         <Button icon={<ReloadOutlined />} loading={loading} onClick={load}>刷新</Button>
-        <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={refreshDiscovery}>字段发现</Button></Space>
+        <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={refreshDiscovery}>字段发现</Button>
+      </Space>
     </div>
 
     <Row gutter={[16, 16]}>
-      {SOURCE_OPTIONS.map(option => {
+      {sourceOptions.map(option => {
         const status = sources[option.value] || {};
         const unavailableHint = unavailableSourceHint(status, option.label.replace('（默认）', ''));
         const unavailableAction = unavailableSourceAction(status);

@@ -92,6 +92,21 @@ def _resolve_quantdb_data_dir() -> str:
     except Exception:  # noqa: BLE001
         return "/data/quantdb"
 
+
+def _resolve_market_factor_data_dir(meta: dict) -> str:
+    """按模型 metadata.context.market 解析因子数据根目录（HK→quanthk 等）。"""
+    try:
+        from backend.services.engine.data_platform.quantdb_factor_reader import (
+            market_data_dir, normalize_market,
+        )
+        market = normalize_market(
+            str((meta.get("context") or {}).get("market") or "CN")
+        )
+        path = market_data_dir(market)
+        return str(path) if path.is_dir() else _resolve_quantdb_data_dir()
+    except Exception:  # noqa: BLE001
+        return _resolve_quantdb_data_dir()
+
 _PARQUET_TEMPLATE_MARKERS = (
     "QuantMind Parquet 数据源推理脚本 (inference.py 模板)",
     "QuantMind Parquet 数据源推理脚本\n=================================\n由训练流水线自动生成",
@@ -416,7 +431,7 @@ class InferenceScriptRunner:
                 or os.getenv("MODEL_TRAINING_DATA_DIR", "/app/db/feature_snapshots")
             )
         if data_source == "quantdb_factors":
-            return _resolve_quantdb_data_dir()
+            return _resolve_market_factor_data_dir(primary_meta)
         try:
             from backend.shared.qlib_paths import resolve_qlib_provider_uri
             return resolve_qlib_provider_uri("CN")
@@ -427,7 +442,7 @@ class InferenceScriptRunner:
         meta = self._read_primary_metadata()
         try:
             from backend.services.engine.data_platform.quantdb_factor_reader import QuantDBFactorReader
-            data_dir = Path(_resolve_quantdb_data_dir())
+            data_dir = Path(_resolve_market_factor_data_dir(meta))
             reader = QuantDBFactorReader(data_dir)
             source = str(meta.get("factor_source") or "l1_l2_factors")
             # describe() 会全量扫描 parquet 求 min/max，开销大；做 TTL 缓存避免每次预检 2.6s
@@ -1052,7 +1067,7 @@ class InferenceScriptRunner:
         # to model_features_*.parquet.
         primary_meta = self._read_primary_metadata()
         parquet_data_dir = (
-            _resolve_quantdb_data_dir()
+            _resolve_market_factor_data_dir(primary_meta)
             if data_source == "quantdb_factors" else str(
                 primary_meta.get("data_dir")
                 or os.getenv("MODEL_TRAINING_DATA_DIR", "/app/db/feature_snapshots")

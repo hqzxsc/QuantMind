@@ -544,8 +544,10 @@ class ModelTrainingService {
     return resp.data;
   }
 
-  async getQuantDBTrainingSources(): Promise<QuantDBTrainingSourcesResult> {
-    const resp = await this.client.get<QuantDBTrainingSourcesResult>('/models/training-sources');
+  async getQuantDBTrainingSources(market?: string): Promise<QuantDBTrainingSourcesResult> {
+    const resp = await this.client.get<QuantDBTrainingSourcesResult>('/models/training-sources', {
+      params: market ? { market } : undefined,
+    });
     return resp.data;
   }
 

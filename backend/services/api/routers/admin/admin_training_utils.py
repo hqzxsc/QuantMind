@@ -639,13 +639,11 @@ async def _resolve_quantdb_factor_payload(payload: dict[str, Any], market: str) 
     source = str(payload.get("factor_source") or "").strip()
     if not source:
         return payload, await _load_allowed_features(market=market)
-    if market != "CN":
-        raise HTTPException(status_code=422, detail="QuantDB direct factor training currently supports CN only")
     version_id = str(payload.get("factor_catalog_version") or "").strip()
     if not version_id:
         raise HTTPException(status_code=422, detail="factor_catalog_version is required for QuantDB direct training")
     try:
-        status = QuantDBFactorReader().assert_ready(
+        status = QuantDBFactorReader(market=market).assert_ready(
             source,
             start=str(payload.get("train_start") or "") or None,
             end=str(payload.get("test_end") or payload.get("valid_end") or payload.get("train_end") or "") or None,
@@ -656,8 +654,9 @@ async def _resolve_quantdb_factor_payload(payload: dict[str, Any], market: str) 
     async with get_session() as session:
         version = (await session.execute(text("""
             SELECT version_id, published_at FROM qm_training_factor_catalog_version
-            WHERE version_id = :version_id AND status = 'published' AND source_dataset = :source
-        """), {"version_id": version_id, "source": source})).first()
+            WHERE version_id = :version_id AND status = 'published'
+              AND source_dataset = :source AND market = :market
+        """), {"version_id": version_id, "source": source, "market": market})).first()
         if not version:
             raise HTTPException(status_code=422, detail="factor_catalog_version is not the active published source version")
         rows = (await session.execute(text("""

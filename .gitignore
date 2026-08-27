@@ -246,3 +246,4 @@ backend/scripts/quanthk_south_sync.py
 
 # 本地信号因子生成器（内部资产）
 backend/scripts/build_ml_signal_datasets.py
+backend/scripts/evaluate_signal_factors.py

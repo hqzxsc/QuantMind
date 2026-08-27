@@ -60,6 +60,9 @@ _GROUPS = (
     ("micro_informed_", "toxicity", "信息不对称与毒性", 1300),
     ("micro_order_imbalance_tox", "toxicity", "信息不对称与毒性", 1300),
     ("micro_", "microstructure", "价差与微观结构", 1400),
+    # ── 港股持仓结构与南向资金 ──
+    ("ca_", "holding_structure", "持仓结构", 1500),
+    ("sb_", "holding_structure", "持仓结构", 1500),
 )
 
 # High-value exact descriptions. The token renderer below covers documented
@@ -74,6 +77,22 @@ _EXACT = {
     "fun_np_growth": ("净利润增长率", "净利润同比增长速度"),
     "tech_close_to_high_20": ("20日收盘接近高点程度", "收盘价相对20日最高价的位置"),
     "tech_max_drawdown_20": ("20日最大回撤", "近20日价格路径的最大回撤幅度"),
+    # ── 港股持仓结构（CCASS 日频因子）──
+    "ca_n_pis": ("CCASS 参与人数量", "CCASS Top50 参与人数量（少=筹码集中，负向）"),
+    "ca_hhi_disc": ("CCASS 披露集中度 HHI", "Top50 披露份额赫芬达尔指数，越高筹码越集中"),
+    "ca_rank_overlap_20d": ("CCASS 20日名次重叠度", "参与人名单与 20 个交易日前的 Jaccard 重叠率"),
+    "ca_broker_pct": ("券商席位占比", "券商类参与人披露份额合计"),
+    "ca_disclosed_sum": ("CCASS 披露份额合计", "Top50 参与人披露比例合计（衡量披露质量）"),
+    "ca_cust_share_disc": ("托管行披露份额", "托管行类参与人占披露份额比例"),
+    "ca_south_pct": ("南向席位占比", "港股通席位（A00003/A00004）披露份额合计"),
+    # ── 港股南向资金结构 ──
+    "sb_quantity": ("南向持股数量", "港股通持股数量（正向）"),
+    "sb_pct": ("南向持股占比", "港股通持股占已发行股本比例"),
+    "sb_pct_d1": ("南向占比 1 日变化", "南向持股占比较上一披露日变化"),
+    "sb_pct_d5": ("南向占比 5 日变化", "南向持股占比 5 个披露日变化"),
+    "sb_pct_d20": ("南向占比 20 日变化", "南向持股占比 20 个披露日变化"),
+    "sb_pct_z20": ("南向占比 20 日 Z 分数", "南向持股占比相对 20 日窗口的滚动标准化偏离"),
+    "sb_consec_up": ("南向连增日数", "南向持股占比连续上升的披露日数"),
     "vol_amp_1": ("单日振幅", "当日最高价与最低价的相对振幅"),
     "vol_amp_20": ("20日平均振幅", "近20日单日振幅的统计水平"),
     "vol_gini": ("成交量基尼系数", "分钟成交量分布的不均匀程度"),

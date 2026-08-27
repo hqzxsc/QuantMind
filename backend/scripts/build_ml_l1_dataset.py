@@ -36,6 +36,10 @@ _CN_ONLY_COLS = {
     "idx_all", "idx_hs300", "idx_zz1000", "idx_chinext", "idx_margin",
     "is_st", "listing_market", "ind_code_l1", "ind_code_l2",
 }
+# 同步系统元数据列：不进训练直读数据集。日期由 hive 分区列 dt=YYYYMMDD
+# 承载（reader 经 _date_expression 读取），文件内再写 dt 会引入
+# dictionary/double 混型（pandas 读分区列→字典编码→写盘类型不稳定）。
+_META_COLS = {"release_id", "published_at", "dt"}
 
 
 def _hub(market: str):
@@ -54,8 +58,8 @@ def _existing_partitions(root: Path, name: str = "l1_factors") -> set[str]:
 
 
 def _select_factor_columns(feats: pd.DataFrame, sym_col: str, date_col: str) -> list[str]:
-    """排除 symbol/date、A 股专属列后剩余的因子列（保持原始列序）。"""
-    banned = set(_CN_ONLY_COLS) | {"raw_close", "factor"}
+    """排除 symbol/date、A 股专属列、同步元数据列后剩余的因子列（保持原始列序）。"""
+    banned = set(_CN_ONLY_COLS) | set(_META_COLS) | {"raw_close", "factor"}
     return [
         c for c in feats.columns
         if c != sym_col and c != date_col
@@ -116,7 +120,8 @@ def build_l1(market: str, *, start_year: int | None = None, incremental: bool = 
             continue
         if incremental and existing and dt_str in existing:
             continue  # 增量模式：已有分区一律跳过；--rebuild 才覆盖重写
-        out = g.rename(columns={sym_col: "symbol"})[[c for c in col_order if c in g.columns]]
+        renamed = g.rename(columns={sym_col: "symbol"})
+        out = renamed[[c for c in col_order if c in renamed.columns]]
         out = out.replace([float("inf"), float("-inf")], None)
         dt_dir = ml_root / "l1_factors" / f"dt={dt_str}"
         dt_dir.mkdir(parents=True, exist_ok=True)

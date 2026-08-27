@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -17,30 +18,87 @@ from typing import Iterable, Literal
 
 import pandas as pd
 
-from .quantdb_hub import _resolve_data_dir
 from backend.shared.stock_utils import StockCodeUtil
 
 logger = logging.getLogger(__name__)
 
-FactorSource = Literal["l1_factors", "l2_factors", "l1_l2_factors"]
+FactorSource = Literal[
+    "l1_factors", "l2_factors", "l1_l2_factors", "ccass_factors", "south_factors"
+]
 
 FACTOR_SOURCE_DIRS: dict[FactorSource, str] = {
     "l1_factors": "6_ml_datasets/l1_factors",
     "l2_factors": "6_ml_datasets/l2_factors",
     "l1_l2_factors": "6_ml_datasets/l1_l2_factors",
+    "ccass_factors": "6_ml_datasets/ccass_factors",
+    "south_factors": "6_ml_datasets/south_factors",
 }
 DAILY_BACKWARD_DIR = "1_kline_data/daily_backward"
 DEFAULT_FACTOR_SOURCE: FactorSource = "l1_l2_factors"
+
+# ── 市场 → 可用因子源映射（后台「模型训练数据集」与训练页数据源选择共用）───────
+# 各市场 6_ml_datasets/ 下实际存在的训练直读数据集。
+MARKET_FACTOR_SOURCES: dict[str, tuple[FactorSource, ...]] = {
+    "CN": ("l1_factors", "l2_factors", "l1_l2_factors"),
+    "HK": ("l1_factors", "ccass_factors", "south_factors"),
+    "US": ("l1_factors",),
+    "CRYPTO": ("l1_factors",),
+    "FUTURES": ("l1_factors",),
+}
+DEFAULT_FACTOR_SOURCE_BY_MARKET: dict[str, FactorSource] = {
+    "CN": "l1_l2_factors",
+    "HK": "l1_factors",
+    "US": "l1_factors",
+    "CRYPTO": "l1_factors",
+    "FUTURES": "l1_factors",
+}
+# 各市场数据根目录环境变量（容器内路径，本地编排器挂载后亦可见）
+MARKET_DATA_DIR_ENV: dict[str, str] = {
+    "CN": "QM_QUANTDB_DATA_DIR",
+    "HK": "QM_QUANTHK_DATA_DIR",
+    "US": "QM_QUANTUS_DATA_DIR",
+    "CRYPTO": "QM_QUANTBC_DATA_DIR",
+    "FUTURES": "QM_QUANTFUTURES_DATA_DIR",
+}
+MARKET_DATA_DIR_DEFAULT: dict[str, str] = {
+    "CN": "/data/quantdb",
+    "HK": "/data/quanthk",
+    "US": "/data/quantus",
+    "CRYPTO": "/data/quantbc",
+    "FUTURES": "/data/quantfutures",
+}
+# 次要因子源（ccass/south 等）不含 OHLCV，标签构建所需的行情列由同目录
+# l1_factors 补给（各市场 l1_factors 均带 OHLCV）。
+OHLCV_DONOR_SOURCE: FactorSource = "l1_factors"
+OHLCV_COLUMNS = ("open", "high", "low", "close", "volume", "amount")
 REQUIRED_COLUMNS = (
     "symbol",
     "date",
-    "open",
-    "high",
-    "low",
-    "close",
-    "volume",
-    "amount",
+    *OHLCV_COLUMNS,
 )
+
+
+def normalize_market(market: str | None) -> str:
+    market_upper = str(market or "CN").upper().strip()
+    if market_upper in {"A", "A_SHARE", "SSE", "CN"}:
+        return "CN"
+    return market_upper if market_upper in MARKET_FACTOR_SOURCES else "CN"
+
+
+def sources_for_market(market: str | None = None) -> list[FactorSource]:
+    """该市场在训练页/后台可选的因子源列表（按映射定义顺序）。"""
+    return list(MARKET_FACTOR_SOURCES.get(normalize_market(market), ("l1_factors",)))
+
+
+def default_source_for(market: str | None = None) -> FactorSource:
+    return DEFAULT_FACTOR_SOURCE_BY_MARKET.get(normalize_market(market), "l1_factors")
+
+
+def market_data_dir(market: str | None = None) -> Path:
+    """解析某市场数据根目录（api 容器内视角）。缺省回退市场默认路径。"""
+    market_upper = normalize_market(market)
+    env_val = os.getenv(MARKET_DATA_DIR_ENV[market_upper], "").strip()
+    return Path(env_val) if env_val else Path(MARKET_DATA_DIR_DEFAULT[market_upper])
 KEY_COLUMNS = {"symbol", "date", "dt", "time", "release_id", "published_at"}
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -76,8 +134,15 @@ def _quote(identifier: str) -> str:
 class QuantDBFactorReader:
     """Read one raw QuantDB factor source without materialising a snapshot."""
 
-    def __init__(self, data_dir: str | Path | None = None) -> None:
-        self.data_dir = Path(data_dir) if data_dir is not None else _resolve_data_dir()
+    def __init__(
+        self,
+        data_dir: str | Path | None = None,
+        market: str | None = None,
+    ) -> None:
+        if data_dir is not None:
+            self.data_dir = Path(data_dir)
+        else:
+            self.data_dir = market_data_dir(market)
 
     @staticmethod
     def validate_source(source: str) -> FactorSource:
@@ -120,6 +185,26 @@ class QuantDBFactorReader:
             return None
         parquet_glob = str(root / "**" / "*.parquet").replace("'", "''")
         return f"read_parquet('{parquet_glob}', hive_partitioning=true)"
+
+    def _ohlcv_donor_relation(self) -> str | None:
+        """返回同目录 l1_factors 关系，作为无 OHLCV 次要源（ccass/south）的行情补给。"""
+        root = self.data_dir / FACTOR_SOURCE_DIRS[OHLCV_DONOR_SOURCE]
+        if not root.is_dir() or not any(root.rglob("*.parquet")):
+            return None
+        parquet_glob = str(root / "**" / "*.parquet").replace("'", "''")
+        return f"read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"
+
+    @staticmethod
+    def _relation_columns(relation: str) -> set[str]:
+        duckdb = QuantDBFactorReader._duckdb()
+        con = duckdb.connect(config={"memory_limit": "2GB", "threads": "2"})
+        try:
+            rows = con.execute(f"DESCRIBE SELECT * FROM {relation}").fetchall()
+            return {str(row[0]) for row in rows}
+        except Exception:  # noqa: BLE001
+            return set()
+        finally:
+            con.close()
 
     def describe(self, source: str) -> FactorSourceStatus:
         source = self.validate_source(source)
@@ -170,6 +255,16 @@ class QuantDBFactorReader:
 
         schema_hash = hashlib.sha256("\n".join(columns).encode()).hexdigest()
         missing = [column for column in REQUIRED_COLUMNS if column not in columns]
+        if "date" in missing and "dt" in columns:
+            missing.remove("date")  # dt 分区列即日期（HK l1_factors 无 date 列）
+        reason = None
+        if missing and set(missing) <= set(OHLCV_COLUMNS):
+            # 次要源（ccass/south）：OHLCV 由同目录 l1_factors 补给，标签可构建。
+            donor = self._ohlcv_donor_relation()
+            if donor is not None and set(OHLCV_COLUMNS) <= self._relation_columns(donor):
+                missing = []
+            else:
+                reason = "Missing OHLCV columns (l1_factors donor unavailable)"
         return FactorSourceStatus(
             dataset_id=source,
             path=str(root),
@@ -181,13 +276,12 @@ class QuantDBFactorReader:
             max_date=str(date_row[1])[:10] if date_row and date_row[1] else None,
             ready=not missing,
             missing_required=missing,
-            reason=None if not missing else "Missing required common columns",
+            reason=None if not missing else (reason or "Missing required common columns"),
         )
 
-    def discover(self) -> dict[str, dict]:
-        return {
-            source: self.describe(source).to_dict() for source in FACTOR_SOURCE_DIRS
-        }
+    def discover(self, market: str | None = None) -> dict[str, dict]:
+        sources = FACTOR_SOURCE_DIRS if market is None else sources_for_market(market)
+        return {source: self.describe(source).to_dict() for source in sources}
 
     @staticmethod
     def _date_expression(columns: Iterable[str]) -> str:
@@ -255,7 +349,7 @@ class QuantDBFactorReader:
         status = self.assert_ready(source, start=start, end=end)
         available = set(status.columns)
         requested = list(dict.fromkeys(features))
-        reserved = set(REQUIRED_COLUMNS) | {"trade_date"}
+        reserved = set(REQUIRED_COLUMNS) | {"trade_date", "dt"}
         if any(feature in reserved for feature in requested):
             raise QuantDBFactorError(
                 "Mapped factor names cannot overwrite key or OHLCV columns"
@@ -281,17 +375,29 @@ class QuantDBFactorReader:
             f"{factor_date} AS trade_date",
         ]
         daily_relation = self._daily_backward_relation()
+        # 次要源（ccass/south 等）无 OHLCV 列：从同目录 l1_factors 补给行情，
+        # 用于构建无泄漏的未来收益标签；含 OHLCV 的源不触发。
+        ohlcv_donor = (
+            self._ohlcv_donor_relation()
+            if include_ohlcv and not set(OHLCV_COLUMNS) <= set(status.columns)
+            else None
+        )
+        ohlcv_join = ohlcv_donor or daily_relation
         if include_ohlcv:
             for column in REQUIRED_COLUMNS[2:]:
-                factor_column = f'f.{_quote(column)}'
-                if daily_relation:
-                    # 历史 l1 分区有因子但 OHLCV 均为 NULL；必须用后复权日线
-                    # 补齐，才能构造无泄漏的未来收益标签。新分区的原值优先保留。
-                    selected.append(
-                        f"COALESCE({factor_column}, k.{_quote(column)}) AS {_quote(column)}"
-                    )
-                else:
-                    selected.append(f"{factor_column} AS {_quote(column)}")
+                if column in status.columns:
+                    factor_column = f'f.{_quote(column)}'
+                    if ohlcv_join:
+                        # 源内行情列优先，缺失部分由补给表补齐
+                        # （CN: daily_backward 后复权日线；HK: l1_factors）。
+                        selected.append(
+                            f"COALESCE({factor_column}, k.{_quote(column)}) AS {_quote(column)}"
+                        )
+                    else:
+                        selected.append(f"{factor_column} AS {_quote(column)}")
+                elif ohlcv_join:
+                    # 源无此行情列：直接取补给表（ccass/south 场景）
+                    selected.append(f"k.{_quote(column)} AS {_quote(column)}")
         selected.extend(
             f"f.{_quote(source_column)} AS {_quote(feature)}"
             if source_column != feature
@@ -305,11 +411,11 @@ class QuantDBFactorReader:
         try:
             date_expr = factor_date
             from_clause = f"{factor_relation} AS f"
-            if daily_relation:
-                # factors.date 为实际交易日，daily_backward.dt 为 hive 分区整数。
+            if ohlcv_join:
+                # factors.date 为实际交易日，补给表 dt 为 hive 分区整数。
                 # 用日期格式化连接可同时兼容 int/string 两种 dt 物理类型。
                 from_clause += (
-                    f" LEFT JOIN {daily_relation} AS k"
+                    f" LEFT JOIN {ohlcv_join} AS k"
                     " ON k.symbol = f.symbol"
                     f" AND CAST(k.dt AS VARCHAR) = strftime({date_expr}, '%Y%m%d')"
                 )
@@ -321,15 +427,18 @@ class QuantDBFactorReader:
         finally:
             con.close()
         frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce")
+        # 先剔除空 symbol/日期，再归一化代码格式：str(None) 会把缺失值变成
+        # "None" 字符串绕过 dropna（HK l1 坏分区曾缺 symbol 列，整日静默残留）。
+        frame = frame.dropna(subset=["symbol", "trade_date"]).drop_duplicates(
+            subset=["symbol", "trade_date"], keep="last"
+        )
         # QuantDB may publish either suffix or prefix codes.  QuantMind's
         # canonical internal representation is the prefix form (SH600036),
         # including model inputs, prediction outputs, and persistence keys.
         frame["symbol"] = frame["symbol"].map(
             lambda value: StockCodeUtil.to_prefix(str(value))
         )
-        return frame.dropna(subset=["symbol", "trade_date"]).drop_duplicates(
-            subset=["symbol", "trade_date"], keep="last"
-        )
+        return frame
 
     def read_day(
         self,

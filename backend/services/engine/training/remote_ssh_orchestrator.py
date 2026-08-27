@@ -331,6 +331,15 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
             # their immutable snapshot mount for historical model compatibility.
             config = self._build_config_yaml(run_id, payload)
             direct_source = str(config["data"].get("factor_source") or "")
+            # 远程节点（AutoDL）目前仅支持 A 股 QuantDB 直读：非 CN 市场的
+            # 6_ml_datasets 数据不在同步清单内，硬走会把本地 CN 目录误当
+            # 目标市场数据源（静默用错数据）。显式拒绝而非兜底。
+            market = str((config.get("context") or {}).get("market") or "CN").upper()
+            if direct_source and market != "CN":
+                raise RuntimeError(
+                    f"远程节点暂不支持 {market} 市场 QuantDB 直读训练，"
+                    "请选择本地 Docker 节点，或取消数据源直读（快照路径）"
+                )
             config["data"]["local_dir"] = "/tmp/quantdb" if direct_source else "/tmp/feature_snapshots"
             if direct_source:
                 config["data"]["quantdb_dir"] = "/tmp/quantdb"

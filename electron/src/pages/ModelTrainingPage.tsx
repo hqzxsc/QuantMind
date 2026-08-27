@@ -35,6 +35,10 @@ const TRAINING_MODULES = [
 ];
 
 const TRAINING_PAGE_BOTTOM_SAFE_CLASS = 'pb-[30px]';
+// 直读 ML 数据集训练的市场（数据源选择 + 目录版本门禁），与后端
+// quantdb_factor_reader.MARKET_FACTOR_SOURCES 保持一致。
+const QUANTDB_DIRECT_MARKETS = ['CN', 'HK'];
+const isQuantDBMarket = (market: string) => QUANTDB_DIRECT_MARKETS.includes(market);
 let draftRestoreNoticeShown = false;
 
 const MetricCard: React.FC<{
@@ -241,7 +245,7 @@ export const ModelTrainingPage: React.FC = () => {
     [trainingNodes, selectedNode]
   );
 
-  const isDirectCatalogReady = currentMarket !== 'CN' || (
+  const isDirectCatalogReady = !isQuantDBMarket(currentMarket) || (
     !!factorCatalogVersion && dataCoverage?.ready === true
   );
   const isSelectedNodeReady = selectedNodeObj ? selectedNodeObj.readiness === 'ready' : true;
@@ -275,7 +279,7 @@ export const ModelTrainingPage: React.FC = () => {
     loadNodes();
   }, []);
 
-  // A 股训练目录完全由后端发布版本驱动；不回退到任何内置字段。
+  // 直读市场（CN/HK）训练目录完全由后端发布版本驱动；不回退到任何内置字段。
   useEffect(() => {
     let active = true;
     const loadCatalog = async () => {
@@ -283,8 +287,8 @@ export const ModelTrainingPage: React.FC = () => {
       setFactorCatalogVersion(null);
       setDataCoverage(null);
       try {
-        if (currentMarket === 'CN') {
-          const sourceResult = await modelTrainingService.getQuantDBTrainingSources();
+        if (isQuantDBMarket(currentMarket)) {
+          const sourceResult = await modelTrainingService.getQuantDBTrainingSources(currentMarket);
           if (!active) return;
           setFactorSources(sourceResult.sources || []);
           const selectedSource = sourceResult.sources.find((item) => item.id === factorSource);
@@ -296,7 +300,11 @@ export const ModelTrainingPage: React.FC = () => {
           }
         }
 
-        const catalog = await modelTrainingService.getFeatureCatalog(currentMarket, false, factorSource);
+        const catalog = await modelTrainingService.getFeatureCatalog(
+          currentMarket,
+          false,
+          isQuantDBMarket(currentMarket) ? factorSource : undefined,
+        );
         if (!active) return;
         const dynamicCats = toDynamicCategories(catalog);
         setFeatureCategories(dynamicCats);
@@ -406,7 +414,7 @@ export const ModelTrainingPage: React.FC = () => {
       return;
     }
     if (!isReadyToTrain) {
-      message.warning(currentMarket === 'CN' ? 'QuantDB 数据源、映射版本或覆盖范围尚未就绪' : '配置不完整');
+      message.warning(isQuantDBMarket(currentMarket) ? '数据源、映射版本或覆盖范围尚未就绪' : '配置不完整');
       return;
     }
     clearTimers();
@@ -419,7 +427,7 @@ export const ModelTrainingPage: React.FC = () => {
 
     try {
       const payload = buildBackendTrainingPayload(requestPreview, timePeriods, { nodeId: selectedNode, maxTimeMinutes, factorFilter });
-      if (currentMarket === 'CN' && factorCatalogVersion) {
+      if (isQuantDBMarket(currentMarket) && factorCatalogVersion) {
         payload.factor_source = factorSource;
         payload.factor_catalog_version = factorCatalogVersion;
       }
@@ -516,7 +524,7 @@ export const ModelTrainingPage: React.FC = () => {
         unavailableFeatures,
         marketChanged: config.market !== currentMarket,
         catalogVersionChanged: config.market === currentMarket
-          && config.market === 'CN'
+          && isQuantDBMarket(config.market)
           && Boolean(config.factorCatalogVersion)
           && config.factorCatalogVersion !== factorCatalogVersion,
       });
@@ -537,7 +545,7 @@ export const ModelTrainingPage: React.FC = () => {
     catalogSuggestionAppliedRef.current = true;
     dispatch({ type: 'HYDRATE', payload: config.draft });
     if (config.market !== currentMarket) appDispatch(setMarket(config.market as AppMarket));
-    if (config.market === 'CN' && config.factorSource && config.factorSource !== factorSource) {
+    if (isQuantDBMarket(config.market) && config.factorSource && config.factorSource !== factorSource) {
       setFactorSource(config.factorSource);
     } else {
       const availableKeys = new Set(featureCategories.flatMap((category) => category.features.map((feature) => feature.key)));
@@ -571,8 +579,8 @@ export const ModelTrainingPage: React.FC = () => {
     };
     const content = serializeTrainingConfig(buildTrainingConfigFile(draft, {
       market: currentMarket,
-      factor_source: currentMarket === 'CN' ? factorSource : undefined,
-      factor_catalog_version: currentMarket === 'CN' ? factorCatalogVersion : undefined,
+      factor_source: isQuantDBMarket(currentMarket) ? factorSource : undefined,
+      factor_catalog_version: isQuantDBMarket(currentMarket) ? factorCatalogVersion : undefined,
     }));
     const safeName = (displayName || 'model-training').replace(/[\\/:*?"<>|]/g, '_');
     const filename = `模型训练配置_${safeName}_${dayjs().format('YYYYMMDD')}.yml`;
@@ -678,7 +686,7 @@ export const ModelTrainingPage: React.FC = () => {
                       <CurrentIcon size={18} className="text-blue-500" />
                       <Title level={5} className="!mb-0">{currentModule.title}</Title>
                     </div>
-                    {currentMarket === 'CN' && (
+                    {isQuantDBMarket(currentMarket) && (
                       <div className="flex items-center gap-2 text-xs min-w-0">
                       <span className="font-medium text-slate-600 shrink-0">数据源</span>
                       <Select
@@ -695,7 +703,7 @@ export const ModelTrainingPage: React.FC = () => {
                       {factorCatalogVersion
                         ? <Tag color="blue">目录版本 {factorCatalogVersion}</Tag>
                         : <Tag color={dataCoverage?.ready ? 'default' : 'warning'}>
-                            {factorSources.find((item) => item.id === factorSource)?.reason || '尚未发布 QuantDB 因子目录'}
+                            {factorSources.find((item) => item.id === factorSource)?.reason || '尚未发布因子目录'}
                           </Tag>}
                       </div>
                     )}

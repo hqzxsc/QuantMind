@@ -131,15 +131,21 @@ def task_ah_premium(history: bool = True) -> dict:
     if not mem_path.exists():
         task_ah_membership()
     mem = pd.read_parquet(mem_path)
-    # 1.18.88 stock_zh_ah_name 仅返回 代码(H股5位)/名称 → 名称匹配本地 A 股主表得到 A 股代码
-    inst = pd.read_parquet(QUANTDB_DATA_DIR / "2_base_sector" / "instrument_detail" / "instrument_detail.parquet",
-                           columns=["Symbol", "Name"])
-    inst["name_norm"] = inst["Name"].astype(str).str.strip()
-    name2sym = inst.drop_duplicates("name_norm").set_index("name_norm")["Symbol"].to_dict()
-    mem["h_symbol"] = mem["代码"].astype(str).str.zfill(5).map(lambda s: StockCodeUtil.to_hk_suffix(s))
-    mem["a_symbol"] = mem["名称"].astype(str).str.strip().map(name2sym)
-    matched = mem["a_symbol"].notna().sum()
-    log.info("A/H 名称匹配: %d/%d", matched, len(mem))
+    # 幂等: 首次用 代码(H股5位)/名称匹配; 重跑直接复用已 enrich 的 h_symbol/a_symbol
+    if "代码" in mem.columns:
+        mem["h5"] = mem["代码"].astype(str).str.zfill(5)
+    elif "h_symbol" in mem.columns:
+        mem["h5"] = mem["h_symbol"].astype(str).str.split(".").str[0].str.zfill(5)
+    else:
+        raise RuntimeError("ah_membership 缺少代码列")
+    if "a_symbol" not in mem.columns:
+        inst = pd.read_parquet(QUANTDB_DATA_DIR / "2_base_sector" / "instrument_detail" / "instrument_detail.parquet",
+                               columns=["Symbol", "Name"])
+        inst["name_norm"] = inst["Name"].astype(str).str.strip()
+        name2sym = inst.drop_duplicates("name_norm").set_index("name_norm")["Symbol"].to_dict()
+        mem["a_symbol"] = mem["名称"].astype(str).str.strip().map(name2sym)
+        log.info("A/H 名称匹配: %d/%d", mem["a_symbol"].notna().sum(), len(mem))
+    mem["h_symbol"] = mem["h5"].map(lambda s: StockCodeUtil.to_hk_suffix(s))
     mem = mem.dropna(subset=["a_symbol"]).copy()
     if mem.empty:
         raise RuntimeError("A/H 名称匹配全部失败")
@@ -174,7 +180,8 @@ def task_ah_premium(history: bool = True) -> dict:
 
     log.info("扫描本地 A股 daily_forward (%d 只 A股)...", ah["a_code6"].nunique())
     aclose = _load_a_close_for(sorted(ah["a_code6"].unique()))
-    aclose = aclose.rename(columns={"symbol": "a_symbol_full", "d": "d"})
+    aclose["d"] = pd.to_datetime(aclose["d"]).dt.date
+    aclose = aclose.rename(columns={"symbol": "a_symbol_full"})
     aclose["a_code6"] = aclose["a_symbol_full"].str[-6:]
     ah = ah.merge(aclose[["a_code6", "d", "close"]], on=["a_code6", "d"], how="left")
     ah["fx_hkd_cny"] = ah["d"].map(fx_per_hkd)
@@ -277,7 +284,9 @@ def task_valuation_snapshot(dt: str | None = None, cleanup_yahoo: bool = False) 
     out["time"] = pd.Timestamp(day)
     out["release_id"] = "akshare_local"
     out["published_at"] = pd.Timestamp.now().isoformat()
-    out = out[[c for c in VAL_COLS if c in out.columns] + [c for c in out.columns if c not in VAL_COLS]]
+    for c in VAL_COLS:  # schema 18 列补齐
+        if c not in out.columns:
+            out[c] = pd.NA
     out = out[VAL_COLS]
     pdir = TECH_DIR / "valuation" / f"dt={day}"
     pdir.mkdir(parents=True, exist_ok=True)

@@ -64,22 +64,26 @@ def _load_paid(code5: str) -> pd.DataFrame | None:
     return df.dropna(subset=["time", "close"]).sort_values("time")
 
 
-def _load_akshare_recent(code5: str) -> pd.DataFrame | None:
+def _load_akshare_recent(code5: str, retries: int = 3) -> pd.DataFrame | None:
     import akshare as ak
-    try:
-        df = ak.stock_hk_hist(symbol=code5, period="daily", start_date=AKSHARE_START,
-                              end_date=str(date.today()).replace("-", ""), adjust="")
-    except Exception:  # noqa: BLE001
-        return None
-    if df is None or df.empty:
-        return None
-    df = df.rename(columns={"日期": "time", "开盘": "open", "最高": "high", "最低": "low",
-                            "收盘": "close", "成交量": "volume", "成交额": "amount", "涨跌幅": "pct"})
-    df["time"] = pd.to_datetime(df["time"], errors="coerce")
-    for c in ("open", "high", "low", "close", "volume", "amount", "pct"):
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df["preclose"] = df["close"] / (1.0 + df["pct"].fillna(0.0) / 100.0)
-    return df.dropna(subset=["time", "close"])
+    import time
+    for i in range(retries):
+        try:
+            df = ak.stock_hk_hist(symbol=code5, period="daily", start_date=AKSHARE_START,
+                                  end_date=str(date.today()).replace("-", ""), adjust="")
+        except Exception:  # noqa: BLE001
+            time.sleep(3 * (i + 1))
+            continue
+        if df is None or df.empty:
+            return None
+        df = df.rename(columns={"日期": "time", "开盘": "open", "最高": "high", "最低": "low",
+                                "收盘": "close", "成交量": "volume", "成交额": "amount", "涨跌幅": "pct"})
+        df["time"] = pd.to_datetime(df["time"], errors="coerce")
+        for c in ("open", "high", "low", "close", "volume", "amount", "pct"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df["preclose"] = df["close"] / (1.0 + df["pct"].fillna(0.0) / 100.0)
+        return df.dropna(subset=["time", "close"])
+    return None
 
 
 def build_symbol(code5: str) -> pd.DataFrame | None:
@@ -118,22 +122,39 @@ def build_symbol(code5: str) -> pd.DataFrame | None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="QuantHK 复权因子 + daily_backward")
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--full", action="store_true", help="忽略断点续跑, 全量重算")
     args = ap.parse_args()
 
+    from backend.shared.stock_utils import StockCodeUtil
+
     codes = sorted(p.stem for p in PAID_DIR.glob("*.csv"))
+    if not args.full:  # 断点续跑: 因子已覆盖近月的标的跳过
+        resume_cut = pd.Timestamp("2026-08-15").date()
+        skipped = 0
+        fresh = []
+        for c in codes:
+            fp = FACTOR_DIR / f"{StockCodeUtil.to_hk_suffix(c)}.parquet"
+            if fp.exists():
+                end = pd.read_parquet(fp, columns=["time"])["time"].max()
+                if pd.Timestamp(end).date() >= resume_cut:
+                    skipped += 1
+                    continue
+            fresh.append(c)
+        log.info("断点续跑: 跳过 %d, 待跑 %d", skipped, len(fresh))
+        codes = fresh
     log.info("付费 CSV: %d 只", len(codes))
     FACTOR_DIR.mkdir(parents=True, exist_ok=True)
     BACKWARD_DIR.mkdir(parents=True, exist_ok=True)
 
     from backend.shared.stock_utils import StockCodeUtil
 
-    frames, ok, fail = [], 0, 0
+    frames, kline_frames, ok, fail = [], [], 0, 0
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futs = {pool.submit(build_symbol, c): c for c in codes}
         for i, fut in enumerate(as_completed(futs), 1):
             code = futs[fut]
             try:
-                res = fut.result()
+                res, kline = fut.result()
             except Exception as exc:  # noqa: BLE001
                 fail += 1
                 log.warning("%s 失败: %s", code, str(exc)[:80])
@@ -143,6 +164,7 @@ def main() -> int:
                 continue
             ok += 1
             frames.append(res)
+            kline_frames.append(kline)
             sym = StockCodeUtil.to_hk_suffix(code)
             res.assign(source="paid+akshare").to_parquet(FACTOR_DIR / f"{sym}.parquet", index=False)
             if i % 200 == 0:
@@ -154,17 +176,9 @@ def main() -> int:
     allf = pd.concat(frames, ignore_index=True)
     allf["factor"] = allf["adj_factor"]
 
-    # daily_backward: 每交易日分区 (价格×因子, 量/额保留不复权)
-    raw_rows = []
-    for f in sorted(PAID_DIR.glob("*.csv")):
-        d = _load_paid(f.stem)
-        if d is not None:
-            raw_rows.append(d)
-        if len(raw_rows) % 500 == 0:
-            log.info("原始K线读取 %d/%d", len(raw_rows), len(codes))
-    raw = pd.concat(raw_rows, ignore_index=True)
+    # daily_backward: 每交易日分区 (价格×因子, 量/额保留不复权); K线直接复用内存中已合并的付费+akshare数据
+    raw = pd.concat(kline_frames, ignore_index=True)
     from backend.shared.stock_utils import StockCodeUtil as SU
-    raw["symbol_h5"] = raw["股票代码"].astype(str).str.replace("hk", "", regex=False).str.zfill(5)
     raw["time"] = pd.to_datetime(raw["time"]).dt.date
     raw = raw.merge(allf[["symbol", "time", "factor"]], left_on=["symbol_h5", "time"],
                     right_on=["symbol", "time"], how="inner")

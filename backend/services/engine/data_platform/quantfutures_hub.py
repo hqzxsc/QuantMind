@@ -147,6 +147,10 @@ class QuantFuturesDataHub(QuantDBDataHub):
         "futures_realtime": "2_base_sector/futures_realtime",
         "sector": "2_base_sector/sector",
         "f10": "2_base_sector/f10",
+        "warehouse_receipts": "2_base_sector/warehouse_receipts",
+        "member_positions": "2_base_sector/member_positions",
+        "contracts_daily": "2_base_sector/contracts_daily",
+        "cftc": "2_base_sector/cftc",
     }
 
     def fetch_dataset(self, dataset: str, symbol: str | None = None):

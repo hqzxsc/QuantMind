@@ -364,6 +364,11 @@ class QuantHKDataHub(QuantDBDataHub):
         "calendar": "4_analyst/calendar",
         "insider_transactions": "4_analyst/insider_transactions",
         "options_chain": "4_options",
+        "ah_membership": "2_base_sector/ah_membership",
+        "hsgt_membership": "2_base_sector/hsgt_membership",
+        "index_weights": "2_base_sector/index_weights",
+        "adjust_factors": "2_base_sector/adjust_factors",
+        "ah_premium": "2_base_sector/ah_premium",
     }
 
     def fetch_dataset(self, dataset: str, symbol: str | None = None):

@@ -719,6 +719,7 @@ services:
       - "11112:11112"
     volumes:
       - ./data/futu-opend:/opt/futu/data
+      - ./data/futu-opend-home:/root/.FutuOpenD
     restart: unless-stopped
     networks:
       - quantmind-net

@@ -157,6 +157,7 @@ class QuantUSDataHub(QuantDBDataHub):
         "calendar": "4_analyst/calendar",
         "insider_transactions": "4_analyst/insider_transactions",
         "options_chain": "4_options",
+        "us_universe": "2_base_sector/us_universe",
     }
 
     def fetch_dataset(self, dataset: str, symbol: str | None = None):

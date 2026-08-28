@@ -61,6 +61,10 @@ def _norm_receipt_df(df: pd.DataFrame, venue: str, d: str) -> pd.DataFrame:
         cs = str(c)
         if "品种" in cs or cs.lower() == "variety":
             ren[c] = "variety"
+        elif cs == "仓库编号":
+            ren[c] = "warehouse_code"
+        elif cs == "仓库简称" or cs == "仓库/分库":
+            ren[c] = "warehouse"
         elif "仓库" in cs or "地区" in cs:
             ren[c] = "warehouse"
         elif cs in ("今日仓单", "仓单", "仓单量", "仓单数量", "今日仓单量"):
@@ -74,6 +78,7 @@ def _norm_receipt_df(df: pd.DataFrame, venue: str, d: str) -> pd.DataFrame:
         elif "日期" in cs or cs.lower() == "date":
             ren[c] = "date"
     df = df.rename(columns=ren)
+    df = df.loc[:, ~df.columns.duplicated()]
     df.insert(0, "venue", venue)
     df["trade_date"] = d
     return df
@@ -123,6 +128,12 @@ def task_receipts(days: int) -> dict:
                 empty += 1
         if frames:
             out = pd.concat(frames, ignore_index=True)
+            for c in out.columns:  # 混合类型列(如"升贴水"含数字+中文)统一清洗
+                if out[c].dtype == object:
+                    try:
+                        out[c] = pd.to_numeric(out[c])
+                    except (ValueError, TypeError):
+                        out[c] = out[c].astype(str)
             pdir = out_dir / f"dt={d}"
             pdir.mkdir(parents=True, exist_ok=True)
             out.to_parquet(pdir / "data.parquet", index=False)

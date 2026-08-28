@@ -147,6 +147,42 @@ def _default_datasets(market: str) -> tuple[DatasetSpec, ...]:
                 "symbol",
                 "国际/国内期货实时快照",
             ),
+            DatasetSpec(
+                "warehouse_receipts",
+                "交易所仓单",
+                "2",
+                "base_sector",
+                "2_base_sector/warehouse_receipts",
+                "partition",
+                "DCE/CZCE/GFEX 仓单日报（SHFE 接口失效）",
+            ),
+            DatasetSpec(
+                "member_positions",
+                "会员持仓排名",
+                "2",
+                "base_sector",
+                "2_base_sector/member_positions",
+                "partition",
+                "DCE/GFEX 前20会员多空持仓（东财源）",
+            ),
+            DatasetSpec(
+                "contracts_daily",
+                "分合约日K",
+                "1",
+                "kline",
+                "2_base_sector/contracts_daily",
+                "symbol",
+                "国内分合约日K（含真实结算价/持仓量）",
+            ),
+            DatasetSpec(
+                "cftc",
+                "CFTC持仓",
+                "2",
+                "base_sector",
+                "2_base_sector/cftc",
+                "single",
+                "CFTC COT 周度持仓（商品/商用）",
+            ),
         )
     base = [
         # 1 K线行情
@@ -366,6 +402,71 @@ def _default_datasets(market: str) -> tuple[DatasetSpec, ...]:
                 "2_base_sector/hsgt_south",
                 "partition",
                 "港股通南向资金持仓，symbol 4位+.HK",
+            ),
+        )
+        base.append(
+            DatasetSpec(
+                "ah_premium",
+                "AH溢价",
+                "2",
+                "base_sector",
+                "2_base_sector/ah_premium",
+                "partition",
+                "A/H 配对溢价率日截面（A收盘=本地QuantDB，汇率=中行折算价）",
+            ),
+        )
+        base.append(
+            DatasetSpec(
+                "ah_membership",
+                "AH配对清单",
+                "2",
+                "base_sector",
+                "2_base_sector/ah_membership",
+                "single",
+            ),
+        )
+        base.append(
+            DatasetSpec(
+                "hsgt_membership",
+                "港股通成分",
+                "2",
+                "base_sector",
+                "2_base_sector/hsgt_membership",
+                "single",
+            ),
+        )
+        base.append(
+            DatasetSpec(
+                "index_weights",
+                "指数成分权重",
+                "2",
+                "base_sector",
+                "2_base_sector/index_weights",
+                "symbol",
+                "中证港股通系列指数成分权重",
+            ),
+        )
+        base.append(
+            DatasetSpec(
+                "adjust_factors",
+                "复权因子",
+                "2",
+                "base_sector",
+                "2_base_sector/adjust_factors",
+                "symbol",
+                "由付费源昨收推算的复权因子链（daily_backward 用）",
+            ),
+        )
+    if market == "US":
+        base.append(
+            DatasetSpec(
+                "us_universe",
+                "标的池(市值Top)",
+                "2",
+                "base_sector",
+                "2_base_sector/us_universe",
+                "single",
+                "按市值 Top1000 扩容的标的池与新增代码清单",
             ),
         )
     if market in ("HK", "US", "FUTURES", "BC"):

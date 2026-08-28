@@ -121,7 +121,9 @@ def _load_a_close_for(codes: list[str]) -> pd.DataFrame:
 
 
 def _a_symbol(code6: str) -> str:
-    return ("SH" if code6.startswith(("6", "9")) else "BJ" if code6.startswith(("4", "8")) else "SZ") + code6
+    """6位代码 → QuantDB 后缀格式 (600876.SH / 001236.SZ)"""
+    suf = "SH" if code6.startswith(("6", "9")) else "BJ" if code6.startswith(("4", "8")) else "SZ"
+    return f"{code6}.{suf}"
 
 
 def task_ah_premium(history: bool = True) -> dict:

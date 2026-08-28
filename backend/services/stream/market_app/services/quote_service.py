@@ -33,8 +33,11 @@ class QuoteService:
         self.redis = redis
 
         # 初始化数据源
+        from .data_source import TencentDataSource
+
         self.data_sources = {
             "quantdb": QuantDBDataSource(),
+            "tencent": TencentDataSource(),
             "remote_redis": RemoteRedisDataSource(),
         }
         self.default_source = settings.DEFAULT_SOURCE
@@ -57,7 +60,7 @@ class QuoteService:
             return recent
 
         # 3. 从数据源获取
-        data_source = self._get_data_source(source)
+        data_source = self._get_data_source(source, symbol=symbol)
         quote_data = await data_source.fetch_quote(symbol)
 
         if not quote_data:
@@ -126,8 +129,24 @@ class QuoteService:
         age = (datetime.now(timezone.utc) - _as_utc_aware(latest.timestamp)).total_seconds()
         return latest if age <= max_age_seconds else None
 
-    def _get_data_source(self, source: str | None = None) -> DataSourceAdapter:
-        """获取数据源"""
+    @staticmethod
+    def _symbol_market(symbol: str) -> str:
+        """按符号推断市场（与 trade/simulation market_rules 同口径的简化版）。"""
+        s = str(symbol or "").upper().strip()
+        if s.endswith(".HK"):
+            return "HK"
+        if s.endswith((".SH", ".SZ", ".BJ")) or s.isdigit():
+            return "CN"
+        if s.endswith((".CN", ".FUT")):
+            return "FUTURES"
+        if "USDT" in s:
+            return "CRYPTO"
+        return "US"
+
+    def _get_data_source(self, source: str | None = None, symbol: str = "") -> DataSourceAdapter:
+        """获取数据源（未指定时：港股/美股走腾讯免费实时行情，A股走 quantdb）"""
+        if not source and symbol and self._symbol_market(symbol) in {"HK", "US"}:
+            return self.data_sources["tencent"]
         source_name = source or self.default_source
         adapter = self.data_sources.get(source_name)
         if not adapter:

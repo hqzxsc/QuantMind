@@ -10,6 +10,8 @@
  * - 展示当前账户状态和成交记录
  */
 
+import { useAppSelector } from '../../../store';
+import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
 import {
     Clock, Play, Trash2, Plus, Loader2, AlertTriangle,
@@ -88,6 +90,7 @@ function ModelMetricsBadge({ metrics, label }: { metrics: Record<string, number 
 }
 
 function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void }) {
+    const currentMarket = useAppSelector(selectCurrentMarket);
     // Wizard state
     const [step, setStep] = useState<WizardStep>('model');
 
@@ -122,8 +125,8 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
         (async () => {
             try {
                 const [sys, usr] = await Promise.all([
-                    modelTrainingService.listSystemModels(),
-                    modelTrainingService.listUserModels(true), // include archived
+                    modelTrainingService.listSystemModels(currentMarket),
+                    modelTrainingService.listUserModels(true, currentMarket), // include archived
                 ]);
                 if (cancelled) return;
                 setSystemModels(sys);
@@ -140,7 +143,7 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
             }
         })();
         return () => { cancelled = true; };
-    }, []);
+    }, [currentMarket]);
 
     // Load templates
     useEffect(() => {

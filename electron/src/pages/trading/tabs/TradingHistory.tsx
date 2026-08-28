@@ -1,3 +1,5 @@
+import { useAppSelector } from '../../../store';
+import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { FileText, Search, Download, TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, ChevronLeft, ChevronRight, AlertTriangle, Activity, RotateCcw, ChevronDown } from 'lucide-react';
 import { Dropdown, message } from 'antd';
@@ -67,7 +69,20 @@ const buildDateRange = (timeRange: 'today' | 'week' | 'month' | 'all'): OrdersRa
     };
 };
 
+
+// 与后端 market_rules.infer_market 同口径的简化推断（交易记录按市场过滤用）
+function inferMarketOfSymbol(symbol: string): string {
+    const s = String(symbol || '').toUpperCase().trim();
+    if (/^\d{1,5}\.HK$/.test(s)) return 'HK';
+    if (/^\d{6}\.(SH|SZ|BJ)$/.test(s) || /^\d{6}$/.test(s)) return 'CN';
+    if (/\.(CN|FUT)$/.test(s) || s.includes('(T+D)')) return 'FUTURES';
+    if (/^[A-Z0-9]+USDT$/.test(s)) return 'CRYPTO';
+    if (/^[A-Z]{1,6}(\.[A-Z]{1,2})?$/.test(s)) return 'US';
+    return 'CN';
+}
+
 const TradingHistory: React.FC<TradingHistoryProps> = ({ userId, isActive, tradingMode }) => {
+    const currentMarket = useAppSelector(selectCurrentMarket);
     const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'all'>('today');
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -110,8 +125,13 @@ const TradingHistory: React.FC<TradingHistoryProps> = ({ userId, isActive, tradi
                 offset += PAGE_SIZE;
             }
 
+            // 按当前市场过滤订单（symbol 格式推断，与后端 market_rules 同口径）
+            const marketFilteredOrders = allOrders.filter(
+                o => inferMarketOfSymbol(o.symbol) === currentMarket.toUpperCase()
+            );
+
             const uniqueCodes = Array.from(new Set(
-                allOrders
+                marketFilteredOrders
                     .filter(o => !o.symbol_name)
                     .map(o => o.symbol)
             ));
@@ -142,7 +162,7 @@ const TradingHistory: React.FC<TradingHistoryProps> = ({ userId, isActive, tradi
                 }
             }
 
-            const mapped: TradeRow[] = allOrders.map(order => {
+            const mapped: TradeRow[] = marketFilteredOrders.map(order => {
                 const rawStatus = String(order.status || '').toLowerCase();
                 const filledQty = order.filled_quantity ?? 0;
                 const totalQty = order.quantity ?? 0;

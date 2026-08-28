@@ -1,3 +1,5 @@
+import { useAppSelector } from '../../../store';
+import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle2, ClipboardList, Loader2, Search, Zap, BarChart3, User as UserIcon, Settings2, Sparkles, Filter, Link, ArrowRight, Layers, TrendingUp, Activity, History, Cpu, Clock, Brain, Target, Database, Code, Calendar, Wand2, Eye, Play, CreditCard, Binary, ShieldAlert, Info, TerminalSquare, AlertTriangle } from 'lucide-react';
 import { DatePicker, Empty, Input, Select, Spin, Tag, message, Tooltip, Badge } from 'antd';
@@ -173,6 +175,7 @@ const renderOrderCard = (order: ManualExecutionPreviewOrder, tone: 'buy' | 'sell
 );
 
 const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) => {
+    const currentMarket = useAppSelector(selectCurrentMarket);
     const [currentStep, setCurrentStep] = useState(0);
 
     const [strategies, setStrategies] = useState<StrategyFile[]>([]);
@@ -269,8 +272,8 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
     const loadModels = useCallback(async () => {
         try {
             const [defaultRes, userRes] = await Promise.all([
-                modelTrainingService.getDefaultModel(),
-                modelTrainingService.listUserModels(),
+                modelTrainingService.getDefaultModel(currentMarket),
+                modelTrainingService.listUserModels(false, currentMarket),
             ]);
             setDefaultModel(defaultRes || null);
             setUserModels(userRes.items || []);
@@ -280,7 +283,7 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
         } catch (error) {
             console.warn('Failed to load models', error);
         }
-    }, [manualModelId]);
+    }, [manualModelId, currentMarket]);
 
     const loadRuns = useCallback(async (nextPage = 1) => {
         if (!effectiveModelId) return;

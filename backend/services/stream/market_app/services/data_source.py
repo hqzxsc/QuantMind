@@ -128,22 +128,33 @@ class TencentDataSource(DataSourceAdapter):
         return []
 
     def _format_symbol(self, symbol: str) -> str:
-        """格式化股票代码"""
-        if symbol.startswith("sh") or symbol.startswith("sz"):
-            return symbol
+        """格式化股票代码（多市场：A股 sh/sz 前缀、港股 r_hk、美股 us）"""
+        s = symbol.strip()
+        upper = s.upper()
+        if s.startswith("sh") or s.startswith("sz"):
+            return s
+        # 港股：0001.HK / 0700.HK → r_hk00001（5位数字）
+        if upper.endswith(".HK"):
+            code = upper.split(".")[0]
+            return f"r_hk{code.zfill(5)}"
+        # 美股：纯字母 ticker → usAAPL（腾讯自动带交易所后缀）
+        if "." not in upper and upper.isalpha():
+            return f"us{upper}"
 
-        # 根据代码推断市场
-        if symbol.startswith("6"):
-            return f"sh{symbol}"
-        elif symbol.startswith("0") or symbol.startswith("3"):
-            return f"sz{symbol}"
+        # 根据代码推断市场（A股；剥掉 .SH/.SZ/.BJ 后缀）
+        code = upper.split(".")[0] if "." in upper else symbol
+        if code.startswith("6"):
+            return f"sh{code}"
+        elif code.startswith("0") or code.startswith("3"):
+            return f"sz{code}"
         else:
-            return symbol
+            return code
 
     def _parse_quote(self, text: str, symbol: str) -> dict[str, Any] | None:
         """解析行情数据"""
         try:
             # v_sh000001="1~上证指数~000001~3241.83~3251.85~3241.83~..."
+            # 港股 v_r_hk00700 / 美股 v_usAAPL 前段字段位一致（[3]现价 [4]昨收 [5]开）
             if "~" not in text:
                 return None
 
@@ -154,7 +165,8 @@ class TencentDataSource(DataSourceAdapter):
             current_price = float(parts[3]) if parts[3] else 0.0
             pre_close = float(parts[4]) if parts[4] else 0.0
             open_price = float(parts[5]) if parts[5] else 0.0
-            volume = int(parts[6]) if parts[6] else 0
+            # 港股/美股成交量带小数（13747953.0），先 float 再取整
+            volume = int(float(parts[6])) if parts[6] else 0
 
             change = current_price - pre_close
             change_percent = (change / pre_close * 100) if pre_close > 0 else 0.0

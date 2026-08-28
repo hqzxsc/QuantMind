@@ -1025,20 +1025,25 @@ def _get_stream_series_redis_client():
     return client, host, port
 
 
-def _check_quantdb_latest_daily() -> tuple[bool, str]:
-    """检查本地 QuantDB 是否有最近交易日日线（供模拟盘撮合兜底）。"""
+def _check_quantdb_latest_daily(market: str = "CN") -> tuple[bool, str]:
+    """检查本地市场数据库是否有最近交易日日线（供模拟盘撮合兜底）。
+
+    market=CN 检查 quantdb；HK/US/FUTURES/CRYPTO 分别检查对应市场的
+    6 大类数据目录（同一 LocalMarketData 入口）。
+    """
+    market_upper = str(market or "CN").upper()
     try:
         from backend.services.trade.simulation.services.local_market_data import (
             LocalMarketData,
         )
 
-        market_data = LocalMarketData()
+        market_data = LocalMarketData(market=market_upper)
         latest_date = market_data.latest_trade_date()
         if latest_date is None:
-            return False, "QuantDB 无可用日线"
+            return False, f"{market_upper} 市场数据库无可用日线"
         return True, latest_date.isoformat()
     except Exception as exc:
-        return False, f"QuantDB 检查失败: {exc}"
+        return False, f"{market_upper} 行情库检查失败: {exc}"
 
 
 def check_tdx_bridge_online() -> tuple[bool, str]:
@@ -1064,16 +1069,18 @@ def check_tdx_bridge_online() -> tuple[bool, str]:
 
 
 def check_stream_series_freshness(
-    redis_client=None, *, allow_quantdb_fallback: bool = False
+    redis_client=None, *, allow_quantdb_fallback: bool = False, market: str = "CN"
 ) -> dict[str, Any]:
     """
-    统一的 Stream 行情时序新鲜度检测逻辑。
+    统一的 Stream 行情时序新鲜度检测逻辑（按市场）。
 
     allow_quantdb_fallback=True 时（模拟盘）：当 Redis 时序缺失/不新鲜时，
-    回退检查本地 QuantDB 是否有最近交易日日线。模拟撮合引擎直读 QuantDB，
-    有日线即可撮合，故视为就绪；标记 source=quantdb 供调用方区分。
+    回退检查该市场本地行情库是否有最近交易日日线（CN=quantdb、HK=quanthk、
+    US=quantus…）。模拟撮合引擎直读对应市场库，有日线即可撮合，故视为就绪；
+    标记 source=quantdb 供调用方区分。
     返回 {ok, message, details}
     """
+    market_upper = str(market or "CN").upper()
     stream_symbols = _resolve_preflight_symbols()
     stream_redis, stream_redis_host, stream_redis_port = _get_stream_series_redis_client()
     threshold_sec = int(os.getenv("PREFLIGHT_SERIES_STALE_THRESHOLD_SEC", "300"))
@@ -1122,15 +1129,20 @@ def check_stream_series_freshness(
 
     source = "stream_series"
     if not ok and allow_quantdb_fallback:
-        qdb_ok, qdb_detail = _check_quantdb_latest_daily()
+        qdb_ok, qdb_detail = _check_quantdb_latest_daily(market_upper)
         if qdb_ok:
             ok = True
             source = "quantdb_daily"
+            db_label = {
+                "CN": "QuantDB", "HK": "QuantHK", "US": "QuantUS",
+                "FUTURES": "QuantFutures", "CRYPTO": "QuantBC",
+            }.get(market_upper, "QuantDB")
             message = (
-                f"Redis 行情时序未接入，回退 QuantDB 日线可用（最近交易日 {qdb_detail}）"
+                f"Redis 行情时序未接入，回退 {db_label} 日线可用"
+                f"（最近交易日 {qdb_detail}）"
             )
         else:
-            message = f"Redis 行情时序未接入且 QuantDB 日线不可用: {qdb_detail}"
+            message = f"Redis 行情时序未接入且 {market_upper} 市场日线不可用: {qdb_detail}"
 
     return {
         "ok": ok,

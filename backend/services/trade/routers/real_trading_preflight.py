@@ -756,6 +756,7 @@ async def preflight_check(
 @router.get("/trading-precheck", response_model=TradingPrecheckResponse)
 async def trading_precheck(
     trading_mode: str = "REAL",
+    market: str = "CN",
     auth: AuthContext = Depends(get_auth_context),
     redis: RedisClient = Depends(get_redis),
     db: AsyncSession = Depends(get_db),
@@ -770,6 +771,7 @@ async def trading_precheck(
         redis_client=redis.client,
         user_id=resolved_user_id,
         tenant_id=resolved_tenant_id,
+        market=str(market or "CN").upper(),
     )
 
 

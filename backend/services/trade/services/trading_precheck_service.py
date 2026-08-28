@@ -326,6 +326,7 @@ async def run_trading_readiness_precheck(
     redis_client,
     user_id: str,
     tenant_id: str,
+    market: str = "CN",
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "REAL").strip().upper()
     if normalized_mode not in {"REAL", "SHADOW", "SIMULATION"}:
@@ -479,6 +480,7 @@ async def run_trading_readiness_precheck(
             res = check_stream_series_freshness(
                 redis_client=redis_client,
                 allow_quantdb_fallback=(normalized_mode == "SIMULATION"),
+                market=market,
             )
             checks.append(
                 _build_check(
@@ -556,7 +558,7 @@ async def run_trading_readiness_precheck(
     from backend.services.trade.routers.real_trading_utils import check_stream_series_freshness
     # REAL 模式同样回退 QuantDB 日线兜底：TDX 通道无实时行情流时仍可交易
     res = check_stream_series_freshness(
-        redis_client=redis_client, allow_quantdb_fallback=True
+        redis_client=redis_client, allow_quantdb_fallback=True, market=market
     )
     checks.append(
         _build_check(

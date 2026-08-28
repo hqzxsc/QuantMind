@@ -84,6 +84,62 @@ def get_broker_setting(broker: str, field: str, default: str = "") -> str:
         return ""
 
 
+_SELECTED_KEY = "broker:selected:{market}"
+
+
+@router.get("/broker-config-status")
+async def get_broker_config_status(
+    market: str = "CN",
+    auth: AuthContext = Depends(get_auth_context),
+    redis: RedisClient = Depends(get_redis),
+) -> dict[str, Any]:
+    """按市场汇总：可选券商、各自配置状态、当前选中的券商。"""
+    _ = auth
+    market = str(market or "CN").upper()
+    brokers = {"HK": ["futu", "tiger", "ib"], "US": ["tiger", "ib", "futu"], "FUTURES": ["ib"], "CN": ["qmt", "tdx"], "CRYPTO": []}.get(market, [])
+    items: list[dict[str, Any]] = []
+    for broker in brokers:
+        stored = _read_config(redis, broker)
+        required = BROKER_FIELDS[broker]
+        configured = bool(stored) and all(
+            str(stored.get(name, "") or "").strip() for name in required
+        )
+        items.append({
+            "broker": broker,
+            "label": BROKER_LABELS.get(broker, broker),
+            "configured": configured,
+        })
+    selected_raw = redis.client.get(_SELECTED_KEY.format(market=market)) if redis.client else None
+    selected = (selected_raw or b"").decode() if isinstance(selected_raw, (bytes, bytearray)) else (selected_raw or "")
+    return {
+        "success": True,
+        "market": market,
+        "brokers": items,
+        "selected": selected or None,
+    }
+
+
+class BrokerSelectUpdate(BaseModel):
+    broker: str = Field(..., description="该市场使用的券商（tiger/futu/ib/qmt/tdx）")
+
+
+@router.put("/broker-config/selected/{market}")
+async def select_market_broker(
+    market: str,
+    payload: BrokerSelectUpdate,
+    auth: AuthContext = Depends(get_auth_context),
+    redis: RedisClient = Depends(get_redis),
+) -> dict[str, Any]:
+    """设置某市场使用的实盘券商。"""
+    _ = auth
+    market = str(market or "CN").upper()
+    broker = str(payload.broker or "").lower().strip()
+    if not redis.client:
+        raise HTTPException(status_code=503, detail="Redis 不可用")
+    redis.client.set(_SELECTED_KEY.format(market=market), broker)
+    return {"success": True, "market": market, "selected": broker}
+
+
 @router.get("/broker-config/{broker}")
 async def get_broker_config(
     broker: str,

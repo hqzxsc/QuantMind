@@ -87,6 +87,13 @@ const RealTradingPage: React.FC = () => {
     const currentMarket = useAppSelector(selectCurrentMarket);
     const marketConfig = getMarketConfig(currentMarket);
     const [activeTab, setActiveTab] = useState<ActiveTab>('manage');
+
+    // 券商通道卡「去配置凭证」跳转：切到设置页签
+    useEffect(() => {
+        const handler = () => setActiveTab('settings');
+        window.addEventListener('goto-trading-settings', handler);
+        return () => window.removeEventListener('goto-trading-settings', handler);
+    }, []);
     const [tenantId] = useState<string>(getEnvTenantId);
     const [userId] = useState(() => {
         try {

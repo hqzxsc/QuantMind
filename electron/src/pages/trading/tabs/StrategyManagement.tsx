@@ -1,5 +1,6 @@
 import { useAppSelector } from '../../../store';
 import { selectCurrentMarket } from '../../../store/slices/uiSlice';
+import BrokerChannelCard from '../components/BrokerChannelCard';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Play, Square, CheckCircle, Activity, Cpu, FileText, RefreshCw, AlertCircle, Settings2, Clock3, TerminalSquare, Undo2 } from 'lucide-react';
 import { Input, Select, message, Modal } from 'antd';
@@ -947,19 +948,9 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
                     </div>
                 </div>
 
-                {/* 非 CN 市场：券商通道引导（TDX 桥仅 A 股） */}
+                {/* 非 CN 市场：实盘券商通道卡（TDX 桥仅 A 股） */}
                 {currentMarket !== 'CN' && (
-                    <div className="bg-indigo-50/70 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3">
-                        <AlertCircle size={16} className="text-indigo-500 mt-0.5 shrink-0" />
-                        <div className="text-xs leading-5 text-slate-600">
-                            <span className="font-bold text-slate-800">
-                                {currentMarket === 'HK' ? '港股' : currentMarket === 'US' ? '美股' : '当前市场'}实盘走券商 OpenAPI 通道（T+0 交易，与 A 股 T+1 规则不同）。
-                            </span>
-                            请先到 <span className="font-bold text-indigo-600">设置 → 券商实盘接入</span> 填写券商凭证
-                            （港股推荐富途，美股推荐老虎/IB；老虎 SIM 模拟账户可直接演练）。
-                            「今日委托/一键撤单」为通达信桥专属功能，仅在 A 股市场显示。
-                        </div>
-                    </div>
+                    <BrokerChannelCard market={currentMarket} />
                 )}
 
                 {/* 6-Module Grid */}

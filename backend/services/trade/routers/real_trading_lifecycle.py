@@ -176,12 +176,18 @@ async def start_trading(
                 )
             live_config = _normalize_live_trade_config(user_live_cfg, live_config)
 
+        deployment_market = str(
+            (live_config or {}).get("market")
+            or (exec_config or {}).get("market")
+            or "CN"
+        ).upper()
         readiness = await run_trading_readiness_precheck(
             db,
             mode=mode,
             redis_client=redis.client,
             user_id=resolved_user_id,
             tenant_id=resolved_tenant_id,
+            market=deployment_market,
         )
         signal_readiness = readiness.get("signal_readiness") or {}
         trading_permission = str(

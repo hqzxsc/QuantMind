@@ -256,6 +256,16 @@ interface StrategyManagementProps {
     } | null;
 }
 
+
+// 实盘通道按市场：CN=通达信桥，其余走券商 OpenAPI
+const MARKET_BROKER_LABEL: Record<string, string> = {
+    CN: '通达信实盘交易',
+    HK: '券商实盘交易（富途/老虎/IB）',
+    US: '券商实盘交易（老虎/IB/富途）',
+    FUTURES: '券商实盘交易（IB）',
+    CRYPTO: '暂无券商通道',
+};
+
 const StrategyManagement: React.FC<StrategyManagementProps> = ({
     tenantId,
     userId,
@@ -862,7 +872,7 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
                             <span className="flex items-center gap-1.5">
                                 <Activity size={13} className={isGlobalSim ? 'text-indigo-500' : 'text-rose-500'} />
                                 模式: <span className={`font-bold ${isGlobalSim ? 'text-indigo-600' : 'text-rose-600'}`}>
-                                    {isGlobalSim ? '实盘模拟运行' : '通达信实盘交易'}
+                                    {isGlobalSim ? '实盘模拟运行' : (MARKET_BROKER_LABEL[currentMarket] || '通达信实盘交易')}
                                 </span>
                             </span>
                             <span className="text-slate-200">|</span>
@@ -936,6 +946,21 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
                         )}
                     </div>
                 </div>
+
+                {/* 非 CN 市场：券商通道引导（TDX 桥仅 A 股） */}
+                {currentMarket !== 'CN' && (
+                    <div className="bg-indigo-50/70 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3">
+                        <AlertCircle size={16} className="text-indigo-500 mt-0.5 shrink-0" />
+                        <div className="text-xs leading-5 text-slate-600">
+                            <span className="font-bold text-slate-800">
+                                {currentMarket === 'HK' ? '港股' : currentMarket === 'US' ? '美股' : '当前市场'}实盘走券商 OpenAPI 通道（T+0 交易，与 A 股 T+1 规则不同）。
+                            </span>
+                            请先到 <span className="font-bold text-indigo-600">设置 → 券商实盘接入</span> 填写券商凭证
+                            （港股推荐富途，美股推荐老虎/IB；老虎 SIM 模拟账户可直接演练）。
+                            「今日委托/一键撤单」为通达信桥专属功能，仅在 A 股市场显示。
+                        </div>
+                    </div>
+                )}
 
                 {/* 6-Module Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1373,8 +1398,8 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
                     </div>
                 </div>
 
-                {/* 今日委托 · 一键撤单 */}
-                <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+                {/* 今日委托 · 一键撤单（TDX 桥专属，仅 A 股） */}
+                <div className={`bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden ${currentMarket !== 'CN' ? 'hidden' : ''}`}>
                     <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2.5">
                             <div className="p-1.5 bg-rose-50 rounded-lg">

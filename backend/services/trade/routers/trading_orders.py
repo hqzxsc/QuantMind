@@ -170,7 +170,7 @@ async def cancel_order(
         # 向 Broker 发出撤单指令（fire-and-forget，失败不阻止本地状态更新）
         try:
             engine = TradingEngine(db, redis)
-            broker = engine._get_broker(existing.trading_mode)
+            broker = engine._get_broker(existing.trading_mode, existing.symbol)
             exchange_order_id = str(existing.exchange_order_id or "").strip()
             await broker.cancel_order(
                 exchange_order_id or str(existing.order_id),

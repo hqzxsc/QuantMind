@@ -34,6 +34,29 @@ def _safe_schedule_notification(coro):
         logger.debug("notification task schedule skipped")
 
 
+def _infer_broker_market(symbol: str | None) -> str:
+    """订单标的 → 市场 key（与 broker_config 的 broker:selected:{market} 一致：
+    CN / HK / US / FUTURES / CRYPTO）。"""
+    try:
+        from backend.services.trade.simulation.services.market_rules import infer_market
+
+        return infer_market(symbol or "").value
+    except Exception:  # noqa: BLE001
+        return "CN"
+
+
+def _selected_broker_type(redis: RedisClient, market: str) -> str:
+    """读取用户在「券商接入」页为某市场选定的券商（tiger/futu/ib/qmt/tdx）。"""
+    try:
+        if redis and redis.client:
+            raw = redis.client.get(f"broker:selected:{market}")
+            if raw:
+                return raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 class TradingEngine:
     """
     交易执行引擎
@@ -52,15 +75,33 @@ class TradingEngine:
         self.risk_service = RiskService(db, redis)
         self._broker_cache: dict[str, BaseBroker] = {}
 
-    def _get_broker(self, trading_mode: TradingMode) -> BaseBroker:
+    def _get_broker(
+        self, trading_mode: TradingMode, symbol: str | None = None
+    ) -> BaseBroker:
         """
         按订单 trading_mode 取 broker:
-          - REAL/SHADOW 且启用 TDX 实盘桥 → TdxBroker (通达信)
+          - REAL/SHADOW 且启用实盘 → 按标的市场路由券商：
+            broker:selected:{market}（用户在「券商接入」页选定，tiger/futu/ib/tdx）
+            优先，未选定回退 settings.REAL_BROKER_TYPE
           - 其余 (SIMULATION/BACKTEST) → PaperTradingBroker (本地模拟撮合)
         通过缓存避免重复构造。
         """
         mode = (trading_mode or TradingMode.SIMULATION).value
-        cache_key = f"{mode}:{getattr(settings, 'REAL_BROKER_TYPE', 'paper')}"
+        enable_real = getattr(settings, "ENABLE_REAL_TRADING", False)
+        broker_type = getattr(settings, "REAL_BROKER_TYPE", "tdx")
+        market = "CN"
+        if mode in ("REAL", "SHADOW") and enable_real:
+            market = _infer_broker_market(symbol)
+            selected = _selected_broker_type(self.redis, market)
+            if selected:
+                broker_type = selected
+            logger.info(
+                "[TradingEngine] REAL broker selected: market=%s broker_type=%s symbol=%s",
+                market,
+                broker_type,
+                symbol,
+            )
+        cache_key = f"{mode}:{market}:{broker_type}"
         if cache_key in self._broker_cache:
             return self._broker_cache[cache_key]
 
@@ -68,7 +109,7 @@ class TradingEngine:
         if mode in ("REAL", "SHADOW") and enable_real:
             broker = create_broker(
                 enable_real=True,
-                broker_type=getattr(settings, "REAL_BROKER_TYPE", "tdx"),
+                broker_type=broker_type,
                 redis_client=self.redis,
                 market_url=getattr(
                     settings, "MARKET_DATA_SERVICE_URL", "http://stream-gateway:8003"
@@ -132,7 +173,7 @@ class TradingEngine:
         通过 Broker 执行订单 (工业级防御性实现)
         原则：本地 PENDING 记录必须先于外部动作。
         """
-        broker = self._get_stock_broker(order.trading_mode)
+        broker = self._get_stock_broker(order.trading_mode, order.symbol)
 
         try:
             # 1. 外部请求阶段 (此时本地 order.status 应已为 SUBMITTED 并落库)
@@ -280,9 +321,11 @@ class TradingEngine:
                 )
             )
 
-    def _get_stock_broker(self, trading_mode: TradingMode) -> BaseBroker:
+    def _get_stock_broker(
+        self, trading_mode: TradingMode, symbol: str | None = None
+    ) -> BaseBroker:
         """内部辅助：获取并校验 broker"""
-        return self._get_broker(trading_mode)
+        return self._get_broker(trading_mode, symbol)
 
     async def _sync_account_to_redis(self, tenant_id: str, user_id: int):
         """
@@ -357,7 +400,7 @@ class TradingEngine:
             # 向 Broker（QMT）发出撤单指令，最终状态以异步回报为准。
             if order.exchange_order_id or order.client_order_id:
                 try:
-                    broker = self._get_broker(order.trading_mode)
+                    broker = self._get_broker(order.trading_mode, order.symbol)
                     await broker.cancel_order(
                         str(order.exchange_order_id or ""),
                         user_id=str(order.user_id),
@@ -394,7 +437,7 @@ class TradingEngine:
         is_market_order = str(getattr(order.order_type, "value", order.order_type) or "").lower() == "market"
         if order_val <= 0 and order.quantity > 0:
             try:
-                broker = self._get_broker(order.trading_mode)
+                broker = self._get_broker(order.trading_mode, order.symbol)
                 quote = await broker.query_quote(order.symbol)
                 if quote and quote.get("last_price"):
                     last_price = float(quote.get("last_price"))

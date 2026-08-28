@@ -192,7 +192,7 @@ async def test_broker_connection(
             broker_obj = IBBroker()
             ib = await broker_obj._get_ib()
             accounts = ib.managedAccounts()
-            await broker_obj._ib.disconnect()
+            broker_obj._ib.disconnect()  # 同步方法，不可 await
             return {"success": True, "message": f"IB Gateway 已连接，账户: {', '.join(accounts) or '未知'}"}
         return {"success": False, "message": "该券商暂不支持连接测试"}
     except Exception as exc:

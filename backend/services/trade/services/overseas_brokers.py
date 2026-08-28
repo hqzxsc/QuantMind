@@ -82,21 +82,27 @@ def _futu_code(symbol: str) -> str:
     return f"US.{upper}"
 
 
-def _tiger_code(symbol: str) -> str:
-    """QuantMind 符号 → 老虎代码（美股 ticker 原样、港股数字代码）。"""
+def _tiger_contract(symbol: str) -> tuple[str, str, str]:
+    """QuantMind 符号 → (symbol, currency, exchange)：
+    AAPL → ('AAPL', 'USD', 'SMART')；0001.HK → ('00001', 'HKD', 'SEHK')"""
     upper = symbol.upper()
+    if upper.endswith(".HK"):
+        return upper.split(".")[0].zfill(5), "HKD", "SEHK"
+    if upper.endswith(".US"):
+        return upper.split(".")[0], "USD", "SMART"
     if "." in upper:
-        return upper.split(".")[0]
-    return upper
+        return upper.split(".")[0], "USD", "SMART"
+    return upper, "USD", "SMART"
 
 
 def _ib_contract_params(symbol: str) -> tuple[str, str, str]:
     """QuantMind 符号 → (IB symbol, exchange, currency)。"""
     upper = symbol.upper()
     if upper.endswith(".HK"):
-        code = upper.split(".")[0]
-        return code, "SEHK", "HKD"
-    if "." in upper and not upper.endswith(".CN"):
+        return upper.split(".")[0], "SEHK", "HKD"
+    if upper.endswith(".US"):
+        return upper.split(".")[0], "SMART", "USD"
+    if "." in upper:
         code, suffix = upper.split(".", 1)
         return code, suffix, "USD"
     return upper, "SMART", "USD"
@@ -141,36 +147,69 @@ class _StreamQuoteMixin:
 
 
 class TigerBroker(_StreamQuoteMixin, BaseBroker):
-    """老虎证券 OpenAPI（tigeropen，纯云端 REST）。
+    """老虎证券 OpenAPI（tigeropen SDK，纯云端 REST，无需网关）。
 
-    TIGER_ACCOUNT 缺省取 TIGER_SIM_ACCOUNT（模拟）或环境首个授权账户。
-    模拟账户（SIM 开头）与实盘账户同一套 SDK，适合实盘链路演练。
+    配置（Redis broker:config:tiger 优先，回退环境变量）：
+      tiger_id        — 开放平台用户 ID（如 20161435）
+      rsa_private_key — PKCS#1 私钥（平台生成的裸 base64、PEM 文本或 .pem 文件路径）
+      account         — 交易账户：实盘数字（如 3667944）/ 模拟 SIM 开头
     """
 
     def __init__(self) -> None:
-        self._config: Any = None
+        self._client: Any = None
         self._lock = asyncio.Lock()
 
-    def _get_config(self) -> Any:
-        if self._config is None:
-            from tigeropen.common.consts import Language
-            from tigeropen.tiger_open_config import TigerOpenConfig
+    def _wrap_pem(self, key_text: str) -> str:
+        """裸 PKCS#1 base64 → PEM；清洗空白并校验完整性（复制丢失字符会在此报错）。
 
-            tiger_id = _setting("tiger", "tiger_id", "TIGER_ID")
-            private_key = _setting("tiger", "rsa_private_key", "TIGER_RSA_PRIVATE_KEY")
-            if not tiger_id or not private_key:
-                raise RuntimeError(
-                    "老虎证券接入未配置：请在「模拟交易设置 → 券商接入」填写 TIGER_ID 与 RSA 私钥"
-                )
-            # 兼容两种形态：PEM 文本（含 BEGIN 头）直接传入，否则视为文件路径
-            is_path = "BEGIN" not in private_key
-            self._config = TigerOpenConfig(
-                tiger_id, private_key, is_path=is_path, language=Language.zh_CN
+        兼容三种形态：PEM 文本（含 BEGIN 头）、.pem 文件路径、裸 base64。
+        """
+        key_text = (key_text or "").strip()
+        if not key_text:
+            raise RuntimeError("RSA 私钥为空")
+        # 文件路径形态
+        if "BEGIN" not in key_text and os.path.exists(key_text):
+            with open(key_text) as f:
+                key_text = f.read().strip()
+        if "BEGIN" in key_text:
+            return key_text
+        # 清除所有空白（平台复制时常见的折行空格/不可见字符）
+        compact = "".join(key_text.split())
+        data_chars = len(compact.rstrip("="))
+        if data_chars % 4 != 0:
+            raise RuntimeError(
+                f"RSA 私钥格式无效：base64 数据字符数 {data_chars} 不是 4 的倍数，"
+                "复制可能不完整（末尾缺字符）。请从老虎 OpenAPI 平台重新完整复制，"
+                "或下载 .pem 文件后在私钥字段填写该文件的完整路径"
             )
-        return self._config
+        return (
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            + "\n".join(compact[i : i + 64] for i in range(0, len(compact), 64))
+            + "\n-----END RSA PRIVATE KEY-----\n"
+        )
 
-    def _get_account(self) -> str:
-        return _setting("tiger", "account", "TIGER_ACCOUNT") or _env("TIGER_SIM_ACCOUNT") or ""
+    def _get_client(self) -> Any:
+        with self._lock:
+            if self._client is None:
+                from tigeropen.tiger_open_config import TigerOpenClientConfig
+
+                tiger_id = _setting("tiger", "tiger_id", "TIGER_ID")
+                private_key = _setting("tiger", "rsa_private_key", "TIGER_RSA_PRIVATE_KEY")
+                account = _setting("tiger", "account", "TIGER_ACCOUNT")
+                if not tiger_id or not private_key or not account:
+                    raise RuntimeError(
+                        "老虎证券接入未配置：请在「券商实盘接入」填写 Tiger ID、RSA 私钥、交易账户"
+                    )
+                config = TigerOpenClientConfig()
+                config.tiger_id = tiger_id
+                config.private_key = self._wrap_pem(private_key)
+                config.account = account
+                from tigeropen.trade.trade_client import TradeClient
+                self._client = TradeClient(config)
+            return self._client
+
+    def _account(self) -> str:
+        return _setting("tiger", "account", "TIGER_ACCOUNT")
 
     async def place_order(
         self,
@@ -183,32 +222,27 @@ class TigerBroker(_StreamQuoteMixin, BaseBroker):
         tenant_id: str = "default",
     ) -> BrokerResult:
         def _place() -> dict[str, Any]:
-            from tigeropen.common.consts import Currency, OrderAction, OrderType
-            from tigeropen.trade.context import TradeContext
-            from tigeropen.trade.order.order import StockOrder
+            from tigeropen.common.util.contract_utils import stock_contract
+            from tigeropen.common.util.order_utils import limit_order, market_order
 
-            account = self._get_account()
-            ctx = TradeContext(self._get_config(), account=account)
-            action = OrderAction.BUY if str(side).upper() == "BUY" else OrderAction.SELL
-            sdk_order_type = (
-                OrderType.MKT if str(order_type).lower() == "market" else OrderType.LMT
-            )
-            order = StockOrder(
-                account=account,
-                symbol=_tiger_code(symbol),
-                action=action,
-                order_type=sdk_order_type,
-                quantity=float(quantity),
-                limit_price=float(price) if price else None,
-                currency=Currency.HKD if symbol.upper().endswith(".HK") else Currency.USD,
-            )
-            placed = ctx.place_order(self._get_config(), order)
-            return {
-                "order_id": str(getattr(placed, "id", "") or ""),
-                "filled_price": 0.0,
-                "filled_quantity": 0.0,
-                "message": str(getattr(placed, "status", "") or "SUBMITTED"),
-            }
+            client = self._get_client()
+            sym, currency, exchange = _tiger_contract(symbol)
+            contract = stock_contract(symbol=sym, currency=currency, exchange=exchange)
+            action = "BUY" if str(side).upper() == "BUY" else "SELL"
+            account = client.client_config.account
+            if str(order_type).lower() == "market" or not price:
+                order = market_order(
+                    account=account, contract=contract,
+                    action=action, quantity=float(quantity),
+                )
+            else:
+                order = limit_order(
+                    account=account, contract=contract,
+                    action=action, quantity=float(quantity), limit_price=float(price),
+                )
+            # place_order 返回全局订单 id；order.id 提交后亦被 SDK 回填，双保险
+            order_id = client.place_order(order) or getattr(order, "id", None)
+            return {"order_id": str(order_id or ""), "message": "SUBMITTED"}
 
         try:
             data = await asyncio.to_thread(_place)
@@ -223,27 +257,44 @@ class TigerBroker(_StreamQuoteMixin, BaseBroker):
 
     async def query_account(self, user_id: str, tenant_id: str = "default") -> dict[str, Any]:
         def _query() -> dict[str, Any]:
-            from tigeropen.trade.context import TradeContext
-
-            account = self._get_account()
-            ctx = TradeContext(self._get_config(), account=account)
-            assets = ctx.get_assets(self._get_config(), account=account)
-            if not assets:
+            client = self._get_client()
+            config = client.client_config
+            assets_list = client.get_assets(account=config.account) or []
+            # get_assets 返回 PortfolioAccount 列表；按 account 匹配，缺省取第一个
+            assets = next(
+                (a for a in assets_list if str(getattr(a, "account", "")) == str(config.account)),
+                assets_list[0] if assets_list else None,
+            )
+            if assets is None:
                 return {}
-            asset = assets[0]
-            positions = {}
-            for pos in getattr(assets, "positions", []) or []:
-                positions[str(getattr(pos, "symbol", ""))] = {
-                    "volume": float(getattr(pos, "quantity", 0) or 0),
-                    "available_volume": float(getattr(pos, "qty_available", 0) or 0),
-                    "price": float(getattr(pos, "latest_price", 0) or 0),
-                    "market_value": float(getattr(pos, "market_value", 0) or 0),
-                    "cost": float(getattr(pos, "avg_cost", 0) or 0),
-                }
+            summary = getattr(assets, "summary", None)
+            total_asset = float(getattr(summary, "net_liquidation", 0) or 0)
+            cash = float(getattr(summary, "cash", 0) or 0)
+            gross = float(getattr(summary, "gross_position_value", 0) or 0)
+            positions: dict[str, Any] = {}
+            try:
+                pos_list = client.get_positions(account=config.account) or []
+                for pos in pos_list:
+                    contract = getattr(pos, "contract", None)
+                    sym = str(getattr(contract, "symbol", "") or getattr(pos, "symbol", "") or "")
+                    if not sym:
+                        continue
+                    cost = getattr(pos, "average_cost", None)
+                    if cost is None:
+                        cost = getattr(pos, "avg_cost", None)
+                    positions[sym] = {
+                        "volume": float(getattr(pos, "quantity", 0) or 0),
+                        "available_volume": float(getattr(pos, "salable_qty", 0) or 0),
+                        "price": float(getattr(pos, "market_price", 0) or 0),
+                        "market_value": float(getattr(pos, "market_value", 0) or 0),
+                        "cost": float(cost or 0),
+                    }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[TigerBroker] positions query failed: %s", exc)
             return {
-                "total_asset": float(getattr(asset, "net_liquidation", 0) or 0),
-                "cash": float(getattr(asset, "cash", 0) or 0),
-                "market_value": float(getattr(asset, "market_value", 0) or 0),
+                "total_asset": total_asset,
+                "cash": cash,
+                "market_value": gross or (total_asset - cash),
                 "positions": positions,
             }
 
@@ -255,23 +306,15 @@ class TigerBroker(_StreamQuoteMixin, BaseBroker):
 
     async def cancel_order(self, exchange_order_id: str, **kwargs) -> bool:
         def _cancel() -> bool:
-            from tigeropen.trade.context import TradeContext
-
-            account = self._get_account()
-            ctx = TradeContext(self._get_config(), account=account)
-            result = ctx.cancel_order(self._get_config(), account=account, id=int(exchange_order_id))
-            return bool(getattr(result, "success", True))
+            client = self._get_client()
+            client.cancel_order(id=int(exchange_order_id), account=self._account())
+            return True
 
         try:
             return await asyncio.to_thread(_cancel)
         except Exception as e:  # noqa: BLE001
             logger.error("[TigerBroker] cancel_order %s failed: %s", exchange_order_id, e)
             return False
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 富途证券
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class FutuBroker(_StreamQuoteMixin, BaseBroker):
@@ -456,7 +499,7 @@ class IBBroker(_StreamQuoteMixin, BaseBroker):
             summary = await ib.accountSummaryAsync()
             values = {item.tag: item.value for item in summary}
             positions: dict[str, Any] = {}
-            for pos in await ib.positionsAsync():
+            for pos in await ib.reqPositionsAsync():
                 contract = pos.contract
                 key = getattr(contract, "localSymbol", "") or contract.symbol
                 positions[key] = {
@@ -481,7 +524,7 @@ class IBBroker(_StreamQuoteMixin, BaseBroker):
             ib = await self._get_ib()
             for trade in ib.openTrades():
                 if str(trade.order.orderId) == str(exchange_order_id):
-                    ib.cancelOrder(trade.contract, trade.order)
+                    ib.cancelOrder(trade.order)
                     return True
             return False
         except Exception as e:  # noqa: BLE001

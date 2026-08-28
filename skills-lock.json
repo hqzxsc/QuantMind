@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "skills": {
+    "tigeropen": {
+      "source": "tigerfintech/tigeropen-skill",
+      "sourceType": "github",
+      "skillPath": "skills/tigeropen/SKILL.md",
+      "computedHash": "f42af24ba732eae74de55e82eb012d568cf00e49968d2bdee7394023af852f20"
+    },
+    "tigeropen-cpp": {
+      "source": "tigerfintech/tigeropen-skill",
+      "sourceType": "github",
+      "skillPath": "skills/tigeropen-cpp/SKILL.md",
+      "computedHash": "58a74018dc4d8adee32d9079c91c6eb061eed9353aaaa96a51b64c92c086fe9f"
+    },
+    "tigeropen-csharp": {
+      "source": "tigerfintech/tigeropen-skill",
+      "sourceType": "github",
+      "skillPath": "skills/tigeropen-csharp/SKILL.md",
+      "computedHash": "ed71c97331c1406b3f5a3744b72f58a29150781e35d4c50182320642416bd8d3"
+    },
+    "tigeropen-go": {
+      "source": "tigerfintech/tigeropen-skill",
+      "sourceType": "github",
+      "skillPath": "skills/tigeropen-go/SKILL.md",
+      "computedHash": "be2d8576c0adb3208295582cce5424b852e5d6e107c5f208450766772c9dac59"
+    },
+    "tigeropen-java": {
+      "source": "tigerfintech/tigeropen-skill",
+      "sourceType": "github",
+      "skillPath": "skills/tigeropen-java/SKILL.md",
+      "computedHash": "dbd3139db91360e9241d7950f9e3bb8195ad3f5267fc39b12d699b906f16342f"
+    },
+    "tigeropen-rust": {
+      "source": "tigerfintech/tigeropen-skill",
+      "sourceType": "github",
+      "skillPath": "skills/tigeropen-rust/SKILL.md",
+      "computedHash": "e89f51a441429a988d7db2c7c62034bf9481b13760f0c904eeaf0f71eba1dd93"
+    },
+    "tigeropen-typescript": {
+      "source": "tigerfintech/tigeropen-skill",
+      "sourceType": "github",
+      "skillPath": "skills/tigeropen-typescript/SKILL.md",
+      "computedHash": "1d4be43542690bde88be27f43cbeac1ca7da39e081585778ea48280902246544"
+    },
+    "ibkr-cli": {
+      "source": "fatwang2/ibkr-cli",
+      "sourceType": "github",
+      "skillPath": "skills/ibkr-cli/SKILL.md",
+      "computedHash": "23b14f87f38da695fa1da61e5119037bb61d58f47bc41dae224c6012d325ad7b"
+    }
+  }
+}

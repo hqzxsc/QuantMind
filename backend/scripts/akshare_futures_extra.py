@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""QuantFutures 扩展数据集 — 交易所仓单 / 会员持仓排名 / 分合约日K / CFTC持仓。
+"""QuantFutures 扩展数据集 — 交易所仓单 / 会员持仓排名 / 分合约日K / CFTC持仓 / 汇率。
 
 数据集:
   2_base_sector/warehouse_receipts/dt=YYYYMMDD/data.parquet   四所仓单 (SHFE/DCE/CZCE/GFEX)
   2_base_sector/member_positions/dt=YYYYMMDD/data.parquet     会员持仓排名 (DCE/GFEX, akshare 1.18 仅此两所)
   2_base_sector/contracts_daily/{contract}.parquet            分合约日K (含真实结算价/持仓量)
   2_base_sector/cftc/cftc_{kind}.parquet                      CFTC COT 周度持仓 (国际品种)
+  2_base_sector/fx_daily/{code}.parquet                       中行外汇牌价日度 (每100外币兑人民币)
 
 用法:
   python backend/scripts/akshare_futures_extra.py --task receipts --days 90
   python backend/scripts/akshare_futures_extra.py --task member_positions --days 90
   python backend/scripts/akshare_futures_extra.py --task contracts_daily
   python backend/scripts/akshare_futures_extra.py --task cftc
+  python backend/scripts/akshare_futures_extra.py --task fx
 """
 from __future__ import annotations
 
@@ -34,6 +36,8 @@ log = logging.getLogger("futures_extra")
 
 FUT_DATA_DIR = Path(os.getenv("QM_QUANTFUTURES_DATA_DIR", str(PROJECT_ROOT / "data" / "quantfutures")))
 BASE_DIR = FUT_DATA_DIR / "2_base_sector"
+
+from backend.scripts.akshare_futures_sync import CN_MAIN  # noqa: E402
 
 KLINE_BASE_COLS = ["symbol", "time", "open", "high", "low", "close", "volume", "amount", "release_id", "published_at"]
 
@@ -101,7 +105,7 @@ def task_receipts(days: int) -> dict:
         interfaces.append((venue, fn, kw))
 
     dates = _recent_trading_days(days)
-    ok = empty = fail = 0
+    ok = empty = 0
     for d in dates:
         frames = []
         for venue, fn, kw in interfaces:
@@ -215,8 +219,9 @@ def task_member_positions(days: int) -> dict:
 
 # ---------------- contracts_daily ----------------
 
-_CN_MAIN_STEMS = ["V", "M", "Y", "C", "P", "A", "SR", "CF", "TA", "RB", "HC", "I", "J", "JM",
-                  "FU", "RU", "CU", "AL", "ZN", "AU", "AG", "SC"]
+# 分合约品种 stem（合约代码前缀，如 RB2509 → RB）— 由扩展后的国内主力清单推导：
+# CN_MAIN 键为 `{stem}0` 主力连续代码，去掉尾部 0 即合约代码前缀（RB0 → RB）
+_CN_MAIN_STEMS = sorted({k[:-1] for k in CN_MAIN})
 
 
 def _norm_contract_kline(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
@@ -288,10 +293,51 @@ def task_cftc() -> dict:
     return {"task": "cftc", "rows": results}
 
 
+# ---------------- fx_daily ----------------
+
+# 中行外汇牌价(每100外币兑人民币) — akshare currency_boc_sina 支持的币种子集
+_FX_CURRENCIES = {
+    "美元": "USD", "英镑": "GBP", "欧元": "EUR", "港币": "HKD", "日元": "JPY",
+    "澳大利亚元": "AUD", "加拿大元": "CAD", "瑞士法郎": "CHF", "新加坡元": "SGD",
+    "新西兰元": "NZD", "瑞典克朗": "SEK", "挪威克朗": "NOK", "丹麦克朗": "DKK", "澳门元": "MOP",
+}
+
+
+def task_fx() -> dict:
+    import akshare as ak
+    out_dir = BASE_DIR / "fx_daily"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results = {}
+    for cn, code in _FX_CURRENCIES.items():
+        try:
+            df = ak.currency_boc_sina(
+                symbol=cn, start_date="20000101", end_date=date.today().strftime("%Y%m%d")
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("汇率 %s 失败: %s", cn, str(exc)[:50])
+            continue
+        df = df.rename(columns={"日期": "time", "中行汇买价": "bid", "中行钞买价": "bid_cash",
+                                "中行钞卖价/汇卖价": "sell", "央行中间价": "pbc_mid", "中行折算价": "mid"})
+        df["time"] = pd.to_datetime(df["time"], errors="coerce")
+        df = df.dropna(subset=["time"])
+        for c in ("bid", "bid_cash", "sell", "pbc_mid", "mid"):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df.dropna(subset=["mid"]).sort_values("time")
+        df["pair"] = f"{code}CNY"
+        df["quote_unit"] = "100外币"
+        df["release_id"] = "akshare"
+        df["published_at"] = pd.Timestamp.now().isoformat()
+        df.to_parquet(out_dir / f"{code}.parquet", index=False)
+        results[code] = (len(df), str(df["time"].min().date()), str(df["time"].max().date()))
+        log.info("fx %sCNY: %d 行 %s ~ %s", code, len(df), df["time"].min().date(), df["time"].max().date())
+    return {"task": "fx", "pairs": results}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="QuantFutures 扩展数据集")
     ap.add_argument("--task", required=True,
-                    choices=["receipts", "member_positions", "contracts_daily", "cftc"])
+                    choices=["receipts", "member_positions", "contracts_daily", "cftc", "fx"])
     ap.add_argument("--days", type=int, default=90)
     args = ap.parse_args()
     if args.task == "receipts":
@@ -300,6 +346,8 @@ def main() -> int:
         r = task_member_positions(args.days)
     elif args.task == "contracts_daily":
         r = task_contracts_daily()
+    elif args.task == "fx":
+        r = task_fx()
     else:
         r = task_cftc()
     print(r)

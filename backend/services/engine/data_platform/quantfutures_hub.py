@@ -151,6 +151,7 @@ class QuantFuturesDataHub(QuantDBDataHub):
         "member_positions": "2_base_sector/member_positions",
         "contracts_daily": "2_base_sector/contracts_daily",
         "cftc": "2_base_sector/cftc",
+        "fx_daily": "2_base_sector/fx_daily",
     }
 
     def fetch_dataset(self, dataset: str, symbol: str | None = None):

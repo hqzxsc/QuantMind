@@ -183,6 +183,15 @@ def _default_datasets(market: str) -> tuple[DatasetSpec, ...]:
                 "single",
                 "CFTC COT 周度持仓（商品/商用）",
             ),
+            DatasetSpec(
+                "fx_daily",
+                "汇率(中行牌价)",
+                "2",
+                "base_sector",
+                "2_base_sector/fx_daily",
+                "symbol",
+                "主流货币兑人民币日度牌价（每100外币，USD/EUR/JPY/HKD 等）",
+            ),
         )
     base = [
         # 1 K线行情

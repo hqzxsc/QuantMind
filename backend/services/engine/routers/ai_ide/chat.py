@@ -19,6 +19,37 @@ from .skill_engine import SkillEngine
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# 策略生成的市场上下文：LLM 生成/修改策略时按所选市场适配数据与规则口径
+STRATEGY_MARKET_CONTEXT: dict[str, str] = {
+    "CN": (
+        "A股市场。标的符号：6位数字后缀格式（600036.SH / 000001.SZ / 830001.BJ）。"
+        "回转交易 T+1（当日买入次日可卖），最小交易单位 100 股整手。"
+        "有涨跌停限制：主板 ±10%、创业板/科创板 ±20%、北交所 ±30%（ST 已统一 ±10%）。"
+        "费用：佣金约 0.03%、印花税卖出 0.05%。默认基准指数 SH000300。"
+    ),
+    "HK": (
+        "港股市场。标的符号：4位数字+.HK（0001.HK = 长和、0700.HK = 腾讯）。"
+        "回转交易 T+0（当日买入当日可卖，交收 T+2 不影响卖出）。"
+        "最小交易单位：每手股数按个股 board lot（各股不同），无涨跌停限制。"
+        "费用：佣金约 0.03%、印花税 0.1%（双边）。货币 HKD。默认基准指数 HSI。"
+    ),
+    "US": (
+        "美股市场。标的符号：纯字母 ticker（AAPL / MSFT / NVDA）。"
+        "回转交易 T+0（小额账户注意 PDT 规则）。"
+        "最小交易单位 1 股（支持碎股）。无涨跌停限制（有熔断机制）。"
+        "费用：佣金约 0。货币 USD。默认基准指数 SPX。"
+    ),
+    "FUTURES": (
+        "期货/贵金属市场。标的符号：RB0.CN（内盘）、CL.FUT（外盘）、Au99.99（上金所）。"
+        "回转交易 T+0。交易单位为合约（手）。保证金交易。货币 CNY/USD 按品种。"
+    ),
+    "CRYPTO": (
+        "加密货币市场。标的符号：BTCUSDT / ETHUSDT（计价 USDT）。"
+        "回转交易 T+0，7×24 交易无休市。最小单位 1（代码量纲为币数）。"
+        "无涨跌停。费用：taker 约 0.1%。货币 USDT。"
+    ),
+}
+
 # --- Core Logic (Ported from AI-IDE Agent) ---
 
 
@@ -316,6 +347,9 @@ def get_strategy_config():
         selection = context.get("selection", "")
         file_path = str(context.get("file_path", "") or "").strip()
         prompt = f"User Request: {user_input}\n"
+        market_ctx = str(context.get("market_context", "") or "").strip()
+        if market_ctx:
+            prompt += f"\n[Target Market]:\n{market_ctx}\n"
         if assistant_rules:
             prompt += f"\n[Development Rules]:\n{assistant_rules}\n"
         if file_path:
@@ -357,6 +391,7 @@ class ChatRequest(BaseModel):
     file_path: str | None = None
     history: list[ChatMessage] | None = []
     extra_context: dict[str, Any] | None = None
+    market: str | None = None  # 当前市场（CN/HK/US/FUTURES/CRYPTO）
 
 
 @router.post("/chat")
@@ -419,6 +454,9 @@ async def chat_completions(request: Request, item: ChatRequest):
         "error_msg": item.error_msg,
         "file_path": item.file_path,
         "history": [m.model_dump() for m in (item.history or [])],
+        "market_context": STRATEGY_MARKET_CONTEXT.get(
+            str(item.market or (item.extra_context or {}).get("market") or "CN").upper().strip(), ""
+        ),
         **(item.extra_context or {}),
     }
 

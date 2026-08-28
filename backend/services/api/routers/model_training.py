@@ -716,12 +716,13 @@ async def list_user_models(
 
 @router.get("/default", summary="获取当前用户默认模型（用户态）")
 async def get_default_model(
+    market: str | None = Query(None, description="按市场过滤默认模型（CN/HK/US/FUTURES/CRYPTO）"),
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     tenant_id = str(current_user.get("tenant_id") or "default")
     user_id = str(current_user.get("user_id") or current_user.get("sub") or "")
     model = await model_registry_service.get_default_model(
-        tenant_id=tenant_id, user_id=user_id
+        tenant_id=tenant_id, user_id=user_id, market=market
     )
     if not model:
         raise HTTPException(status_code=404, detail="Default model not found")

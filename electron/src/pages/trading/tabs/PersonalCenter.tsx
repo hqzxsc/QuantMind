@@ -31,6 +31,7 @@ const PersonalCenter: React.FC<PersonalCenterProps> = ({ tenantId, userId, statu
 
     useEffect(() => {
         let alive = true;
+        if (currentMarket !== 'CN') return;  // L2/TDX 仅 A 股
         const fetchL2Status = async () => {
             try {
                 const res = await fetch(`${apiGatewayBase}/api/v1/tdx/l2/status`, {
@@ -48,7 +49,7 @@ const PersonalCenter: React.FC<PersonalCenterProps> = ({ tenantId, userId, statu
             alive = false;
             clearInterval(timer);
         };
-    }, [apiGatewayBase]);
+    }, [apiGatewayBase, currentMarket]);
 
     const formatUptime = (startedAt?: string | null) => {
         if (!startedAt) return '--';

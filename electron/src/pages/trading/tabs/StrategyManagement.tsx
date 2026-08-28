@@ -1,3 +1,5 @@
+import { useAppSelector } from '../../../store';
+import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Play, Square, CheckCircle, Activity, Cpu, FileText, RefreshCw, AlertCircle, Settings2, Clock3, TerminalSquare, Undo2 } from 'lucide-react';
 import { Input, Select, message, Modal } from 'antd';
@@ -266,6 +268,7 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
     activeExecutionConfig,
     activeLiveTradeConfig,
 }) => {
+    const currentMarket = useAppSelector(selectCurrentMarket);
     const [strategies, setStrategies] = useState<StrategyFile[]>([]);
     const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
     const [isShadowMode, setIsShadowMode] = useState(false);
@@ -329,7 +332,7 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
 
     const loadDefaultModel = useCallback(async () => {
         try {
-            const model = await modelTrainingService.getDefaultModel();
+            const model = await modelTrainingService.getDefaultModel(currentMarket);
             setDefaultModel(model || null);
         } catch (e) {
             const statusErr = (e as any)?.response?.status;

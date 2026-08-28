@@ -46,9 +46,22 @@ def _require_env(key: str) -> str:
     value = _env(key)
     if not value:
         raise RuntimeError(
-            f"环境变量 {key} 未配置：请在 .env 中提供后重试"
+            f"配置 {key} 未提供：请在「模拟交易设置 → 券商接入」填写，或在 .env 中配置"
         )
     return value
+
+
+def _setting(broker: str, field: str, env_key: str, default: str = "") -> str:
+    """券商配置读取：Trade Redis 的 broker:config 优先，回退环境变量。"""
+    try:
+        from backend.services.trade.routers.broker_config import get_broker_setting
+
+        value = get_broker_setting(broker, field)
+        if value:
+            return value
+    except Exception:  # noqa: BLE001
+        pass
+    return _env(env_key) or default
 
 
 def _futu_code(symbol: str) -> str:
@@ -141,8 +154,12 @@ class TigerBroker(_StreamQuoteMixin, BaseBroker):
             from tigeropen.common.consts import Language
             from tigeropen.tiger_open_config import TigerOpenConfig
 
-            tiger_id = _require_env("TIGER_ID")
-            private_key = _require_env("TIGER_RSA_PRIVATE_KEY")
+            tiger_id = _setting("tiger", "tiger_id", "TIGER_ID")
+            private_key = _setting("tiger", "rsa_private_key", "TIGER_RSA_PRIVATE_KEY")
+            if not tiger_id or not private_key:
+                raise RuntimeError(
+                    "老虎证券接入未配置：请在「模拟交易设置 → 券商接入」填写 TIGER_ID 与 RSA 私钥"
+                )
             # 兼容两种形态：PEM 文本（含 BEGIN 头）直接传入，否则视为文件路径
             is_path = "BEGIN" not in private_key
             self._config = TigerOpenConfig(
@@ -151,7 +168,7 @@ class TigerBroker(_StreamQuoteMixin, BaseBroker):
         return self._config
 
     def _get_account(self) -> str:
-        return _env("TIGER_ACCOUNT") or _env("TIGER_SIM_ACCOUNT") or ""
+        return _setting("tiger", "account", "TIGER_ACCOUNT") or _env("TIGER_SIM_ACCOUNT") or ""
 
     async def place_order(
         self,
@@ -263,9 +280,15 @@ class FutuBroker(_StreamQuoteMixin, BaseBroker):
     """
 
     def __init__(self) -> None:
-        self.host = _env("FUTU_OPEND_HOST", "127.0.0.1")
-        self.port = int(_env("FUTU_OPEND_PORT", "11111"))
-        self.trade_env_real = _env("FUTU_TRADE_ENV", "SIMULATE").upper() == "REAL"
+        self.host = _setting("futu", "opend_host", "FUTU_OPEND_HOST", "127.0.0.1")
+        try:
+            self.port = int(_setting("futu", "opend_port", "FUTU_OPEND_PORT", "11111"))
+        except ValueError:
+            self.port = 11111
+        self.trade_env_real = _setting(
+            "futu", "trade_env", "FUTU_TRADE_ENV", "SIMULATE"
+        ).upper() == "REAL"
+        self._pwd_md5 = _setting("futu", "trade_pwd_md5", "FUTU_TRADE_PWD_MD5")
 
     def _trade_env(self) -> Any:
         from futu import TrdEnv
@@ -292,7 +315,7 @@ class FutuBroker(_StreamQuoteMixin, BaseBroker):
             )
             try:
                 if is_hk and self.trade_env_real:
-                    pwd = _env("FUTU_TRADE_PWD_MD5")
+                    pwd = self._pwd_md5
                     if pwd:
                         ctx.unlock_trade(pwd)
                 futu_side = TrdSide.BUY if str(side).upper() == "BUY" else TrdSide.SELL
@@ -402,9 +425,15 @@ class IBBroker(_StreamQuoteMixin, BaseBroker):
     """
 
     def __init__(self) -> None:
-        self.host = _env("IB_GATEWAY_HOST", "127.0.0.1")
-        self.port = int(_env("IB_GATEWAY_PORT", "4002"))
-        self.client_id = int(_env("IB_CLIENT_ID", "7"))
+        self.host = _setting("ib", "gateway_host", "IB_GATEWAY_HOST", "127.0.0.1")
+        try:
+            self.port = int(_setting("ib", "gateway_port", "IB_GATEWAY_PORT", "4002"))
+        except ValueError:
+            self.port = 4002
+        try:
+            self.client_id = int(_setting("ib", "client_id", "IB_CLIENT_ID", "7"))
+        except ValueError:
+            self.client_id = 7
         self._ib: Any = None
         self._lock = asyncio.Lock()
 

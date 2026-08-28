@@ -582,8 +582,10 @@ class ModelTrainingService {
     }
   }
 
-  async getDefaultModel(): Promise<UserModelRecord> {
-    const resp = await this.client.get<UserModelRecord>(`/models/default`);
+  async getDefaultModel(market?: string): Promise<UserModelRecord> {
+    const resp = await this.client.get<UserModelRecord>(`/models/default`, {
+      params: market ? { market } : undefined,
+    });
     return resp.data;
   }
 

@@ -1,3 +1,5 @@
+import { useAppSelector } from '../../../store';
+import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AccountInfo } from '../../../services/realTradingService';
@@ -60,6 +62,7 @@ const mergeLivePrices = (holdings: NormalizedHolding[], live: Record<string, num
 };
 
 const PositionMonitor: React.FC<PositionMonitorProps> = ({ userId: _userId, isActive, accountInfo }) => {
+    const currentMarket = useAppSelector(selectCurrentMarket);
     const [stockNames, setStockNames] = useState<Record<string, string>>({});
     const [livePrices, setLivePrices] = useState<Record<string, number>>({});
     const livePricesRef = useRef<Record<string, number>>({});
@@ -168,8 +171,8 @@ const PositionMonitor: React.FC<PositionMonitorProps> = ({ userId: _userId, isAc
 
     return (
         <div className="h-full p-2.5 pb-[50px] flex flex-col gap-2">
-            {/* 实时行情来源指示：TDX 桥实时 vs QuantDB 日线兜底 */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-white/70 text-[11px] shrink-0">
+            {/* 实时行情来源指示：TDX 桥实时 vs QuantDB 日线兜底（仅 CN；其余市场为日线数据） */}
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-white/70 text-[11px] shrink-0 ${currentMarket !== 'CN' ? 'hidden' : ''}`}>
                 <span className="font-black text-slate-500">行情来源</span>
                 {memberDenied ? (
                     <span className="inline-flex items-center gap-1.5 font-bold text-amber-600">

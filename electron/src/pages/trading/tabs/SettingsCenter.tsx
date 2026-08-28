@@ -1,4 +1,8 @@
+import { useAppSelector } from '../../../store';
+import BrokerConfigCard from '../components/BrokerConfigCard';
+import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import React, { useEffect, useState } from 'react';
+import { BankOutlined } from '@ant-design/icons';
 import {
   Check,
   Copy,
@@ -89,6 +93,7 @@ interface SettingsCenterProps {
 }
 
 const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => {
+    const currentMarket = useAppSelector(selectCurrentMarket);
   const apiGatewayBase = SERVICE_URLS.API_GATEWAY.replace(/\/+$/, '');
   const authHeader = () => ({
     'Content-Type': 'application/json',
@@ -146,7 +151,7 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
   const [rollingExecuteMode, setRollingExecuteMode] = useState<'off' | 'tdx' | 'paper'>('off');
   const [rollingDate, setRollingDate] = useState('');
   const [rollingCfgMsg, setRollingCfgMsg] = useState('');
-  const [activeTab, setActiveTab] = useState<'credentials' | 'tdx'>('credentials');
+  const [activeTab, setActiveTab] = useState<'credentials' | 'tdx' | 'brokers'>('credentials');
 
   // 持仓股止损止盈提醒配置（/tdx/sltp-config，仅提醒不下单）
   const [sltpStopLoss, setSltpStopLoss] = useState('8');
@@ -154,6 +159,13 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
   const [sltpTrailing, setSltpTrailing] = useState('');
   const [sltpEnabled, setSltpEnabled] = useState(true);
   const [sltpMsg, setSltpMsg] = useState('');
+
+  // 非 CN 市场：TDX 通道不适用，自动切到券商接入页
+  useEffect(() => {
+    if (currentMarket !== 'CN' && activeTab === 'tdx') {
+      setActiveTab('brokers');
+    }
+  }, [currentMarket, activeTab]);
 
   const handleCopy = async (text: string, key: string) => {
     await navigator.clipboard.writeText(text);
@@ -484,6 +496,7 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
           <Key size={13} className="inline mr-1.5 -mt-0.5" />
           接入凭证 / API 密钥
         </button>
+        {currentMarket === 'CN' && (
         <button
           onClick={() => setActiveTab('tdx')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
@@ -495,6 +508,20 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
           <Cable size={13} className="inline mr-1.5 -mt-0.5" />
           通达信交易桥 / 滚动买卖
         </button>
+        )}
+        {currentMarket !== 'CN' && (
+        <button
+          onClick={() => setActiveTab('brokers')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
+            activeTab === 'brokers'
+              ? 'bg-white text-indigo-700 border border-indigo-200 shadow-sm'
+              : 'bg-white/60 text-gray-500 border border-gray-200 hover:text-gray-700'
+          }`}
+        >
+          <BankOutlined className="inline mr-1.5 -mt-0.5" />
+          券商实盘接入
+        </button>
+        )}
       </div>
 
       {/* 内容区：两个面板各自独立滚动 */}
@@ -596,7 +623,7 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
         {/* 通达信交易桥卡片 */}
         <div
           className={`h-full bg-white rounded-3xl border border-gray-200 shadow-sm overflow-y-auto custom-scrollbar ${
-            activeTab === 'tdx' ? '' : 'hidden'
+            activeTab === 'tdx' && currentMarket === 'CN' ? '' : 'hidden'
           }`}
         >
         <div className="p-5 flex flex-col gap-4">

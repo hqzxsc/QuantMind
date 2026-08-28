@@ -72,6 +72,16 @@ const getErrorHttpStatus = (err: unknown): number | undefined => {
     return response?.status;
 };
 
+
+// 实盘通道文案按市场：CN=通达信桥，HK=富途/老虎/IB，US=老虎/IB/富途
+const BROKER_LABELS: Record<string, string> = {
+  CN: '通达信',
+  HK: '富途/老虎/IB',
+  US: '老虎/IB/富途',
+  FUTURES: 'IB',
+  CRYPTO: '暂无',
+};
+
 const RealTradingPage: React.FC = () => {
     const dispatch = useAppDispatch();
     const currentMarket = useAppSelector(selectCurrentMarket);
@@ -257,7 +267,7 @@ const RealTradingPage: React.FC = () => {
                 setEffectiveLiveTradeConfig(startResp.effective_live_trade_config);
             }
 
-            const modeText = tradingMode === 'real' ? '实盘(通达信)' : '模拟盘';
+            const modeText = tradingMode === 'real' ? `实盘(${BROKER_LABELS[currentMarket] || '券商'})` : '模拟盘';
             const permissionText = startResp?.trading_permission === 'observe_only'
                 ? '（观察态，不自动下单）'
                 : '';
@@ -411,7 +421,7 @@ const RealTradingPage: React.FC = () => {
 
     const confirmStartLabel = useMemo(() => {
         if (!pendingDeploy) return '确认并启动';
-        return tradingMode === 'real' ? '确认并启动实盘(通达信)' : '确认并启动模拟盘';
+        return tradingMode === 'real' ? `确认并启动实盘(${BROKER_LABELS[currentMarket] || '券商'})` : '确认并启动模拟盘';
     }, [pendingDeploy, tradingMode]);
 
     // 检测结果全部展示，不做逐项 reveal（加快加载速度）

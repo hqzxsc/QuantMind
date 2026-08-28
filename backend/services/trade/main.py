@@ -297,10 +297,12 @@ app.include_router(replay_router)
 from backend.services.trade.routers.tdx_config import router as tdx_config_router
 from backend.services.trade.routers.tdx_quote_feed import router as tdx_quote_feed_router
 from backend.services.trade.routers.tdx_l2 import router as tdx_l2_router
+from backend.services.trade.routers.broker_config import router as broker_config_router
 
 app.include_router(tdx_config_router, prefix="/api/v1", tags=["TDX-Bridge"])
 app.include_router(tdx_quote_feed_router, prefix="/api/v1", tags=["TDX-Bridge"])
 app.include_router(tdx_l2_router, prefix="/api/v1", tags=["TDX-L2"])
+app.include_router(broker_config_router, prefix="/api/v1", tags=["Broker-Config"])
 
 app.add_middleware(
     CORSMiddleware,

@@ -516,23 +516,30 @@ class ModelRegistryService:
             ).mappings().first()
         return self._row_to_model(dict(row)) if row else None
 
-    async def get_default_model(self, *, tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    async def get_default_model(
+        self, *, tenant_id: str, user_id: str, market: str | None = None
+    ) -> dict[str, Any] | None:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
+        market_clause = ""
+        params: dict[str, Any] = {"tenant_id": tenant, "user_id": user}
+        if market:
+            market_clause = " AND COALESCE(metadata_json->>'market', 'CN') = :market"
+            params["market"] = str(market).upper().strip()
         async with get_session(read_only=True) as session:
             row = (
                 await session.execute(
                     text(
-                        """
+                        f"""
                         SELECT tenant_id, user_id, model_id, source_run_id, status, storage_path, model_file,
                                metadata_json, metrics_json, is_default, created_at, updated_at, activated_at
                         FROM qm_user_models
                         WHERE tenant_id = :tenant_id AND user_id = :user_id
-                          AND is_default = TRUE AND status IN ('ready', 'active')
+                          AND is_default = TRUE AND status IN ('ready', 'active'){market_clause}
                         ORDER BY activated_at DESC NULLS LAST, updated_at DESC
                         LIMIT 1
                         """
                     ),
-                    {"tenant_id": tenant, "user_id": user},
+                    params,
                 )
             ).mappings().first()
         return self._row_to_model(dict(row)) if row else None

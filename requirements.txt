@@ -67,3 +67,8 @@ pyarrow>=15.0.0
 python-alipay-sdk>=3.4.0
 pyahocorasick
 tables>=3.8.0
+
+# 海外券商实盘接入（富途/老虎/IB）
+tigeropen>=7.0.0
+futu-api>=9.0.0
+ib_async>=1.0.0

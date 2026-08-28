@@ -815,11 +815,12 @@ export const NewsPanel: React.FC = () => {
         )}
       </div>
 
-      {/* ===== 新闻大类导航 + 当前筛选标签（同一行，分类 Tab 后紧跟筛选 chips） ===== */}
+      {/* ===== 分类导航：词典大类 + 全部高频事件标签（含文章数），点击按 event_tags 筛选 ===== */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '4px 16px', borderBottom: '1px solid rgba(226,232,240,0.8)', background: 'rgba(255,255,255,0.85)', flexWrap: 'wrap' }}>
         <Text type="secondary" style={{ fontSize: 12, marginRight: 6, whiteSpace: 'nowrap' }}>分类:</Text>
         {QUICK_EVENT_CHIPS.map((chip) => {
           const active = chip.value === '' ? f.selectedEventTags.length === 0 : f.selectedEventTags.includes(chip.value);
+          const cnt = chip.value ? stats?.top_events.find((e) => e.name === chip.value)?.count : undefined;
           return (
             <Tag.CheckableTag
               key={chip.value || '__all'}
@@ -837,9 +838,29 @@ export const NewsPanel: React.FC = () => {
               style={{ fontSize: 12, padding: '2px 10px', borderRadius: 12, margin: 0, fontWeight: active ? 600 : 400 }}
             >
               {chip.label}
+              {cnt != null && <span style={{ opacity: 0.5, fontWeight: 400 }}> ({cnt.toLocaleString()})</span>}
             </Tag.CheckableTag>
           );
         })}
+        {/* 高频事件标签（词典大类之外，全部展示，含文章数） */}
+        {(stats?.top_events ?? [])
+          .filter((e) => !QUICK_EVENT_CHIPS.some((q) => q.value === e.name))
+          .map((e) => {
+            const active = f.selectedEventTags.includes(e.name);
+            return (
+              <Tag.CheckableTag
+                key={`ev-${e.name}`}
+                checked={active}
+                onChange={(c) => {
+                  if (c) addFilter('selectedEventTags', e.name);
+                  else removeFilter('selectedEventTags', e.name);
+                }}
+                style={{ fontSize: 12, padding: '2px 10px', borderRadius: 12, margin: 0, fontWeight: active ? 600 : 400 }}
+              >
+                {e.name} <span style={{ opacity: 0.5, fontWeight: 400 }}>({e.count.toLocaleString()})</span>
+              </Tag.CheckableTag>
+            );
+          })}
         {/* 当前筛选标签：紧跟分类 Tab 之后 */}
         {activeFilterCount > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', marginLeft: 4 }}>
@@ -853,39 +874,6 @@ export const NewsPanel: React.FC = () => {
       {/* ===== Advanced filter panel (collapsible) ===== */}
       {f.advancedOpen && (
         <div className="news-advanced-panel">
-          <div className="news-advanced-row">
-            <div className="news-filter-group">
-              <Text type="secondary" style={{ fontSize: 12 }}>板块:</Text>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {QUICK_EVENT_CHIPS.map((chip) => {
-                  const active = f.selectedEventTags.includes(chip.value);
-                  return (
-                    <Tag.CheckableTag key={chip.value} checked={active}
-                      onChange={(c) => {
-                        if (c) addFilter('selectedEventTags', chip.value);
-                        else removeFilter('selectedEventTags', chip.value);
-                      }}
-                      style={{ fontSize: 12, padding: '2px 8px', borderRadius: 10, margin: 0 }}>
-                      {chip.label}
-                    </Tag.CheckableTag>
-                  );
-                })}
-                {(stats?.top_events ?? []).slice(0, 8).filter((e) => !QUICK_EVENT_CHIPS.some((q) => q.value === e.name)).map((e) => {
-                  const active = f.selectedEventTags.includes(e.name);
-                  return (
-                    <Tag.CheckableTag key={`ae-${e.name}`} checked={active}
-                      onChange={(c) => {
-                        if (c) addFilter('selectedEventTags', e.name);
-                        else removeFilter('selectedEventTags', e.name);
-                      }}
-                      style={{ fontSize: 12, padding: '2px 8px', borderRadius: 10, margin: 0 }}>
-                      {e.name} <span style={{ opacity: 0.5 }}>({e.count})</span>
-                    </Tag.CheckableTag>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
           <div className="news-advanced-row">
             <FilterSelect label="股票" value={f.selectedTickers} options={stats?.top_tickers ?? []} onChange={(v) => updateF({ selectedTickers: v })} showSearch />
             <FilterSelect label="行业" value={f.selectedIndustries} options={stats?.top_industries ?? []} onChange={(v) => updateF({ selectedIndustries: v })} showSearch />

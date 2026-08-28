@@ -290,8 +290,7 @@ class FutuBroker(_StreamQuoteMixin, BaseBroker):
         ).upper() == "REAL"
         self._pwd_md5 = _setting("futu", "trade_pwd_md5", "FUTU_TRADE_PWD_MD5")
         # OpenD 跨网(非127.0.0.1)访问时交易接口强制 RSA 加密：
-        # OpenD 与客户端共享同一把私钥（官方 rsa_private_key 机制）
-        self.rsa_key = _setting("futu", "rsa_key", "FUTU_RSA_KEY", "/data/futu-opend/rsa.key")
+        # OpenD 端持私钥（官方 rsa_private_key 配置），SDK 端 is_encrypt=True 即可
 
     def _trade_env(self) -> Any:
         from futu import TrdEnv
@@ -310,11 +309,12 @@ class FutuBroker(_StreamQuoteMixin, BaseBroker):
     ) -> BrokerResult:
         def _place() -> dict[str, Any]:
             from futu import OpenSecTradeContext, OrderType as FutuOrderType, TrdSide, TrdMarket
+            FutuBroker._apply_sdk_rsa()
 
             is_hk = symbol.upper().endswith(".HK")
             trd_market = TrdMarket.HK if is_hk else TrdMarket.US
             ctx = OpenSecTradeContext(
-                filter_trdmarket=trd_market, host=self.host, port=self.port, security_firm="FUTUSECURITIES", rsa_private_key=self.rsa_key
+                filter_trdmarket=trd_market, host=self.host, port=self.port, security_firm="FUTUSECURITIES", is_encrypt=True
             )
             try:
                 if is_hk and self.trade_env_real:
@@ -354,6 +354,7 @@ class FutuBroker(_StreamQuoteMixin, BaseBroker):
     async def query_account(self, user_id: str, tenant_id: str = "default") -> dict[str, Any]:
         def _query() -> dict[str, Any]:
             from futu import OpenSecTradeContext, TrdMarket
+            FutuBroker._apply_sdk_rsa()
 
             ctx = OpenSecTradeContext(
                 filter_trdmarket=TrdMarket.HK, host=self.host, port=self.port, security_firm="FUTUSECURITIES"

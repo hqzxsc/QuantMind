@@ -149,7 +149,7 @@ def task_ah_premium(history: bool = True) -> dict:
     mem = mem.dropna(subset=["a_symbol"]).copy()
     if mem.empty:
         raise RuntimeError("A/H 名称匹配全部失败")
-    mem["a_code6"] = mem["a_symbol"].str[-6:]
+    mem["a_code6"] = mem["a_symbol"].astype(str).str.split(".").str[0]
     mem_out = mem[["h_symbol", "a_symbol", "名称", "source", "updated_at"]]
     mem_out.to_parquet(mem_path, index=False)
 

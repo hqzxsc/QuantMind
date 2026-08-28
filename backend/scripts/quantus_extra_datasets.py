@@ -58,7 +58,7 @@ def _load_financial(kind: str) -> pd.DataFrame:
 
 
 def _ttm(series: pd.Series, dates: pd.Series, day: pd.Timestamp, window_days: int = 400) -> float:
-    """截至 day 的最近 4 期(≤window_days)报告求和, 不同 report_date 去重。"""
+    """截至 day 的最近 4 期(≤window_days)报告求和; 不足 3 期(如仅年报)用最近一期值做代理。"""
     m = (dates <= day) & (dates >= day - pd.Timedelta(days=window_days))
     vals = series[m]
     dts = dates[m]
@@ -68,9 +68,11 @@ def _ttm(series: pd.Series, dates: pd.Series, day: pd.Timestamp, window_days: in
     for d, v in zip(dts, vals):  # 保留最近一份
         uniq[d] = v
     last4 = sorted(uniq.items(), key=lambda kv: kv[0])[-4:]
-    if len(last4) < 3:  # 不足 3 期视为不可用
-        return np.nan
-    return float(np.nansum([v for _, v in last4]))
+    if len(last4) >= 3:
+        return float(np.nansum([v for _, v in last4]))
+    if len(last4) >= 1:  # 年报口径代理
+        return float(last4[-1][1])
+    return np.nan
 
 
 def task_valuation_backfill(days_back: int = 750) -> dict:

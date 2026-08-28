@@ -26,4 +26,4 @@ fi
 mkdir -p /opt/futu/data
 export LD_LIBRARY_PATH="$OPD_DIR:$LD_LIBRARY_PATH"
 echo "[entrypoint] starting official FutuOpenD: $OPD_DIR/FutuOpenD (api 0.0.0.0:11111, rsa on)"
-exec ./FutuOpenD -data_dir /opt/futu/data "$@"
+exec ./FutuOpenD -login_by_remember -data_dir /opt/futu/data "$@"

@@ -30,6 +30,8 @@ import re
 from typing import Any
 
 import httpx
+from pathlib import Path
+import json
 
 from backend.services.trade.services.broker_client import BaseBroker, BrokerResult
 
@@ -275,8 +277,11 @@ class TigerBroker(_StreamQuoteMixin, BaseBroker):
 class FutuBroker(_StreamQuoteMixin, BaseBroker):
     """富途 OpenAPI（futu-api，经 FutuOpenD 网关）。
 
-    FUTU_TRADE_ENV = REAL / SIMULATE（模拟环境无需真实资金）。
-    港股/美股实盘下单前需交易解锁（FUTU_TRADE_PWD_MD5，MD5 后的交易密码）。
+    配置（Redis broker:config:futu 优先，回退环境变量）：
+      opend_host/opend_port  — FutuOpenD 网关地址（局域网 IP 即可）
+      trade_pwd_md5          — 交易密码 MD5（REAL 环境下单前自动解锁）
+      trade_env              — SIMULATE（模拟）/ REAL（实盘）
+      rsa_key                — OpenD 端 RSA 私钥文件路径（默认 /data/futu-opend/rsa.key）
     """
 
     def __init__(self) -> None:
@@ -289,13 +294,54 @@ class FutuBroker(_StreamQuoteMixin, BaseBroker):
             "futu", "trade_env", "FUTU_TRADE_ENV", "SIMULATE"
         ).upper() == "REAL"
         self._pwd_md5 = _setting("futu", "trade_pwd_md5", "FUTU_TRADE_PWD_MD5")
-        # OpenD 跨网(非127.0.0.1)访问时交易接口强制 RSA 加密：
-        # OpenD 端持私钥（官方 rsa_private_key 配置），SDK 端 is_encrypt=True 即可
+        self.rsa_key = _setting("futu", "rsa_key", "FUTU_RSA_KEY", "/data/futu-opend/rsa.key")
 
-    def _trade_env(self) -> Any:
-        from futu import TrdEnv
+    @staticmethod
+    def _run_subprocess(op: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """在独立子进程中执行 futu SDK 调用（脚本 futu_subprocess.py）。
 
-        return TrdEnv.REAL if self.trade_env_real else TrdEnv.SIMULATE
+        futu SDK 的连接/等待模型与 asyncio 事件循环混用会死锁（实测
+        to_thread 挂起），独立子进程隔离最可靠。
+        """
+        import subprocess
+        import sys as _sys
+
+        host = _setting("futu", "opend_host", "FUTU_OPEND_HOST", "").strip()
+        # 0.0.0.0 是监听地址不是连接地址；127.0.0.1 在本容器内连不到 OpenD——
+        # 两者一律回退同网络的容器名（quantmind-net 内直接可达）
+        if host in {"", "0.0.0.0", "127.0.0.1", "localhost"}:
+            host = "futu-opend"
+        port = _setting("futu", "opend_port", "FUTU_OPEND_PORT", "11111")
+        rsa_key = _setting("futu", "rsa_key", "FUTU_RSA_KEY", "/data/futu-opend/rsa.key")
+        script_path = Path(__file__).resolve().parent / "futu_subprocess.py"
+        import tempfile
+
+        fd, result_path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        cmd = [
+            _sys.executable, str(script_path),
+            host, str(port), rsa_key, op, json.dumps(payload), result_path,
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+            with open(result_path) as f:
+                out_text = f.read().strip()
+            if proc.returncode != 0 or not out_text:
+                detail = (proc.stderr or "futu subprocess failed")[-300:]
+                raise RuntimeError(detail)
+            return json.loads(out_text)
+        finally:
+            os.unlink(result_path)
+
+    async def query_account(self, user_id: str, tenant_id: str = "default") -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                self._run_subprocess, "account",
+                {"env": "REAL" if self.trade_env_real else "SIMULATE"},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error("[FutuBroker] query_account failed: %s", e)
+            return {}
 
     async def place_order(
         self,
@@ -307,118 +353,40 @@ class FutuBroker(_StreamQuoteMixin, BaseBroker):
         price: float | None = None,
         tenant_id: str = "default",
     ) -> BrokerResult:
-        def _place() -> dict[str, Any]:
-            from futu import OpenSecTradeContext, OrderType as FutuOrderType, TrdSide, TrdMarket
-            FutuBroker._apply_sdk_rsa()
-
-            is_hk = symbol.upper().endswith(".HK")
-            trd_market = TrdMarket.HK if is_hk else TrdMarket.US
-            ctx = OpenSecTradeContext(
-                filter_trdmarket=trd_market, host=self.host, port=self.port, security_firm="FUTUSECURITIES", is_encrypt=True
-            )
-            try:
-                if is_hk and self.trade_env_real:
-                    pwd = self._pwd_md5
-                    if pwd:
-                        ctx.unlock_trade(pwd)
-                futu_side = TrdSide.BUY if str(side).upper() == "BUY" else TrdSide.SELL
-                futu_type = (
-                    FutuOrderType.MARKET if str(order_type).lower() == "market" else FutuOrderType.NORMAL
-                )
-                ret, data = ctx.place_order(
-                    code=_futu_code(symbol),
-                    price=float(price) if price else 0.0,
-                    quantity=float(quantity),
-                    order_type=futu_type,
-                    trd_side=futu_side,
-                    trd_env=self._trade_env(),
-                    adjust_limit=0.0 if is_hk else None,
-                )
-                if ret != 0:
-                    raise RuntimeError(str(data))
-                return {"order_id": str(data.get("order_id", "")), "message": "SUBMITTED"}
-            finally:
-                ctx.close()
-
+        is_hk = symbol.upper().endswith(".HK")
+        payload = {
+            "env": "REAL" if self.trade_env_real else "SIMULATE",
+            "order": {
+                "code": _futu_code(symbol),
+                "price": float(price or 0),
+                "quantity": float(quantity),
+                "order_type": "MARKET" if str(order_type).lower() == "market" else "NORMAL",
+                "trd_side": "BUY" if str(side).upper() == "BUY" else "SELL",
+                "is_hk": is_hk,
+            },
+        }
         try:
-            data = await asyncio.to_thread(_place)
+            data = await asyncio.to_thread(self._run_subprocess, "place", payload)
             return BrokerResult(
-                success=True,
-                exchange_order_id=data.get("order_id", ""),
-                message=data.get("message", ""),
+                success=bool(data.get("success")),
+                exchange_order_id=str(data.get("order_id", "")),
+                message=str(data.get("message", "")),
             )
         except Exception as e:  # noqa: BLE001
             logger.error("[FutuBroker] place_order %s failed: %s", symbol, e)
             return BrokerResult(success=False, message=str(e))
 
-    async def query_account(self, user_id: str, tenant_id: str = "default") -> dict[str, Any]:
-        def _query() -> dict[str, Any]:
-            from futu import OpenSecTradeContext, TrdMarket
-            FutuBroker._apply_sdk_rsa()
-
-            ctx = OpenSecTradeContext(
-                filter_trdmarket=TrdMarket.HK, host=self.host, port=self.port, security_firm="FUTUSECURITIES"
-            )
-            try:
-                ret, data = ctx.accinfo_query(trd_env=self._trade_env())
-                if ret != 0:
-                    raise RuntimeError(str(data))
-                row = data.iloc[0] if hasattr(data, "iloc") and len(data) else {}
-                positions: dict[str, Any] = {}
-                ret2, pos_data = ctx.position_list_query(trd_env=self._trade_env())
-                if ret2 == 0 and hasattr(pos_data, "iloc"):
-                    for _, p in pos_data.iterrows():
-                        positions[str(p.get("code", ""))] = {
-                            "volume": float(p.get("qty", 0) or 0),
-                            "available_volume": float(p.get("can_sell_qty", 0) or 0),
-                            "price": float(p.get("current_price", 0) or 0),
-                            "market_value": float(p.get("market_val", 0) or 0),
-                            "cost": float(p.get("cost_price", 0) or 0),
-                        }
-                return {
-                    "total_asset": float(row.get("total_assets", 0) or 0),
-                    "cash": float(row.get("cash", 0) or 0),
-                    "market_value": float(row.get("market_val", 0) or 0),
-                    "positions": positions,
-                }
-            finally:
-                ctx.close()
-
-        try:
-            return await asyncio.to_thread(_query)
-        except Exception as e:  # noqa: BLE001
-            logger.error("[FutuBroker] query_account failed: %s", e)
-            return {}
-
     async def cancel_order(self, exchange_order_id: str, **kwargs) -> bool:
-        def _cancel() -> bool:
-            from futu import ModifyOrderOp, OpenSecTradeContext, TrdMarket
-
-            ctx = OpenSecTradeContext(
-                filter_trdmarket=TrdMarket.HK, host=self.host, port=self.port, security_firm="FUTUSECURITIES"
-            )
-            try:
-                ret, _ = ctx.modify_order(
-                    ModifyOrderOp.CANCEL,
-                    order_id=exchange_order_id,
-                    qty=0,
-                    price=0,
-                    trd_env=self._trade_env(),
-                )
-                return ret == 0
-            finally:
-                ctx.close()
-
         try:
-            return await asyncio.to_thread(_cancel)
+            data = await asyncio.to_thread(
+                self._run_subprocess, "cancel",
+                {"env": "REAL" if self.trade_env_real else "SIMULATE",
+                 "order_id": exchange_order_id},
+            )
+            return bool(data.get("success"))
         except Exception as e:  # noqa: BLE001
             logger.error("[FutuBroker] cancel_order %s failed: %s", exchange_order_id, e)
             return False
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 盈透证券（IB）
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class IBBroker(_StreamQuoteMixin, BaseBroker):

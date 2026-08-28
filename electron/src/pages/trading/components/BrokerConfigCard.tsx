@@ -41,7 +41,7 @@ const FIELD_DEFS: Record<BrokerKey, FieldDef[]> = {
     { name: 'account', label: '交易账户', placeholder: '实盘 U 开头 / 模拟 SIM 开头，如 SIM123456' },
   ],
   futu: [
-    { name: 'opend_host', label: 'FutuOpenD 地址', placeholder: '127.0.0.1' },
+    { name: 'opend_host', label: 'FutuOpenD 地址', placeholder: 'OpenD 所在机器的局域网 IP，如 192.168.31.68' },
     { name: 'opend_port', label: 'FutuOpenD 端口', placeholder: '11111' },
     { name: 'trade_pwd_md5', label: '交易密码 MD5', sensitive: true, placeholder: '交易密码的 MD5（实盘下单前自动解锁）' },
     { name: 'trade_env', label: '交易环境', placeholder: 'SIMULATE=模拟 / REAL=实盘' },

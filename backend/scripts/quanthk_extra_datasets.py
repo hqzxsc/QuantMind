@@ -184,7 +184,7 @@ def task_ah_premium(history: bool = True) -> dict:
     aclose = _load_a_close_for(sorted(ah["a_code6"].unique()))
     aclose["d"] = pd.to_datetime(aclose["d"]).dt.date
     aclose = aclose.rename(columns={"symbol": "a_symbol_full"})
-    aclose["a_code6"] = aclose["a_symbol_full"].str[-6:]
+    aclose["a_code6"] = aclose["a_symbol_full"].astype(str).str.split(".").str[0]
     ah = ah.merge(aclose[["a_code6", "d", "close"]], on=["a_code6", "d"], how="left")
     ah["fx_hkd_cny"] = ah["d"].map(fx_per_hkd)
     ah["premium_pct"] = (ah["close"] / (ah["h_close"] * ah["fx_hkd_cny"]) - 1.0) * 100.0

@@ -29,6 +29,7 @@ export interface UserModelRecord {
   status: string;
   storage_path: string;
   model_file: string;
+  market?: string;
   metadata_json: Record<string, unknown>;
   metrics_json: Record<string, unknown>;
   is_default: boolean;
@@ -463,6 +464,7 @@ export interface SystemModelRecord {
   model_id: string;
   dir_name: string;
   tenant_id: 'system';
+  market?: string;
   display_name: string;
   description: string;
   framework: string;
@@ -561,17 +563,18 @@ class ModelTrainingService {
     return resp.data;
   }
 
-  async listUserModels(includeArchived = false): Promise<{ items: UserModelRecord[]; total: number }> {
+  async listUserModels(includeArchived = false, market?: string): Promise<{ items: UserModelRecord[]; total: number }> {
     const resp = await this.client.get<{ items: UserModelRecord[]; total: number }>(`/models`, {
-      params: { include_archived: includeArchived },
+      params: { include_archived: includeArchived, ...(market ? { market } : {}) },
     });
     return resp.data;
   }
 
-  async listSystemModels(): Promise<SystemModelRecord[]> {
+  async listSystemModels(market?: string): Promise<SystemModelRecord[]> {
     try {
       const resp = await this.client.get<{ status: string; count: number; models: SystemModelRecord[] }>(
-        `/models/system-models`
+        `/models/system-models`,
+        { params: market ? { market } : undefined },
       );
       return resp.data.models ?? [];
     } catch {

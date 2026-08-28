@@ -110,14 +110,15 @@ export const InferenceCenterPage: React.FC = () => {
   const [prediction, setPrediction] = useState<SingleStockPredictionResponse | null>(null);
 
   // ─────────────────────────────────────────────────────────────
-  // 截面推理：加载所有注册模型
+  // 截面推理：按当前市场加载注册模型（用户模型 + 系统模型）
   // ─────────────────────────────────────────────────────────────
   const loadRegisteredModels = useCallback(async () => {
     setModelsLoading(true);
     try {
+      const marketUpper = currentMarket.toUpperCase();
       const [uRes, sList] = await Promise.all([
-        modelTrainingService.listUserModels().catch(() => ({ items: [], total: 0 })),
-        modelTrainingService.listSystemModels().catch(() => []),
+        modelTrainingService.listUserModels(false, marketUpper).catch(() => ({ items: [], total: 0 })),
+        modelTrainingService.listSystemModels(marketUpper).catch(() => []),
       ]);
       const activeUser = (uRes.items || []).filter((m) => m.status !== 'archived');
       const activeSys = (sList || []).map(systemModelToUserModel);
@@ -129,13 +130,16 @@ export const InferenceCenterPage: React.FC = () => {
           const defaultM = combined.find((m) => m.is_default) || combined[0];
           setSelectedModelId(defaultM.model_id);
         }
+      } else if (selectedModelId) {
+        // 当前市场没有可用模型：清空选择，避免残留其他市场的模型
+        setSelectedModelId('');
       }
     } catch (err) {
       console.error('加载注册模型失败:', err);
     } finally {
       setModelsLoading(false);
     }
-  }, [selectedModelId]);
+  }, [selectedModelId, currentMarket]);
 
   useEffect(() => {
     void loadRegisteredModels();

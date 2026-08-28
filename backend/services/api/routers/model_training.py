@@ -222,6 +222,12 @@ def _load_production_models() -> list[dict[str, Any]]:
         # label_formula 优先取平铺字段，回退旧格式 training_config.label
         label_formula = meta.get("label_formula") or tc.get("label") or ""
 
+        # 市场归属：新训练脚本写在顶层 market / context.market；旧系统模型缺省 CN
+        ctx = meta.get("context") if isinstance(meta.get("context"), dict) else {}
+        market_tag = str(
+            meta.get("market") or ctx.get("market") or tc.get("market") or "CN"
+        ).upper()
+
         # metrics：新格式在 meta.metrics，旧格式在 performance_metrics
         new_metrics = meta.get("metrics", {})
         if new_metrics:
@@ -245,6 +251,7 @@ def _load_production_models() -> list[dict[str, Any]]:
                 "model_id": model_id,
                 "dir_name": subdir.name,
                 "tenant_id": "system",
+                "market": market_tag,
                 "display_name": display_name,
                 "description": meta.get("description") or info.get("description", ""),
                 "framework": meta.get("framework", ""),
@@ -568,11 +575,15 @@ def _render_next_run(next_run_at: Any) -> str | None:
     "/system-models", summary="获取系统内置模型列表（读取 models/production 目录）"
 )
 async def list_system_models(
+    market: str | None = Query(None, description="按市场过滤（CN/HK/US/FUTURES/CRYPTO），缺省返回全部"),
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     """返回 models/production/ 下所有含 metadata.json 的子目录，无需分页。"""
     try:
         models = _load_production_models()
+        market_upper = str(market or "").upper().strip()
+        if market_upper:
+            models = [m for m in models if str(m.get("market") or "").upper() == market_upper]
         return {"status": "success", "count": len(models), "models": models}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

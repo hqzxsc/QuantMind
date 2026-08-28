@@ -31,6 +31,7 @@ export function systemModelToUserModel(s: SystemModelRecord): UserModelRecord {
     storage_path: `models/production/${s.dir_name}`,
     model_file: s.files?.model_checkpoint ?? 'model.lgb',
     is_default: false,
+    market: (s as any).market ?? 'CN',
     created_at: s.created_at ? new Date(s.created_at).toISOString() : undefined,
     updated_at: s.created_at ? new Date(s.created_at).toISOString() : undefined,
     activated_at: s.created_at ? new Date(s.created_at).toISOString() : undefined,

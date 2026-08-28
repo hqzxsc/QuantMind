@@ -48,6 +48,27 @@ _MACRO_INTERFACES = {
     "macro_usa_retail_sales": "macro_retail_sales",
     "macro_usa_spcs20": "macro_spcs20",
     "macro_usa_trade_balance": "macro_trade_balance",
+    # 2026-08 扩充: 通胀/就业/景气/地产/货币
+    "macro_usa_cpi_monthly": "macro_cpi_mom",
+    "macro_usa_cpi_yoy": "macro_cpi_yoy",
+    "macro_usa_core_cpi_monthly": "macro_core_cpi_mom",
+    "macro_usa_core_ppi": "macro_core_ppi",
+    "macro_usa_core_pce_price": "macro_core_pce",
+    "macro_usa_non_farm": "macro_non_farm",
+    "macro_usa_initial_jobless": "macro_initial_jobless",
+    "macro_usa_adp_employment": "macro_adp_employment",
+    "macro_usa_ism_pmi": "macro_ism_pmi",
+    "macro_usa_ism_non_pmi": "macro_ism_non_pmi",
+    "macro_usa_services_pmi": "macro_services_pmi",
+    "macro_usa_michigan_consumer_sentiment": "macro_michigan_sentiment",
+    "macro_usa_gdp_monthly": "macro_gdp_monthly",
+    "macro_usa_durable_goods_orders": "macro_durable_goods",
+    "macro_usa_house_starts": "macro_house_starts",
+    "macro_usa_exist_home_sales": "macro_exist_home_sales",
+    "macro_usa_industrial_production": "macro_industrial_production",
+    "macro_usa_eia_crude_rate": "macro_eia_crude",
+    "macro_usa_api_crude_stock": "macro_api_crude_stock",
+    "macro_usa_rig_count": "macro_rig_count",
 }
 
 

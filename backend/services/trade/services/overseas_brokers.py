@@ -27,6 +27,7 @@ import asyncio
 import logging
 import os
 import re
+import threading
 from typing import Any
 
 import httpx
@@ -157,7 +158,9 @@ class TigerBroker(_StreamQuoteMixin, BaseBroker):
 
     def __init__(self) -> None:
         self._client: Any = None
-        self._lock = asyncio.Lock()
+        # _get_client 在 asyncio.to_thread 的 worker 线程中执行，须用线程锁
+        # （asyncio.Lock 的同步 with 在 Python 3.10 无 __enter__，且线程内无事件循环）
+        self._lock = threading.Lock()
 
     def _wrap_pem(self, key_text: str) -> str:
         """裸 PKCS#1 base64 → PEM；清洗空白并校验完整性（复制丢失字符会在此报错）。

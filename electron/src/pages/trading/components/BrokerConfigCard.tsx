@@ -139,7 +139,8 @@ export const BrokerConfigCard: React.FC<{ market: string }> = ({ market }) => {
     try {
       const resp = await fetch(`${apiBase}/broker-config/${selected}/test`, {
         method: 'POST',
-        headers: authHeaders(),
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ values, trade_env: values.trade_env }),
       });
       const data = await resp.json();
       setTestResult({ ok: Boolean(data?.success), message: String(data?.message || '') });

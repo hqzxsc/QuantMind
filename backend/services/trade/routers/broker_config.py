@@ -141,15 +141,30 @@ async def select_market_broker(
 
 
 
+class BrokerTestRequest(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict, description="当前表单值（测试前自动保存）")
+    trade_env: str | None = Field(None, description="覆盖交易环境（REAL/SIMULATE），不影响已保存配置")
+
+
 @router.post("/broker-config/{broker}/test")
 async def test_broker_connection(
     broker: str,
+    payload: BrokerTestRequest | None = None,
     auth: AuthContext = Depends(get_auth_context),
     redis: RedisClient = Depends(get_redis),
 ) -> dict[str, Any]:
-    """测试券商连通性（真实调用 SDK；OpenD/Gateway 未启动会明确报错）。"""
+    """测试券商连通性（真实调用 SDK；OpenD/Gateway 未启动会明确报错）。
+
+    测试前自动保存表单值；trade_env 可临时覆盖（测试 REAL 环境无需先改配置）。
+    """
     _ = auth
     broker = _normalize_broker(broker)
+    if payload and payload.values:
+        allowed = set(BROKER_FIELDS[broker])
+        clean = {k: str(v).strip() for k, v in payload.values.items() if k in allowed and str(v).strip()}
+        stored = _read_config(redis, broker)
+        stored.update(clean)
+        _write_config(redis, broker, stored)
     try:
         if broker == "tiger":
             from backend.services.trade.services.overseas_brokers import TigerBroker
@@ -163,6 +178,9 @@ async def test_broker_connection(
             from backend.services.trade.services.overseas_brokers import FutuBroker
 
             broker_obj = FutuBroker()
+            env_override = str((payload.trade_env if payload else "") or "").upper()
+            if env_override in {"REAL", "SIMULATE"}:
+                broker_obj.trade_env_real = env_override == "REAL"
             account = await broker_obj.query_account("test")
             if account.get("total_asset"):
                 env = "实盘" if broker_obj.trade_env_real else "模拟"

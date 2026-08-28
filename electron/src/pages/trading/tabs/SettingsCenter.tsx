@@ -620,6 +620,17 @@ const SettingsCenter: React.FC<SettingsCenterProps> = ({ userId, isActive }) => 
         </div>
         </div>
 
+        {/* 券商实盘接入卡片（非 CN 市场） */}
+        <div
+          className={`h-full bg-white rounded-3xl border border-gray-200 shadow-sm overflow-y-auto custom-scrollbar ${
+            activeTab === 'brokers' ? '' : 'hidden'
+          }`}
+        >
+          <div className="p-5">
+            <BrokerConfigCard market={currentMarket} />
+          </div>
+        </div>
+
         {/* 通达信交易桥卡片 */}
         <div
           className={`h-full bg-white rounded-3xl border border-gray-200 shadow-sm overflow-y-auto custom-scrollbar ${

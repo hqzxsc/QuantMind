@@ -140,6 +140,52 @@ async def select_market_broker(
     return {"success": True, "market": market, "selected": broker}
 
 
+
+@router.post("/broker-config/{broker}/test")
+async def test_broker_connection(
+    broker: str,
+    auth: AuthContext = Depends(get_auth_context),
+    redis: RedisClient = Depends(get_redis),
+) -> dict[str, Any]:
+    """测试券商连通性（真实调用 SDK；OpenD/Gateway 未启动会明确报错）。"""
+    _ = auth
+    broker = _normalize_broker(broker)
+    try:
+        if broker == "tiger":
+            from backend.services.trade.services.overseas_brokers import TigerBroker
+
+            broker_obj = TigerBroker()
+            account = await broker_obj.query_account("test")
+            if account.get("total_asset"):
+                return {"success": True, "message": f"连接成功，账户总资产 {account['total_asset']:.2f}"}
+            return {"success": False, "message": "连接失败：请检查 Tiger ID / RSA 私钥 / 账户号，或券商侧 OpenAPI 权限"}
+        if broker == "futu":
+            from backend.services.trade.services.overseas_brokers import FutuBroker
+
+            broker_obj = FutuBroker()
+            account = await broker_obj.query_account("test")
+            if account.get("total_asset"):
+                env = "实盘" if broker_obj.trade_env_real else "模拟"
+                return {"success": True, "message": f"FutuOpenD 已连接（{env}环境），账户总资产 {account['total_asset']:.2f}"}
+            return {"success": False, "message": "FutuOpenD 未连接：请确认 OpenD 已启动并登录（扫码/设备验证），地址端口正确"}
+        if broker == "ib":
+            from backend.services.trade.services.overseas_brokers import IBBroker
+
+            broker_obj = IBBroker()
+            ib = await broker_obj._get_ib()
+            accounts = ib.managedAccounts()
+            await broker_obj._ib.disconnect()
+            return {"success": True, "message": f"IB Gateway 已连接，账户: {', '.join(accounts) or '未知'}"}
+        return {"success": False, "message": "该券商暂不支持连接测试"}
+    except Exception as exc:
+        hint = {
+            "futu": "FutuOpenD 未运行或未登录（需在 OpenD 客户端扫码/设备验证），并检查局域网 IP 与端口",
+            "ib": "IB Gateway 未运行（4002=模拟 / 4001=实盘），并检查局域网 IP 与端口",
+            "tiger": "检查 Tiger ID / RSA 私钥 / 账户号是否正确",
+        }.get(broker, "")
+        return {"success": False, "message": f"连接失败：{exc}{('；' + hint) if hint else ''}"}
+
+
 @router.get("/broker-config/{broker}")
 async def get_broker_config(
     broker: str,

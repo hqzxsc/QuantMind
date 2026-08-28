@@ -62,6 +62,8 @@ export const BrokerConfigCard: React.FC<{ market: string }> = ({ market }) => {
   const [configured, setConfigured] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const authHeaders = () => {
     const token = authService.getAccessToken();
@@ -130,6 +132,24 @@ export const BrokerConfigCard: React.FC<{ market: string }> = ({ market }) => {
     }
   };
 
+  const testConnection = async () => {
+    if (!selected) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const resp = await fetch(`${apiBase}/broker-config/${selected}/test`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const data = await resp.json();
+      setTestResult({ ok: Boolean(data?.success), message: String(data?.message || '') });
+    } catch (e: any) {
+      setTestResult({ ok: false, message: e?.message || '测试请求失败' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   if (brokers.length === 0) {
     return (
       <Alert
@@ -187,6 +207,21 @@ export const BrokerConfigCard: React.FC<{ market: string }> = ({ market }) => {
               {brokers.find((b) => b.key === selected)?.desc}
             </Text>
           </div>
+          {selected === 'futu' && (
+            <div className="text-[11px] leading-5 text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
+              配置步骤：① 在本地或局域网机器上安装并启动 <b>FutuOpenD</b>（富途官网下载，支持 Windows/Mac/Linux）；② 在 OpenD 客户端<b>扫码登录</b>富途账号（首次需设备验证）；③ 上方填写 OpenD 所在机器的<b>局域网 IP 和端口</b>（默认 11111）；④ 填写交易密码 MD5 后点「测试连接」。
+            </div>
+          )}
+          {selected === 'ib' && (
+            <div className="text-[11px] leading-5 text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
+              配置步骤：① 启动 <b>IB Gateway</b>（或 TWS），端口 4002=模拟账户 / 4001=实盘；② Gateway 启动时用 IB 账号密码登录（每次会话需重新登录，可用自动化容器托管）；③ 上方填写 Gateway 所在机器的<b>局域网 IP 和端口</b>；④ 点「测试连接」。需在 IB 端开通对应市场行情与交易权限。
+            </div>
+          )}
+          {selected === 'tiger' && (
+            <div className="text-[11px] leading-5 text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
+              配置步骤：① 在老虎证券 OpenAPI 开放平台创建应用，获得 <b>Tiger ID</b> 并生成 <b>RSA 密钥对</b>（公钥绑定账户，私钥粘贴到下方）；② 填写交易账户号（U 开头=实盘，SIM 开头=模拟，模拟账户可直接演练）；③ 无需网关，保存后点「测试连接」即可。
+            </div>
+          )}
           {FIELD_DEFS[selected].map(({ name, label, sensitive, placeholder }) => {
             const isConfigured = configured[name];
             return (
@@ -219,10 +254,23 @@ export const BrokerConfigCard: React.FC<{ market: string }> = ({ market }) => {
               </div>
             );
           })}
-          <div className="flex justify-end gap-2 pt-1">
-            <Button onClick={() => void load()}>还原</Button>
-            <Button type="primary" loading={saving} onClick={save}>保存配置</Button>
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <Button icon={<ReloadOutlined />} loading={testing} onClick={testConnection}>
+              测试连接
+            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => void load()}>还原</Button>
+              <Button type="primary" loading={saving} onClick={save}>保存配置</Button>
+            </div>
           </div>
+          {testResult && (
+            <Alert
+              type={testResult.ok ? 'success' : 'error'}
+              showIcon
+              message={testResult.message}
+              className="!text-xs"
+            />
+          )}
         </div>
       )}
     </div>

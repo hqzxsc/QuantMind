@@ -1,12 +1,17 @@
 """本地行情数据层 —— 模拟盘的唯一行情来源。
 
-直接读取 data/quantdb 的 parquet（经 QuantDBDataHub 的 DuckDB 视图），
+按市场读取对应数据平台的 parquet（经各市场 DataHub 的 DuckDB 视图），
 不再依赖实时行情 HTTP 服务。
 
-复权口径选择：**不复权（daily_unadjusted）**。
-模拟撮合需要"当日实际可成交价"，涨跌停也必须在同一口径上计算；
-前复权序列的价格是被回溯改写过的历史价，用它撮合会产生与真实盘面
-不一致的成交价与涨跌停判定。
+复权口径选择：
+- CN：不复权（daily_unadjusted）。模拟撮合需要"当日实际可成交价"，
+  涨跌停也必须在同一口径上计算；前复权序列的价格是被回溯改写过的
+  历史价，用它撮合会产生与真实盘面不一致的成交价与涨跌停判定。
+- HK/US/FUTURES/CRYPTO：daily_forward（同步落盘的不复权日K）。
+
+市场差异（见 market_rules.MarketTradingRules）：
+- 涨跌停仅 CN 计算，其余市场 limit_up=inf / limit_down=0（无限制）
+- ST 判定仅 CN（其余市场恒为 False）
 """
 
 from __future__ import annotations
@@ -22,11 +27,22 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 import pandas as pd
 
 from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
+from backend.services.trade.simulation.services.market_rules import (
+    Market,
+    normalize_market,
+)
 from backend.shared.stock_utils import StockCodeUtil
 
 logger = logging.getLogger(__name__)
 
-_KLINE_VIEW = "qdb_daily_unadjusted"
+# CN 不复权日线视图；其余市场用各自 daily_forward（同步落盘的原始价）
+_MARKET_KLINE_VIEWS: dict[Market, str] = {
+    Market.CN: "qdb_daily_unadjusted",
+    Market.HK: "qhk_daily_forward",
+    Market.US: "qus_daily_forward",
+    Market.FUTURES: "qfut_daily_forward",
+    Market.CRYPTO: "qbc_daily_forward",
+}
 
 # 每档涨跌幅（不含 ST 折减）
 _PCT_MAIN = Decimal("0.10")
@@ -142,14 +158,46 @@ def _detect_amount_scale(df: pd.DataFrame) -> float:
 
 
 class LocalMarketData:
-    """按日读取本地 parquet 日线，产出带涨跌停/ST/停牌标记的 DailyBar。"""
+    """按日读取本地 parquet 日线，产出带涨跌停/ST/停牌标记的 DailyBar。
 
-    def __init__(self, hub: QuantDBDataHub | None = None) -> None:
-        self._hub = hub or QuantDBDataHub.get_instance()
+    market 决定数据根（hub）与视图：CN 用不复权日线并计算涨跌停/ST；
+    其余市场用 daily_forward 原始价，无涨跌停、无 ST。
+    """
+
+    def __init__(
+        self,
+        hub: QuantDBDataHub | None = None,
+        market: Market | str | None = None,
+    ) -> None:
+        self.market = normalize_market(market)
+        self._hub = hub or self._resolve_hub(self.market)
+        self._kline_view = _MARKET_KLINE_VIEWS[self.market]
         self._lock = threading.RLock()
         self._date_cache: OrderedDict[date, dict[str, DailyBar]] = OrderedDict()
         self._st_symbols: frozenset[str] | None = None
         self._session_dates: list[int] | None = None
+
+    @staticmethod
+    def _resolve_hub(market: Market) -> QuantDBDataHub:
+        if market is Market.CN:
+            return QuantDBDataHub.get_instance()
+        if market is Market.HK:
+            from backend.services.engine.data_platform.quanthk_hub import QuantHKDataHub
+
+            return QuantHKDataHub.get_instance()
+        if market is Market.US:
+            from backend.services.engine.data_platform.quantus_hub import QuantUSDataHub
+
+            return QuantUSDataHub.get_instance()
+        if market is Market.FUTURES:
+            from backend.services.engine.data_platform.quantfutures_hub import (
+                QuantFuturesDataHub,
+            )
+
+            return QuantFuturesDataHub.get_instance()
+        from backend.services.engine.data_platform.quantbc_hub import QuantBCDataHub
+
+        return QuantBCDataHub.get_instance()
 
     # ------------------------------------------------------------------
     # 公开 API
@@ -213,10 +261,16 @@ class LocalMarketData:
         if today.empty:
             return {}
 
-        scale = _detect_amount_scale(today)
-        # volume 为"手"时（新口径）需换算为股，amount 已是元。
-        volume_to_shares = 100.0 if scale == _SCALE_CURRENT else 1.0
-        amount_to_yuan = 1.0 if scale == _SCALE_CURRENT else _SCALE_LEGACY
+        # 量额单位自动探测仅 CN（历史口径切换）；其余市场 volume=股/枚、
+        # amount=计价货币原样，vwap=amount/volume。
+        if self.market is Market.CN:
+            scale = _detect_amount_scale(today)
+            # volume 为"手"时（新口径）需换算为股，amount 已是元。
+            volume_to_shares = 100.0 if scale == _SCALE_CURRENT else 1.0
+            amount_to_yuan = 1.0 if scale == _SCALE_CURRENT else _SCALE_LEGACY
+        else:
+            volume_to_shares = 1.0
+            amount_to_yuan = 1.0
 
         if prev_dt_int is None:
             pre_close_map: dict[str, float] = {}
@@ -224,7 +278,7 @@ class LocalMarketData:
             prev = df[df["dt"] == prev_dt_int]
             pre_close_map = dict(zip(prev["symbol"], prev["close"].astype(float), strict=True))
 
-        st_symbols = self._st_symbol_set()
+        st_symbols = self._st_symbol_set() if self.market is Market.CN else frozenset()
 
         bars: dict[str, DailyBar] = {}
         for row in today.itertuples(index=False):
@@ -238,9 +292,13 @@ class LocalMarketData:
 
             pre_close = pre_close_map.get(symbol, 0.0)
             is_st = symbol in st_symbols
-            limit_up, limit_down = compute_limits(
-                symbol, pre_close, is_st=is_st, trade_date=trade_date
-            )
+            if self.market is Market.CN and pre_close > 0:
+                limit_up, limit_down = compute_limits(
+                    symbol, pre_close, is_st=is_st, trade_date=trade_date
+                )
+            else:
+                # 无昨收（新股首日）或非 CN 市场：无涨跌幅限制
+                limit_up, limit_down = math.inf, 0.0
             bars[symbol] = DailyBar(
                 symbol=symbol,
                 trade_date=trade_date,
@@ -264,7 +322,7 @@ class LocalMarketData:
         dt_list = ", ".join(str(d) for d in dt_ints)
         sql = (
             "SELECT symbol, dt, open, high, low, close, volume, amount "
-            f"FROM {_KLINE_VIEW} WHERE dt IN ({dt_list})"
+            f"FROM {self._kline_view} WHERE dt IN ({dt_list})"
         )
         try:
             return self._hub.query(sql)
@@ -279,7 +337,7 @@ class LocalMarketData:
                 return self._session_dates
         try:
             df = self._hub.query(
-                f"SELECT DISTINCT dt FROM {_KLINE_VIEW} ORDER BY dt"
+                f"SELECT DISTINCT dt FROM {self._kline_view} ORDER BY dt"
             )
             sessions = [int(v) for v in df["dt"].tolist()]
         except Exception as exc:
@@ -359,15 +417,20 @@ def _from_dt_int(value: int) -> date:
     return date(value // 10000, (value // 100) % 100, value % 100)
 
 
-_default_instance: LocalMarketData | None = None
+_default_instances: dict[Market, LocalMarketData] = {}
 _default_lock = threading.Lock()
 
 
-def get_local_market_data() -> LocalMarketData:
-    """进程内共享实例（DuckDB 连接与按日缓存均可复用）。"""
-    global _default_instance
-    if _default_instance is None:
+def get_local_market_data(market: Market | str | None = None) -> LocalMarketData:
+    """进程内共享实例（DuckDB 连接与按日缓存均可复用），按市场隔离。"""
+    market_key = normalize_market(market)
+    if market_key is Market.CN and _default_instances.get(Market.CN) is None:
+        # 兼容历史：无参调用复用既有 CN 单例
         with _default_lock:
-            if _default_instance is None:
-                _default_instance = LocalMarketData()
-    return _default_instance
+            if _default_instances.get(Market.CN) is None:
+                _default_instances[Market.CN] = LocalMarketData(market=Market.CN)
+    if market_key not in _default_instances:
+        with _default_lock:
+            if market_key not in _default_instances:
+                _default_instances[market_key] = LocalMarketData(market=market_key)
+    return _default_instances[market_key]

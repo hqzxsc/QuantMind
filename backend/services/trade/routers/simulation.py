@@ -97,7 +97,7 @@ async def _get_latest_price(symbol: str) -> float:
     """
     market_url = settings.MARKET_DATA_SERVICE_URL.rstrip("/")
     price = 0.0
-    
+
     # Level 1: 实时行情
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
@@ -113,17 +113,17 @@ async def _get_latest_price(symbol: str) -> float:
         price = await _get_latest_close_from_sdl(symbol)
         if price > 0:
             logger.info(f"Fallback to SDL close for {symbol}: {price}")
-            
+
     return price
 
 
-async def _resolve_symbol_by_name(name: str) -> Optional[str]:
+async def _resolve_symbol_by_name(name: str) -> str | None:
     """
     通过股票名称反查标准 Prefix 代码
     """
     if not name:
         return None
-        
+
     try:
         db_manager = get_db_manager()
         # 清理名称中的特殊字符，如 *ST
@@ -133,7 +133,7 @@ async def _resolve_symbol_by_name(name: str) -> Optional[str]:
             WHERE stock_name LIKE :name
             ORDER BY trade_date DESC LIMIT 1
         """)
-        
+
         async with db_manager.get_master_session() as session:
             # 先试完全匹配
             result = await session.execute(query, {"name": f"%{clean_name}%"})
@@ -142,11 +142,11 @@ async def _resolve_symbol_by_name(name: str) -> Optional[str]:
                 return row[0]
     except Exception as e:
         logger.error(f"Failed to resolve symbol for name {name}: {e}")
-        
+
     return None
 
 
-async def _resolve_user_api_key(user_id: str) -> Optional[str]:
+async def _resolve_user_api_key(user_id: str) -> str | None:
     """从 user_profiles 读取用户级 API Key，兼容常见 user_id 形态。"""
     uid = str(user_id or "").strip()
     if not uid:
@@ -180,18 +180,19 @@ COOLDOWN_DAYS = 30
 
 class AccountResetRequest(BaseModel):
     initial_cash: float | None = None
+    market: str | None = None  # 模拟账户市场维度（CN/HK/US/FUTURES/CRYPTO），缺省 CN
 
 
 class HoldingItem(BaseModel):
     symbol: str
     quantity: float
-    name: Optional[str] = None
-    current_price: Optional[float] = None
+    name: str | None = None
+    current_price: float | None = None
 
 
 class SyncHoldingsRequest(BaseModel):
-    holdings: List[HoldingItem]
-    available_cash: Optional[float] = None
+    holdings: list[HoldingItem]
+    available_cash: float | None = None
 
 
 # SimulationSettingsRequest removed as it is deprecated.
@@ -232,7 +233,7 @@ async def get_simulation_settings(
         cooldown_days=COOLDOWN_DAYS,
     )
     return {
-        "success": True, 
+        "success": True,
         "data": {
             "initial_cash": data.get("initial_cash", DEFAULT_INITIAL_CASH),
             "can_modify": False, # Modification deprecated
@@ -290,13 +291,22 @@ async def reset_simulation_account(
     if request.initial_cash is not None:
         await manager.set_initial_cash(uid, initial_cash, tenant_id=auth.tenant_id)
 
-    account = await manager.init_account(uid, initial_cash, tenant_id=auth.tenant_id)
+    market = str(request.market or "CN").upper()
+    account = await manager.init_account(
+        uid, initial_cash, tenant_id=auth.tenant_id, market=market
+    )
     await _capture_simulation_snapshot(redis)
-    return {"success": True, "message": "Simulation account reset", "data": account}
+    return {
+        "success": True,
+        "message": "Simulation account reset",
+        "data": account,
+        "market": market,
+    }
 
 
 @router.get("/account")
 async def get_simulation_account(
+    market: str = Query("CN", description="模拟账户市场（CN/HK/US/FUTURES/CRYPTO）"),
     auth: AuthContext = Depends(get_auth_context),
     redis: RedisClient = Depends(get_redis),
 ):
@@ -306,7 +316,8 @@ async def get_simulation_account(
     """
     manager = SimulationAccountManager(redis)
     uid = _require_user_id(auth.user_id)
-    account = await manager.get_account(uid, tenant_id=auth.tenant_id)
+    market = market.upper()
+    account = await manager.get_account(uid, tenant_id=auth.tenant_id, market=market)
     if not account:
         # 不再自动初始化，返回空账户标记
         return {
@@ -317,7 +328,8 @@ async def get_simulation_account(
                 "market_value": 0.0,
                 "positions": {},
                 "account_not_initialized": True,
-            }
+            },
+            "market": market,
         }
 
     # 从 settings 中读取 initial_cash 作为 initial_equity
@@ -385,7 +397,7 @@ async def list_simulation_fund_snapshots(
     ]
 @router.post("/sync/ocr")
 async def ocr_sync_holdings(
-    images: List[UploadFile] = File(...),
+    images: list[UploadFile] = File(...),
     auth: AuthContext = Depends(get_auth_context),
     redis: RedisClient = Depends(get_redis),
 ):
@@ -395,25 +407,25 @@ async def ocr_sync_holdings(
     for img in images:
         content = await img.read()
         image_data.append(content)
-        
+
     ocr_result = await ocr_service.analyze_images(image_data)
     recognized_items = ocr_result if isinstance(ocr_result, list) else (ocr_result.get("holdings", []) if isinstance(ocr_result, dict) else [])
     available_cash = ocr_result.get("available_cash") if isinstance(ocr_result, dict) else None
-    
+
     # 4. 后处理：纠偏代码 & 统一价格口径（OCR 识别价优先，后端仅兜底）
     results = []
-    
+
     for item in recognized_items:
         original_symbol = item.get("symbol")
         name = item.get("name")
-        
+
         # 优先使用 OCR 识别出的代码（已在服务层通过 stocks_index.json 对齐）
         symbol = original_symbol if original_symbol else await _resolve_symbol_by_name(name)
-        
+
         if not symbol:
             logger.warning(f"Skipping holding {name}: Symbol could not be resolved.")
             continue
-            
+
         raw_price = item.get("current_price")
         try:
             current_price = float(raw_price or 0)
@@ -423,16 +435,16 @@ async def ocr_sync_holdings(
         # OCR 未识别到有效价格时，才用后端价格源兜底
         if current_price <= 0:
             current_price = await _get_latest_close_from_sdl(symbol)
-            
+
         results.append({
             **item,
             "symbol": symbol,
             "current_price": current_price,
             "market_value": round(current_price * item["quantity"], 2)
         })
-            
+
     return {
-        "success": True, 
+        "success": True,
         "data": results,
         "available_cash": available_cash
     }
@@ -454,7 +466,7 @@ async def confirm_holding_sync(
     # 1. 预先获取所有股票的最新价格并计算总市值
     sync_positions = []
     total_market_value = 0.0
-    
+
     for item in request.holdings:
         # 与预览一致：优先使用前端回传的 OCR 识别价，仅在缺失时兜底
         try:
@@ -463,13 +475,13 @@ async def confirm_holding_sync(
             price = 0.0
         if price <= 0:
             price = await _get_latest_close_from_sdl(item.symbol)
-        
+
         if price <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"无法获取股票 {item.symbol} 的实时价格或历史收盘价，同步中止。请检查代码是否正确。"
             )
-        
+
         total_market_value += price * item.quantity
         sync_positions.append({
             "symbol": item.symbol,
@@ -500,8 +512,8 @@ async def confirm_holding_sync(
             delta_volume=pos["quantity"],
             price=pos["price"]
         )
-            
+
     # 5. 捕获快照
     await _capture_simulation_snapshot(redis)
-    
+
     return {"success": True, "message": f"持仓同步成功，初始资产已对齐至 {calculated_initial_cash:,.2f}"}

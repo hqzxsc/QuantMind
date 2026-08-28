@@ -785,18 +785,20 @@ export const realTradingService = {
         userId: string,
         tenantId: string = getTenantId(),
         runtimeMode?: string | null,
+        market?: string,
     ): Promise<AccountInfo | null> => {
         const normalizedMode = String(runtimeMode || '').trim().toUpperCase();
         if (normalizedMode === 'SIMULATION') {
-            return await realTradingService.getSimulationAccount(userId, tenantId).catch(() => null);
+            return await realTradingService.getSimulationAccount(userId, tenantId, market).catch(() => null);
         }
         return await realTradingService.getAccount(userId, tenantId).catch(() => null);
     },
 
     // Get Simulation Account Info
-    getSimulationAccount: async (_userId: string, _tenantId: string = getTenantId()): Promise<AccountInfo | null> => {
+    getSimulationAccount: async (_userId: string, _tenantId: string = getTenantId(), market?: string): Promise<AccountInfo | null> => {
         const token = authService.getAccessToken();
         const response = await axios.get(`${SERVICE_ENDPOINTS.API_GATEWAY}/simulation/account`, {
+            params: market ? { market } : undefined,
             headers: token ? new AxiosHeaders({ Authorization: `Bearer ${token}` }) : undefined,
             timeout: 30000,
         });
@@ -824,12 +826,13 @@ export const realTradingService = {
     resetSimulationAccount: async (
         _userId: string,
         initialCash: number,
-        _tenantId: string = getTenantId()
+        _tenantId: string = getTenantId(),
+        market?: string
     ): Promise<AccountInfo | null> => {
         const token = authService.getAccessToken();
         const response = await axios.post(
             `${SERVICE_ENDPOINTS.API_GATEWAY}/simulation/reset`,
-            { initial_cash: initialCash },
+            { initial_cash: initialCash, market },
             {
                 headers: token ? new AxiosHeaders({ Authorization: `Bearer ${token}` }) : undefined,
                 timeout: 30000,

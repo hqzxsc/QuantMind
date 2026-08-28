@@ -33,6 +33,10 @@ from backend.services.trade.simulation.services.rebalance_calculator import (
     StrategyConfig,
     WeightMode,
 )
+from backend.services.trade.simulation.services.market_rules import (
+    infer_market_from_symbols,
+    rules_for,
+)
 from backend.services.trade.simulation.services.signal_loader import (
     SignalLoader,
     SignalScore,
@@ -145,28 +149,40 @@ class SimulationEngine:
                     report.error = "无可用信号"
                     return report
 
+                # 1.5 市场推断：同一策略的信号来自同一模型/市场，按信号代码
+                # 众数确定本轮行情源、交易规则与账户维度。
+                market = infer_market_from_symbols([s.symbol for s in signals])
+                logger.info(
+                    "SimulationEngine: market=%s (from %d signals)",
+                    market.value,
+                    len(signals),
+                )
+
                 # 2. 加载策略配置
                 strategy_config = await self._load_strategy_config(
                     db=db,
                     strategy_id=strategy_id,
                     user_id=uid,
                     params_override=params_override,
+                    market=market,
                 )
 
-                # 3. 批量获取行情
+                # 3. 批量获取行情（按市场选择行情源）
                 symbols = [s.symbol for s in signals]
-                quotes = await self._fetch_quotes(symbols)
+                quotes = await self._fetch_quotes(symbols, market=market)
 
-                # 4. 获取当前账户状态
+                # 4. 获取当前账户状态（按市场隔离）
                 account_data = await self.account_manager.get_account(
                     user_id=int(uid) if uid.isdigit() else 0,
                     tenant_id=tenant,
+                    market=market.value,
                 )
                 if not account_data:
                     logger.warning(
-                        "SimulationEngine: 账户不存在, tenant=%s user=%s",
+                        "SimulationEngine: 账户不存在, tenant=%s user=%s market=%s",
                         tenant,
                         uid,
+                        market.value,
                     )
                     report.error = "账户不存在"
                     return report
@@ -200,6 +216,7 @@ class SimulationEngine:
                         tenant_id=tenant,
                         user_id=uid,
                         strategy_id=strategy_id,
+                        market=market,
                     )
                     report.orders.append(self._order_to_dict(order, result))
                     if result.success:
@@ -211,12 +228,13 @@ class SimulationEngine:
                 await db.commit()
 
                 # 7. 同步快照
-                await self._sync_snapshot(tenant, uid)
+                await self._sync_snapshot(tenant, uid, market)
 
                 # 8. 更新账户快照
                 updated_account = await self.account_manager.get_account(
                     user_id=int(uid) if uid.isdigit() else 0,
                     tenant_id=tenant,
+                    market=market.value,
                 )
                 report.account_snapshot = updated_account or {}
 
@@ -247,10 +265,17 @@ class SimulationEngine:
         strategy_id: str,
         user_id: str,
         params_override: dict[str, Any] | None = None,
+        market: Any = None,
     ) -> StrategyConfig:
-        """加载策略配置，支持前端参数覆盖"""
+        """加载策略配置，支持前端参数覆盖。
+
+        lot_size 默认值按市场规则（CN 100 股整手，其余 1）；显式传入的
+        策略参数仍优先。
+        """
+        rules = rules_for(market)
+        default_lot = rules.lot_size
         # 默认配置
-        config = StrategyConfig()
+        config = StrategyConfig(lot_size=default_lot)
 
         try:
             # 尝试从策略存储服务加载
@@ -268,7 +293,7 @@ class SimulationEngine:
                     custom_weights=params.get("custom_weights", {}),
                     min_score=float(params.get("min_score", 0.0)),
                     max_position_pct=float(params.get("max_position_pct", 0.15)),
-                    lot_size=int(params.get("lot_size", 100)),
+                    lot_size=int(params.get("lot_size", default_lot)),
                 )
         except Exception as e:
             logger.warning("SimulationEngine: 加载策略配置失败 %s, 使用默认配置", e)
@@ -296,17 +321,21 @@ class SimulationEngine:
         return config
 
     async def _fetch_quotes(
-        self, symbols: list[str], as_of: date | None = None
+        self,
+        symbols: list[str],
+        as_of: date | None = None,
+        market: Any = None,
     ) -> dict[str, Quote]:
-        """从本地 quantdb 批量获取行情（一次 DuckDB 扫描替代逐 symbol HTTP）。
+        """从本地市场数据批量获取行情（一次 DuckDB 扫描替代逐 symbol HTTP）。
 
         as_of 指定基准交易日，仅时光回放会传；不传即按今天，活路径行为不变。
         """
         if not symbols:
             return {}
 
+        market_data = get_local_market_data(market)
         trade_date = as_of or datetime.now().date()
-        bars = self._market_data.load_date(trade_date, symbols=symbols)
+        bars = market_data.load_date(trade_date, symbols=symbols)
 
         quotes: dict[str, Quote] = {}
         for sym, bar in bars.items():
@@ -338,6 +367,7 @@ class SimulationEngine:
         tenant_id: str,
         user_id: str,
         strategy_id: str,
+        market: Any = None,
     ) -> ExecutionResult:
         """执行单个订单"""
         from backend.services.trade.simulation.models.order import (
@@ -360,8 +390,10 @@ class SimulationEngine:
         db.add(sim_order)
         await db.flush()
 
-        # 执行订单
-        result = await exec_engine.execute_order(sim_order)
+        # 执行订单（按市场规则决定佣金/T+1/账户维度）
+        result = await exec_engine.execute_order(
+            sim_order, market=getattr(market, "value", None)
+        )
         if result.success:
             await exec_engine.apply_filled(sim_order, result)
         else:
@@ -383,7 +415,7 @@ class SimulationEngine:
             "message": result.message if not result.success else None,
         }
 
-    async def _sync_snapshot(self, tenant_id: str, user_id: str) -> None:
+    async def _sync_snapshot(self, tenant_id: str, user_id: str, market: Any = None) -> None:
         """同步快照"""
         try:
             await SimulationFundSnapshotService.capture_all(self.redis)

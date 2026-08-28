@@ -214,7 +214,7 @@ class SimulationExecutionEngine:
             price_source="random_fallback",
         )
 
-    async def execute_order(self, order: SimOrder) -> ExecutionResult:
+    async def execute_order(self, order: SimOrder, market: str | None = None) -> ExecutionResult:
         snapshot = await self._latest_price(
             order.symbol,
             user_id=order.user_id,
@@ -223,6 +223,15 @@ class SimulationExecutionEngine:
         base_price = snapshot.price
         fetched_source = snapshot.price_source
         slippage = settings.SIMULATION_SLIPPAGE_BPS / 10000
+
+        # 市场规则：由标的代码推断（信号/订单来自同一市场），佣金、
+        # 印花税、T+1 语义均按市场区分。
+        from backend.services.trade.simulation.services.market_rules import (
+            infer_market,
+            rules_for,
+        )
+
+        rules = rules_for(market or infer_market(order.symbol))
 
         side = str(order.side.value).lower()
         if snapshot.suspended:
@@ -244,7 +253,13 @@ class SimulationExecutionEngine:
         else:
             return ExecutionResult(success=False, message=f"Unsupported order type: {order.order_type}")
 
-        commission = round(order.quantity * exec_price * settings.SIMULATION_COMMISSION_RATE, 2)
+        if rules.market.value == "CN":
+            # A 股保持既有全局费率口径（可由 env 覆盖），行为不变
+            commission = round(
+                order.quantity * exec_price * settings.SIMULATION_COMMISSION_RATE, 2
+            )
+        else:
+            commission = rules.compute_commission(order.quantity, exec_price, side)
         gross = order.quantity * exec_price
         if order.side.value == "buy":
             delta_cash = -(gross + commission)
@@ -260,6 +275,8 @@ class SimulationExecutionEngine:
             delta_volume=delta_volume,
             price=exec_price,
             tenant_id=order.tenant_id,
+            market=rules.market.value,
+            t_plus_1=rules.t_plus_1,
         )
         if not update.get("success"):
             reason = update.get("reason", "BALANCE_UPDATE_FAILED")

@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useAppSelector } from '../../../store';
+import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import { User, Activity, Server, Clock, Shield, Database, Settings2, RefreshCw, DownloadCloud, Camera, Upload, Trash2, CheckCircle2 } from 'lucide-react';
 import { message, Modal } from 'antd';
 import type { AccountInfo, RealTradingStatus } from '../../../services/realTradingService';
@@ -16,6 +18,7 @@ interface PersonalCenterProps {
 }
 
 const PersonalCenter: React.FC<PersonalCenterProps> = ({ tenantId, userId, status, tradingMode }) => {
+    const currentMarket = useAppSelector(selectCurrentMarket);
     const isRunning = status?.status === 'running';
     const activeStrategy = status?.strategy;
     
@@ -130,7 +133,7 @@ const PersonalCenter: React.FC<PersonalCenterProps> = ({ tenantId, userId, statu
         try {
             const runtimeMode = resolveTradingAccountMode(status?.mode, tradingMode);
             const { realTradingService } = await import('../../../services/realTradingService');
-            const accountResp = await realTradingService.getRuntimeAccount(userId, tenantId, runtimeMode).catch(() => null);
+            const accountResp = await realTradingService.getRuntimeAccount(userId, tenantId, runtimeMode, currentMarket).catch(() => null);
 
             if (!mounted) return;
 
@@ -186,7 +189,8 @@ const PersonalCenter: React.FC<PersonalCenterProps> = ({ tenantId, userId, statu
             const account = await realTradingService.resetSimulationAccount(
                 userId,
                 configuredInitialCash,
-                tenantId
+                tenantId,
+                currentMarket
             );
             setSelectedAccount(account);
             showSnapshotNotice('今日快照已更新');

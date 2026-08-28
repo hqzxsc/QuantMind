@@ -130,7 +130,7 @@ const RealTradingPage: React.FC = () => {
             const { realTradingService } = await import('../../services/realTradingService');
             const statusData = await realTradingService.getStatus(userId, tradingMode, tenantId);
             const runtimeMode = resolveTradingAccountMode(statusData?.mode, tradingMode);
-            const accountData = await realTradingService.getRuntimeAccount(userId, tenantId, runtimeMode).catch(() => null);
+            const accountData = await realTradingService.getRuntimeAccount(userId, tenantId, runtimeMode, currentMarket).catch(() => null);
 
             setStatus(statusData);
             setAccountInfo(accountData);

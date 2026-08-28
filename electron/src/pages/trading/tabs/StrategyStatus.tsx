@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useAppSelector } from '../../../store';
+import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import { Server, Box, Cpu, PieChart as PieChartIcon, CheckCircle2 } from 'lucide-react';
 import { realTradingService, RealTradingStatus, AccountInfo } from '../../../services/realTradingService';
 import { buildNormalizedHoldings, getPositionSummary } from '../utils/positionMetrics';
@@ -11,6 +13,7 @@ interface StrategyStatusProps {
 }
 
 const StrategyStatus: React.FC<StrategyStatusProps> = ({ tenantId, userId, isActive }) => {
+    const currentMarket = useAppSelector(selectCurrentMarket);
     const [status, setStatus] = useState<RealTradingStatus | null>(null);
     const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null);
     const [_loading, setLoading] = useState(false);
@@ -21,7 +24,7 @@ const StrategyStatus: React.FC<StrategyStatusProps> = ({ tenantId, userId, isAct
             const data = await realTradingService.getStatus(userId, tenantId);
             setStatus(data);
 
-            const account = await realTradingService.getRuntimeAccount(userId, tenantId, data?.mode).catch(() => null);
+            const account = await realTradingService.getRuntimeAccount(userId, tenantId, data?.mode, currentMarket).catch(() => null);
             setAccountInfo(account);
         } catch (e) {
             // ignore

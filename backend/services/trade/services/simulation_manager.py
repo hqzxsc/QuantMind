@@ -45,6 +45,10 @@ if not pos then
     pos = {volume=0, available_volume=0, cost=0, market_value=0, price=0}
 end
 
+-- ARGV[5]: 买入时新增的可卖量。CN(T+1) 传 0（锁定至次日），
+-- T+0 市场传 delta_volume（买入即可卖）。卖出路径不受影响。
+local avail_delta = tonumber(ARGV[5] or "0")
+
 local old_volume = tonumber(pos.volume or 0)
 -- 兼容 T+1 上线前写入的存量持仓: 它们没有 available_volume 字段，
 -- 视为全部可卖。缺少这个回退会让存量持仓永久无法卖出且不报错。
@@ -78,6 +82,8 @@ if delta_volume < 0 then
         })
     end
     new_available = old_available + delta_volume
+elseif delta_volume > 0 then
+    new_available = old_available + avail_delta
 end
 
 if delta_volume > 0 then
@@ -151,8 +157,20 @@ return cjson.encode({success=true, unlocked=unlocked})
     def _normalize_tenant(tenant_id: str | None) -> str:
         return (tenant_id or "").strip() or "default"
 
-    def _get_key(self, user_id: int, tenant_id: str) -> str:
-        return f"simulation:account:{tenant_id}:{user_id}"
+    @staticmethod
+    def _normalize_market(market: str | None) -> str:
+        """市场标识（账户 Redis 键维度）。CN 保持无后缀旧键，兼容存量账户。"""
+        market_upper = str(market or "CN").upper().strip()
+        if market_upper in {"", "CN", "A", "A_SHARE"}:
+            return "CN"
+        return market_upper
+
+    def _get_key(self, user_id: int, tenant_id: str, market: str = "CN") -> str:
+        market = self._normalize_market(market)
+        if market == "CN":
+            # 存量 A 股账户保持无后缀键，不迁移
+            return f"simulation:account:{tenant_id}:{user_id}"
+        return f"simulation:account:{tenant_id}:{user_id}:{market}"
 
     def _get_settings_key(self, user_id: int, tenant_id: str) -> str:
         return f"simulation:settings:{tenant_id}:{user_id}"
@@ -233,10 +251,11 @@ return cjson.encode({success=true, unlocked=unlocked})
         user_id: int,
         initial_cash: float = 1_000_000.0,
         tenant_id: str = "default",
+        market: str = "CN",
     ) -> dict[str, Any]:
         """Initialize or reset simulation account."""
         tenant_id = self._normalize_tenant(tenant_id)
-        key = self._get_key(user_id, tenant_id)
+        key = self._get_key(user_id, tenant_id, market)
 
         account_data = {
             "cash": initial_cash,
@@ -247,25 +266,29 @@ return cjson.encode({success=true, unlocked=unlocked})
             "maintenance_margin_ratio": 0.0,
             "warning_level": "normal",
             "positions": {},
+            "market": self._normalize_market(market),
         }
 
         write_json_cache(self.redis, key, account_data)
         logger.info(
-            "Initialized simulation account for tenant=%s user=%s with %.2f",
+            "Initialized simulation account for tenant=%s user=%s market=%s with %.2f",
             tenant_id,
             user_id,
+            market,
             initial_cash,
         )
 
         return account_data
 
-    async def get_account(self, user_id: int, tenant_id: str = "default") -> dict[str, Any] | None:
+    async def get_account(
+        self, user_id: int, tenant_id: str = "default", market: str = "CN"
+    ) -> dict[str, Any] | None:
         """Get simulation account state. Returns None if account not initialized."""
         if not self.redis.client:
             return None
 
         tenant_id = self._normalize_tenant(tenant_id)
-        key = self._get_key(user_id, tenant_id)
+        key = self._get_key(user_id, tenant_id, market)
         data = read_json_cache(self.redis, key)
 
         # 不再自动初始化，返回 None 表示账户未创建
@@ -282,17 +305,23 @@ return cjson.encode({success=true, unlocked=unlocked})
         trade_action: str | None = None,
         position_side: str = "long",
         is_margin_trade: bool = False,
+        market: str = "CN",
+        t_plus_1: bool = True,
     ) -> dict[str, Any]:
-        """Update account balance after trade execution."""
+        """Update account balance after trade execution.
+
+        t_plus_1: 买入是否锁定至次日（CN 规则）。T+0 市场传 False，
+        买入即刻计入可卖量。
+        """
         if not self.redis.client:
             return {"success": False, "reason": "REDIS_UNAVAILABLE"}
 
         tenant_id = self._normalize_tenant(tenant_id)
-        key = self._get_key(user_id, tenant_id)
+        key = self._get_key(user_id, tenant_id, market)
 
         # 如果账户不存在，先初始化（交易时需要账户存在）
         if not self.redis.client.get(key):
-            await self.init_account(user_id, tenant_id=tenant_id)
+            await self.init_account(user_id, tenant_id=tenant_id, market=market)
 
         if (
             is_margin_trade
@@ -306,7 +335,11 @@ return cjson.encode({success=true, unlocked=unlocked})
                 tenant_id=tenant_id,
                 trade_action=trade_action,
                 quantity=abs(delta_volume),
+                market=market,
             )
+
+        # T+0 市场买入即可卖；CN 买入锁定（avail_delta=0）
+        avail_delta = float(delta_volume) if (delta_volume > 0 and not t_plus_1) else 0.0
 
         try:
             result = self.redis.client.eval(
@@ -317,6 +350,7 @@ return cjson.encode({success=true, unlocked=unlocked})
                 str(delta_cash),
                 str(delta_volume),
                 str(price),
+                str(avail_delta),
             )
             payload = json.loads(result) if isinstance(result, str) else result
             if isinstance(payload, dict):
@@ -326,13 +360,19 @@ return cjson.encode({success=true, unlocked=unlocked})
             logger.error("Failed to update simulation account atomically: %s", e)
             return {"success": False, "reason": "ATOMIC_UPDATE_FAILED"}
 
-    async def unlock_t1(self, user_id: int, tenant_id: str = "default") -> dict[str, Any]:
-        """交易日开盘前解除 T+1 锁定：把所有持仓的可卖量补齐为总量。"""
+    async def unlock_t1(
+        self, user_id: int, tenant_id: str = "default", market: str = "CN"
+    ) -> dict[str, Any]:
+        """交易日开盘前解除 T+1 锁定：把所有持仓的可卖量补齐为总量。
+
+        仅对 T+1 市场（CN）有意义；对 T+0 市场账户调用无副作用
+        （可卖量恒等于总量）。
+        """
         if not self.redis.client:
             return {"success": False, "reason": "REDIS_UNAVAILABLE"}
 
         tenant_id = self._normalize_tenant(tenant_id)
-        key = self._get_key(user_id, tenant_id)
+        key = self._get_key(user_id, tenant_id, market)
 
         try:
             result = self.redis.client.eval(self._unlock_t1_lua, 1, key)
@@ -353,8 +393,9 @@ return cjson.encode({success=true, unlocked=unlocked})
         tenant_id: str,
         trade_action: str | None,
         quantity: float,
+        market: str = "CN",
     ) -> dict[str, Any]:
-        key = self._get_key(user_id, tenant_id)
+        key = self._get_key(user_id, tenant_id, market)
         account = await self.get_account(user_id, tenant_id=tenant_id) or {}
         positions = dict(account.get("positions") or {})
         cash = float(account.get("cash") or 0.0)

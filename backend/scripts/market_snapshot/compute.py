@@ -307,11 +307,15 @@ def get_indices_overview(con, data_dir: Path) -> list[dict]:
         return []
     df["dt"] = df["dt"].astype(str)
     result = []
+    # 参考日：以指数自身最新可用交易日为准，而非 daily_unadjusted。
+    # 若 index_daily 落后于最新交易日（如 8/28 分区未同步），避免把上一交易日
+    # 的收盘按最新日显示——每个指数输出其真实 trade_date，前端据此标注。
     for item in INDEX_OVERVIEW:
         sub = df[df["symbol"] == item["symbol"]].sort_values("dt")
         if sub.empty:
             continue
         closes = sub["close"].tolist()
+        ref = sub["dt"].iloc[-1]
         last_close = float(closes[-1])
         prev_close = float(closes[-2]) if len(closes) > 1 else last_close
         change = last_close - prev_close
@@ -325,6 +329,7 @@ def get_indices_overview(con, data_dir: Path) -> list[dict]:
             "pct_change": round(pct, 2),
             "turnover": round(turnover, 2),
             "trend": [round(float(c), 2) for c in closes[-5:]],
+            "trade_date": f"{ref[:4]}-{ref[4:6]}-{ref[6:]}",
         })
     return result
 

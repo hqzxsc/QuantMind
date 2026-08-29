@@ -392,8 +392,9 @@ class QlibDataBuilder:
     ) -> dict:
         """从 parquet 后复权 K 线生成 features/*.day.bin。
 
-        非 A 股市场标的数大（HK 数千），逐标的全库扫描太慢，
-        走 build_features_bulk 一次读入再分组。
+        CN 与非 CN 一律走批量构建（一次读入全市场再按标的分组写 bin），
+        比逐标的串行快 1~2 个量级。`incremental` 参数保留以兼容调用方，
+        批量构建是整库重写，天然与上游 FULL_REWRITE（分红复权）保持一致。
         """
         if symbols is None:
             symbols = self._get_all_symbols()
@@ -401,56 +402,35 @@ class QlibDataBuilder:
         if not symbols:
             return {"updated": 0, "skipped": 0}
 
-        # 非 A 股市场（无 daily_unadjusted 复权需求）用批量构建。
-        # 逐标的增量在 HK（3387 标的 × 上万分区）上每次 sync 需数小时
-        # （实测 35 分钟无进度），bulk 一次读入仅 ~15s，故一律走 bulk。
-        if self._market != "CN":
-            return self.build_features_bulk(symbols=symbols)
+        result = self.build_features_bulk(symbols=symbols)
 
-        cal_dates = self._load_calendar()
-        if not cal_dates:
-            logger.warning("请先构建日历 (build_calendar)")
-            return {"updated": 0, "skipped": 0}
+        # A 股指数不在 daily_* 行情分区中，bulk 读不到，单独补建（仅 3 只，开销极小）
+        if self._market == "CN":
+            cal_dates = self._load_calendar()
+            if cal_dates:
+                cal_index = {d: i for i, d in enumerate(cal_dates)}
+                for qlib_sym in (self._to_qlib_symbol(s) for s in CN_QLIB_INDEX_SYMBOLS):
+                    feat_dir = self._qlib_dir / "features" / self._feat_dir_name(qlib_sym)
+                    feat_dir.mkdir(parents=True, exist_ok=True)
+                    try:
+                        if self._build_index_features(qlib_sym, self._to_qdb_symbol(qlib_sym), feat_dir, cal_dates, cal_index):
+                            result["updated"] += 1
+                        else:
+                            result["skipped"] += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("构建指数 %s features 失败: %s", qlib_sym, exc)
+                        result["skipped"] += 1
 
-        cal_index = {d: i for i, d in enumerate(cal_dates)}
-
-        updated = 0
-        skipped = 0
-
-        for i in range(0, len(symbols), batch_size):
-            batch = symbols[i : i + batch_size]
-            for sym in batch:
-                try:
-                    qdb_sym = self._to_qdb_symbol(sym)
-                    if not qdb_sym:
-                        skipped += 1
-                        continue
-
-                    result = self._build_symbol_features(
-                        sym, qdb_sym, cal_dates, cal_index, incremental=incremental
-                    )
-                    if result:
-                        updated += 1
-                    else:
-                        skipped += 1
-                except Exception as exc:
-                    logger.warning("构建 %s features 失败: %s", sym, exc)
-                    skipped += 1
-
-            if i + batch_size < len(symbols):
-                logger.info(
-                    "Features[%s] 进度: %d/%d (updated=%d, skipped=%d)",
-                    self._market, min(i + batch_size, len(symbols)), len(symbols), updated, skipped,
-                )
-
-        return {"updated": updated, "skipped": skipped}
+        return result
 
     def build_features_bulk(self, symbols: list[str] | None = None) -> dict:
-        """一次扫描全市场 parquet，按标的分组写 bin（非 A 股专用）。
+        """一次扫描全市场 parquet，按标的分组写 bin。
 
-        非 A 股市场（US/HK/CRYPTO/FUTURES）只有 daily_forward 分区，无
-        daily_unadjusted，factor 恒为 1.0。整体读入再 groupby，避免逐标的
-        全库扫描导致 OOM / 数小时耗时。
+        - CN: 读 daily_backward（后复权 hfq）为 OHLCV，join daily_unadjusted 求
+          factor = hfq_close / unadjusted_close（与原有全量/增量口径完全一致）。
+        - 非 CN（US/HK/CRYPTO/FUTURES）: 只有 daily_forward，factor 恒为 1.0。
+
+        整体读入再 groupby，避免逐标的全库扫描导致 OOM / 数小时耗时。
 
         symbols: 可选子集（qlib 格式）；None 则覆盖 parquet 中全部标的。
         """
@@ -462,18 +442,39 @@ class QlibDataBuilder:
             return {"updated": 0, "skipped": 0}
         cal_index = {d: i for i, d in enumerate(cal_dates)}
 
-        fwd = str(self._hub.data_dir / "1_kline_data/daily_forward/dt=*/data.parquet")
+        is_cn = self._market == "CN"
+        kline_sub = "daily_backward" if is_cn else "daily_forward"
+        kline_glob = str(self._hub.data_dir / f"1_kline_data/{kline_sub}/dt=*/data.parquet")
 
         con = duckdb.connect(config={"memory_limit": "8GB", "threads": "4"})
         try:
-            df = con.execute(
-                f"""
-                SELECT symbol, CAST(time AS DATE) d,
-                       open, high, low, close, volume, amount
-                FROM read_parquet('{fwd}', hive_partitioning=1)
-                ORDER BY symbol, d
-                """
-            ).fetchdf()
+            if is_cn:
+                # 后复权 + 不复权 → factor = hfq_close/unadjusted_close（保留原口径）
+                unadj_glob = str(self._hub.data_dir / "1_kline_data/daily_unadjusted/dt=*/data.parquet")
+                df = con.execute(
+                    f"""
+                    SELECT k.symbol,
+                           CAST(k.time AS DATE) AS d,
+                           k.open, k.high, k.low, k.close, k.volume, k.amount,
+                           k.close / NULLIF(u.close, 0.0) AS factor
+                    FROM read_parquet('{kline_glob}', hive_partitioning=1) k
+                    LEFT JOIN read_parquet('{unadj_glob}', hive_partitioning=1) u
+                      ON u.symbol = k.symbol AND CAST(u.time AS DATE) = CAST(k.time AS DATE)
+                    WHERE k.close > 0 AND u.close > 0
+                    ORDER BY k.symbol, d
+                    """
+                ).fetchdf()
+            else:
+                df = con.execute(
+                    f"""
+                    SELECT symbol, CAST(time AS DATE) d,
+                           open, high, low, close, volume, amount
+                    FROM read_parquet('{kline_glob}', hive_partitioning=1)
+                    ORDER BY symbol, d
+                    """
+                ).fetchdf()
+                if not df.empty:
+                    df["factor"] = np.ones(len(df), dtype=np.float64)
         finally:
             con.close()
 
@@ -487,7 +488,7 @@ class QlibDataBuilder:
         if symbols is not None:
             # all.txt 中的 symbol 已小写（_feat_dir_name 规则），而 parquet 原生
             # symbol 保留大小写，非 CN 市场过滤需两侧都小写比较
-            if self._market != "CN":
+            if not is_cn:
                 qlib_wanted = {s.lower() for s in symbols}
                 df = df[df["symbol"].map(self._to_qlib_symbol).str.lower().isin(qlib_wanted)]
             else:
@@ -512,8 +513,12 @@ class QlibDataBuilder:
                     aligned = np.full(span, np.nan, dtype=np.float32)
                     aligned[offsets] = group[field].values.astype(np.float32)
                     self._write_bin_file(feat_dir / f"{field}.day.bin", start_idx, aligned)
-                factor = np.ones(span, dtype=np.float32)
-                self._write_bin_file(feat_dir / "factor.day.bin", start_idx, factor)
+                if is_cn:
+                    f_aligned = np.full(span, 1.0, dtype=np.float32)
+                    f_aligned[offsets] = group["factor"].values.astype(np.float32)
+                else:
+                    f_aligned = np.ones(span, dtype=np.float32)
+                self._write_bin_file(feat_dir / "factor.day.bin", start_idx, f_aligned)
                 updated += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning("构建 %s features 失败: %s", qlib_sym, exc)

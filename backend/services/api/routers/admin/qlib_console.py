@@ -127,38 +127,11 @@ def _build_from_parquet_job(job_id: str, incremental: bool) -> None:
 
 
 def _sync_from_sdk_job(job_id: str) -> None:
-    """先通过 QuantDB SDK 同步 K 线 parquet，再对实际使用的 Qlib 缓存做增量更新。"""
-    quantdb_sync_jobs.upsert_job(
-        job_id,
-        stage="sdk_sync",
-        current="通过 SDK 同步 K 线 parquet",
-        progress=5,
-    )
+    """从本地 parquet 增量重建 Qlib（本地 quantdb 已有独立同步流程，不再走 SDK 下载）。"""
+    quantdb_sync_jobs.upsert_job(job_id, stage="qlib_build", current="开始从本地 parquet 重建 Qlib", progress=5)
     try:
-        from backend.scripts.quantdb_daily_sync import run_daily_sync
         from backend.services.engine.qlib_data_builder import QlibDataBuilder
 
-        def _cb(event: str, **kw: Any) -> None:
-            ds = kw.get("dataset") or ""
-            done = kw.get("done")
-            total = kw.get("total")
-            if event == "dataset_start":
-                quantdb_sync_jobs.upsert_job(job_id, current=f"{ds} 开始同步")
-            elif event == "file":
-                quantdb_sync_jobs.upsert_job(
-                    job_id, current=f"{ds} 下载 {done}/{total}", progress=max(5, min(70, int((done or 0) / max(1, total or 1) * 70)))
-                )
-            elif event == "dataset_done":
-                quantdb_sync_jobs.upsert_job(job_id, current=f"{ds} 完成 (同步 {kw.get('synced', 0)})")
-
-        result = run_daily_sync(
-            datasets=QLIB_FEED_DATASETS,
-            skip_pg=True,
-            skip_snapshot=True,
-            skip_qlib=True,  # Qlib 单独在此增量更新实际缓存，避免 rebuild 到错误路径
-            progress_cb=_cb,
-        )
-        # 增量更新系统实际读取的 Qlib 缓存（仅补缺失交易日，不重建新路径）
         qlib_dir = _resolve_cn_qlib_dir()
         builder = QlibDataBuilder.for_market("CN", qlib_dir=qlib_dir)
         build_result = builder.build_all(incremental=True)
@@ -171,15 +144,13 @@ def _sync_from_sdk_job(job_id: str) -> None:
             status="completed",
             result={
                 "qlib_dir": str(qlib_dir),
-                "parquet": result.get("parquet"),
                 "build": build_result,
                 "status": qlib_status,
-                "finished": result.get("finished"),
             },
             finished_at=_now_iso(),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error("qlib job %s sdk update failed: %s", job_id, exc, exc_info=True)
+        logger.error("qlib job %s update failed: %s", job_id, exc, exc_info=True)
         quantdb_sync_jobs.upsert_job(
             job_id, stage="error", status="failed", error=str(exc), finished_at=_now_iso()
         )

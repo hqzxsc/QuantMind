@@ -61,11 +61,65 @@ def fetch() -> dict:
         "flow_5d": qf.get_money_flow_period("5d", "sector", "shenwan", 31),
         "flow_10d": qf.get_money_flow_period("10d", "sector", "shenwan", 31),
         "tag_stats": qf.get_tag_stats(limit=30),
+        "sector_multiday": fetch_sector_multiday(),
     }
     data["trade_date"] = data["breadth"].get("trade_date") or str(
         pd.Timestamp.now().date()
     )
     return data
+
+
+def fetch_sector_multiday() -> dict:
+    """行业多日涨跌幅对比：1/3/5 日累计涨幅（成分股中位数口径）。
+
+    读 daily_unadjusted 最近 6 个交易日，按申万行业分组聚合。
+    返回 {"latest": str, "items": [{name, pct_1d, pct_3d, pct_5d}, ...]}
+    """
+    latest = qf._latest_trade_date()
+    dates = qf._trading_days(latest, 6)  # 降序，[0]=最新
+    if len(dates) < 2:
+        return {"latest": latest, "items": []}
+    dt_in = ",".join(dates)
+    df = qf._q(
+        f"SELECT symbol, dt, close FROM qdb_daily_unadjusted WHERE dt IN ({dt_in})"
+    )
+    if df.empty:
+        return {"latest": latest, "items": []}
+    df["dt"] = df["dt"].astype(str)
+    piv = df.pivot_table(index="symbol", columns="dt", values="close")
+    cols = [c for c in dates if c in piv.columns]  # 保持日期顺序
+    if len(cols) < 2:
+        return {"latest": latest, "items": []}
+
+    close_t0 = piv[cols[0]]
+
+    def _pct(offset: int) -> pd.Series:
+        idx = len(cols) - 1 - offset
+        if idx < 0:
+            return pd.Series(dtype=float)
+        prev = piv[cols[idx]]
+        return (close_t0 / prev - 1) * 100
+
+    p1 = _pct(0)
+    p3 = _pct(2) if len(cols) >= 3 else pd.Series(dtype=float)
+    p5 = _pct(4) if len(cols) >= 5 else pd.Series(dtype=float)
+    per = pd.DataFrame({"pct_1d": p1, "pct_3d": p3, "pct_5d": p5})
+
+    groups = qf._sector_groups("shenwan")
+    items = []
+    for name, syms in groups.items():
+        sub = per.loc[per.index.intersection(syms)]
+        if sub.empty:
+            continue
+        row = {
+            "name": name,
+            "pct_1d": round(float(sub["pct_1d"].median()), 2),
+            "pct_3d": round(float(sub["pct_3d"].median()), 2),
+            "pct_5d": round(float(sub["pct_5d"].median()), 2),
+        }
+        items.append(row)
+    items.sort(key=lambda x: x["pct_5d"], reverse=True)
+    return {"latest": latest, "items": items}
 
 
 # ---------------- 报告生成 ----------------
@@ -157,6 +211,22 @@ def _section_tags(d: dict) -> str:
     return "\n".join(lines)
 
 
+def _section_multiday(md: dict) -> str:
+    items = md.get("items", [])
+    if not items:
+        return "_（数据不足：需至少 3 个交易日）_"
+    head = ["行业", "1日%", "3日%", "5日%"]
+    pos = items[:10]
+    neg = sorted(items, key=lambda x: x["pct_5d"])[:10]
+    return "\n".join([
+        "**5 日累计涨幅 Top10**（成分股中位数）",
+        _fmt_table(head, [[it["name"], _pct(it["pct_1d"]), _pct(it["pct_3d"]), _pct(it["pct_5d"])] for it in pos]),
+        "",
+        "**5 日累计跌幅 Top10**",
+        _fmt_table(head, [[it["name"], _pct(it["pct_1d"]), _pct(it["pct_3d"]), _pct(it["pct_5d"])] for it in neg]),
+    ])
+
+
 def build_report_md(d: dict) -> str:
     date_s = d["trade_date"]
     sw = sorted(d["heatmap_shenwan"], key=lambda x: x["pct_change"], reverse=True)
@@ -182,39 +252,43 @@ def build_report_md(d: dict) -> str:
 
 {_section_heatmap(d["heatmap_shenwan"], "行业板块")}
 
-## 四、热门概念
+## 四、行业多日涨跌幅对比（截至 {d['sector_multiday'].get('latest', '')}）
+
+{_section_multiday(d["sector_multiday"])}
+
+## 五、热门概念
 
 {_section_heatmap(d["heatmap_concept"], "概念板块")}
 
-## 五、板块资金流
+## 六、板块资金流
 
-### 5.1 当日净流入 Top10
+### 6.1 当日净流入 Top10
 
 {_section_money_flow(d["flow_1d"][:10], "1日")}
 
-### 5.2 近 10 日净流入 Top10
+### 6.2 近 10 日净流入 Top10
 
 {_section_money_flow(out_10, "10日")}
 
-### 5.3 近 10 日净流出 Top10
+### 6.3 近 10 日净流出 Top10
 
 {_section_money_flow(out_10_neg, "10日")}
 
-## 六、个股主力资金（当日）
+## 七、个股主力资金（当日）
 
-### 6.1 主力净流入 Top20
+### 7.1 主力净流入 Top20
 
 {_section_stock_flow(d["stock_flow"])}
 
-### 6.2 主力净流出 Top10
+### 7.2 主力净流出 Top10
 
 {_section_stock_flow(sf_neg)}
 
-## 七、标签体系
+## 八、标签体系
 
 {_section_tags(d)}
 
-## 八、市场解读与次日关注（AI 撰写）
+## 九、市场解读与次日关注（AI 撰写）
 
 <!-- AI: 基于 facts 撰写以下内容 -->
 ### 8.1 市场总览
@@ -229,7 +303,7 @@ def build_report_md(d: dict) -> str:
 ### 8.4 次日关注
 <!-- AI: 2-3 条可跟踪的具体信号（板块/资金/情绪） -->
 
-## 九、数据说明与免责声明
+## 十、数据说明与免责声明
 
 - 涨跌家数与涨跌停：以 `technical_indicators.pct_change`（%）为口径，涨停≈≥9.8%、跌停≈≤-9.8%
 - 成交额：指数 `index_daily.amount`（万元）；两市总额为全市场日线 amount 聚合，已转亿元

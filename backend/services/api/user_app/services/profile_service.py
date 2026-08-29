@@ -118,8 +118,14 @@ class ProfileService:
                 ProfileService._profile_table_checked = True
 
             if not ProfileService._profile_columns_checked:
-                # 幂等补列：兼容历史库没有 api_key 字段的场景
+                # 幂等补列：兼容历史库没有 api_key/llm 字段的场景
                 await session.execute(text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS api_key TEXT"))
+                await session.execute(
+                    text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS llm_base_url VARCHAR(512)")
+                )
+                await session.execute(
+                    text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS llm_model VARCHAR(128)")
+                )
                 ProfileService._profile_columns_checked = True
         except Exception:
             logger.exception("Failed to ensure user_profiles table")
@@ -170,6 +176,8 @@ class ProfileService:
                 "preferences": profile.preferences,
                 "notification_settings": profile.notification_settings,
                 "api_key": profile.api_key,
+                "llm_base_url": profile.llm_base_url,
+                "llm_model": profile.llm_model,
                 "created_at": profile.created_at,
                 "updated_at": profile.updated_at,
                 "username_at_runtime": username,  # 附加用户名
@@ -228,6 +236,8 @@ class ProfileService:
                 "preferences": profile.preferences,
                 "notification_settings": profile.notification_settings,
                 "api_key": profile.api_key,
+                "llm_base_url": profile.llm_base_url,
+                "llm_model": profile.llm_model,
                 "created_at": profile.created_at,
                 "updated_at": profile.updated_at,
                 "username_at_runtime": None,
@@ -292,6 +302,8 @@ class ProfileService:
                 "preferences": profile.preferences,
                 "notification_settings": profile.notification_settings,
                 "api_key": profile.api_key,
+                "llm_base_url": profile.llm_base_url,
+                "llm_model": profile.llm_model,
                 "created_at": profile.created_at,
                 "updated_at": profile.updated_at,
                 "username_at_runtime": None,

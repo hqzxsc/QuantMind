@@ -1,6 +1,5 @@
 import logging
 import os
-from typing import Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -13,7 +12,9 @@ router = APIRouter()
 
 
 class LLMConfig(BaseModel):
-    qwen_api_key: str
+    qwen_api_key: str = ""
+    model: str | None = None
+    base_url: str | None = None
 
 
 def _get_user_info(request: Request):
@@ -31,6 +32,19 @@ def _get_api_gateway_url():
         return url
     # OSS 单容器模式，所有服务在同一容器内
     return "http://127.0.0.1:8000"
+
+
+def _build_profile_payload(config: LLMConfig) -> dict:
+    """组装 Profile 更新 payload；Key 为空时不覆盖已有 Key。"""
+    payload: dict = {}
+    new_key = config.qwen_api_key.strip()
+    if new_key:
+        payload["api_key"] = new_key
+    if config.model is not None and config.model.strip():
+        payload["llm_model"] = config.model.strip()
+    if config.base_url is not None and config.base_url.strip():
+        payload["llm_base_url"] = config.base_url.strip()
+    return payload
 
 
 @router.get("/llm")
@@ -61,25 +75,27 @@ async def get_llm_config(request: Request):
                     "success": True,
                     "has_key": has_key,
                     "masked_key": masked,
+                    "model": data.get("llm_model") or "",
+                    "base_url": data.get("llm_base_url") or "",
                 }
             else:
                 logger.warning(f"Failed to fetch profile: {resp.status_code} {resp.text}")
     except Exception as e:
         logger.error(f"Failed to fetch profile for user {user_id}: {e}")
 
-    return {"success": True, "has_key": False, "masked_key": ""}
+    return {"success": True, "has_key": False, "masked_key": "", "model": "", "base_url": ""}
 
 
 @router.post("/llm")
 async def save_llm_config(request: Request, config: LLMConfig):
-    """保存 LLM API Key，同步到用户 Profile"""
+    """保存 LLM 配置（API Key / 模型 / 接口地址），同步到用户 Profile"""
     user = _get_user_info(request)
     user_id = user["user_id"]
     tenant_id = user.get("tenant_id", "default")
 
-    new_key = config.qwen_api_key.strip()
-    if not new_key:
-        raise HTTPException(status_code=400, detail="API Key 不能为空")
+    payload = _build_profile_payload(config)
+    if not payload:
+        raise HTTPException(status_code=400, detail="请至少填写 API Key、模型或接口地址")
 
     api_gateway = _get_api_gateway_url()
 
@@ -94,7 +110,7 @@ async def save_llm_config(request: Request, config: LLMConfig):
             resp = await client.put(
                 f"{api_gateway}/api/v1/profiles/{user_id}",
                 headers=headers,
-                json={"api_key": new_key},
+                json=payload,
             )
             if resp.status_code != 200:
                 logger.error(f"Failed to update profile for user {user_id}: {resp.text}")

@@ -97,6 +97,10 @@ class UserProfileUpdate(BaseModel):
     api_key: str | None = Field(
         None, max_length=2048, description="API Key（全系统通用）"
     )
+    llm_base_url: str | None = Field(
+        None, max_length=512, description="LLM API 接口地址（OpenAI 兼容 base_url）"
+    )
+    llm_model: str | None = Field(None, max_length=128, description="LLM 模型名称")
 
 
 # ============ 响应模型 ============
@@ -138,6 +142,8 @@ class UserProfileResponse(BaseModel):
     risk_tolerance: str | None = None
     investment_goal: str | None
     api_key: str | None = Field(None, description="API Key（全系统通用）")
+    llm_base_url: str | None = Field(None, description="LLM API 接口地址")
+    llm_model: str | None = Field(None, description="LLM 模型名称")
     created_at: datetime
     updated_at: datetime | None
 

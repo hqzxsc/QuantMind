@@ -410,7 +410,7 @@ async def chat_completions(request: Request, item: ChatRequest):
         or os.getenv("OPENAI_API_KEY", "")
     )
 
-    # 2. 尝试从数据库获取用户私有 API Key (个人 Key 优先级最高)
+    # 2. 尝试从数据库获取用户私有配置 (个人 Key/模型/接口地址 优先级最高)
     user_context = getattr(request.state, "user", None)
     if user_context:
         user_id = user_context.get("user_id")
@@ -418,15 +418,23 @@ async def chat_completions(request: Request, item: ChatRequest):
             from sqlalchemy import text
             async with get_session(read_only=True) as session:
                 result = await session.execute(
-                    text("SELECT api_key FROM user_profiles WHERE user_id = :user_id"),
+                    text(
+                        "SELECT api_key, llm_base_url, llm_model "
+                        "FROM user_profiles WHERE user_id = :user_id"
+                    ),
                     {"user_id": user_id}
                 )
                 row = result.fetchone()
-                if row and row[0]:
-                    api_key = row[0]
+                if row:
+                    if row[0]:
+                        api_key = row[0]
+                    if row[1]:
+                        base_url = row[1]
+                    if row[2]:
+                        model = row[2]
         except Exception as e:
             logger.warning(
-                f"Could not fetch individual API key for user {user_id}: {e}"
+                f"Could not fetch individual LLM config for user {user_id}: {e}"
             )
 
     # 获取项目根目录，以便读取文档

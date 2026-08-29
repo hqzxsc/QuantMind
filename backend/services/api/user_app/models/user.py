@@ -111,6 +111,8 @@ class UserProfile(Base):
     preferences = Column(JSON, default={}, comment="用户偏好设置(JSON)")
     notification_settings = Column(JSON, default={}, comment="通知设置(JSON)")
     api_key = Column(Text, comment="API Key（用户级，全系统通用）")
+    llm_base_url = Column(String(512), comment="LLM API 接口地址（OpenAI 兼容 base_url）")
+    llm_model = Column(String(128), comment="LLM 模型名称")
 
     # 审计字段
     created_at = Column(

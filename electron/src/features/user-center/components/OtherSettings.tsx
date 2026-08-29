@@ -47,6 +47,9 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
       // 恢复模型配置
       const savedModel = result.model || '';
       const savedBaseUrl = result.base_url || '';
+      if (savedBaseUrl) {
+        setBaseUrl(savedBaseUrl);
+      }
       if (savedModel) {
         const preset = MODEL_PRESETS.find(p => p.value === savedModel);
         if (preset && preset.value !== '__custom__') {
@@ -81,7 +84,7 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
 
   const handleSaveApiKey = async () => {
     const trimmedKey = apiKey.trim();
-    if (!trimmedKey) {
+    if (!trimmedKey && !hasKey) {
       message.warning('请输入 API Key');
       return;
     }
@@ -95,7 +98,7 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
     setIsSaving(true);
     try {
       await userCenterService.saveLLMConfig(trimmedKey, model, baseUrl.trim());
-      message.success('配置保存成功');
+      message.success(trimmedKey ? '配置保存成功' : '模型与接口地址已更新');
       setApiKey('');
       await loadApiKeyStatus();
     } catch (error: any) {
@@ -221,7 +224,7 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
               icon={<Save className="w-4 h-4" />}
               onClick={handleSaveApiKey}
               loading={isSaving}
-              disabled={!apiKey.trim()}
+              disabled={!apiKey.trim() && !hasKey}
               className="!h-8 !rounded-[8px]"
             >
               保存

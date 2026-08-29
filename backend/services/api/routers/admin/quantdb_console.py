@@ -875,11 +875,16 @@ async def local_scan_preflight(
 ):
     """本地扫描预检：数据目录、各数据集文件统计与状态库现状（不做哈希）。"""
     from backend.scripts.quantdb_daily_sync import _state_path
-    from backend.scripts.quantdb_local_scan import iter_dataset_files
+    from backend.scripts.quantdb_local_scan import _default_root, iter_dataset_files
 
     try:
+        # 默认 root 与扫描/同步同源（QM_QUANTDB_DATA_DIR 环境变量语义）。
+        # 不用 hub 的 _data_dir()：数据目录不存在时 hub 会兜底到项目目录，
+        # 与 sync 实际读写的目录分叉，扫描的登记会落错状态库。
         root_path = (
-            Path(os.path.abspath(os.path.expanduser(root))) if root else _data_dir()
+            Path(os.path.abspath(os.path.expanduser(root)))
+            if root
+            else Path(os.path.abspath(_default_root()))
         )
         exists = root_path.is_dir()
         items = []
@@ -899,10 +904,9 @@ async def local_scan_preflight(
         qm_db = _state_path(root_path)
         sdk_db = root_path / "quantdb_sync.sqlite"
         warnings: list[str] = []
-        try:
-            same_root = os.path.normcase(str(root_path)) == os.path.normcase(str(_data_dir()))
-        except Exception:  # noqa: BLE001
-            same_root = True
+        same_root = os.path.normcase(str(root_path)) == os.path.normcase(
+            str(Path(os.path.abspath(_default_root())))
+        )
         if not same_root:
             warnings.append(
                 "扫描目录与当前数据目录不一致：请把数据移动/链接到数据目录，"

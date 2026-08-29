@@ -24,6 +24,8 @@ interface CapitalFlowHorizontalBarChartProps {
   categoryMode?: 'shenwan' | 'concept';
   height?: number | string;
   onItemClick?: (item: FlowItem) => void;
+  /** 排序口径：absolute=按净流入(亿)，relative=按涨跌幅(%) */
+  sortMode?: 'absolute' | 'relative';
 }
 
 export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarChartProps> = ({
@@ -32,6 +34,7 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
   categoryMode = 'shenwan',
   height = 540,
   onItemClick,
+  sortMode = 'absolute',
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
@@ -76,11 +79,17 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
     }
     const chart = instanceRef.current;
 
-    // 按资金净流入升序排列，使得流入最大的显示在横轴最上方
-    const sortedData = [...data].sort((a, b) => a.net_inflow - b.net_inflow);
+    // 按 sortMode 升序排列：absolute=净流入(亿)；relative=涨跌幅(%)。流入最大/涨幅最弱显示在横轴最上方
+    const sortedData = [...data].sort((a, b) =>
+      sortMode === 'relative' ? a.pct_change - b.pct_change : a.net_inflow - b.net_inflow,
+    );
 
     const categories = sortedData.map((d) => d.name);
-    const valuesInYi = sortedData.map((d) => Number((d.net_inflow / 100000000).toFixed(2)));
+    const valuesInYi = sortedData.map((d) =>
+      sortMode === 'relative'
+        ? Number(d.pct_change.toFixed(2))
+        : Number((d.net_inflow / 100000000).toFixed(2)),
+    );
 
     // 🎯 关键技术实现: 计算最大绝对值，设置 symmetrically 0-centered min/max 确保中线绝对居中
     const maxAbs = Math.max(...valuesInYi.map((v) => Math.abs(v)), 1) * 1.25;
@@ -148,7 +157,7 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
       },
       xAxis: {
         type: 'value',
-        name: '资金净流向 (亿元)',
+        name: sortMode === 'relative' ? '涨跌幅 (%)' : '资金净流向 (亿元)',
         nameTextStyle: { color: '#64748b', fontSize: 11, fontWeight: 'bold' },
         min: -maxAbs, // 🎯 强制左右对称，0 点锁定绝对居中
         max: maxAbs,  // 🎯 强制左右对称
@@ -161,7 +170,9 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
           fontFamily: 'monospace',
           formatter: (val: number) => {
             if (val === 0) return '0 轴 (居中)';
-            return `${val > 0 ? '+' : ''}${val}亿`;
+            return sortMode === 'relative'
+              ? `${val > 0 ? '+' : ''}${val}%`
+              : `${val > 0 ? '+' : ''}${val}亿`;
           },
         },
       },
@@ -256,7 +267,7 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
     return () => {
       window.removeEventListener('resize', handleResize);
     };
-  }, [data, period]);
+  }, [data, period, sortMode]);
 
   return (
     <div className="relative w-full flex flex-col items-center justify-center">

@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import re
 import time
 from datetime import date, datetime
 from typing import Any
@@ -18,7 +19,7 @@ from backend.shared.database_manager_v2 import get_session
 
 logger = logging.getLogger(__name__)
 
-from . import quantdb_feed
+from . import quantdb_feed, quantdb_snapshot as _snap
 from .domain import SectorConflictError, SectorNotFoundError
 from .repository import MarketAnalysisRepository
 from .schemas import (
@@ -191,20 +192,39 @@ async def get_metrics_history(
 
 @router.get("/breadth", response_model=MarketBreadthResponse)
 async def get_market_breadth(
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> MarketBreadthResponse:
-    """获取大盘情绪温度计与赚钱效应指标（真实 QuantDB 聚合）"""
-    data = quantdb_feed.get_market_breadth()
+    """获取大盘情绪温度计与赚钱效应指标（优先快照，缺失回退实时聚合；显式历史日期无快照则空）。"""
+    _ = current_user
+    data = _snap.breadth(date)
+    if not data:
+        if not date:
+            data = quantdb_feed.get_market_breadth()
+        else:
+            data = {"trade_date": date, "advance_count": 0, "decline_count": 0, "flat_count": 0,
+                    "limit_up_count": 0, "limit_down_count": 0, "total_turnover_yi": 0.0,
+                    "exploded_ratio": 0.0, "profit_effect_score": 0.0, "profit_effect": 0.0,
+                    "limit_up_broken_ratio": 0.0}
     return MarketBreadthResponse(**data)
 
 
 @router.get("/heatmap")
 async def get_heatmap(
-    trade_date: date | None = Query(default=None),
+    trade_date: date | None = Query(default=None, description="PPT 交易日（回退用）"),
     category: str = Query(default="shenwan", description="分类: shenwan 或 concept"),
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ):
-    """获取申万一级行业或热门概念热力矩形图（支持 QuantDB 真实聚合）"""
+    """获取申万一级行业或热门概念热力矩形图（优先快照/SQLite）。"""
+    _ = current_user
+    snap = _snap.heatmap(category=category, date=date)
+    if snap and snap["items"]:
+        return snap
+    if date:
+        # 显式历史日期无快照 → 返回空，不回落实时/今日，避免日期错配
+        return {"trade_date": date, "category": category, "items": []}
+
     real_items = quantdb_feed.get_sector_heatmap(category=category)
     if real_items:
         return {
@@ -249,11 +269,40 @@ async def list_anomalies(
 
 # ---- Indices & Money Flow Extensions (QuantDB 真实驱动) ----
 
+@router.get("/status")
+async def get_snapshot_status(
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """快照状态（存在性 / 交易日 / 生成时间 / 各块数量）。"""
+    _ = current_user
+    st = _snap.status(date)
+    if st:
+        return st
+    return {"has_snapshot": False, "message": "暂无快照，请先执行 backend/scripts/market_snapshot/compute.py"}
+
+
+@router.get("/snapshot/dates")
+async def get_snapshot_dates(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """列出所有可用快照日期（YYYY-MM-DD 降序），供前端日期选择器枚举。"""
+    _ = current_user
+    return {"dates": _snap.available_dates(), "latest": _snap.trade_date()}
+
+
 @router.get("/indices/overview")
 async def get_indices_overview(
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
-    """获取大盘核心指数 (上证, 深证, 创业板, 沪深300, 科创50) 快照（真实 QuantDB 数据）"""
+    """获取大盘核心指数快照（优先读快照，缺失回退实时聚合；显式历史日期无快照则空）。"""
+    _ = current_user
+    data = _snap.indices(date)
+    if data:
+        return data
+    if date:
+        return []
     data = quantdb_feed.get_indices_overview()
     if data:
         return data
@@ -263,20 +312,45 @@ async def get_indices_overview(
 @router.get("/money-flow/stocks")
 async def get_stock_money_flow(
     limit: int = Query(default=20, ge=1, le=100),
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
-    """个股资金流向排行榜（真实 QuantDB L2 资金流）"""
+    """个股资金流向排行榜（优先快照，缺失回退实时 L2 资金流）"""
+    _ = current_user
+    data = _snap.stock_flow(limit=limit, date=date)
+    if data:
+        return data
+    if date:
+        return []
     data = quantdb_feed.get_stock_money_flow(limit=limit)
     if data:
         return data
     return []
 
 
+@router.get("/money-flow/stocks/full")
+async def get_stock_money_flow_full(
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    current_user: dict = Depends(get_current_user),
+) -> list[dict]:
+    """全市场个股资金流（供前端本地搜索）；仅快照模式提供，缺失返回空。"""
+    _ = current_user
+    data = _snap.stock_flow_full(date)
+    return data or []
+
+
 @router.get("/money-flow/sankey")
 async def get_money_flow_sankey(
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """获取主力资金流向桑基图数据 (Nodes & Links)"""
+    """获取主力资金流向桑基图数据 (Nodes & Links)（优先快照）"""
+    _ = current_user
+    data = _snap.sankey(date)
+    if data:
+        return data
+    if date:
+        return {"nodes": [], "links": []}
     data = quantdb_feed.get_money_flow_sankey()
     if data:
         return data
@@ -288,10 +362,18 @@ async def get_money_flow_sankey(
 @router.get("/tags/stats")
 async def get_tag_stats(
     limit: int = Query(default=30, ge=1, le=100),
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """标签体系统计与热门标签列表（真实 QuantDB sector_members 聚合）"""
+    """标签体系统计与热门标签（优先 SQLite 快照，缺失回退 sector_members 聚合）"""
     _ = current_user
+    st = _snap.tag_stats(limit=limit, date=date)
+    if st:
+        return st
+    if date:
+        return {"trade_date": date, "total_sectors": 0, "total_stocks": 0,
+                "avg_tags_per_stock": 0.0, "max_tags_per_stock": 0,
+                "total_relations": 0, "hot_tags": []}
     return quantdb_feed.get_tag_stats(limit=limit)
 
 
@@ -299,9 +381,16 @@ async def get_tag_stats(
 async def get_stocks_by_tag(
     tag: str = Query(..., description="标签或板块名称，如：低空经济 / 华为概念 / 电子"),
     limit: int = Query(default=30, ge=1, le=200),
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """根据标签查个股：返回该标签/板块包含的成分股列表（真实 QuantDB 数据）"""
+    """根据标签查个股（优先 SQLite 快照，缺失回退实时聚合）。"""
+    _ = current_user
+    st = _snap.stocks_by_tag(tag=tag, limit=limit, date=date)
+    if st:
+        return {"tag": tag, "total": len(st["items"]), "items": st["items"]}
+    if date:
+        return {"tag": tag, "total": 0, "items": []}
     items = quantdb_feed.get_stocks_by_tag(tag=tag, limit=limit)
     if items is not None:
         return {"tag": tag, "total": len(items), "items": items}
@@ -311,13 +400,32 @@ async def get_stocks_by_tag(
 @router.get("/tags/by-stock")
 async def get_tags_by_stock(
     symbol: str = Query(..., description="股票代码或名称，如：SH600036 或 招商银行"),
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """根据个股查标签：返回该股票归属的所有行业、概念、风格与因子标签（真实 QuantDB 数据）"""
+    """根据个股查标签（优先 SQLite 快照，缺失回退实时聚合）。"""
+    _ = current_user
+    norm = _snap_normalize_symbol(symbol)
+    st = _snap.tags_by_stock(symbol=norm, date=date)
+    if st and st["tags"]:
+        return {"symbol": symbol, "tags": st["tags"]}
+    if date:
+        return {"symbol": symbol, "tags": {}}
     tags = quantdb_feed.get_tags_by_stock(symbol=symbol)
     if tags:
         return {"symbol": symbol, "tags": tags}
     return {"symbol": symbol, "tags": {}}
+
+
+def _snap_normalize_symbol(symbol: str) -> str:
+    """把用户输入归一为快照标签库使用的 Prefix（SH600036）。"""
+    s = symbol.strip().upper()
+    m = re.fullmatch(r"(\d{6})\.(SH|SZ|BJ)", s)
+    if m:
+        return f"{m.group(2)}{m.group(1)}"
+    if re.fullmatch(r"\d{6}", s):
+        return (f"SH{s}" if s[0] in "69" else f"SZ{s}" if s[0] in "032" else f"BJ{s}")
+    return s
 
 
 @router.get("/money-flow/period", response_model=MoneyFlowPeriodResponse)
@@ -326,16 +434,21 @@ async def get_money_flow_by_period(
     dimension: str = Query("sector", description="维度: sector 或 stock"),
     category: str = Query("shenwan", description="分类: shenwan 或 concept"),
     limit: int = Query(31, ge=1, le=100),
+    date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> MoneyFlowPeriodResponse:
-    """获取指定交易日周期 (1D/3D/5D/10D/20D) 的资金净流向排行榜（真实 QuantDB 数据）"""
-    raw_items = quantdb_feed.get_money_flow_period(
-        period=period,
-        dimension=dimension,
-        category=category,
-        limit=limit,
-    )
+    """获取指定交易日周期 (1D/3D/5D/10D/20D) 的资金净流向排行榜（优先快照）。"""
+    _ = current_user
     today_str = datetime.now().strftime("%Y-%m-%d")
+    raw_items = _snap.money_flow_period(period=period, dimension=dimension,
+                                        category=category, limit=limit, date=date)
+    if raw_items is None:
+        if date:
+            raw_items = []
+        else:
+            raw_items = quantdb_feed.get_money_flow_period(
+                period=period, dimension=dimension, category=category, limit=limit,
+            )
     if raw_items:
         items = [MoneyFlowPeriodItem(**it) for it in raw_items]
         return MoneyFlowPeriodResponse(
@@ -357,10 +470,19 @@ async def get_money_flow_by_period(
 async def trigger_market_analysis(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """手动触发从 QuantDB 读取最新数据并重新执行全市场分析与聚合。"""
+    """手动触发重算/刷新：优先提示快照模式，无快照则实时重算。"""
     _ = current_user
+    st = _snap.status()
+    if st and st["has_snapshot"]:
+        return {
+            "status": "snapshot",
+            "trade_date": st["trade_date"],
+            "generated_at": st["generated_at"],
+            "indices_count": st["indices_count"],
+            "message": "快照模式：请重新执行 backend/scripts/market_snapshot/compute.py 后覆盖 data/market-analysis/*.json",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
     quantdb_feed.clear_cache()
-
     latest_dt = quantdb_feed._latest_trade_date()
     indices = quantdb_feed.get_indices_overview()
     breadth = quantdb_feed.get_market_breadth()
@@ -417,8 +539,28 @@ async def trigger_market_analysis_stream(
     _ = current_user
 
     async def event_stream():
-        yield _sse("start", {"message": "开始从 QuantDB 读取最新数据并逐步分析…"})
+        yield _sse("start", {"message": "开始读取市场分析数据…"})
         try:
+            # 快照模式：存在离线快照则直接分段推送（服务器零计算）
+            snap = await asyncio.to_thread(_snap.full)
+            if snap:
+                yield _sse("indices", {"indices": snap.get("indices") or []})
+                await asyncio.sleep(0.05)
+                yield _sse("breadth", {"breadth": snap.get("breadth") or {}})
+                await asyncio.sleep(0.05)
+                yield _sse("heatmap", {"heatmap": (snap.get("heatmap") or {}).get("shenwan") or []})
+                await asyncio.sleep(0.05)
+                yield _sse("sankey", {"sankey": snap.get("sankey") or {"nodes": [], "links": []}})
+                await asyncio.sleep(0.05)
+                yield _sse("stock_flow", {"stock_flow": snap.get("stock_flow") or []})
+                await asyncio.sleep(0.05)
+                yield _sse("done", {
+                    "trade_date": snap.get("trade_date"),
+                    "message": "已从快照读取最新数据并完成市场分析",
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                return
+
             await asyncio.to_thread(quantdb_feed.clear_cache)
             latest_dt = await _run_step("trade_date", quantdb_feed._latest_trade_date)
             if await request.is_disconnected():

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Sparkles, Search, Activity, Layers, Network, TrendingUp, BarChart3, Clock, RefreshCw, Zap } from 'lucide-react';
-import { Input, Spin, message } from 'antd';
+import { Input, DatePicker, Spin, message } from 'antd';
+import dayjs from 'dayjs';
 import { BroadMarketHeader, IndexItem } from '../components/BroadMarketHeader';
 import { ShenwanHeatmapChart } from '../components/ShenwanHeatmapChart';
 import { CapitalFlowSankeyChart } from '../components/CapitalFlowSankeyChart';
@@ -45,6 +46,15 @@ export const MarketAnalysisPage: React.FC = () => {
   const [categoryMode, setCategoryMode] = useState<'shenwan' | 'concept'>('shenwan');
   const [chartViewMode, setChartViewMode] = useState<'bar' | 'treemap'>('bar');
   const [selectedFlowItem, setSelectedFlowItem] = useState<FlowItem | null>(null);
+  // 🎯 全局搜索 + 排序口径（Phase 3 迁移自官网 Dashboard）
+  const [allStocks, setAllStocks] = useState<StockMoneyFlowItem[]>([]);
+  const [focusStock, setFocusStock] = useState<StockMoneyFlowItem | null>(null);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [sortMode, setSortMode] = useState<'absolute' | 'relative'>('absolute');
+
+  // 🎯 快照历史日期（Phase 3 后端 /snapshot/dates）
+  const [snapDate, setSnapDate] = useState<string | undefined>();
+  const [snapDates, setSnapDates] = useState<string[]>([]);
 
   useEffect(() => {
     fetchMarketData();
@@ -54,24 +64,48 @@ export const MarketAnalysisPage: React.FC = () => {
   useEffect(() => {
     if (activeTab !== 'flow-bar' || chartViewMode !== 'treemap') return;
     const token = localStorage.getItem('access_token') || '';
-    fetch(`${MARKET_ANALYSIS_API}/heatmap?category=${categoryMode}`, { headers: { Authorization: `Bearer ${token}` } })
+    const dq = snapDate ? `&date=${snapDate}` : '';
+    fetch(`${MARKET_ANALYSIS_API}/heatmap?category=${categoryMode}${dq}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
       .then((d) => setTreemapData(d?.items && d.items.length > 0 ? d.items : []))
       .catch(() => setTreemapData([]));
-  }, [activeTab, chartViewMode, categoryMode]);
+  }, [activeTab, chartViewMode, categoryMode, snapDate]);
+
+  // 加载可用快照日期 + 快照模式；切换日期重取
+  useEffect(() => {
+    let cancelled = false;
+    const token = localStorage.getItem('access_token') || '';
+    fetch(`${MARKET_ANALYSIS_API}/snapshot/dates`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((d) => {
+        if (!cancelled && d && Array.isArray(d.dates)) {
+          setSnapDates(d.dates);
+          if (!snapDate && d.latest) setSnapDate(undefined); // 默认最新（latest）
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    fetchMarketData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapDate]);
 
   const fetchMarketData = async () => {
     setLoading(true);
     const token = localStorage.getItem('access_token') || '';
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const dq = snapDate ? `&date=${snapDate}` : '';
 
     try {
       const [resIdx, resStock, resBreadth, resHeatmap, resSankey] = await Promise.all([
-        fetch(`${MARKET_ANALYSIS_API}/indices/overview`, { headers }),
-        fetch(`${MARKET_ANALYSIS_API}/money-flow/stocks?limit=20`, { headers }),
-        fetch(`${MARKET_ANALYSIS_API}/breadth`, { headers }),
-        fetch(`${MARKET_ANALYSIS_API}/heatmap?category=shenwan`, { headers }),
-        fetch(`${MARKET_ANALYSIS_API}/money-flow/sankey`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/indices/overview${snapDate ? `?date=${snapDate}` : ''}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/money-flow/stocks?limit=20${dq}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/breadth${snapDate ? `?date=${snapDate}` : ''}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/heatmap?category=shenwan${dq}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/money-flow/sankey${snapDate ? `?date=${snapDate}` : ''}`, { headers }),
       ]);
 
       if (resIdx.ok) {
@@ -113,6 +147,59 @@ export const MarketAnalysisPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 🎯 全市场个股资金流（供全局搜索本地过滤，不触发服务端计算）
+  useEffect(() => {
+    let cancelled = false;
+    const token = localStorage.getItem('access_token') || '';
+    fetch(`${MARKET_ANALYSIS_API}/money-flow/stocks/full`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((d) => { if (!cancelled && Array.isArray(d)) setAllStocks(d); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // 本地过滤搜索结果（名称/代码子串）
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return allStocks
+      .filter((s) => s.name?.toLowerCase().includes(q) || s.symbol?.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [searchQuery, allStocks]);
+
+  // 个股资金流「筹码四分结构」柱状图
+  const renderFourBarChart = (s: StockMoneyFlowItem) => {
+    const items = [
+      { label: '超大单', key: 'super_large', color: '#e11d48', cls: 'text-rose-700' },
+      { label: '大单', key: 'large', color: '#ea580c', cls: 'text-orange-700' },
+      { label: '中单', key: 'medium', color: '#d97706', cls: 'text-amber-700' },
+      { label: '小单', key: 'small', color: '#059669', cls: 'text-emerald-700' },
+    ] as const;
+    const maxAbs = Math.max(1, ...items.map((i) => Math.abs((s as any)[i.key] ?? 0)));
+    return (
+      <div className="flex flex-col gap-2.5">
+        {items.map((i) => {
+          const v = ((s as any)[i.key] as number) ?? 0;
+          const yi = v / 1e8;
+          const pct = Math.max(4, (Math.abs(v) / maxAbs) * 100);
+          return (
+            <div key={i.key} className="flex items-center gap-3">
+              <span className={`w-14 text-xs font-bold ${i.cls} flex-shrink-0`}>{i.label}</span>
+              <div className="flex-1 h-6 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: i.color }} />
+              </div>
+              <span className={`w-24 text-right font-mono text-xs font-extrabold flex-shrink-0 ${yi >= 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                {yi >= 0 ? '+' : ''}{yi.toFixed(2)} 亿
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   /** 手动触发读取 QuantDB 数据，SSE 逐步流式推送，边分析边渲染 */
@@ -221,11 +308,9 @@ export const MarketAnalysisPage: React.FC = () => {
     { id: 'tag-lookup', label: '标签双向查询', icon: TagIcon },
   ];
 
-  const periodOptions: Array<{ id: '1d' | '3d' | '5d' | '10d' | '20d'; label: string }> = [
+  const periodOptions: Array<{ id: '1d' | '5d' | '20d'; label: string }> = [
     { id: '1d', label: '1日' },
-    { id: '3d', label: '3日' },
     { id: '5d', label: '5日' },
-    { id: '10d', label: '10日' },
     { id: '20d', label: '20日' },
   ];
 
@@ -260,14 +345,56 @@ export const MarketAnalysisPage: React.FC = () => {
                 <span className="text-purple-700">{dataDate}</span>
               </span>
             )}
-            <div className="w-60">
+            <div className="relative w-60">
               <Input
                 prefix={<Search className="w-3.5 h-3.5 text-purple-400 mr-1.5" />}
                 placeholder="全局搜索行业或股票..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); setIsSearchOpen(true); }}
+                onFocus={() => setIsSearchOpen(true)}
+                onBlur={() => setTimeout(() => setIsSearchOpen(false), 150)}
                 className="rounded-xl border border-purple-200/80 bg-white text-xs text-slate-800 placeholder-slate-400 py-1.5 px-3.5 shadow-2xs hover:border-purple-300 focus:bg-white focus:ring-2 focus:ring-purple-100 transition-all"
               />
+              {isSearchOpen && searchQuery.trim() && searchResults.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-xl border border-purple-100 shadow-xl z-50 overflow-hidden max-h-80 overflow-y-auto">
+                  {searchResults.map((item) => (
+                    <button
+                      key={item.symbol}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => { setFocusStock(item); setActiveTab('stock-flow'); setSearchQuery(''); setIsSearchOpen(false); }}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-purple-50 border-b border-slate-100 last:border-0 text-left"
+                    >
+                      <span className="text-xs font-extrabold text-slate-800 truncate">{item.name}</span>
+                      <span className="text-[11px] font-mono text-slate-400">{item.symbol}</span>
+                      <span className={`font-mono text-xs font-extrabold ${(item.pct_change ?? 0) >= 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                        {(item.pct_change ?? 0) >= 0 ? '+' : ''}{item.pct_change?.toFixed(2)}%
+                      </span>
+                      <span className={`font-mono text-[11px] px-2 py-0.5 rounded-full border ${(item.net_inflow ?? 0) >= 0 ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
+                        {(item.net_inflow ?? 0) >= 0 ? '+' : ''}{((item.net_inflow ?? 0) / 1e8).toFixed(2)} 亿
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 🎯 快照历史日期选择器 */}
+            <div className="flex items-center gap-2">
+              <DatePicker
+                allowClear
+                value={snapDate ? dayjs(snapDate) : null}
+                onChange={(d) => setSnapDate(d ? d.format('YYYY-MM-DD') : undefined)}
+                disabledDate={(d) => (snapDates.length > 0 ? !snapDates.includes(d.format('YYYY-MM-DD')) : false)}
+                placeholder="快照日期(默认最新)"
+                className="!w-44"
+                size="small"
+                suffixIcon={<Clock className="w-3 h-3 text-purple-400" />}
+              />
+              {snapDate && (
+                <span className="text-[11px] text-slate-400 cursor-pointer hover:text-purple-600 whitespace-nowrap" onClick={() => setSnapDate(undefined)}>
+                  最新
+                </span>
+              )}
             </div>
 
             {/* 🎯 手动市场分析触发按钮 */}
@@ -385,7 +512,7 @@ export const MarketAnalysisPage: React.FC = () => {
                         : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
-                    申万一级
+                    通达信二级(80)
                   </button>
                   <button
                     onClick={() => setCategoryMode('concept')}
@@ -395,7 +522,7 @@ export const MarketAnalysisPage: React.FC = () => {
                         : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
-                    热门概念
+                    热门概念(50)
                   </button>
                 </div>
               )}
@@ -423,6 +550,22 @@ export const MarketAnalysisPage: React.FC = () => {
                 >
                   <Layers className="w-3.5 h-3.5" />
                   <span>矩形树图</span>
+                </button>
+              </div>
+
+              {/* 4. 排序口径 (绝对净值 vs 相对涨跌) */}
+              <div className="flex items-center bg-amber-50/90 border border-amber-200/70 rounded-full p-1 gap-1 shadow-2xs">
+                <button
+                  onClick={() => setSortMode('absolute')}
+                  className={`px-3 py-1 rounded-full text-xs font-extrabold transition-all ${sortMode === 'absolute' ? 'bg-amber-600 text-white shadow' : 'text-amber-700'}`}
+                >
+                  绝对(亿)
+                </button>
+                <button
+                  onClick={() => setSortMode('relative')}
+                  className={`px-3 py-1 rounded-full text-xs font-extrabold transition-all ${sortMode === 'relative' ? 'bg-amber-600 text-white shadow' : 'text-amber-700'}`}
+                >
+                  相对(%)
                 </button>
               </div>
             </div>
@@ -454,6 +597,7 @@ export const MarketAnalysisPage: React.FC = () => {
                   categoryMode={categoryMode}
                   height={flowDimension === 'sector' && categoryMode === 'shenwan' ? 780 : 560}
                   onItemClick={(item) => setSelectedFlowItem(item)}
+                  sortMode={sortMode}
                 />
               ) : (
                 <ShenwanHeatmapChart data={treemapData} height={780} />
@@ -600,6 +744,39 @@ export const MarketAnalysisPage: React.FC = () => {
 
       {activeTab === 'stock-flow' && (
         <div className="flex flex-col gap-3">
+          {focusStock && (
+            <div className="bg-white/95 backdrop-blur-md rounded-3xl p-5 border border-purple-100/80 shadow-md shadow-purple-500/5 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                  <TrendingUp className="w-3.5 h-3.5 text-purple-600" />
+                  <span>个股资金流详情</span>
+                  <span className="font-mono text-purple-600 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200">
+                    {focusStock.name} ({focusStock.symbol})
+                  </span>
+                </h3>
+                <span className="text-xs text-slate-400 font-mono">{breadth?.trade_date || dataDate}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-purple-50/60 rounded-2xl p-4 border border-purple-100 flex flex-col items-center justify-center text-center">
+                  <span className="text-[11px] text-slate-500">当日净流入</span>
+                  <div className={`text-base font-extrabold font-mono mt-1 ${(focusStock.net_inflow ?? 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    {(focusStock.net_inflow ?? 0) >= 0 ? '+' : ''}{((focusStock.net_inflow ?? 0) / 1e8).toFixed(2)} 亿元
+                  </div>
+                </div>
+                <div className="bg-purple-50/60 rounded-2xl p-4 border border-purple-100 flex flex-col items-center justify-center text-center">
+                  <span className="text-[11px] text-slate-500">主力净占比</span>
+                  <div className="text-base font-extrabold font-mono text-purple-700 mt-1">{focusStock.main_ratio ?? 0}%</div>
+                </div>
+                <div className="bg-purple-50/60 rounded-2xl p-4 border border-purple-100 flex flex-col items-center justify-center text-center">
+                  <span className="text-[11px] text-slate-500">涨跌幅 / 最新价</span>
+                  <div className={`text-base font-extrabold font-mono mt-1 ${(focusStock.pct_change ?? 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    {(focusStock.pct_change ?? 0) >= 0 ? '+' : ''}{focusStock.pct_change?.toFixed(2)}% / {focusStock.close_price ?? '—'}
+                  </div>
+                </div>
+              </div>
+              <div>{renderFourBarChart(focusStock)}</div>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
               <TrendingUp className="w-3.5 h-3.5 text-purple-600" />

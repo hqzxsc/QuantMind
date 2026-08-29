@@ -234,6 +234,8 @@ services:
       - QUANTDB_API_KEY=${QUANTDB_API_KEY:-}
       # QuantDB 本地数据中枢（A 股优先数据源）
       - QM_QUANTDB_DATA_DIR=/data/quantdb
+      # 市场分析快照目录（脚本 compute.py 产出后经 scp 部署到宿主机 ./data/market-analysis）
+      - QM_MARKET_SNAPSHOT_DIR=/data/market-analysis
       # QuantUS / QuantHK 本地数据中枢（美股/港股，Yahoo Finance 摄取）
       - QM_QUANTUS_DATA_DIR=/data/quantus
       - QM_QUANTHK_DATA_DIR=/data/quanthk

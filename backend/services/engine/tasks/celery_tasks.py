@@ -1090,3 +1090,51 @@ def run_market_scheduled_sync(market: str, cfg: dict[str, Any]) -> dict[str, Any
     except Exception as e:
         logger.exception("[SyncSchedule] %s 定时同步失败: %s", market, e)
         return {"market": market, "status": "failed", "error": str(e)}
+
+
+@celery_app.task(name="engine.tasks.market_snapshot")
+def run_market_snapshot() -> dict[str, Any]:
+    """在服务器容器内计算市场分析快照，写入 QM_MARKET_SNAPSHOT_DIR。
+
+    服务器即生产环境：数据(读取容器 /data/quantdb)与脚本都在容器内。
+    交易日盘后由 beat 触发，API 通过 QM_MARKET_SNAPSHOT_DIR=/data/market-analysis 读取。
+    """
+    import subprocess
+    import sys
+    from datetime import datetime
+    from pathlib import Path as _Path
+
+    try:
+        root = _Path(__file__).resolve().parents[4]  # 仓库根目录（含 backend/）
+        script = root / "backend" / "scripts" / "market_snapshot" / "compute.py"
+        data_dir = os.getenv("QM_QUANTDB_DATA_DIR", "/data/quantdb")
+        out_dir = os.getenv("QM_MARKET_SNAPSHOT_DIR", "/data/market-analysis")
+        _Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            sys.executable, str(script),
+            "--data-dir", data_dir,
+            "--out", out_dir,
+            "--periods", "1d", "5d", "20d",
+        ]
+        started = datetime.now()
+        logger.info("[MarketSnapshot] 开始: %s", " ".join(str(c) for c in cmd))
+
+        proc = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=1800)
+        if proc.returncode != 0:
+            logger.error("[MarketSnapshot] 失败 code=%d stderr=%s",
+                         proc.returncode, proc.stderr[-4000:])
+            return {"status": "failed", "returncode": proc.returncode,
+                    "stderr_tail": proc.stderr[-4000:]}
+
+        elapsed = (datetime.now() - started).total_seconds()
+        logger.info("[MarketSnapshot] 完成 用时%.0fs\n%s", elapsed, proc.stdout[-2000:])
+        return {
+            "status": "success",
+            "elapsed_s": round(elapsed, 1),
+            "out_dir": out_dir,
+            "stdout_tail": proc.stdout[-1200:],
+        }
+    except Exception as e:
+        logger.exception("[MarketSnapshot] 失败: %s", e)
+        return {"status": "failed", "error": str(e)}

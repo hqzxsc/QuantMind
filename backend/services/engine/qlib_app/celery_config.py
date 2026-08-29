@@ -170,6 +170,14 @@ if os.getenv("STRATEGY_LAB_SCAN_ENABLED", "true").lower() == "true":
         "kwargs": {"lookback_days": 7},
     }
 
+# 交易日盘后 04:10 计算市场分析快照（数据已由 daily-data-sync 03:00 同步完）
+# 产出 JSON + 标签 SQLite 到 QM_MARKET_SNAPSHOT_DIR=/data/market-analysis，API 读取。
+if os.getenv("MARKET_SNAPSHOT_ENABLED", "true").lower() == "true":
+    beat_schedule["market-snapshot"] = {
+        "task": "engine.tasks.market_snapshot",
+        "schedule": crontab(minute="10", hour="4", day_of_week="1-5"),
+    }
+
 celery_app.conf.update(
     # 序列化
     task_serializer="json",

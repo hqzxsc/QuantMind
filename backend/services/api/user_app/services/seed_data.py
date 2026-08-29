@@ -53,6 +53,7 @@ async def init_admin_data(db: AsyncSession):
             password_hash=hashed,
             is_active=True,
             is_verified=True,
+            is_admin=True,
             is_deleted=False,
         )
         db.add(admin_user)

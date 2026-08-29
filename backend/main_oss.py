@@ -480,10 +480,54 @@ def _ensure_database_schema_python():
         logger.warning("数据库自动建表失败（不影响启动）: %s", e)
 
 
+def _ensure_seed_admin():
+    """启动期确保默认管理员账号存在（自愈）。
+
+    离线部署的 postgres 转储不含 admin 用户，且历史上应用启动不会自动 seed，
+    导致首次登录报 'user not found' (401)。这里在启动期幂等地创建默认 admin
+    （admin / admin123，user_id=00000001，is_admin=true），并补全 RBAC 角色。
+    失败仅告警，不影响主流程启动。
+    """
+    try:
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        # 触发 user_app 模型（users / roles / permissions 等）注册到 Base.metadata
+        from backend.services.api.user_app.models.user import Base, User  # noqa: F401
+        from backend.services.api.user_app.models import rbac  # noqa: F401
+        from backend.services.api.user_app.services.seed_data import init_admin_data
+
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.warning("DATABASE_URL 未设置，跳过默认管理员 seed")
+            return
+
+        engine = create_async_engine(db_url)
+        async_session = async_sessionmaker(engine, expire_on_commit=False)
+
+        async def _run():
+            # 幂等建表：确保 users / roles / permissions / user_roles 等存在
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            async with async_session() as session:
+                await init_admin_data(session)
+            await engine.dispose()
+
+        asyncio.run(_run())
+        logger.info("默认管理员账号 seed 完成")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "默认管理员 seed 失败（不影响启动，可手动执行 seed_data.py）: %s", e
+        )
+
+
 def main():
     """主入口"""
     # 启动前确保数据库表结构完整
     _ensure_database_schema()
+    # 启动期确保默认管理员账号存在（幂等，失败不影响启动）
+    _ensure_seed_admin()
 
     service_mode = os.getenv("SERVICE_MODE", "all").lower().strip()
     ports = get_service_ports()

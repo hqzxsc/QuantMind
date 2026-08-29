@@ -253,6 +253,8 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
     };
 
     chart.setOption(option, true);
+    // 画布高度随条数变化，需通知 echarts 重新布局（配合二级纵向滚动）
+    chart.resize();
 
     const handleResize = () => chart.resize();
     window.addEventListener('resize', handleResize);
@@ -279,7 +281,10 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
           暂无资金流向数据
         </div>
       ) : (
-        <div ref={chartRef} style={{ width: '100%', height: typeof height === 'number' ? `${height}px` : height }} />
+        // 🎯 二级纵向滚动：按条数撑高画布，可视高度固定原 height，超出滚动看全 80 个行业
+        <div style={{ width: '100%', maxHeight: typeof height === 'number' ? `${height}px` : height, overflowY: 'auto', overflowX: 'hidden' }}>
+          <div ref={chartRef} style={{ width: '100%', height: `${Math.max((data.length || 1) * 40, 320) + 140}px` }} />
+        </div>
       )}
       {loading && (
         <div className="absolute inset-0 bg-white/60 backdrop-blur-xs flex items-center justify-center rounded-2xl">

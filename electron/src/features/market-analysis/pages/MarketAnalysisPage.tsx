@@ -202,10 +202,13 @@ export const MarketAnalysisPage: React.FC = () => {
     );
   };
 
-  // 点击个股 → 打开资金流详情(四分结构)并切到个股资金流 tab
+  // 点击个股 → 打开资金流详情(四分结构)并切到个股资金流 tab / 滚动到详情
   const openStockDetail = (item: StockMoneyFlowItem) => {
     setFocusStock(item);
     setActiveTab('stock-flow');
+    setTimeout(() => {
+      document.getElementById('focus-stock-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
   };
 
   /** 手动触发读取 QuantDB 数据，SSE 逐步流式推送，边分析边渲染 */
@@ -751,7 +754,7 @@ export const MarketAnalysisPage: React.FC = () => {
       {activeTab === 'stock-flow' && (
         <div className="flex flex-col gap-3">
           {focusStock && (
-            <div className="bg-white/95 backdrop-blur-md rounded-3xl p-5 border border-purple-100/80 shadow-md shadow-purple-500/5 flex flex-col gap-4">
+            <div id="focus-stock-detail" className="bg-white/95 backdrop-blur-md rounded-3xl p-5 border border-purple-100/80 shadow-md shadow-purple-500/5 flex flex-col gap-4 scroll-mt-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
                   <TrendingUp className="w-3.5 h-3.5 text-purple-600" />

@@ -69,6 +69,7 @@ pyahocorasick
 tables>=3.8.0
 
 # 海外券商实盘接入（富途/老虎/IB）
-tigeropen>=7.0.0
+# 老虎 PyPI 最高 3.7.1（曾误写 >=7.0.0 导致镜像构建失败），生产实测 3.7.1
+tigeropen>=3.0.0
 futu-api>=9.0.0
 ib_async>=1.0.0

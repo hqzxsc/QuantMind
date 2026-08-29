@@ -37,6 +37,21 @@ class LLMConfig:
     model: str
     protocol: str  # "openai" | "anthropic"
 
+    def llm_env_overrides(self) -> dict[str, str]:
+        """生成 RD-Agent 子进程的 LLM 环境变量覆盖。
+
+        覆盖 LITELLM_*/OPENAI_*/CHAT_MODEL 全套，确保 build_llm_env 的
+        优先级链（占位符过滤后）最终选中本配置。
+        """
+        return {
+            "LITELLM_OPENAI_API_KEY": self.api_key,
+            "LITELLM_OPENAI_API_BASE": self.base_url,
+            "OPENAI_API_KEY": self.api_key,
+            "OPENAI_BASE_URL": self.base_url,
+            "CHAT_MODEL": self.model,
+            "REASONING_MODEL": self.model,
+        }
+
 
 def resolve_llm_config() -> LLMConfig | None:
     """解析当前环境可用的 LLM 配置。无可用 key 返回 None。"""
@@ -78,9 +93,19 @@ def resolve_llm_config() -> LLMConfig | None:
     return LLMConfig(api_key=key, base_url=base, model=model, protocol=protocol)
 
 
-async def chat(messages: list[dict[str, str]], *, max_tokens: int = 500, temperature: float = 0.3, timeout: float = 30) -> str:
-    """调用 LLM 返回纯文本。messages 为 [{role, content}, ...]。"""
-    cfg = resolve_llm_config()
+async def chat(
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int = 500,
+    temperature: float = 0.3,
+    timeout: float = 30,
+    config: LLMConfig | None = None,
+) -> str:
+    """调用 LLM 返回纯文本。messages 为 [{role, content}, ...]。
+
+    config 不传时从环境变量解析；调用方可显式传入（如用户 Profile 中的 Key）。
+    """
+    cfg = config or resolve_llm_config()
     if cfg is None:
         raise RuntimeError("未配置可用的 LLM API Key（DEEPSEEK_API_KEY / AI_IDE_LLM_API_KEY / OPENAI_API_KEY 均为空或占位符）")
 

@@ -336,6 +336,9 @@ export const SettingsPage: React.FC = () => {
                       <Check className="h-5 w-5 text-success" />
                       <span className="text-sm font-medium text-success">已配置可用</span>
                       <Badge variant="outline" className="ml-2">
+                        {llmConfig.source === 'user_profile' ? '个人中心配置' : '服务器环境变量'}
+                      </Badge>
+                      <Badge variant="outline" className="ml-2">
                         {llmConfig.provider === 'anthropic' ? 'Anthropic 协议' : 'OpenAI 兼容'}
                       </Badge>
                     </div>

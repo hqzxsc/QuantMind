@@ -82,8 +82,13 @@ class AlphaAgentLauncher:
         provider_uri: str | None = None,
         direction: str | None = None,
         data_source: str | None = None,
+        llm_overrides: dict[str, str] | None = None,
     ) -> str:
-        """Start a factor evolution task. Returns task_id."""
+        """Start a factor evolution task. Returns task_id.
+
+        llm_overrides: 用户级 LLM 环境变量覆盖（如个人中心配置的 API Key），
+        优先于容器全局 env 注入子进程。
+        """
         task_id = uuid.uuid4().hex[:16]
         task = EvolutionTask(
             task_id=task_id, user_id=user_id, market=market,
@@ -125,6 +130,7 @@ class AlphaAgentLauncher:
                 seed=seed_path,
                 provider_uri=provider_uri,
                 direction=direction or "",
+                llm_overrides=llm_overrides,
             )
         )
         return task_id
@@ -305,6 +311,7 @@ class AlphaAgentLauncher:
         seed: str,
         provider_uri: str,
         direction: str = "",
+        llm_overrides: dict[str, str] | None = None,
     ) -> None:
         task.status = TaskStatus.RUNNING
         task.phase = "starting"
@@ -329,6 +336,12 @@ class AlphaAgentLauncher:
         )
         chat_model = os.getenv("CHAT_MODEL", "")
         system_prompt = os.getenv("ALPHA_AGENT_SYSTEM_PROMPT", "")
+
+        # 用户级 LLM 配置（如个人中心「AI 服务配置」）优先于容器全局 env
+        if llm_overrides:
+            openai_base = llm_overrides.get("OPENAI_BASE_URL", openai_base)
+            openai_api_key = llm_overrides.get("OPENAI_API_KEY", openai_api_key)
+            chat_model = llm_overrides.get("CHAT_MODEL", chat_model)
 
         env = {
             **os.environ,
@@ -357,6 +370,11 @@ class AlphaAgentLauncher:
             env["CHAT_MODEL"] = chat_model
 
         # 补齐 RD-Agent litellm 后端需要的 LITELLM_ 前缀变量（deepseek 优先）
+        if llm_overrides:
+            # 显式写入 LITELLM_ 覆盖，绕开 build_llm_env 里 os.getenv 的 mock 占位符链
+            for _k in ("LITELLM_OPENAI_API_KEY", "LITELLM_OPENAI_API_BASE"):
+                if llm_overrides.get(_k):
+                    env[_k] = llm_overrides[_k]
         from backend.services.engine.rd_agent.llm_env import build_llm_env
         build_llm_env(env)
 

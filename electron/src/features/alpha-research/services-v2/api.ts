@@ -514,6 +514,8 @@ export async function cancelBacktest(_taskId: string): Promise<ApiResponse> {
 export interface LlmConfigStatus {
   configured: boolean;
   reason?: string;
+  /** 配置来源：env=服务器环境变量，user_profile=个人中心 AI 服务配置 */
+  source?: 'env' | 'user_profile';
   provider?: string;
   model?: string;
   base_url?: string;

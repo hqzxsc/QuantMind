@@ -30,8 +30,56 @@ persistence = RDAgentFactorPersistence()
 
 _running_backtests: set[str] = set()
 # 回测子进程句柄 + 取消标记：cancel 接口据此真正 kill 子进程
-_backtest_processes: dict[str, "subprocess.Popen"] = {}
+_backtest_processes: dict[str, subprocess.Popen] = {}
 _backtest_cancelled: set[str] = set()
+
+
+async def _fetch_profile_llm_config(user_id: str, tenant_id: str):
+    """读取用户个人中心「AI 服务配置」（Profile 的 api_key/llm_base_url/llm_model）。
+
+    与 AI-IDE 共享同一份凭证。无有效 Key 返回 None。
+    """
+    from backend.services.engine.alpha_agent.llm_client import LLMConfig, _is_placeholder
+
+    try:
+        from backend.shared.auth import get_internal_call_secret
+
+        gateway = os.getenv("INTERNAL_API_GATEWAY_URL") or "http://127.0.0.1:8000"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{gateway}/api/v1/profiles/{user_id}",
+                headers={
+                    "X-Internal-Call": get_internal_call_secret(),
+                    "X-User-Id": user_id,
+                    "X-Tenant-Id": tenant_id,
+                },
+            )
+        if resp.status_code != 200:
+            logger.warning("[alpha-agent] fetch profile %s llm config: http %s", user_id, resp.status_code)
+            return None
+        data = resp.json().get("data", {})
+        key = (data.get("api_key") or "").strip()
+        if not key or _is_placeholder(key):
+            return None
+        base = (data.get("llm_base_url") or "").strip() or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        model = (data.get("llm_model") or "").strip() or "qwen-plus"
+        return LLMConfig(api_key=key, base_url=base, model=model, protocol="openai")
+    except Exception:
+        logger.exception("[alpha-agent] fetch profile llm config failed")
+        return None
+
+
+async def _resolve_effective_llm_config(user_id: str, tenant_id: str):
+    """环境变量（平台级）优先；无有效 Key 时回退当前用户 Profile 的 AI-IDE 配置。"""
+    from backend.services.engine.alpha_agent.llm_client import resolve_llm_config
+
+    cfg = resolve_llm_config()
+    if cfg is not None:
+        return cfg, "env"
+    cfg = await _fetch_profile_llm_config(user_id, tenant_id)
+    if cfg is not None:
+        return cfg, "user_profile"
+    return None, "none"
 
 
 class FactorBacktestCancelled(RuntimeError):
@@ -146,12 +194,14 @@ async def start_evolution(
             detail=f"Unknown universe: {universe}. Available: {valid_universes}",
         )
 
-    from backend.services.engine.alpha_agent.llm_client import resolve_llm_config
-    if resolve_llm_config() is None:
+    llm_config, llm_source = await _resolve_effective_llm_config(auth_user_id, auth_tenant_id)
+    if llm_config is None:
         raise HTTPException(
             status_code=412,
-            detail="API Key 未配置。请在 .env 设置 DEEPSEEK_API_KEY / AI_IDE_LLM_API_KEY / OPENAI_API_KEY 后再使用因子挖掘功能。",
+            detail="未配置 LLM API Key：可在个人中心「其他设置 → AI 服务配置」填写（与 AI-IDE 共用），"
+            "或在服务器 .env 配置 DEEPSEEK_API_KEY / AI_IDE_LLM_API_KEY / OPENAI_API_KEY。",
         )
+    logger.info("[alpha-agent] evolve llm source=%s model=%s", llm_source, llm_config.model)
 
     launcher = get_launcher()
     # 并发上限：每个任务是 RD-Agent 子进程（烧 LLM token + Qlib 回测），
@@ -177,6 +227,7 @@ async def start_evolution(
         loop_n=loop_n,
         direction=direction or None,
         data_source=data_source or None,
+        llm_overrides=llm_config.llm_env_overrides(),
     )
     return {
         "code": 200,
@@ -308,10 +359,15 @@ async def explain_factor(factor_id: str, request: Request):
     factor_code = factor.get("factor_code", "")
     factor_formulation = metadata.get("factor_formulation", "")
 
-    from backend.services.engine.alpha_agent.llm_client import chat as llm_chat, resolve_llm_config
+    from backend.services.engine.alpha_agent.llm_client import chat as llm_chat
 
-    if resolve_llm_config() is None:
-        raise HTTPException(status_code=412, detail="API Key 未配置。请在 .env 或环境变量中设置 DEEPSEEK_API_KEY / AI_IDE_LLM_API_KEY / OPENAI_API_KEY")
+    auth_user_id, auth_tenant_id = get_authenticated_identity(request)
+    llm_config, _ = await _resolve_effective_llm_config(auth_user_id, auth_tenant_id)
+    if llm_config is None:
+        raise HTTPException(
+            status_code=412,
+            detail="未配置 LLM API Key：可在个人中心「其他设置 → AI 服务配置」填写，或在服务器 .env 配置。",
+        )
 
     prompt = f"""请用中文简洁地解释以下量化因子。输出格式：
 1. **含义**：一句话概括
@@ -330,6 +386,7 @@ async def explain_factor(factor_id: str, request: Request):
             max_tokens=500,
             temperature=0.3,
             timeout=30,
+            config=llm_config,
         )
     except httpx.HTTPStatusError as e:
         logger.error("LLM explain failed: status=%s body=%s", e.response.status_code, e.response.text[:300])
@@ -580,11 +637,26 @@ async def get_universes():
 
 @router.get("/llm-config")
 async def get_llm_config(request: Request):
-    """返回当前 LLM 配置状态（不回显完整 key）。"""
+    """返回当前生效的 LLM 配置状态（不回显完整 key）。
+
+    优先级：服务器环境变量 > 当前用户个人中心的 AI 服务配置。
+    """
     from backend.services.engine.alpha_agent.llm_client import resolve_llm_config
+
+    auth_user_id, auth_tenant_id = get_authenticated_identity(request)
     cfg = resolve_llm_config()
+    source = "env"
     if cfg is None:
-        return {"code": 200, "data": {"configured": False, "reason": "未配置可用的 API Key"}}
+        cfg = await _fetch_profile_llm_config(auth_user_id, auth_tenant_id)
+        source = "user_profile"
+    if cfg is None:
+        return {
+            "code": 200,
+            "data": {
+                "configured": False,
+                "reason": "未配置可用的 API Key：可在个人中心「其他设置 → AI 服务配置」填写，或在服务器 .env 配置",
+            },
+        }
     # 仅回显 key 末 4 位，避免泄露
     key = cfg.api_key
     masked = f"****{key[-4:]}" if len(key) >= 4 else "****"
@@ -592,6 +664,7 @@ async def get_llm_config(request: Request):
         "code": 200,
         "data": {
             "configured": True,
+            "source": source,
             "provider": cfg.protocol,
             "model": cfg.model,
             "base_url": cfg.base_url,

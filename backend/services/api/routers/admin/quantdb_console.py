@@ -24,10 +24,9 @@ import os
 import re
 import threading
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -51,71 +50,8 @@ def _now_iso() -> str:
 # ---------------------------------------------------------------------------
 # 数据集目录
 # ---------------------------------------------------------------------------
-# layout 决定落盘形态与预览读法：
-#   partition — dt=YYYYMMDD/data.parquet 按交易日分区
-#   symbol    — 每标的一个 {SYMBOL}.parquet
-#   single    — 整个数据集一个 parquet
-Layout = Literal["partition", "symbol", "single"]
-
-
-@dataclass(frozen=True)
-class DatasetSpec:
-    dataset: str
-    name: str
-    category_id: str
-    group: str
-    rel_dir: str
-    layout: Layout
-    note: str = ""
-
-
-GROUPS: list[dict[str, str]] = [
-    {"id": "kline", "name": "K线行情", "category_id": "1"},
-    {"id": "base_sector", "name": "基础板块", "category_id": "2"},
-    {"id": "financial", "name": "财务数据", "category_id": "3"},
-    {"id": "bond_etf", "name": "债券/ETF", "category_id": "4"},
-    {"id": "technical", "name": "技术衍生", "category_id": "5"},
-    {"id": "ml", "name": "ML数据集", "category_id": "6"},
-]
-
-DATASETS: tuple[DatasetSpec, ...] = (
-    # 1 K线行情
-    DatasetSpec("daily_forward", "日线前复权", "1", "kline", "1_kline_data/daily_forward", "partition", "训练/回测主用"),
-    DatasetSpec("daily_backward", "日线后复权", "1", "kline", "1_kline_data/daily_backward", "partition"),
-    DatasetSpec("daily_unadjusted", "日线不复权", "1", "kline", "1_kline_data/daily_unadjusted", "partition", "amount/volume 单位在 20260721 切换"),
-    DatasetSpec("index_daily", "指数日线", "1", "kline", "1_kline_data/index_daily", "partition"),
-    DatasetSpec("min5_kline", "5分钟线", "1", "kline", "1_kline_data/min5_kline", "symbol"),
-    DatasetSpec("min1_kline", "1分钟线", "1", "kline", "1_kline_data/min1_kline", "symbol", "体积大，按需同步"),
-    DatasetSpec("tick_data", "Tick逐笔", "1", "kline", "1_kline_data/tick_data", "partition", "流量消耗极高"),
-    # 2 基础板块
-    DatasetSpec("instrument_detail", "个股详情", "2", "base_sector", "2_base_sector/instrument_detail", "single", "152 列基本面快照"),
-    DatasetSpec("sector_concept", "板块概念", "2", "base_sector", "2_base_sector/sector_concept", "single"),
-    DatasetSpec("index_weights", "指数权重", "2", "base_sector", "2_base_sector/index_weights", "symbol", "沪深300/中证500/1000 等"),
-    DatasetSpec("trading_calendar", "交易日历", "2", "base_sector", "2_base_sector/trading_calendar", "single"),
-    DatasetSpec("margin_trading", "融资融券", "2", "base_sector", "2_base_sector/margin_trading", "partition"),
-    DatasetSpec("hsgt_north", "北向资金(季度)", "2", "base_sector", "2_base_sector/hsgt_north", "partition", "2024-08 起北向个股改季度披露，每季度末+第5交易日抓取，symbol 6位格式"),
-    DatasetSpec("hsgt_north_daily", "北向资金日频(akshare)", "2", "base_sector", "2_base_sector/hsgt_north/daily_freq", "symbol", "2017-03~2024-08 北向持股日频，akshare逐股拉取"),
-    # 3 财务数据
-    DatasetSpec("balance", "资产负债表", "3", "financial", "3_financial_data/balance", "symbol"),
-    DatasetSpec("income", "利润表", "3", "financial", "3_financial_data/income", "symbol"),
-    DatasetSpec("cashflow", "现金流量表", "3", "financial", "3_financial_data/cashflow", "symbol"),
-    DatasetSpec("capital", "股本结构", "3", "financial", "3_financial_data/capital", "symbol"),
-    DatasetSpec("pershare_index", "每股指标", "3", "financial", "3_financial_data/pershare_index", "symbol"),
-    DatasetSpec("dividend_factors", "分红因子", "3", "financial", "3_financial_data/dividend_factors", "symbol"),
-    DatasetSpec("holder_num", "股东户数", "3", "financial", "3_financial_data/holder_num", "symbol"),
-    # 4 债券/ETF
-    DatasetSpec("etf_pcf", "ETF申赎清单", "4", "bond_etf", "4_bond_etf/etf_pcf", "symbol"),
-    DatasetSpec("convertible_bond", "可转债", "4", "bond_etf", "4_bond_etf/convertible_bond", "symbol"),
-    # 5 技术衍生
-    DatasetSpec("valuation", "估值", "5", "technical", "5_technical_derived/valuation", "partition", "PE/PB/市值"),
-    DatasetSpec("technical_indicators", "技术指标", "5", "technical", "5_technical_derived/technical_indicators", "partition", "本地覆盖不全，优先用 features_daily"),
-    DatasetSpec("market_sentiment", "市场情绪", "5", "technical", "5_technical_derived/market_sentiment", "partition"),
-    # 6 ML数据集
-    DatasetSpec("features_daily", "日频特征", "6", "ml", "6_ml_datasets/features_daily", "partition", "技术指标 + 估值合并，PG 填充主源"),
-    DatasetSpec("l1_factors", "L1 因子", "6", "ml", "6_ml_datasets/l1_factors", "partition", "因子挖掘核心"),
-    DatasetSpec("l2_factors", "L2 因子", "6", "ml", "6_ml_datasets/l2_factors", "partition", "高频微观因子"),
-    DatasetSpec("l1_l2_factors", "L1+L2 合并", "6", "ml", "6_ml_datasets/l1_l2_factors", "partition"),
-)
+# 规格定义在 backend/shared/quantdb_datasets.py（供管理台与本地扫描脚本共用）
+from backend.shared.quantdb_datasets import DATASETS, DatasetSpec, GROUPS  # noqa: E402
 
 _BY_NAME = {ds.dataset: ds for ds in DATASETS}
 
@@ -902,6 +838,234 @@ async def cancel_sync_job(job_id: str, current_user: dict = Depends(require_admi
     """取消正在运行的同步任务（协作式，当前数据集完成后停止）。"""
     with _jobs_lock:
         job = _jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+        if job["status"] != "running":
+            raise HTTPException(status_code=400, detail=f"任务状态为 {job['status']}，无法取消")
+        job["cancel_requested"] = True
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "status": "cancelling",
+            "message": "取消信号已发送，当前数据集完成后将停止",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# 本地扫描（离线数据 → SQLite 同步状态库）
+# ---------------------------------------------------------------------------
+class LocalScanRequest(BaseModel):
+    root: str | None = Field(None, description="扫描根目录，默认当前 QuantDB 数据目录")
+    datasets: list[str] | None = Field(None, description="数据集名列表，留空扫描全部")
+    force: bool = Field(False, description="忽略已有登记，强制重算哈希")
+
+
+# 独立于 _jobs：sync-jobs 列表被目录/预览组件轮询并取 jobs[0] 当最新同步任务，
+# 混入扫描任务会被误渲染。
+_scan_jobs: dict[str, dict[str, Any]] = {}
+MAX_SCAN_JOB_HISTORY = 10
+
+
+@router.get("/local-scan/preflight")
+async def local_scan_preflight(
+    root: str | None = Query(None, description="扫描根目录，留空用当前数据目录"),
+    current_user: dict = Depends(require_admin),
+):
+    """本地扫描预检：数据目录、各数据集文件统计与状态库现状（不做哈希）。"""
+    from backend.scripts.quantdb_daily_sync import _state_path
+    from backend.scripts.quantdb_local_scan import iter_dataset_files
+
+    try:
+        root_path = (
+            Path(os.path.abspath(os.path.expanduser(root))) if root else _data_dir()
+        )
+        exists = root_path.is_dir()
+        items = []
+        for spec in DATASETS:
+            files = iter_dataset_files(root_path, spec.rel_dir, spec.layout) if exists else []
+            size = sum((f.stat().st_size for f in files if f.exists()), 0)
+            items.append({
+                "dataset": spec.dataset,
+                "name": spec.name,
+                "group": spec.group,
+                "layout": spec.layout,
+                "rel_dir": spec.rel_dir,
+                "files": len(files),
+                "bytes": size,
+            })
+
+        qm_db = _state_path(root_path)
+        sdk_db = root_path / "quantdb_sync.sqlite"
+        warnings: list[str] = []
+        try:
+            same_root = os.path.normcase(str(root_path)) == os.path.normcase(str(_data_dir()))
+        except Exception:  # noqa: BLE001
+            same_root = True
+        if not same_root:
+            warnings.append(
+                "扫描目录与当前数据目录不一致：请把数据移动/链接到数据目录，"
+                "或将 QM_QUANTDB_DATA_DIR 指向扫描目录后重启，否则业务读不到这些数据。"
+            )
+
+        return {
+            "success": True,
+            "data": {
+                "root": str(root_path),
+                "exists": exists,
+                "same_root": same_root,
+                "datasets": items,
+                "total_files": sum(it["files"] for it in items),
+                "total_bytes": sum(it["bytes"] for it in items),
+                "state": {
+                    "quantmind_path": str(qm_db),
+                    "quantmind_objects": _count_state_objects(qm_db),
+                    "sdk_path": str(sdk_db),
+                    "sdk_objects": _count_state_objects(sdk_db),
+                },
+                "warnings": warnings,
+                "timestamp": _now_iso(),
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.error("quantdb local-scan preflight failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"failed: {exc}") from exc
+
+
+def _count_state_objects(db_path: Path) -> int:
+    """统计状态库 objects 行数；库不存在或损坏返回 0。"""
+    import sqlite3
+
+    if not db_path.exists():
+        return 0
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=10)
+    except sqlite3.Error:
+        return 0
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM objects").fetchone()[0])
+    except sqlite3.Error:
+        return 0
+    finally:
+        conn.close()
+
+
+def _run_local_scan_job(job_id: str, root: str | None, datasets: list[str] | None, force: bool) -> None:
+    from backend.scripts.quantdb_local_scan import scan_local_data
+
+    def _cancelled() -> bool:
+        with _jobs_lock:
+            return bool(_scan_jobs.get(job_id, {}).get("cancel_requested"))
+
+    # 进度回调：数据集级进度实时写回 job 记录
+    def _on_progress(event: str, **kw: Any) -> None:
+        with _jobs_lock:
+            job = _scan_jobs.get(job_id)
+            if job is None:
+                return
+            ds = kw.get("dataset")
+            if event == "dataset_start":
+                job["total"] = kw.get("total") or job.get("total") or 0
+                job["current"] = f"{ds} 扫描中（{kw.get('files', 0)} 个文件）"
+                job["current_detail"] = {"dataset": ds, "phase": "dataset_start", "files": kw.get("files")}
+            elif event == "file":
+                job["current_detail"] = {
+                    "dataset": ds, "phase": "hashing",
+                    "done": kw.get("done"), "total": kw.get("total"),
+                }
+            elif event == "dataset_done":
+                job["done"] = job.get("done", 0) + 1
+                job["current"] = f"{ds} 完成（登记 {kw.get('registered', 0)}）"
+
+    started_at = _now_iso()
+    try:
+        summary = scan_local_data(
+            root=root,
+            datasets=datasets,
+            force=force,
+            progress_cb=_on_progress,
+            should_cancel=_cancelled,
+        )
+        status = "cancelled" if summary.get("cancelled") else "completed"
+        with _jobs_lock:
+            job = _scan_jobs.get(job_id)
+            if job is not None:
+                job.update(status=status, summary=summary, finished_at=_now_iso(), current=None)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("quantdb local-scan job %s failed: %s", job_id, exc, exc_info=True)
+        with _jobs_lock:
+            job = _scan_jobs.get(job_id)
+            if job is not None:
+                job.update(status="failed", error=str(exc), finished_at=_now_iso())
+        return
+    logger.info("quantdb local-scan job %s %s (started %s)", job_id, status, started_at)
+
+
+@router.post("/local-scan")
+async def start_local_scan(payload: LocalScanRequest, current_user: dict = Depends(require_admin)):
+    """启动本地扫描（后台线程执行，返回 job_id 供轮询）。"""
+    if payload.datasets:
+        for name in payload.datasets:
+            _spec(name)
+
+    job_id = f"qdb-scan-{next(_job_counter)}"
+    job = {
+        "job_id": job_id,
+        "kind": "local_scan",
+        "status": "running",
+        "stage": "scan",
+        "root": payload.root,
+        "datasets": payload.datasets,
+        "force": payload.force,
+        "total": 0,  # dataset_start 进度回填实际数据集数
+        "done": 0,
+        "current": None,
+        "current_detail": None,
+        "summary": None,
+        "error": None,
+        "cancel_requested": False,
+        "started_at": _now_iso(),
+        "started_by": current_user.get("username") or current_user.get("user_id"),
+    }
+    with _jobs_lock:
+        _scan_jobs[job_id] = job
+        for stale in sorted(_scan_jobs)[:-MAX_SCAN_JOB_HISTORY]:
+            if _scan_jobs[stale]["status"] != "running":
+                _scan_jobs.pop(stale, None)
+
+    threading.Thread(
+        target=_run_local_scan_job,
+        args=(job_id, payload.root, payload.datasets, payload.force),
+        daemon=True,
+    ).start()
+    return {"success": True, "data": {"job": job}}
+
+
+@router.get("/local-scan/jobs")
+async def list_local_scan_jobs(current_user: dict = Depends(require_admin)):
+    """本地扫描任务列表（最新在前）。"""
+    with _jobs_lock:
+        jobs = [_scan_jobs[k] for k in sorted(_scan_jobs, reverse=True)]
+    return {"success": True, "data": {"jobs": jobs, "timestamp": _now_iso()}}
+
+
+@router.get("/local-scan/jobs/{job_id}")
+async def get_local_scan_job(job_id: str, current_user: dict = Depends(require_admin)):
+    """单个本地扫描任务进度。"""
+    with _jobs_lock:
+        job = _scan_jobs.get(job_id)
+        snapshot = dict(job) if job is not None else None
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+    return {"success": True, "data": {"job": snapshot}}
+
+
+@router.post("/local-scan/jobs/{job_id}/cancel")
+async def cancel_local_scan_job(job_id: str, current_user: dict = Depends(require_admin)):
+    """取消本地扫描任务（协作式，当前数据集完成后停止）。"""
+    with _jobs_lock:
+        job = _scan_jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
         if job["status"] != "running":

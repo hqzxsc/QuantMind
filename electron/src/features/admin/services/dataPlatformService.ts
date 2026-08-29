@@ -190,6 +190,62 @@ export interface QuantDBSyncJob {
     started_by?: string;
 }
 
+export interface QuantDBLocalScanPreflight {
+    root: string;
+    exists: boolean;
+    same_root: boolean;
+    datasets: Array<{
+        dataset: string;
+        name: string;
+        group: string;
+        layout: string;
+        rel_dir: string;
+        files: number;
+        bytes: number;
+    }>;
+    total_files: number;
+    total_bytes: number;
+    state: {
+        quantmind_path: string;
+        quantmind_objects: number;
+        sdk_path: string;
+        sdk_objects: number;
+    };
+    warnings: string[];
+    timestamp: string;
+}
+
+export interface QuantDBLocalScanJob {
+    job_id: string;
+    kind: 'local_scan';
+    status: 'running' | 'completed' | 'failed' | 'cancelled' | 'cancelling';
+    stage: string;
+    root?: string | null;
+    datasets?: string[] | null;
+    force?: boolean;
+    total: number;
+    done: number;
+    current?: string | null;
+    current_detail?: { dataset?: string; phase?: string; done?: number; total?: number; files?: number } | null;
+    summary?: {
+        root: string;
+        registered: number;
+        reused: number;
+        invalid_files: number;
+        total_files: number;
+        total_bytes: number;
+        elapsed_sec: number;
+        state_dbs: Record<string, string>;
+        per_dataset: Record<string, { files: number; registered: number; reused: number; invalid: number; bytes: number }>;
+        warnings?: string[];
+    } | null;
+    error?: string | null;
+    cancel_requested?: boolean;
+    started_at: string;
+    finished_at?: string;
+    started_by?: string;
+}
+
 export interface QuantDBDatasetDiff {
     dataset: string;
     name: string;
@@ -540,6 +596,47 @@ class DataPlatformService {
             params: datasets ? { datasets: datasets.join(',') } : undefined,
             timeout: 120000,
         });
+        return this.unwrap(resp);
+    }
+
+    // ---- QuantDB 本地扫描（离线数据 → SQLite 同步状态库） ----
+    async localScanPreflight(root?: string): Promise<QuantDBLocalScanPreflight> {
+        const resp = await this.axiosInstance.get('/admin/data-platform/quantdb/local-scan/preflight', {
+            params: root ? { root } : undefined,
+            timeout: 120000, // 预检需遍历全部数据集目录统计文件
+        });
+        return this.unwrap(resp);
+    }
+
+    async startQuantDBLocalScan(payload: {
+        root?: string;
+        datasets?: string[];
+        force?: boolean;
+    }): Promise<{ job: QuantDBLocalScanJob }> {
+        const resp = await this.axiosInstance.post('/admin/data-platform/quantdb/local-scan', payload, {
+            timeout: 30000,
+        });
+        return this.unwrap(resp);
+    }
+
+    async listQuantDBLocalScanJobs(): Promise<{ jobs: QuantDBLocalScanJob[]; timestamp: string }> {
+        const resp = await this.axiosInstance.get('/admin/data-platform/quantdb/local-scan/jobs');
+        return this.unwrap(resp);
+    }
+
+    async getQuantDBLocalScanJob(jobId: string): Promise<{ job: QuantDBLocalScanJob }> {
+        const resp = await this.axiosInstance.get(`/admin/data-platform/quantdb/local-scan/jobs/${jobId}`);
+        return this.unwrap(resp);
+    }
+
+    async cancelQuantDBLocalScanJob(jobId: string): Promise<{
+        job_id: string;
+        status: string;
+        message: string;
+    }> {
+        const resp = await this.axiosInstance.post(
+            `/admin/data-platform/quantdb/local-scan/jobs/${jobId}/cancel`,
+        );
         return this.unwrap(resp);
     }
 

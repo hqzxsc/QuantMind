@@ -117,10 +117,20 @@ SYNC_WORKERS = 8
 _STATE_DIR = Path(os.getenv("QUANTDB_STATE_DIR", str(Path.home() / ".quantdb_state")))
 
 
-def _state_path() -> Path:
-    root = str(QUANTDB_DATA_DIR.resolve())
-    name = "quantdb_sync_" + root.replace("/", "_").replace("\\", "_").strip("_") + ".sqlite"
-    return _STATE_DIR / name
+def _state_dir() -> Path:
+    """状态库目录：调用时读 env（测试可隔离），缺省回退模块级常量。"""
+    return Path(os.getenv("QUANTDB_STATE_DIR", str(_STATE_DIR)))
+
+
+def _state_path(root: Path | None = None) -> Path:
+    """状态库文件路径：文件名由数据根目录路径生成（换目录即换库）。
+
+    root 缺省用 QUANTDB_DATA_DIR；本地扫描等外部调用可传入其它数据根
+    以复用同一命名规则。
+    """
+    resolved = str((root or QUANTDB_DATA_DIR).resolve())
+    name = "quantdb_sync_" + resolved.replace("/", "_").replace("\\", "_").strip("_") + ".sqlite"
+    return _state_dir() / name
 
 
 def _open_state():

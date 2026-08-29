@@ -34,7 +34,7 @@ FACTOR_SOURCE_DIRS: dict[FactorSource, str] = {
     "south_factors": "6_ml_datasets/south_factors",
 }
 DAILY_BACKWARD_DIR = "1_kline_data/daily_backward"
-DEFAULT_FACTOR_SOURCE: FactorSource = "l1_l2_factors"
+DEFAULT_FACTOR_SOURCE: FactorSource = "l1_factors"
 
 # ── 市场 → 可用因子源映射（后台「模型训练数据集」与训练页数据源选择共用）───────
 # 各市场 6_ml_datasets/ 下实际存在的训练直读数据集。
@@ -46,7 +46,7 @@ MARKET_FACTOR_SOURCES: dict[str, tuple[FactorSource, ...]] = {
     "FUTURES": ("l1_factors",),
 }
 DEFAULT_FACTOR_SOURCE_BY_MARKET: dict[str, FactorSource] = {
-    "CN": "l1_l2_factors",
+    "CN": "l1_factors",
     "HK": "l1_factors",
     "US": "l1_factors",
     "CRYPTO": "l1_factors",
@@ -158,7 +158,9 @@ class QuantDBFactorReader:
 
     def _files(self, source: str) -> list[Path]:
         root = self.source_path(source)
-        return sorted(root.rglob("*.parquet")) if root.is_dir() else []
+        # 只统计已发布的 dt= 分区文件，排除 _stage 等非分区暂存目录，
+        # 否则暂存 parquet 会被计入分区文件数，与实际可读数据不一致。
+        return sorted(root.glob("dt=*/*.parquet")) if root.is_dir() else []
 
     @staticmethod
     def _duckdb():
@@ -174,8 +176,10 @@ class QuantDBFactorReader:
         root = self.source_path(source)
         if not root.is_dir():
             raise QuantDBFactorError(f"QuantDB factor directory does not exist: {root}")
-        # All values come from the local QuantDB root; quote for a DuckDB string literal.
-        parquet_glob = str(root / "**" / "*.parquet").replace("'", "''")
+        # 只读取已发布分区 dt=YYYYMMDD/*.parquet（hive 分区）。若用 **/*.parquet 把
+        # _stage 等暂存目录一并 glob，暂存文件 schema 与分区不一致会抛
+        # "Hive partition mismatch"，导致整个因子源无法直读训练。
+        parquet_glob = str(root / "dt=*" / "*.parquet").replace("'", "''")
         return f"read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"
 
     def _daily_backward_relation(self) -> str | None:

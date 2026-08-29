@@ -175,7 +175,7 @@ export const ModelTrainingPage: React.FC = () => {
   // A 股 QuantDB 的字段、分类与默认勾选只来自后端已发布目录。
   const [featureCategories, setFeatureCategories] = useState<FeatureCategory[]>([]);
   const [featureCatalogLoading, setFeatureCatalogLoading] = useState(false);
-  const [factorSource, setFactorSource] = useState('l1_l2_factors');
+  const [factorSource, setFactorSource] = useState('l1_factors');
   const [factorSources, setFactorSources] = useState<QuantDBTrainingSource[]>([]);
   const [factorCatalogVersion, setFactorCatalogVersion] = useState<string | null>(null);
   const [dataCoverage, setDataCoverage] = useState<AdminModelFeatureDataCoverage | null>(null);

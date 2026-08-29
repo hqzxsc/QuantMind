@@ -21,8 +21,8 @@ const MARKET_OPTIONS = [
 
 const MARKET_SOURCE_FALLBACK: Record<string, { value: string; label: string }[]> = {
   CN: [
-    { value: 'l1_l2_factors', label: 'L1 + L2 合并宽表（默认）' },
-    { value: 'l1_factors', label: 'L1 因子' },
+    { value: 'l1_factors', label: 'L1 因子（默认）' },
+    { value: 'l1_l2_factors', label: 'L1 + L2 合并宽表' },
     { value: 'l2_factors', label: 'L2 因子' },
   ],
   HK: [
@@ -77,7 +77,7 @@ function unavailableSourceAction(status: Record<string, any>): string {
 
 export const AdminTrainingDatasets: React.FC = () => {
   const [market, setMarket] = useState('CN');
-  const [source, setSource] = useState('l1_l2_factors');
+  const [source, setSource] = useState('l1_factors');
   const [sources, setSources] = useState<Record<string, any>>({});
   const [sourceLabels, setSourceLabels] = useState<Record<string, string>>({});
   const [fields, setFields] = useState<any[]>([]);
@@ -292,7 +292,7 @@ export const AdminTrainingDatasets: React.FC = () => {
       })}
     </Row>
 
-    <Alert type="info" showIcon message="单次任务只能选择一个数据源" description="默认 L1+L2 合并宽表。L1、L2 是独立训练源，禁止跨源自由拼接；数据或 OHLCV 覆盖不完整时，直读训练入口会拒绝提交。" />
+    <Alert type="info" showIcon message="单次任务只能选择一个数据源" description="默认 L1 因子。L1、L2 是独立训练源，禁止跨源自由拼接；数据或 OHLCV 覆盖不完整时，直读训练入口会拒绝提交。" />
 
     <Row gutter={[16, 16]}>
       <Col xs={24} lg={18}><Card title="因子目录" extra={<Space><Input allowClear value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索因子、分类或中文解释" style={{ width: 220 }} /><Tag>{factorRows.length} 个已发现字段</Tag>{draft && <Tag color="orange">{pending.length} 个待分类</Tag>}</Space>}>

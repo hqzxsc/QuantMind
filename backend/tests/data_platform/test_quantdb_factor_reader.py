@@ -150,7 +150,7 @@ def test_market_source_mapping_and_defaults():
     assert sources_for_market("HK") == ["l1_factors", "ccass_factors", "south_factors"]
     assert sources_for_market("US") == ["l1_factors"]
     assert default_source_for("HK") == "l1_factors"
-    assert default_source_for("CN") == "l1_l2_factors"
+    assert default_source_for("CN") == "l1_factors"
 
 
 def test_hk_l1_dt_date_alias_ready_and_read(tmp_path):

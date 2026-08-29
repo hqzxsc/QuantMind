@@ -82,23 +82,25 @@ def fetch_quote(hub, symbol: str, days: int = 120) -> dict:
 
 
 def fetch_indicators(hub, symbol: str) -> dict:
-    """技术指标（最新 + 近 20 日均线）。"""
+    """技术指标（最新日）。注意：该数据集 close/ma* 为后复权价位，与 K 线前复权
+    不一致，故只输出量纲无关指标（rsi/kdj/macd/乖离率/量能/波动率），
+    绝对价位与均线一律由 quote.kline 计算，避免误导。"""
     df = hub.fetch_technical_indicators(symbol)
     if df.empty:
         return {}
     df = df.sort_values("dt")
     latest = df.iloc[-1]
+    # 后复权绝对价位字段（与 quote 前复权错位，剔除）
+    skip = {"symbol", "dt", "time", "close", "ma5", "ma10", "ma20", "ma60", "close_20d"}
     out = {}
     for c in df.columns:
-        if c in ("symbol", "dt", "time"):
+        if c in skip:
             continue
         v = latest[c]
         try:
             out[c] = round(float(v), 3) if v == v and v is not None else None
         except (TypeError, ValueError):
             out[c] = None
-    # 20 日收盘序列（供 AI 画趋势）
-    out["close_20d"] = [round(float(x), 2) for x in df["close"].tail(20).tolist()]
     return out
 
 

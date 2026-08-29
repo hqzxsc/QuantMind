@@ -242,14 +242,14 @@ EOF
 # 在容器内执行（脚本随 backend bind mount 可见）
 # 新目录结构：{市场名}/{股票名}/，文件 {股票名}{代码}_{date}_投研分析报告.{md,pdf}
 docker exec quantmind python /app/backend/scripts/md_to_pdf_report.py \
-  /app/db/trading_agents_results/A股市场/比亚迪/比亚迪002594_2026-08-14_投研分析报告.md \
-  /app/db/trading_agents_results/A股市场/比亚迪/比亚迪002594_2026-08-14_投研分析报告.pdf
+  /data/reports/trading_agents/A股市场/比亚迪/比亚迪002594_2026-08-14_投研分析报告.md \
+  /data/reports/trading_agents/A股市场/比亚迪/比亚迪002594_2026-08-14_投研分析报告.pdf
 
 # 验证字体真正内嵌（WQY 字体子集化后带 AAAAAA+ 前缀，
 # 必须用 BaseFont 正则解析，不能直接 grep 'WQY' 字节串）
 docker exec quantmind python -c "
 import re
-data = open('/app/db/trading_agents_results/A股市场/比亚迪/比亚迪002594_2026-08-14_投研分析报告.pdf','rb').read()
+data = open('/data/reports/trading_agents/A股市场/比亚迪/比亚迪002594_2026-08-14_投研分析报告.pdf','rb').read()
 bf = sorted(set(m.group(1).decode() for m in re.finditer(rb'/BaseFont\s*/([A-Za-z0-9+_.-]+)', data)))
 print('字体:', bf)
 print('粗体 OK:', any('ZenHei' in f or 'CJK-Bold' in f for f in bf))
@@ -257,7 +257,7 @@ print('正文 OK:', any('MicroHei' in f or 'CJK' in f for f in bf))
 "
 
 # 复制到宿主机
-docker cp quantmind:/app/db/trading_agents_results/A股市场/比亚迪/比亚迪002594_2026-08-14_投研分析报告.pdf .
+docker cp quantmind:/data/reports/trading_agents/A股市场/比亚迪/比亚迪002594_2026-08-14_投研分析报告.pdf .
 
 # 宿主机直跑（需 reportlab，字体路径见下方说明）
 # python backend/scripts/md_to_pdf_report.py input.md output.pdf

@@ -13,7 +13,7 @@ description: "新闻情绪研究方法论 — Huntly RSS 42万篇历史新闻 �
 >    docker cp <脚本路径> quantmind:/tmp/<脚本名> && docker exec -w /app quantmind python3 /tmp/<脚本名> <参数>
 >    ```
 >    脚本源三选一：宿主机 repo `skills/<name>/scripts/`、QwenPaw 工作区 `/app/working/workspaces/default/skills/<name>/scripts/`、挂载目录 `/quantmind/skills/<name>/scripts/`。纯标准库脚本（无重依赖）可在 QwenPaw 本地直接跑。
-> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/app/db/trading_agents_results/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
+> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/data/reports/trading_agents/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
 > 4. **MD → PDF 转换（按优先级降级）**：
 >    ① `docker exec -w /app quantmind python3 backend/scripts/md_to_pdf_report.py <输入.md> <输出.pdf>`（研报级排版，首选）；
 >    ② docker 不可用时，**改用 QwenPaw 内置 `pdf` 技能**把 MD 转成 PDF；
@@ -134,8 +134,8 @@ ENABLE_TAG_BOOST = True          # 事件标签 → 仓位 1.3-1.5x
 # 2) 容器内转 PDF（研报排版：深蓝封面+金色双线+斑马纹+红涨绿跌）
 docker exec quantmind python3 /app/backend/scripts/md_to_pdf_report.py /tmp/report.md /tmp/report.pdf
 # 3) 落盘前端可见目录（必做，只发 /tmp = 未交付）
-docker cp report.md  quantmind:/app/db/trading_agents_results/每日复盘/新闻情绪研究报告_$(date +%F).md
-docker cp report.pdf quantmind:/app/db/trading_agents_results/每日复盘/新闻情绪研究报告_$(date +%F).pdf
+docker cp report.md  quantmind:/data/reports/trading_agents/每日复盘/新闻情绪研究报告_$(date +%F).md
+docker cp report.pdf quantmind:/data/reports/trading_agents/每日复盘/新闻情绪研究报告_$(date +%F).pdf
 ```
 
 报告标准结构（13 章）：数据基础 → 事件研究 → 来源特征 → 时间特征 → 信号强度 → 价格行为 → 事件标签 → 策略回测（含 P0 升级 v6/hw40）→ 极端案例 → 规律清单 → 风险局限 → 结论 → **单股深度分析应用手册**。模板：`docs/news_sentiment_deep_report.md`（2026-08-21 升华版）。

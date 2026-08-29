@@ -63,7 +63,7 @@ const AdminTrainingDatasets = lazy(() => import('./features/admin/components/Adm
 const AdminAutoDLNodes = lazy(() => import('./features/admin/components/AdminAutoDLNodes').then(m => ({ default: m.AdminAutoDLNodes })));
 const ComingSoonPage = lazy(() => import('./features/admin/components/ComingSoonPage').then(m => ({ default: m.ComingSoonPage })));
 const AlphaResearchPage = lazy(() => import('./features/alpha-research/pages/AlphaResearchPage'));
-const ReportManagerPage = lazy(() => import('./features/trading-agents/pages/ReportManagerPage'));
+const SkillsCenterPage = lazy(() => import('./features/skills-center/pages/SkillsCenterPage'));
 
 // 主题切换hook
 // 主题管理已移除 - 应用统一使用浅色主题
@@ -181,7 +181,7 @@ export default function App() {
       'trading': '/trading',
       'rss-news': '/rss-news',
       'alpha-research': '/alpha-research',
-      'trading-agents': '/trading-agents',
+      skills: '/skills',
       'profile': '/user-center',
       'admin': '/admin',
     };
@@ -222,7 +222,9 @@ export default function App() {
     } else if (location.pathname.startsWith('/research')) {
       dispatch(setCurrentTab('research' as DashboardTab));
     } else if (location.pathname.startsWith('/trading-agents')) {
-      dispatch(setCurrentTab('trading-agents' as DashboardTab));
+      dispatch(setCurrentTab('skills' as DashboardTab));
+    } else if (location.pathname.startsWith('/skills')) {
+      dispatch(setCurrentTab('skills' as DashboardTab));
     } else if (location.pathname.startsWith('/trading')) {
       dispatch(setCurrentTab('trading' as DashboardTab));
     } else if (location.pathname.startsWith('/rss-news')) {
@@ -661,15 +663,16 @@ export default function App() {
                     }
                   />
                   <Route
-                    path="/trading-agents"
+                    path="/skills"
                     element={
                       <ProtectedRoute>
                         <Suspense fallback={<Spin size="large" />}>
-                          <ReportManagerPage />
+                          <SkillsCenterPage />
                         </Suspense>
                       </ProtectedRoute>
                     }
                   />
+                  <Route path="/trading-agents" element={<Navigate to="/skills" replace />} />
                   <Route
                     path="/admin"
                     element={

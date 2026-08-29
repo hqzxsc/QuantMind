@@ -351,7 +351,7 @@ def load_names(cur) -> dict[str, str]:
 def load_sector_flow(data_date: date | None, buy_date: date) -> dict[str, float]:
     """复盘 stats 的板块超级大单净额（亿）：{行业: net_yi}。缺失返回空。
     用于反推：候选所处行业当日有无聪明钱净流入。"""
-    base = os.getenv("QM_REPORT_DIR", "data/reports/daily_review")
+    base = os.getenv("QM_REPORT_DIR") or os.path.join(os.getenv("QM_REPORTS_DIR", "data/reports"), "daily_review")
     want = data_date or buy_date
     path = os.path.join(base, f"{want.strftime('%Y-%m-%d')}_stats.json")
     if not os.path.exists(path):
@@ -388,7 +388,7 @@ def load_industries() -> dict[str, str]:
 def load_news(data_date: date | None, buy_date: date) -> dict[str, dict]:
     """新闻情绪（news_review.py 产物）。数据日指定时用数据日（无泄露：只用买入日前
     已知的新闻）；否则用信号日。缺失时返回空（新闻维度中性）。"""
-    base = os.getenv("QM_REPORT_DIR", "data/reports/daily_review")
+    base = os.getenv("QM_REPORT_DIR") or os.path.join(os.getenv("QM_REPORTS_DIR", "data/reports"), "daily_review")
     want = data_date or buy_date
     path = os.path.join(base, f"{want.strftime('%Y-%m-%d')}_news.json")
     alt = os.path.join(base, f"{want.strftime('%Y%m%d')}_news.json")
@@ -415,7 +415,7 @@ def load_market_direction(data_date: date | None, buy_date: date) -> dict | None
     当日无复盘时回退到 ≤ 该日的最近复盘（往前最多找 7 天），保证看空门不因
     复盘缺跑而漏掉暴跌日。
     """
-    base = os.getenv("QM_REPORT_DIR", "data/reports/daily_review")
+    base = os.getenv("QM_REPORT_DIR") or os.path.join(os.getenv("QM_REPORTS_DIR", "data/reports"), "daily_review")
     want = data_date or buy_date
     from datetime import timedelta
     for back in range(0, 8):
@@ -874,7 +874,7 @@ def main():
     ) or "无"
 
     # 落盘
-    out_dir = os.getenv("QM_PICKS_DIR", "data/reports/stock_picks")
+    out_dir = os.getenv("QM_PICKS_DIR") or os.path.join(os.getenv("QM_REPORTS_DIR", "data/reports"), "stock_picks")
     os.makedirs(out_dir, exist_ok=True)
     md = render_md(date_str, cands, {
         "signal_date": str(buy_date),

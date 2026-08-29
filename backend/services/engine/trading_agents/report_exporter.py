@@ -41,7 +41,7 @@ _MARKET_NAMES = {
 }
 
 _RESULTS_DIR = Path(
-    os.getenv("TRADING_AGENTS_RESULTS_DIR", "").strip() or "/app/db/trading_agents_results"
+    os.getenv("TRADING_AGENTS_RESULTS_DIR", "").strip() or "/data/reports/trading_agents"
 )
 
 

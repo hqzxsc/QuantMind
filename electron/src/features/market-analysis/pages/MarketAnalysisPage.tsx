@@ -325,7 +325,7 @@ export const MarketAnalysisPage: React.FC = () => {
 
   return (
     <div
-      className={`w-full h-full ${activeTab === 'panorama' ? 'overflow-hidden' : 'overflow-y-auto'} bg-slate-50/60 px-5 pt-4 pb-28 flex flex-col gap-2.5 font-sans`}
+      className={`w-full h-full ${activeTab === 'panorama' || activeTab === 'stock-flow' || activeTab === 'tag-lookup' ? 'overflow-hidden' : 'overflow-y-auto'} bg-slate-50/60 px-5 pt-4 pb-28 flex flex-col gap-2.5 font-sans`}
       style={{
         WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
         maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
@@ -753,9 +753,9 @@ export const MarketAnalysisPage: React.FC = () => {
       )}
 
       {activeTab === 'stock-flow' && (
-        <div className="flex flex-col gap-3">
+        <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
           {focusStock && (
-            <div id="focus-stock-detail" className="bg-white/95 backdrop-blur-md rounded-3xl p-5 border border-purple-100/80 shadow-md shadow-purple-500/5 flex flex-col gap-4 scroll-mt-4">
+            <div id="focus-stock-detail" className="flex-shrink-0 bg-white/95 backdrop-blur-md rounded-3xl p-5 border border-purple-100/80 shadow-md shadow-purple-500/5 flex flex-col gap-4 scroll-mt-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
                   <TrendingUp className="w-3.5 h-3.5 text-purple-600" />
@@ -787,18 +787,24 @@ export const MarketAnalysisPage: React.FC = () => {
               <div>{renderFourBarChart(focusStock)}</div>
             </div>
           )}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-shrink-0">
             <h3 className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
               <TrendingUp className="w-3.5 h-3.5 text-purple-600" />
               <span>个股主力资金净流入排行榜</span>
             </h3>
             <span className="text-xs text-slate-400">包含超大单、大单、中单、小单拆解</span>
           </div>
-          <StockMoneyFlowTable items={stockFlows} loading={loading} latestDate={breadth?.trade_date} onStockClick={openStockDetail} />
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <StockMoneyFlowTable items={stockFlows} loading={loading} latestDate={breadth?.trade_date} onStockClick={openStockDetail} />
+          </div>
         </div>
       )}
 
-      {activeTab === 'tag-lookup' && <TagLookupPanel />}
+      {activeTab === 'tag-lookup' && (
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <TagLookupPanel />
+        </div>
+      )}
     </div>
   );
 };

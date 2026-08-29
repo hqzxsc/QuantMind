@@ -245,9 +245,9 @@ export const TagLookupPanel: React.FC = () => {
   ];
 
   return (
-    <div className="w-full flex flex-col gap-5 bg-white/95 backdrop-blur-md rounded-3xl p-6 border border-purple-100/80 shadow-lg shadow-purple-500/5">
+    <div className="w-full h-full flex flex-col gap-5 bg-white/95 backdrop-blur-md rounded-3xl p-6 border border-purple-100/80 shadow-lg shadow-purple-500/5 overflow-hidden">
       {/* 🌟 1. 顶部 4 大统计数据卡片 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 flex-shrink-0">
         {statCards.map((c) => (
           <div key={c.label} className={`bg-gradient-to-br ${c.cardClass} rounded-2xl p-4 shadow-sm flex items-center justify-between`}>
             <div>

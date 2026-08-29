@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -776,9 +777,8 @@ def main() -> None:
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir) if args.data_dir else default_data_dir()
-    out_dir = (
-        Path(args.out_dir) if args.out_dir else _REPO_ROOT / "data" / "reports" / "daily_review"
-    )
+    reports_root = Path(os.getenv("QM_REPORTS_DIR", str(_REPO_ROOT / "data" / "reports")))
+    out_dir = Path(args.out_dir) if args.out_dir else reports_root / "daily_review"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     db = duckdb.connect()

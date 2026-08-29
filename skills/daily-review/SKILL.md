@@ -13,7 +13,7 @@ description: "A股每日复盘（专业版）— 基于 QuantDB 本地数据 + �
 >    docker cp <脚本路径> quantmind:/tmp/<脚本名> && docker exec -w /app quantmind python3 /tmp/<脚本名> <参数>
 >    ```
 >    脚本源三选一：宿主机 repo `skills/<name>/scripts/`、QwenPaw 工作区 `/app/working/workspaces/default/skills/<name>/scripts/`、挂载目录 `/quantmind/skills/<name>/scripts/`。纯标准库脚本（无重依赖）可在 QwenPaw 本地直接跑。
-> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/app/db/trading_agents_results/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
+> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/data/reports/trading_agents/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
 > 4. **MD → PDF 转换（按优先级降级）**：
 >    ① `docker exec -w /app quantmind python3 backend/scripts/md_to_pdf_report.py <输入.md> <输出.pdf>`（研报级排版，首选）；
 >    ② docker 不可用时，**改用 QwenPaw 内置 `pdf` 技能**把 MD 转成 PDF；
@@ -155,12 +155,12 @@ python3 /app/backend/scripts/md_to_pdf_report.py /tmp/review.md /tmp/review.pdf
 
 ```bash
 # —— 宿主机：宿主机直接 cp 会 EACCES（目录 owner 是容器 root），必须 docker cp ——
-docker cp 复盘.md quantmind:/app/db/trading_agents_results/每日复盘/每日复盘_2026-08-14.md
-docker cp 复盘.pdf quantmind:/app/db/trading_agents_results/每日复盘/每日复盘_2026-08-14.pdf
+docker cp 复盘.md quantmind:/data/reports/trading_agents/每日复盘/每日复盘_2026-08-14.md
+docker cp 复盘.pdf quantmind:/data/reports/trading_agents/每日复盘/每日复盘_2026-08-14.pdf
 
 # —— 容器内：直接 cp ——
-cp 复盘.md /app/db/trading_agents_results/每日复盘/每日复盘_2026-08-14.md
-cp 复盘.pdf /app/db/trading_agents_results/每日复盘/每日复盘_2026-08-14.pdf
+cp 复盘.md /data/reports/trading_agents/每日复盘/每日复盘_2026-08-14.md
+cp 复盘.pdf /data/reports/trading_agents/每日复盘/每日复盘_2026-08-14.pdf
 ```
 
 落盘后 `ls` 确认 md + pdf 都在（前端「股票报告」页 → 每日复盘 文件夹）。

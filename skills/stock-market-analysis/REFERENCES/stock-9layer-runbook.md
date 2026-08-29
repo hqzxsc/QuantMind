@@ -114,10 +114,10 @@ docker exec quantmind-db psql -U quantmind -d quantmind -c \
 # ① 按模板写 MD（结构见 §5）→ /tmp/{name}_{code}_report.md
 # ② 容器内转 PDF
 docker cp /tmp/{name}_{code}_report.md quantmind:/tmp/report.md
-docker exec quantmind bash -c 'mkdir -p "/app/db/trading_agents_results/A股市场/{股票名}" && \
+docker exec quantmind bash -c 'mkdir -p "/data/reports/trading_agents/A股市场/{股票名}" && \
   python3 /app/backend/scripts/md_to_pdf_report.py /tmp/report.md \
-    "/app/db/trading_agents_results/A股市场/{股票名}/{股票名}{code}_{YYYYMMDD}_深度学习分析报告.pdf" && \
-  cp /tmp/report.md "/app/db/trading_agents_results/A股市场/{股票名}/{股票名}{code}_{YYYYMMDD}_深度学习分析报告.md"'
+    "/data/reports/trading_agents/A股市场/{股票名}/{股票名}{code}_{YYYYMMDD}_深度学习分析报告.pdf" && \
+  cp /tmp/report.md "/data/reports/trading_agents/A股市场/{股票名}/{股票名}{code}_{YYYYMMDD}_深度学习分析报告.md"'
 # ③ 宿主机可见（挂载 ./db:/app/db 自动同步），前端报告列表可查
 ```
 

@@ -13,7 +13,7 @@ description: "个股深度研究（多 Agent 框架版）— 借鉴 TradingAgent
 >    docker cp <脚本路径> quantmind:/tmp/<脚本名> && docker exec -w /app quantmind python3 /tmp/<脚本名> <参数>
 >    ```
 >    脚本源三选一：宿主机 repo `skills/<name>/scripts/`、QwenPaw 工作区 `/app/working/workspaces/default/skills/<name>/scripts/`、挂载目录 `/quantmind/skills/<name>/scripts/`。纯标准库脚本（无重依赖）可在 QwenPaw 本地直接跑。
-> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/app/db/trading_agents_results/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
+> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/data/reports/trading_agents/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
 > 4. **MD → PDF 转换（按优先级降级）**：
 >    ① `docker exec -w /app quantmind python3 backend/scripts/md_to_pdf_report.py <输入.md> <输出.pdf>`（研报级排版，首选）；
 >    ② docker 不可用时，**改用 QwenPaw 内置 `pdf` 技能**把 MD 转成 PDF；
@@ -96,7 +96,7 @@ mkdir -p /tmp/stock-research/{symbol}/reports
 docker cp /tmp/stock-research/{symbol}/reports/final.md quantmind:/tmp/ma_report.md
 docker exec quantmind bash -lc "cd /app && python3 backend/scripts/md_to_pdf_report.py /tmp/ma_report.md /tmp/ma_report.pdf"
 # 落盘（A股市场/{股票名}/，与深度分析报告同列表；目录为 root，须容器内操作）
-docker exec quantmind bash -c "mkdir -p '/app/db/trading_agents_results/A股市场/{股票名}' && cp /tmp/ma_report.md '/app/db/trading_agents_results/A股市场/{股票名}/{股票名}{代码}_2026-08-29_深度研究分析报告.md' && cp /tmp/ma_report.pdf '/app/db/trading_agents_results/A股市场/{股票名}/{股票名}{代码}_2026-08-29_深度研究分析报告.pdf'"
+docker exec quantmind bash -c "mkdir -p '/data/reports/trading_agents/A股市场/{股票名}' && cp /tmp/ma_report.md '/data/reports/trading_agents/A股市场/{股票名}/{股票名}{代码}_2026-08-29_深度研究分析报告.md' && cp /tmp/ma_report.pdf '/data/reports/trading_agents/A股市场/{股票名}/{股票名}{代码}_2026-08-29_深度研究分析报告.pdf'"
 ```
 
 文件名约定：`{股票名}{代码}_{日期}_深度研究分析报告.pdf`（与现有深度学习分析报告同格式，便于排序）。

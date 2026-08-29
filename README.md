@@ -127,6 +127,8 @@
 
 系统基于 Docker 容器化编排，推荐使用 **Ubuntu 22.04 / 24.04** 运行环境。
 
+> 📖 **完整部署指南**（含离线/在线/手动三种部署方式、`.env` 配置、QwenPaw 初始化、数据目录说明与常见问题排查）见 **[docs/部署指南.md](docs/部署指南.md)**。
+
 ### 1. 完整离线部署（推荐 · 生产就绪）
 
 离线包内含完整预构建镜像、业务数据、预训练模型、Qlib 数据与 PostgreSQL 初始化备份：
@@ -271,7 +273,7 @@ quantmind/
 └── docker-compose.yml        # 容器服务编排定义
 ```
 
-> 详细文档参考：[架构说明](docs/development/architecture.md) • [源码包部署](docs/deployment/source-bundle.md) • [通达信桥接](docs/integrations/tdx-bridge.md)
+> 详细文档参考：[部署指南](docs/部署指南.md) • [架构说明](docs/development/architecture.md) • [源码包部署](docs/deployment/source-bundle.md) • [通达信桥接](docs/integrations/tdx-bridge.md)
 
 ---
 

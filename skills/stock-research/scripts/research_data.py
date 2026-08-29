@@ -32,7 +32,7 @@ from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub  # 
 from backend.shared.stock_utils import StockCodeUtil  # noqa: E402
 
 HUNTLY_DB = "/data/huntly/db.sqlite"
-OUT_DIR = Path("/data/reports/stock_research")
+OUT_DIR = Path(os.getenv("QM_REPORTS_DIR", "/data/reports")) / "stock_research"
 
 
 def _hub() -> QuantDBDataHub:

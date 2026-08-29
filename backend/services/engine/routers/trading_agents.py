@@ -22,8 +22,9 @@ router = APIRouter(prefix="/api/v1/trading-agents", tags=["TradingAgents"])
 _trackers: dict[str, object] = {}
 _threads: dict[str, object] = {}
 
-# Results storage directory
-_RESULTS_DIR = Path("/app/db/trading_agents_results")
+# Results storage directory（统一报告根 data/reports 下的投研报告子目录）
+_RESULTS_DIR = Path("/data/reports/trading_agents")
+_LEGACY_RESULTS_DIR = Path("/app/db/trading_agents_results")
 
 
 class AnalyzeRequest(BaseModel):
@@ -422,12 +423,16 @@ def _safe_folder_path(path: str) -> bool:
 
 
 def _resolve_results_dir() -> Path:
-    """解析报告目录（宿主机/容器均可）。"""
+    """解析报告目录（宿主机/容器均可）。新目录不存在时回退旧目录，保证历史报告可见。"""
     env_val = os.getenv("TRADING_AGENTS_RESULTS_DIR", "").strip()
     if env_val:
         p = Path(env_val)
         if p.is_dir():
             return p
+    if _RESULTS_DIR.is_dir():
+        return _RESULTS_DIR
+    if _LEGACY_RESULTS_DIR.is_dir():
+        return _LEGACY_RESULTS_DIR
     return _RESULTS_DIR
 
 

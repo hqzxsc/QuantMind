@@ -13,7 +13,7 @@ description: "个股深度投研分析（智能体自主版）— 拉取 QuantMi
 >    docker cp <脚本路径> quantmind:/tmp/<脚本名> && docker exec -w /app quantmind python3 /tmp/<脚本名> <参数>
 >    ```
 >    脚本源三选一：宿主机 repo `skills/<name>/scripts/`、QwenPaw 工作区 `/app/working/workspaces/default/skills/<name>/scripts/`、挂载目录 `/quantmind/skills/<name>/scripts/`。纯标准库脚本（无重依赖）可在 QwenPaw 本地直接跑。
-> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/app/db/trading_agents_results/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
+> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/data/reports/trading_agents/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
 > 4. **MD → PDF 转换（按优先级降级）**：
 >    ① `docker exec -w /app quantmind python3 backend/scripts/md_to_pdf_report.py <输入.md> <输出.pdf>`（研报级排版，首选）；
 >    ② docker 不可用时，**改用 QwenPaw 内置 `pdf` 技能**把 MD 转成 PDF；
@@ -239,8 +239,8 @@ mkdir -p "/home/zbox/projects/quantmind/db/trading_agents_results/A股市场/贵
 
 ```bash
 docker exec quantmind python /app/backend/scripts/md_to_pdf_report.py \
-  "/app/db/trading_agents_results/A股市场/贵州茅台/贵州茅台600519_2026-08-15_投研分析报告.md" \
-  "/app/db/trading_agents_results/A股市场/贵州茅台/贵州茅台600519_2026-08-15_投研分析报告.pdf"
+  "/data/reports/trading_agents/A股市场/贵州茅台/贵州茅台600519_2026-08-15_投研分析报告.md" \
+  "/data/reports/trading_agents/A股市场/贵州茅台/贵州茅台600519_2026-08-15_投研分析报告.pdf"
 ```
 
 **PDF 特性**：A4、TTF 内嵌中文字体（任何 PDF 阅读器含浏览器 pdfjs 都正常渲染）、**粗体真实加粗**（正文文泉驿 MicroHei + 粗体 ZenHei 独立字重）、h1 居中大标题、h2 蓝色小节、表格深蓝表头 + 隔行底色。
@@ -252,7 +252,7 @@ docker exec quantmind python /app/backend/scripts/md_to_pdf_report.py \
 ```bash
 docker exec quantmind python -c "
 import re
-data = open('/app/db/trading_agents_results/A股市场/贵州茅台/贵州茅台600519_2026-08-15_投研分析报告.pdf','rb').read()
+data = open('/data/reports/trading_agents/A股市场/贵州茅台/贵州茅台600519_2026-08-15_投研分析报告.pdf','rb').read()
 bf = sorted(set(m.group(1).decode() for m in re.finditer(rb'/BaseFont\s*/([A-Za-z0-9+_.-]+)', data)))
 print('字体:', bf)
 print('粗体 OK:', any('ZenHei' in f or 'CJK-Bold' in f for f in bf))

@@ -1,0 +1,256 @@
+# -*- coding: utf-8 -*-
+"""一次性生成 prompts/ 提示词库（技能中心数据源）。"""
+import os
+
+os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "prompts"))
+
+# (name, title, category, description, outputs, body)
+P = []
+
+P.append(("quantbot-init", "QuantBot 环境初始化", "平台运营",
+    "首次使用 QuantBot 时，检查并安装 QuantMind 技能与人格配置",
+    "QwenPaw 技能池 + default 工作区",
+    """请完成 QuantBot（QwenPaw）与 QuantMind 平台的对接检查：
+
+1. 检查技能池：确认 QuantMind 技能（daily-review、stock-research 等）是否已安装到我的工作区；
+2. 如缺失：读取 /quantmind/scripts/quantbot_init.sh 了解安装流程，或提示用户在服务器执行 `bash scripts/quantbot_init.sh --skills-only`（装技能）和 `--persona-only`（装人格）；
+3. 环境自检：确认你能访问后端 API（http://quantmind:8000，内部认证见 AGENTS.md）、能读写 /data/reports/、能 docker exec 到 quantmind 容器；
+4. 输出一份环境就绪清单：哪些能力可用、哪些缺失、如何补齐。"""))
+
+# ---- 平台运营 ----
+P.append(("quantmind-operations", "平台运营总指南", "平台运营",
+    "模型训练、模型管理、后台数据更新、RSS 新闻对接等平台运营操作",
+    "视具体操作而定",
+    """我需要执行平台运营操作：{操作内容，如：训练一个 lightgbm 模型 / 更新今日数据 / 对接 RSS 新闻源}。
+
+请读取 skills/quantmind-operations/SKILL.md，按其中对应章节的流程执行，遵守顶部运行环境契约。涉及数据更新的操作请确认同步脚本执行结果；完成后给我操作结果速览。"""))
+
+P.append(("quantmind-deploy", "部署与运维", "平台运营",
+    "一键部署、快速部署、数据库初始化、部署问题排查、服务健康检查",
+    "服务状态报告",
+    """我需要部署或排查 QuantMind 平台：{部署新服务器 / 排查部署失败 / 检查服务健康}。
+
+请读取 skills/quantmind-deploy/SKILL.md，按其中对应章节执行；服务健康检查可用 docker compose ps 与各服务 /health 端点。发现问题给出根因和修复步骤，重大变更操作前先向我确认。"""))
+
+P.append(("quantdb-sdk", "QuantDB 数据查询", "平台运营",
+    "QuantDB API Key 配置、数据集目录、K线/财务/因子远程查询",
+    "查询结果",
+    """我需要查询量化数据：{查询内容，如：600519 最近 60 个交易日的日K / 某财报字段}。
+
+请读取 skills/quantdb-sdk/SKILL.md 获取数据集目录与查询方式，并配合 skills/quantdb-fields/SKILL.md 确认字段单位口径（volume=股、amount=万元等）。查询结果用表格给我，标注单位。"""))
+
+P.append(("quantdb-fields", "字段单位与口径速查", "平台运营",
+    "QuantDB 各数据集实测单位、口径与陷阱速查手册",
+    "口径说明",
+    """我在做数据分析/回测/报告时需要确认数据口径：{字段疑问，如：成交量单位是股还是手 / 股息率是百分数还是小数 / L2 逐笔数据怎么读}。
+
+请读取 skills/quantdb-fields/SKILL.md，直接给我该字段的单位、口径和已知陷阱，必要时给出验证方法。"""))
+
+# ---- 研究分析 ----
+P.append(("daily-review", "A股每日复盘", "研究分析",
+    "盘后专业复盘：指数、涨停梯队、行业轮动、资金面、L2 微观结构、推理信号复盘、次日方向研判",
+    "data/reports/daily_review/ + PDF 报告",
+    """今天是 {日期，如 2026-08-29}，请给我做 A 股每日复盘。
+
+请读取 skills/daily-review/SKILL.md 并严格按照其固定流程执行（取数脚本 → 按模板写复盘 → 转 PDF → 落盘）：报告以 facts 数据为准，facts 里没有的数字不要写。最后给我 200 字以内的速览：市场方向、最强板块、明日关键位。"""))
+
+P.append(("market-analysis", "市场分析报告", "研究分析",
+    "大盘快照版市场分析：核心指数、广度情绪、行业热力图、板块资金流、个股主力 Top20",
+    "data/reports/market_analysis/ + PDF 报告",
+    """请给我做一份今日市场分析报告（大盘快照版）。
+
+请读取 skills/market-analysis/SKILL.md 并按其流程执行：跑取数脚本（market_analysis.py）→ 基于 facts 撰写解读 → Markdown → PDF（研报风）→ 落盘 data/reports/market_analysis/。最后给我核心结论速览：大盘状态、资金主线、值得关注的 3 个板块。"""))
+
+P.append(("stock-market-analysis", "个股/全市场深度分析", "研究分析",
+    "全市场信号扫描、行业轮动、个股六维深度分析（基本面/估值/技术/资金筹码/情绪/风险）、CSV 导出",
+    "分析报告 + CSV 导出",
+    """我需要市场/个股深度分析：{全市场信号扫描 / 行业轮动分析 / 深度分析某只股票，如 600519 / 导出选股数据 CSV}。
+
+请读取 skills/stock-market-analysis/SKILL.md 并按对应章节执行，个股分析覆盖基本面/估值/技术/资金筹码/情绪/风险六个维度。报告数据必须来自接口真实返回，最后给出可操作结论。"""))
+
+P.append(("stock-picks", "每日股票推荐", "研究分析",
+    "复盘后多维打分选股：L2 微观结构 + 模型融合分 + 仓位信号 + 板块强度 + 新闻情绪",
+    "data/reports/stock_picks/ + PDF 报告",
+    """请基于最新复盘数据给我做今日股票推荐。
+
+请读取 skills/stock-picks/SKILL.md 并按其流程执行：先确认 data/reports/daily_review/ 有当日 stats（没有先跑复盘取数）→ 跑 pick_candidates.py 多维打分 → Top N 个股深度分析 → 综合报告 → PDF 落盘 data/reports/stock_picks/。最后给我候选榜和每只股票的一句入选理由。"""))
+
+P.append(("stock-research", "个股深度研究（多Agent）", "研究分析",
+    "5 分析师并行（技术/新闻/资金情绪/基本面/市场）→ 多空辩论 → 研究经理汇总 → 研报 PDF",
+    "data/reports/stock_research/ + data/reports/trading_agents/ PDF",
+    """请对 {股票名称及代码，如：贵州茅台 600519} 做一次个股深度研究。
+
+请读取 skills/stock-research/SKILL.md 并严格按多 Agent 流程执行：跑 research_data.py 取数 → 5 个分析师并行（用 prompts/ 下的角色提示词）→ 多空辩论 → 研究经理汇总 → MD 转 PDF → 落盘 data/reports/trading_agents/{市场}/{股票名}/（平台股票报告页可见）。最后给我结论速览：核心逻辑、多空关键分歧、风险点。"""))
+
+P.append(("trading-agents", "个股投研分析（智能体自主版）", "研究分析",
+    "本地数据 → 多空子代理辩论 → 综合研判 → PDF 报告，不依赖容器投研管线",
+    "data/reports/trading_agents/ PDF 报告",
+    """请用智能体自主模式深度分析 {股票名称及代码}。
+
+请读取 skills/trading-agents/SKILL.md 并按其流程执行：拉取本地数据（特征/风险评分/推理分数/新闻）→ 组织多空子代理辩论 → 综合研判 → 生成 MD 报告 → 转 PDF 落盘 data/reports/trading_agents/{市场}/{股票名}/。最后给我投资论点摘要和主要风险。"""))
+
+P.append(("smart-strategy-stock-picking", "条件选股", "研究分析",
+    "基于 QuantDB 的条件选股：自然语言或结构化条件筛选、构建股票池",
+    "股票池列表",
+    """请帮我选股，条件：{自然语言条件，如：市值 100-500 亿、PE < 30、近 20 日主力资金净流入、行业为半导体}。
+
+请读取 skills/smart-strategy-stock-picking/SKILL.md，把我的条件转成结构化筛选并执行。结果按市值/涨跌幅排序给表格，注明每列单位与数据截止日期；超出 50 只时只展示前 50 并说明总量。"""))
+
+P.append(("batch-inference-analysis", "批量推理信号分析", "研究分析",
+    "每日推理信号解读：行业轮动、个股分数区间、负分参考、市场状态判断",
+    "信号解读报告",
+    """请分析最新一批模型推理信号：{指定日期或批次，留空则取最新}。
+
+请读取 skills/batch-inference-analysis/SKILL.md 并按其方法论执行：读取推理信号数据 → 分析行业分布与轮动 → 个股分数区间解读 → 负分参考。最后给我：市场状态判断、信号最集中的 3 个行业、Top 5 高分股与风险提示。"""))
+
+P.append(("news-sentiment-research", "新闻情绪研究", "研究分析",
+    "RSS 历史新闻情绪研究：事件研究、七维深度分析、融合规律优化回测、研报输出",
+    "研报 MD + PDF",
+    """我想研究新闻情绪对股价的规律：{研究主题，如：利好新闻后 5 日收益分布 / 情绪强度与后续涨幅关系}。
+
+请读取 skills/news-sentiment-research/SKILL.md 并按方法论执行（数据源为 Huntly RSS 历史新闻 + FinBERT 情绪），跑对应 backtest_news_*.py 脚本，输出研报级 MD + PDF。结论必须基于数据，样本量不足时明确说明。"""))
+
+P.append(("news-sentiment-finbert", "新闻情绪管线运维", "平台运营",
+    "FinBERT 中文金融情绪识别：安装、权重下载、字典扩充、全量重算、排查",
+    "运维结果",
+    """新闻情绪功能需要运维：{情绪不生效 / 情绪都是中性 / 重新安装 FinBERT / 扩充情绪词典 / 触发全量重算}。
+
+请读取 skills/news-sentiment-finbert/SKILL.md，按对应章节排查或执行。涉及全量重算的操作先告诉我预计耗时，经我确认后再执行。"""))
+
+# ---- 策略·因子·模型·回测 ----
+P.append(("ai-ide-strategy-writing", "AI 写量化策略", "策略·因子·模型·回测",
+    "AI 生成 Qlib 量化策略代码、Docker 容器执行、策略落库",
+    "策略代码 + 落库结果",
+    """请帮我写一个量化策略：{策略想法，如：低波动+高股息双因子选股，每周调仓}。
+
+请读取 skills/ai-ide-strategy-writing/SKILL.md，按其规范生成 Qlib 策略代码，在 Docker runner 中执行验证可运行，然后落库保存。给我策略逻辑说明、代码位置和执行结果。"""))
+
+P.append(("backtest-center", "回测中心", "策略·因子·模型·回测",
+    "Qlib 回测：快速回测、专家模式、策略对比、参数优化、高级分析",
+    "回测结果报告",
+    """我需要回测：{快速回测某策略 / 对比多个策略 / 参数优化 / 查看回测历史}，市场 {CN/HK/US/CRYPTO/FUTURES}。
+
+请读取 skills/backtest-center/SKILL.md，按对应模式操作。回测配置按市场切换（provider_uri/基准/股票池）。结果给我年化收益、最大回撤、夏普比率的对比表，并说明结论是否稳健。"""))
+
+P.append(("rd-agent-factor-mining", "因子挖掘（RD-Agent）", "策略·因子·模型·回测",
+    "RD-Agent 因子演化端到端流水线：启动 → 轮询 → 回测评估 → IC/Sharpe 排序 → 入库",
+    "因子报告 + 入库结果",
+    """请帮我挖掘新因子：市场 {CN/HK/US/CRYPTO/FUTURES}，{可选：关注方向，如量价类/基本面类}。
+
+请读取 skills/rd-agent-factor-mining/SKILL.md 并走完整流水线：preflight 环境检查 → 启动演化 → 轮询完成 → 批量回测评估 → IC/Sharpe 排序 → 解释 → 入库 → Markdown 报告。挖因子耗时较长，先给我预计时间并分段汇报进度。"""))
+
+P.append(("model-train-infer-backtest-report", "训练-推理-回测-报告全流程", "策略·因子·模型·回测",
+    "T+N 周期模型训练（13 种模型）→ 批量推理 → 组合回测（阈值+大盘MA+止损）→ 研报输出",
+    "研报 MD + PDF",
+    """请走完「训练 → 推理 → 回测 → 报告」全流程：模型类型 {lightgbm/xgboost/lstm/transformer 等 13 选 1}，周期 T+{N}，市场 {CN/HK/US/CRYPTO/FUTURES}。
+
+请读取 skills/model-train-infer-backtest-report/SKILL.md 并按流程执行：提交训练 → 等待完成 → 批量推理 → 自定义组合回测（分数阈值 + 大盘 MA 过滤{+止损}）→ 导出研报 MD+PDF。训练耗时长，分段汇报；最后给我 T+N 周期对比与效益分析结论。"""))
+
+# ---- 交易 ----
+P.append(("simulation-trading", "模拟交易", "交易",
+    "模拟盘下单买卖、持仓管理、成交查询、资金快照",
+    "交易结果",
+    """请帮我操作模拟交易：{买入/卖出 某股票及数量 / 查持仓 / 查账户与资金 / 查成交记录}。
+
+请读取 skills/simulation-trading/SKILL.md，通过 /api/v1/simulation/* 接口执行。下单前把订单要素（代码、方向、数量、价格）列给我确认后再提交；完成后返回成交结果与最新持仓。"""))
+
+P.append(("tdx-live-trading", "TDX 实盘监控与交易", "交易",
+    "通达信实盘链路：实时推理、自动买卖、挂单/撤单、交易记录、持仓、桥健康巡检",
+    "链路状态/交易结果",
+    """我需要处理 TDX 实盘链路：{查看链路健康状态 / 查今日交易记录与持仓 / 配置实时推理 / 下单、撤单操作}。
+
+请读取 skills/tdx-live-trading/SKILL.md：先跑 tdx_live_status.py 状态快照并按异常判定表巡检；涉及实盘下单/撤单的操作必须先列出订单要素经我确认。实盘资金安全第一，任何异常先停止操作并报告。"""))
+
+P.append(("ibkr-cli", "IBKR 盈透证券操作", "交易",
+    "Interactive Brokers CLI：行情、下单、订单管理、账户/持仓/盈亏、期权链、扫描器",
+    "操作结果",
+    """我需要通过 Interactive Brokers 操作：{行情查询 / 下单 / 账户持仓盈亏 / 期权链 / 基本面数据}。
+
+请读取 skills/ibkr-cli/SKILL.md 获取 ibkr-cli 用法并执行。涉及真实订单的操作先与我确认要素；输出用表格，注明币种与数据时点。"""))
+
+# ---- 券商 SDK ----
+P.append(("futuapi", "富途 OpenAPI 助手", "券商 SDK",
+    "富途 OpenAPI（Python）：行情/K线/下单/持仓/资金",
+    "代码 / 查询结果",
+    """我需要用富途 OpenAPI：{行情查询 / 下单 / 持仓资金查询 / 编写交易程序}。
+
+请读取 skills/futuapi/SKILL.md 获取 SDK 配置与 API 用法（OpenD 连接方式见 install-futu-opend 技能），给出可直接运行的 Python 代码或执行结果。真实下单代码先给我确认。"""))
+
+P.append(("install-futu-opend", "安装富途 OpenD", "券商 SDK",
+    "富途 OpenD 网关下载/安装/启动、futu-api SDK 升级",
+    "安装结果",
+    """请帮我安装/启动富途 OpenD 网关：{本机安装 / Docker 运行（docker compose up -d futu-opend）/ 升级 futu-api SDK}。
+
+请读取 skills/install-futu-opend/SKILL.md 并按流程执行，完成后验证 OpenD 连接（端口 11111）可用。"""))
+
+TIGER_LANGS = {
+    "tigeropen": ("Python", "行情、股票/期货/期权交易、实时推送、CLI、MCP Server 集成"),
+    "tigeropen-java": ("Java", "行情、交易、推送、账户管理、策略示例"),
+    "tigeropen-cpp": ("C++", "SDK 编译配置、行情、交易、推送"),
+    "tigeropen-csharp": ("C#/.NET", "行情、交易、推送"),
+    "tigeropen-go": ("Go", "行情、交易、推送"),
+    "tigeropen-rust": ("Rust（异步）", "行情、交易、推送"),
+    "tigeropen-typescript": ("TypeScript/Node.js", "行情、交易、推送"),
+}
+for name, (lang, feats) in TIGER_LANGS.items():
+    P.append((name, "老虎证券 OpenAPI " + lang + " SDK", "券商 SDK",
+        "老虎证券 OpenAPI " + lang + " SDK：" + feats,
+        "可运行代码",
+        "我需要用老虎证券 OpenAPI（" + lang + "）实现：{需求，如：订阅某股实时行情 / 下单 / 查询期权链 / 集成到我的应用}。\n\n"
+        "请读取 skills/" + name + "/SKILL.md 获取 SDK 安装配置与 API 用法，生成可直接运行的代码，标注所需的开发者账号配置项（不硬编码密钥）。"))
+
+
+def write(name, title, category, desc, outputs, body):
+    content = "---\n"
+    content += "name: " + name + "\n"
+    content += "title: " + title + "\n"
+    content += "category: " + category + "\n"
+    content += "description: " + desc + "\n"
+    content += "outputs: " + outputs + "\n"
+    content += "---\n\n"
+    content += "> 复制下方提示词到 QuantBot（QwenPaw 控制台）即可使用；`{占位符}` 处替换为你的实际内容。\n\n"
+    content += body + "\n"
+    with open(name + ".md", "w", encoding="utf-8", newline="\n") as f:
+        f.write(content)
+
+
+for item in P:
+    write(*item)
+
+# 同步生成前端数据模块（技能中心提示词卡片数据源，构建期打包进 bundle）
+TS_OUT = os.path.join(os.getcwd(), "..", "electron", "src", "features", "skills-center",
+                      "prompts.generated.ts")
+lines = [
+    "/**",
+    " * 本文件由 scripts/gen_prompts.py 自动生成，请勿手工编辑。",
+    " * 源数据：仓库根目录 prompts/*.md（人类可读版本）。",
+    " */",
+    "",
+    "export interface PromptMeta {",
+    "  name: string;",
+    "  title: string;",
+    "  category: string;",
+    "  description: string;",
+    "  outputs: string;",
+    "  body: string;",
+    "}",
+    "",
+    "export const PROMPTS: PromptMeta[] = [",
+]
+for name, title, category, desc, outputs, body in P:
+    def esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${").replace("\n", "\\n")
+    lines.append("  {")
+    lines.append(f"    name: '{name}',")
+    lines.append(f"    title: '{title}',")
+    lines.append(f"    category: '{category}',")
+    lines.append(f"    description: '{esc(desc)}',")
+    lines.append(f"    outputs: '{esc(outputs)}',")
+    lines.append(f"    body: `{esc(body)}`,")
+    lines.append("  },")
+lines.append("];")
+lines.append("")
+with open(TS_OUT, "w", encoding="utf-8", newline="\n") as f:
+    f.write("\n".join(lines))
+
+print("written", len(P), "prompts; ts module ->", TS_OUT)

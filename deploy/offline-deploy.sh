@@ -86,7 +86,20 @@ install_runtime() {
     log '步骤 1/8：更新系统并安装依赖'
     apt-get update -y
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        ca-certificates curl git gnupg lsb-release zstd
+        ca-certificates curl git gnupg lsb-release zstd \
+        python3-pip python3-pandas
+
+    # 数据分析与 parquet 读取依赖：
+    #   - python3-pandas 已通过 apt 安装（读 parquet 还需 pyarrow 引擎）
+    #   - duckdb 用于直接查询 quantdb 的海量 parquet 数据
+    #   - pyarrow 补齐 pandas 的 parquet 引擎
+    # 离线环境可能无 PyPI 访问，安装失败仅告警，不中断整体部署。
+    if [[ ${QUANTMIND_SKIP_ANALYSIS_TOOLS:-false} != true ]]; then
+        log '步骤 1/8：安装 parquet 分析工具（pandas/duckdb/pyarrow）'
+        python3 -m pip install --break-system-packages duckdb pyarrow \
+            || python3 -m pip install duckdb pyarrow --user \
+            || log '警告：parquet 分析工具安装失败（可能无外网），已跳过'
+    fi
 
     log '步骤 2/8：安装 Docker 和 Docker Compose'
     if ! command -v docker >/dev/null 2>&1; then
@@ -290,6 +303,44 @@ restore_qwenpaw_volumes() {
     done
 }
 
+configure_qwenpaw_runtime() {
+    log '步骤 8/8：配置 QwenPaw 运行时（reportlab / docker CLI）'
+    # 技能运行环境契约依赖：
+    #   - reportlab：QwenPaw venv 内做研报级 MD→PDF 转换（md_to_pdf_report.py）
+    #   - docker CLI：QwenPaw 容器内经 docker exec quantmind 执行重依赖取数脚本
+    # 离线/无外网环境安装失败仅告警，不中断部署。
+    if ! docker ps --format '{{.Names}}' | grep -qx qwenpaw; then
+        log '警告：qwenpaw 容器未运行，跳过 QwenPaw 运行时配置'
+        return 0
+    fi
+
+    if docker exec qwenpaw /app/venv/bin/python3 -c 'import reportlab' >/dev/null 2>&1; then
+        log 'QwenPaw venv 已包含 reportlab，跳过安装'
+    else
+        docker exec qwenpaw sh -c \
+            '/app/venv/bin/pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple reportlab' \
+            || docker exec qwenpaw sh -c \
+            '/app/venv/bin/pip install -q -i https://mirrors.aliyun.com/pypi/simple/ reportlab' \
+            || docker exec qwenpaw sh -c '/app/venv/bin/pip install -q reportlab' \
+            || log '警告：reportlab 安装失败（可能无外网），技能 PDF 生成将降级为仅 MD 输出'
+    fi
+
+    if docker exec qwenpaw sh -c 'command -v docker' >/dev/null 2>&1; then
+        log 'QwenPaw 容器已包含 docker CLI'
+    elif [[ -x /usr/bin/docker ]] \
+        && docker cp /usr/bin/docker qwenpaw:/usr/local/bin/docker 2>/dev/null \
+        && docker exec qwenpaw sh -c \
+            'chmod +x /usr/local/bin/docker && docker --version >/dev/null' 2>/dev/null; then
+        # 首选：宿主机 docker CLI 为静态二进制，直接复制进容器（离线可用，秒级完成）
+        log '已从宿主机复制 docker CLI 到 QwenPaw 容器'
+    else
+        # 兜底：容器内 apt 安装（需外网且容器有软件源）
+        docker exec qwenpaw sh -c \
+            'command -v apt-get >/dev/null 2>&1 && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -q docker.io' \
+            || log '警告：QwenPaw 容器内 docker CLI 安装失败，重依赖取数脚本无法经 docker exec 在 quantmind 内执行（技能将走内置 pdf 技能兜底）'
+    fi
+}
+
 build_and_start() {
     log '步骤 8/8：基于最新代码重新构建并启动服务'
     cd "$PROJECT_DIR"
@@ -297,6 +348,7 @@ build_and_start() {
     # 成品镜像，直接复用可避免为可选服务拉取额外构建基础镜像。
     docker compose build --pull=false quantmind
     docker compose up -d --pull never
+    configure_qwenpaw_runtime
     docker compose ps
 }
 

@@ -13,7 +13,7 @@ description: "股票市场深度数据分析与导出 — 全市场信号扫描�
 >    docker cp <脚本路径> quantmind:/tmp/<脚本名> && docker exec -w /app quantmind python3 /tmp/<脚本名> <参数>
 >    ```
 >    脚本源三选一：宿主机 repo `skills/<name>/scripts/`、QwenPaw 工作区 `/app/working/workspaces/default/skills/<name>/scripts/`、挂载目录 `/quantmind/skills/<name>/scripts/`。纯标准库脚本（无重依赖）可在 QwenPaw 本地直接跑。
-> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/app/db/trading_agents_results/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
+> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/data/reports/trading_agents/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
 > 4. **MD → PDF 转换（按优先级降级）**：
 >    ① `docker exec -w /app quantmind python3 backend/scripts/md_to_pdf_report.py <输入.md> <输出.pdf>`（研报级排版，首选）；
 >    ② docker 不可用时，**改用 QwenPaw 内置 `pdf` 技能**把 MD 转成 PDF；
@@ -463,10 +463,10 @@ db/trading_agents_results/{市场名}/{股票名}/{股票名}{代码}_{日期}_�
   docker exec quantmind bash -lc "cd /app && python3 backend/scripts/md_to_pdf_report.py /tmp/report.md /tmp/report.pdf"
   docker cp quantmind:/tmp/report.pdf /tmp/report.pdf
   ```
-- **落盘权限陷阱**：宿主机上 `db/trading_agents_results/` 的目录 owner 是容器内 root，宿主机直接 cp md 会 EACCES——**必须走 docker cp**（容器内路径 `/app/db/trading_agents_results/...`，宿主机的 `./db` 挂载到容器 `/app/db`）：
+- **落盘权限陷阱**：宿主机上 `db/trading_agents_results/` 的目录 owner 是容器内 root，宿主机直接 cp md 会 EACCES——**必须走 docker cp**（容器内路径 `/data/reports/trading_agents/...`，宿主机的 `./db` 挂载到容器 `/app/db`）：
   ```bash
-  docker cp /tmp/report.md quantmind:/app/db/trading_agents_results/A股市场/{股票名}/{股票名}{代码}_{日期}_投研分析报告.md
-  docker cp /tmp/report.pdf quantmind:/app/db/trading_agents_results/A股市场/{股票名}/{股票名}{代码}_{日期}_投研分析报告.pdf
+  docker cp /tmp/report.md quantmind:/data/reports/trading_agents/A股市场/{股票名}/{股票名}{代码}_{日期}_投研分析报告.md
+  docker cp /tmp/report.pdf quantmind:/data/reports/trading_agents/A股市场/{股票名}/{股票名}{代码}_{日期}_投研分析报告.pdf
   ```
 - 交付确认：ls 目标目录确认 md+pdf 都存在；只发 /tmp 路径 = 未交付
 

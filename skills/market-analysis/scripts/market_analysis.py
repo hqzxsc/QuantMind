@@ -316,7 +316,13 @@ def build_report_md(d: dict) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="市场分析取数 + 报告骨架")
-    ap.add_argument("--out", default=str(PROJECT_ROOT / "data" / "reports" / "market_analysis"))
+    ap.add_argument(
+        "--out",
+        default=str(
+            Path(os.getenv("QM_REPORTS_DIR", str(PROJECT_ROOT / "data" / "reports")))
+            / "market_analysis"
+        ),
+    )
     args = ap.parse_args()
 
     out_dir = Path(args.out)

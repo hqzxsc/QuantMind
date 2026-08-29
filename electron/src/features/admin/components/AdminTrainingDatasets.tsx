@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, Button, Card, Col, Form, Input, Modal, Row, Select, Space, Statistic,
-  Switch, Table, Tag, Typography, message,
+  Switch, Table, Tag, Tooltip, Typography, message,
 } from 'antd';
 import { DatabaseOutlined, EditOutlined, InfoCircleOutlined, PlusOutlined, ReloadOutlined, RocketOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -254,10 +254,9 @@ export const AdminTrainingDatasets: React.FC = () => {
     { title: '风格', dataIndex: 'style', width: 130, render: (value) => <Tag color={value === '待分类' ? 'default' : 'blue'}>{value}</Tag> },
     { title: '中文解释', dataIndex: 'explanation', ellipsis: true, render: (value) => <Text>{value}</Text> },
     { title: '状态', width: 80, render: (_, row) => row.is_present ? <Tag color="green">已发现</Tag> : <Tag>已删除</Tag> },
-    { title: '训练配置', width: 174, render: (_, row) => row.mapping ? <Space size={4}>
-      <Switch size="small" checked={row.mapping.enabled} onChange={checked => saveMapping({ ...row.mapping!, enabled: checked })} />
-      <Text type="secondary" className="text-xs">默认</Text>
-      <Switch size="small" checked={row.mapping.default_selected} disabled={!row.mapping.enabled} onChange={checked => saveMapping({ ...row.mapping!, default_selected: checked })} />
+    { title: '训练配置', width: 230, render: (_, row) => row.mapping ? <Space size={8} wrap>
+      <Tooltip title="启用：该因子参与训练（左开关）"><Space size={2}>启用<Switch size="small" checked={row.mapping.enabled} onChange={checked => saveMapping({ ...row.mapping!, enabled: checked })} /></Space></Tooltip>
+      <Tooltip title="默认：训练时默认勾选该因子（右开关）"><Space size={2}>默认<Switch size="small" checked={row.mapping.default_selected} disabled={!row.mapping.enabled} onChange={checked => saveMapping({ ...row.mapping!, default_selected: checked })} /></Space></Tooltip>
       <Button type="text" size="small" icon={<EditOutlined />} onClick={() => {
         setEditing(row.mapping!);
         form.setFieldsValue({ feature_key: row.mapping!.key, display_name: row.mapping!.feature_name, category_id: row.mapping!.category_id, category_name: row.mapping!.category_name });

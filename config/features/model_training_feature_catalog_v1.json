@@ -113,9 +113,9 @@
         {
           "feature_id": "feat_ohlcv_005",
           "key": "factor",
-          "description": "因子: factor",
+          "description": "通用因子桶(待细分)",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -159,9 +159,9 @@
         {
           "feature_id": "feat_momentum_001",
           "key": "mom_ret_3d",
-          "description": "因子: mom_ret_3d",
-          "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "description": "3日收益率",
+          "formula": "(C_t/C_{t-3})-1",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -199,9 +199,9 @@
         {
           "feature_id": "feat_momentum_003",
           "key": "mom_ret_10d",
-          "description": "因子: mom_ret_10d",
-          "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "description": "10日收益率",
+          "formula": "(C_t/C_{t-10})-1",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -259,9 +259,9 @@
         {
           "feature_id": "feat_momentum_006",
           "key": "mom_ret_120d",
-          "description": "因子: mom_ret_120d",
-          "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "description": "120日收益率",
+          "formula": "(C_t/C_{t-120})-1",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -299,9 +299,9 @@
         {
           "feature_id": "feat_momentum_008",
           "key": "mom_ma_gap_10",
-          "description": "因子: mom_ma_gap_10",
-          "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "description": "收盘价偏离10日均线",
+          "formula": "(C_t/MA(10))-1",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -357,9 +357,9 @@
         {
           "feature_id": "feat_momentum_011",
           "key": "mom_ma_gap_120",
-          "description": "因子: mom_ma_gap_120",
-          "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "description": "收盘价偏离120日均线",
+          "formula": "(C_t/MA(120))-1",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -375,9 +375,9 @@
         {
           "feature_id": "feat_momentum_012",
           "key": "mom_ema_gap_12",
-          "description": "因子: mom_ema_gap_12",
+          "description": "动量 指数均线 偏离 12",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -395,9 +395,9 @@
         {
           "feature_id": "feat_momentum_013",
           "key": "mom_ema_gap_26",
-          "description": "因子: mom_ema_gap_26",
+          "description": "动量 指数均线 偏离 26",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -415,9 +415,9 @@
         {
           "feature_id": "feat_momentum_014",
           "key": "mom_macd_dif",
-          "description": "因子: mom_macd_dif",
+          "description": "动量 MACD DIF",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -435,9 +435,9 @@
         {
           "feature_id": "feat_momentum_015",
           "key": "mom_macd_dea",
-          "description": "因子: mom_macd_dea",
+          "description": "动量 MACD DEA",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -475,9 +475,9 @@
         {
           "feature_id": "feat_momentum_017",
           "key": "mom_rsi_6",
-          "description": "因子: mom_rsi_6",
+          "description": "6日 RSI 相对强弱指标",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -535,9 +535,9 @@
         {
           "feature_id": "feat_momentum_020",
           "key": "mom_kdj_d",
-          "description": "因子: mom_kdj_d",
+          "description": "动量 KDJ d",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -555,9 +555,9 @@
         {
           "feature_id": "feat_momentum_021",
           "key": "mom_kdj_j",
-          "description": "因子: mom_kdj_j",
+          "description": "动量 KDJ j",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -575,9 +575,9 @@
         {
           "feature_id": "feat_momentum_022",
           "key": "mom_roc_12",
-          "description": "因子: mom_roc_12",
+          "description": "动量 roc 12",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -829,9 +829,9 @@
         {
           "feature_id": "feat_volatility_000",
           "key": "vol_std_5",
-          "description": "因子: vol_std_5",
+          "description": "5日收益率标准差",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -849,9 +849,9 @@
         {
           "feature_id": "feat_volatility_001",
           "key": "vol_std_10",
-          "description": "因子: vol_std_10",
+          "description": "10日收益率标准差",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -929,9 +929,9 @@
         {
           "feature_id": "feat_volatility_005",
           "key": "vol_atr_20",
-          "description": "因子: vol_atr_20",
+          "description": "20日平均真实波幅",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -949,9 +949,9 @@
         {
           "feature_id": "feat_volatility_006",
           "key": "vol_true_range",
-          "description": "因子: vol_true_range",
+          "description": "vol true range",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -969,9 +969,9 @@
         {
           "feature_id": "feat_volatility_007",
           "key": "vol_parkinson_10",
-          "description": "因子: vol_parkinson_10",
+          "description": "10日 Parkinson 波动率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -1009,9 +1009,9 @@
         {
           "feature_id": "feat_volatility_009",
           "key": "vol_gk_10",
-          "description": "因子: vol_gk_10",
+          "description": "vol Garman-Klass 波动率 10",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -1027,9 +1027,9 @@
         {
           "feature_id": "feat_volatility_010",
           "key": "vol_gk_20",
-          "description": "因子: vol_gk_20",
+          "description": "vol Garman-Klass 波动率 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -1047,9 +1047,9 @@
         {
           "feature_id": "feat_volatility_011",
           "key": "vol_rs_10",
-          "description": "因子: vol_rs_10",
+          "description": "vol rs 10",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -1065,9 +1065,9 @@
         {
           "feature_id": "feat_volatility_012",
           "key": "vol_rs_20",
-          "description": "因子: vol_rs_20",
+          "description": "vol rs 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -1178,9 +1178,9 @@
         {
           "feature_id": "feat_volatility_018",
           "key": "vol_realized_rkurt",
-          "description": "因子: vol_realized_rkurt",
+          "description": "vol realized 已实现峰度",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -1214,9 +1214,9 @@
         {
           "feature_id": "feat_volatility_020",
           "key": "vol_jump_rjv_ratio",
-          "description": "因子: vol_jump_rjv_ratio",
+          "description": "vol 跳跃 rjv 比率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -1232,9 +1232,9 @@
         {
           "feature_id": "feat_volatility_021",
           "key": "vol_jump_sjv_ratio",
-          "description": "因子: vol_jump_sjv_ratio",
+          "description": "vol 跳跃 sjv 比率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -1790,9 +1790,9 @@
         {
           "feature_id": "feat_liquidity_001",
           "key": "liq_turnover_tl",
-          "description": "因子: liq_turnover_tl",
+          "description": "换手率等权均值",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -1828,9 +1828,9 @@
         {
           "feature_id": "feat_liquidity_003",
           "key": "liq_volume_ma_5",
-          "description": "因子: liq_volume_ma_5",
+          "description": "5日均成交量",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -1848,9 +1848,9 @@
         {
           "feature_id": "feat_liquidity_004",
           "key": "liq_volume_ma_10",
-          "description": "因子: liq_volume_ma_10",
+          "description": "10日均成交量",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -1866,9 +1866,9 @@
         {
           "feature_id": "feat_liquidity_005",
           "key": "liq_volume_ma_20",
-          "description": "因子: liq_volume_ma_20",
+          "description": "20日均成交量",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -1906,9 +1906,9 @@
         {
           "feature_id": "feat_liquidity_007",
           "key": "liq_volume_ratio_20",
-          "description": "因子: liq_volume_ratio_20",
+          "description": "成交量20日斜率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -1946,9 +1946,9 @@
         {
           "feature_id": "feat_liquidity_009",
           "key": "liq_amount_ma_5",
-          "description": "因子: liq_amount_ma_5",
+          "description": "5日均成交额",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -1966,9 +1966,9 @@
         {
           "feature_id": "feat_liquidity_010",
           "key": "liq_amount_ma_10",
-          "description": "因子: liq_amount_ma_10",
+          "description": "10日均成交额",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -1984,9 +1984,9 @@
         {
           "feature_id": "feat_liquidity_011",
           "key": "liq_amount_ma_20",
-          "description": "因子: liq_amount_ma_20",
+          "description": "20日均成交额",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -2004,9 +2004,9 @@
         {
           "feature_id": "feat_liquidity_012",
           "key": "liq_amount_ratio_5",
-          "description": "因子: liq_amount_ratio_5",
+          "description": "成交额5日斜率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -2024,9 +2024,9 @@
         {
           "feature_id": "feat_liquidity_013",
           "key": "liq_amount_ratio_20",
-          "description": "因子: liq_amount_ratio_20",
+          "description": "成交额20日斜率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -2042,7 +2042,7 @@
         {
           "feature_id": "feat_liquidity_014",
           "key": "liq_trade_count",
-          "description": "因子: liq_trade_count (低覆盖率，已禁用)",
+          "description": "成交笔数",
           "formula": "",
           "source": "feature_snapshots/model_features_*.parquet",
           "enabled": false,
@@ -2056,7 +2056,7 @@
         {
           "feature_id": "feat_liquidity_015",
           "key": "liq_avg_trade_size",
-          "description": "因子: liq_avg_trade_size (低覆盖率，已禁用)",
+          "description": "平均单笔成交额",
           "formula": "",
           "source": "feature_snapshots/model_features_*.parquet",
           "enabled": false,
@@ -2070,9 +2070,9 @@
         {
           "feature_id": "feat_liquidity_016",
           "key": "liq_obv_20",
-          "description": "因子: liq_obv_20",
+          "description": "20日OBV能量潮",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -2090,9 +2090,9 @@
         {
           "feature_id": "feat_liquidity_017",
           "key": "liq_obv_60",
-          "description": "因子: liq_obv_60",
+          "description": "60日OBV能量潮",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -2128,9 +2128,9 @@
         {
           "feature_id": "feat_liquidity_019",
           "key": "liq_accdist_20",
-          "description": "因子: liq_accdist_20",
+          "description": "20日累积/派发线(ADL)",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -2164,9 +2164,9 @@
         {
           "feature_id": "feat_liquidity_021",
           "key": "liq_amihud_60",
-          "description": "因子: liq_amihud_60",
+          "description": "60日Amihud非流动性",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -2541,9 +2541,9 @@
         {
           "feature_id": "feat_fund_flow_003",
           "key": "flow_large_net_ratio",
-          "description": "因子: flow_large_net_ratio",
+          "description": "资金流 大单 净流入 比率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2556,9 +2556,9 @@
         {
           "feature_id": "feat_fund_flow_004",
           "key": "flow_medium_net_amount",
-          "description": "因子: flow_medium_net_amount",
+          "description": "资金流 中单 净流入 成交额",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2571,9 +2571,9 @@
         {
           "feature_id": "feat_fund_flow_005",
           "key": "flow_medium_net_ratio",
-          "description": "因子: flow_medium_net_ratio",
+          "description": "资金流 中单 净流入 比率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2586,9 +2586,9 @@
         {
           "feature_id": "feat_fund_flow_006",
           "key": "flow_small_net_amount",
-          "description": "因子: flow_small_net_amount",
+          "description": "资金流 小单 净流入 成交额",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2601,9 +2601,9 @@
         {
           "feature_id": "feat_fund_flow_007",
           "key": "flow_small_net_ratio",
-          "description": "因子: flow_small_net_ratio",
+          "description": "资金流 小单 净流入 比率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2616,9 +2616,9 @@
         {
           "feature_id": "feat_fund_flow_008",
           "key": "flow_net_order_count",
-          "description": "因子: flow_net_order_count",
+          "description": "资金流 净流入 委托 次数",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -2634,9 +2634,9 @@
         {
           "feature_id": "feat_fund_flow_009",
           "key": "flow_net_order_ratio",
-          "description": "因子: flow_net_order_ratio",
+          "description": "资金流 净流入 委托 比率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -2652,9 +2652,9 @@
         {
           "feature_id": "feat_fund_flow_010",
           "key": "flow_large_net_order",
-          "description": "因子: flow_large_net_order",
+          "description": "资金流 大单 净流入 委托",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2667,9 +2667,9 @@
         {
           "feature_id": "feat_fund_flow_011",
           "key": "flow_large_order_ratio",
-          "description": "因子: flow_large_order_ratio",
+          "description": "资金流 大单 委托 比率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2736,9 +2736,9 @@
         {
           "feature_id": "feat_fund_flow_015",
           "key": "flow_vpin_delta_5",
-          "description": "因子: flow_vpin_delta_5",
+          "description": "资金流 VPIN delta 5",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -2754,9 +2754,9 @@
         {
           "feature_id": "feat_fund_flow_016",
           "key": "flow_qsp",
-          "description": "因子: flow_qsp",
+          "description": "资金流 qsp",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2769,9 +2769,9 @@
         {
           "feature_id": "feat_fund_flow_017",
           "key": "flow_esp",
-          "description": "因子: flow_esp",
+          "description": "资金流 esp",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2784,9 +2784,9 @@
         {
           "feature_id": "feat_fund_flow_018",
           "key": "flow_aqsp",
-          "description": "因子: flow_aqsp",
+          "description": "资金流 aqsp",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2799,9 +2799,9 @@
         {
           "feature_id": "feat_fund_flow_019",
           "key": "flow_qsp_time",
-          "description": "因子: flow_qsp_time",
+          "description": "资金流 qsp 时间加权",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -2814,9 +2814,9 @@
         {
           "feature_id": "feat_fund_flow_020",
           "key": "flow_esp_time",
-          "description": "因子: flow_esp_time",
+          "description": "资金流 esp 时间加权",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -3492,9 +3492,9 @@
         {
           "feature_id": "feat_style_004",
           "key": "style_smb",
-          "description": "因子: style_smb",
+          "description": "style smb",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -3507,9 +3507,9 @@
         {
           "feature_id": "feat_style_005",
           "key": "style_hml",
-          "description": "因子: style_hml",
+          "description": "style hml",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -3522,9 +3522,9 @@
         {
           "feature_id": "feat_style_006",
           "key": "style_mkt_premium",
-          "description": "因子: style_mkt_premium",
+          "description": "style mkt premium",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -3577,9 +3577,9 @@
         {
           "feature_id": "feat_style_009",
           "key": "style_beta_120",
-          "description": "因子: style_beta_120",
+          "description": "120日市场 Beta",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -3617,9 +3617,9 @@
         {
           "feature_id": "feat_style_011",
           "key": "style_idio_vol_60",
-          "description": "因子: style_idio_vol_60",
+          "description": "60日特质波动率",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -3657,9 +3657,9 @@
         {
           "feature_id": "feat_style_013",
           "key": "style_valuation_composite",
-          "description": "因子: style_valuation_composite",
+          "description": "style valuation composite",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": false,
           "markets": [
             "CN"
@@ -3672,9 +3672,9 @@
         {
           "feature_id": "feat_style_014",
           "key": "style_size_percentile",
-          "description": "因子: style_size_percentile",
+          "description": "style 规模 percentile",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -3687,9 +3687,9 @@
         {
           "feature_id": "feat_style_015",
           "key": "style_value_percentile",
-          "description": "因子: style_value_percentile",
+          "description": "style value percentile",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": false,
           "markets": [
             "CN"
@@ -3774,9 +3774,9 @@
         {
           "feature_id": "feat_industry_001",
           "key": "ind_ret_5d",
-          "description": "因子: ind_ret_5d",
+          "description": "ind 收益率 5d",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3790,9 +3790,9 @@
         {
           "feature_id": "feat_industry_002",
           "key": "ind_ret_10d",
-          "description": "因子: ind_ret_10d",
+          "description": "ind 收益率 10d",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3824,9 +3824,9 @@
         {
           "feature_id": "feat_industry_004",
           "key": "ind_vol_20",
-          "description": "因子: ind_vol_20",
+          "description": "ind vol 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3840,9 +3840,9 @@
         {
           "feature_id": "feat_industry_005",
           "key": "ind_turnover_20",
-          "description": "因子: ind_turnover_20",
+          "description": "ind 换手率 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3856,9 +3856,9 @@
         {
           "feature_id": "feat_industry_006",
           "key": "ind_amount_20",
-          "description": "因子: ind_amount_20",
+          "description": "ind 成交额 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3892,9 +3892,9 @@
         {
           "feature_id": "feat_industry_008",
           "key": "ind_strength_60",
-          "description": "因子: ind_strength_60",
+          "description": "ind strength 60",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -3909,9 +3909,9 @@
         {
           "feature_id": "feat_industry_009",
           "key": "ind_dispersion_20",
-          "description": "因子: ind_dispersion_20",
+          "description": "ind dispersion 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -3926,9 +3926,9 @@
         {
           "feature_id": "feat_industry_010",
           "key": "ind_up_breadth_20",
-          "description": "因子: ind_up_breadth_20",
+          "description": "ind up breadth 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3942,9 +3942,9 @@
         {
           "feature_id": "feat_industry_011",
           "key": "ind_down_breadth_20",
-          "description": "因子: ind_down_breadth_20",
+          "description": "ind down breadth 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3958,9 +3958,9 @@
         {
           "feature_id": "feat_industry_012",
           "key": "ind_relative_volume_20",
-          "description": "因子: ind_relative_volume_20",
+          "description": "ind relative 成交量 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3974,9 +3974,9 @@
         {
           "feature_id": "feat_industry_013",
           "key": "ind_relative_volatility_20",
-          "description": "因子: ind_relative_volatility_20",
+          "description": "ind relative 波动率 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -3990,9 +3990,9 @@
         {
           "feature_id": "feat_industry_014",
           "key": "ind_relative_flow_20",
-          "description": "因子: ind_relative_flow_20",
+          "description": "ind relative 资金流 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -4024,9 +4024,9 @@
         {
           "feature_id": "feat_industry_016",
           "key": "ind_value_rank",
-          "description": "因子: ind_value_rank",
+          "description": "ind value rank",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -4040,9 +4040,9 @@
         {
           "feature_id": "feat_industry_017",
           "key": "ind_size_rank",
-          "description": "因子: ind_size_rank",
+          "description": "ind 规模 rank",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "HK",
@@ -4056,9 +4056,9 @@
         {
           "feature_id": "feat_industry_018",
           "key": "ind_code_l1",
-          "description": "因子: ind_code_l1",
+          "description": "ind code l1",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -4073,9 +4073,9 @@
         {
           "feature_id": "feat_industry_019",
           "key": "ind_code_l2",
-          "description": "因子: ind_code_l2",
+          "description": "ind code l2",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN",
@@ -4288,9 +4288,9 @@
         {
           "feature_id": "feat_microstructure_000",
           "key": "micro_qsp_equal",
-          "description": "因子: micro_qsp_equal",
+          "description": "qsp 等权",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4302,9 +4302,9 @@
         {
           "feature_id": "feat_microstructure_001",
           "key": "micro_esp_equal",
-          "description": "因子: micro_esp_equal",
+          "description": "esp 等权",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4316,9 +4316,9 @@
         {
           "feature_id": "feat_microstructure_002",
           "key": "micro_aqsp_equal",
-          "description": "因子: micro_aqsp_equal",
+          "description": "aqsp 等权",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4331,9 +4331,9 @@
         {
           "feature_id": "feat_microstructure_003",
           "key": "micro_qsp_time",
-          "description": "因子: micro_qsp_time",
+          "description": "qsp 时间加权",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4345,9 +4345,9 @@
         {
           "feature_id": "feat_microstructure_004",
           "key": "micro_esp_time",
-          "description": "因子: micro_esp_time",
+          "description": "esp 时间加权",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4359,9 +4359,9 @@
         {
           "feature_id": "feat_microstructure_005",
           "key": "micro_qsp_volume",
-          "description": "因子: micro_qsp_volume",
+          "description": "qsp 成交量",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4373,9 +4373,9 @@
         {
           "feature_id": "feat_microstructure_006",
           "key": "micro_esp_volume",
-          "description": "因子: micro_esp_volume",
+          "description": "esp 成交量",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4387,9 +4387,9 @@
         {
           "feature_id": "feat_microstructure_007",
           "key": "micro_qsp_amount",
-          "description": "因子: micro_qsp_amount",
+          "description": "qsp 成交额",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4402,9 +4402,9 @@
         {
           "feature_id": "feat_microstructure_008",
           "key": "micro_esp_amount",
-          "description": "因子: micro_esp_amount",
+          "description": "esp 成交额",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4417,9 +4417,9 @@
         {
           "feature_id": "feat_microstructure_009",
           "key": "micro_effective_spread",
-          "description": "因子: micro_effective_spread",
+          "description": "有效 价差",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4432,9 +4432,9 @@
         {
           "feature_id": "feat_microstructure_010",
           "key": "micro_quoted_spread",
-          "description": "因子: micro_quoted_spread",
+          "description": "quoted 价差",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4447,9 +4447,9 @@
         {
           "feature_id": "feat_microstructure_011",
           "key": "micro_spread_vol_20",
-          "description": "因子: micro_spread_vol_20",
+          "description": "价差 vol 20",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4462,9 +4462,9 @@
         {
           "feature_id": "feat_microstructure_012",
           "key": "micro_imbalance_volume",
-          "description": "因子: micro_imbalance_volume",
+          "description": "不平衡度 成交量",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4477,9 +4477,9 @@
         {
           "feature_id": "feat_microstructure_013",
           "key": "micro_imbalance_amount",
-          "description": "因子: micro_imbalance_amount",
+          "description": "不平衡度 成交额",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4492,9 +4492,9 @@
         {
           "feature_id": "feat_microstructure_014",
           "key": "micro_imbalance_count",
-          "description": "因子: micro_imbalance_count",
+          "description": "不平衡度 次数",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4507,9 +4507,9 @@
         {
           "feature_id": "feat_microstructure_015",
           "key": "micro_imbalance_large",
-          "description": "因子: micro_imbalance_large",
+          "description": "不平衡度 大单",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4522,9 +4522,9 @@
         {
           "feature_id": "feat_microstructure_016",
           "key": "micro_imbalance_medium",
-          "description": "因子: micro_imbalance_medium",
+          "description": "不平衡度 中单",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4537,9 +4537,9 @@
         {
           "feature_id": "feat_microstructure_017",
           "key": "micro_imbalance_small",
-          "description": "因子: micro_imbalance_small",
+          "description": "不平衡度 小单",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4552,9 +4552,9 @@
         {
           "feature_id": "feat_microstructure_018",
           "key": "micro_jump_flag",
-          "description": "因子: micro_jump_flag",
+          "description": "跳跃 标记",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"
@@ -4566,9 +4566,9 @@
         {
           "feature_id": "feat_microstructure_019",
           "key": "micro_pressure_score",
-          "description": "因子: micro_pressure_score",
+          "description": "pressure 评分",
           "formula": "",
-          "source": "feature_snapshots/model_features_*.parquet",
+          "source": "6_ml_datasets/l1_l2_factors（A股L1+L2因子训练宽表）",
           "enabled": true,
           "markets": [
             "CN"

@@ -992,3 +992,29 @@ html.platform-win32.os-win10 .module-grid-container {
 .admin-page textarea.ant-input {
   border-radius: 8px;
 }
+
+/* 后台所有输入控件统一圆角（覆盖组件内联 6px，保证全局一致 8px） */
+.admin-page input.ant-input,
+.admin-page .ant-input-affix-wrapper,
+.admin-page .ant-input-number,
+.admin-page .ant-picker,
+.admin-page textarea.ant-input,
+.admin-page .ant-select .ant-select-selector {
+  border-radius: 8px !important;
+}
+
+/* 后台弹窗/抽屉（渲染到 body，脱离 .admin-page）内的输入框同样保持 8px 圆角 */
+.ant-modal .ant-input,
+.ant-modal .ant-input-affix-wrapper,
+.ant-modal .ant-input-number,
+.ant-modal .ant-picker,
+.ant-modal textarea.ant-input,
+.ant-modal .ant-select .ant-select-selector,
+.ant-drawer .ant-input,
+.ant-drawer .ant-input-affix-wrapper,
+.ant-drawer .ant-input-number,
+.ant-drawer .ant-picker,
+.ant-drawer textarea.ant-input,
+.ant-drawer .ant-select .ant-select-selector {
+  border-radius: 8px !important;
+}

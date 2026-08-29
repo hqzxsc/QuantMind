@@ -18,6 +18,8 @@ export interface HealthCell {
 export interface HealthMatrix {
     market: string;
     fields: string[];
+    /** 字段 → tier（如 T1/T2/T3），用于分组 */
+    field_tiers?: Record<string, string>;
     sources: string[];
     cells: HealthCell[];
     timestamp: string;

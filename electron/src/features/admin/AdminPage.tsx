@@ -28,6 +28,17 @@ const AdminPage: React.FC = () => {
             label: '系统概览' 
         },
         { type: 'divider' as const },
+        {
+            key: 'stream-service',
+            icon: <GlobalOutlined />,
+            label: '数据管理',
+            children: [
+                { key: 'data', label: '数据集目录' },
+                { key: 'quotes', label: '数据源监控' },
+                { key: 'news', label: 'RSS源管理' },
+                { key: 'tags', label: '标签管理' },
+            ]
+        },
         { 
             key: 'api-service', 
             icon: <ApiOutlined />, 
@@ -45,7 +56,7 @@ const AdminPage: React.FC = () => {
                 { key: 'models', label: '模型管理' },
                 { key: 'feature-catalog', label: '特征字典' },
                 { key: 'rd-agent', label: 'AlphaAgent因子' },
-                { key: 'inference', label: '推理监控' },
+                { key: 'inference', label: '推理监控（未开发）' },
             ]
         },
         {
@@ -57,28 +68,17 @@ const AdminPage: React.FC = () => {
                 { key: 'training-datasets', label: '模型训练数据集' },
             ]
         },
+        { type: 'divider' as const },
         { 
             key: 'trade-service', 
             icon: <SwapOutlined />, 
-            label: '交易核心',
+            label: '交易核心', 
             children: [
-                { key: 'orders', label: '订单管理' },
-                { key: 'risk', label: '风险控制' },
+                { key: 'orders', label: '订单管理（未开发）' },
+                { key: 'risk', label: '风险控制（未开发）' },
             ]
         },
-        {
-            key: 'stream-service',
-            icon: <GlobalOutlined />,
-            label: '实时数据流',
-            children: [
-                { key: 'data', label: '数据管理' },
-                { key: 'quotes', label: '数据源监控' },
-                { key: 'news', label: 'RSS源管理' },
-                { key: 'tags', label: '标签管理' },
-            ]
-        },
-        { type: 'divider' as const },
-        { key: 'settings', icon: <SettingOutlined />, label: '系统设置' },
+        { key: 'settings', icon: <SettingOutlined />, label: '系统设置（未开发）' },
     ];
 
     const currentKey = location.pathname.split('/').pop() || 'overview';

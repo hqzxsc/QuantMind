@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -125,6 +126,57 @@ def _get_monitor():
         return get_monitor()
 
 
+# ---------------------------------------------------------------------------
+# 数据新鲜度：以「预期最新交易日 vs 数据实际最新 trade_date」计算
+# 尽量避免把“最后一次成功拉取”当作“数据新鲜”，否则回填也会被判为当天新鲜。
+# ---------------------------------------------------------------------------
+# 可映射到本地分区数据(dt=YYYYMMDD)的字段 → 相对数据集目录
+_FIELD_LOCAL_PARTITION: dict[str, str] = {
+    "daily_kline": "1_kline_data/daily_forward",
+    "index_kline": "1_kline_data/index_daily",
+    "valuation": "5_technical_derived/valuation",
+    "technical_indicators": "5_technical_derived/technical_indicators",
+    "market_sentiment": "5_technical_derived/market_sentiment",
+    "margin_trading": "2_base_sector/margin_trading",
+}
+
+
+def _market_hub(market: str):
+    """按市场解析本地量化数据枢纽（读其 data_dir）。"""
+    from backend.services.engine.data_platform import quantdb_hub, quanthk_hub, quantus_hub
+    cls = {
+        "A": quantdb_hub.QuantDBDataHub,
+        "HK": quanthk_hub.QuantHKDataHub,
+        "US": quantus_hub.QuantUSDataHub,
+    }.get(market)
+    try:
+        return cls.get_instance() if cls else None
+    except Exception:
+        return None
+
+
+def _expected_trade_date():
+    """预期最新交易日：今天；周六回退到周五，周日回退到上周五。"""
+    from datetime import timedelta
+    d = date.today()
+    wd = d.weekday()  # 周一=0 ... 周日=6
+    if wd == 5:
+        d -= timedelta(days=1)
+    elif wd == 6:
+        d -= timedelta(days=2)
+    return d
+
+
+def _latest_partition_date_str(root, rel_dir: str):
+    """扫描 dt=YYYYMMDD 分区目录，返回最新日期串 YYYYMMDD；无则 None。"""
+    d = Path(root) / rel_dir
+    if not d.is_dir():
+        return None
+    dates = [p.name[3:] for p in d.iterdir()
+             if p.is_dir() and p.name.startswith("dt=")]
+    return max(dates) if dates else None
+
+
 def _db_engine():
     from sqlalchemy import create_engine
     from urllib.parse import quote_plus as _q
@@ -228,7 +280,7 @@ async def health_matrix(
     market: str = Query("A", description="A / HK / US"),
     current_user: dict = Depends(require_admin),
 ):
-    """字段 × 源 健康矩阵，前端用来渲染颜色 grid。"""
+    """字段 × 源 健康矩阵，前端用来渲染健康卡片/色块。"""
     try:
         rt = _get_routing()
         monitor = _get_monitor()
@@ -237,8 +289,10 @@ async def health_matrix(
         fields = rt.list_fields(m)
         sources_seen: set[str] = set()
         cells: list[dict[str, Any]] = []
+        field_tiers: dict[str, str] = {}
         for f in fields:
             route = rt.get_route(m, f)
+            field_tiers[f] = route.tier
             for src in route.ordered_sources:
                 sources_seen.add(src)
                 health = monitor.get_health(src, f)
@@ -259,6 +313,7 @@ async def health_matrix(
             "data": {
                 "market": m,
                 "fields": fields,
+                "field_tiers": field_tiers,
                 "sources": sorted(sources_seen),
                 "cells": cells,
                 "timestamp": _now_iso(),
@@ -721,9 +776,13 @@ async def get_freshness(
     market: str = Query("A", description="A / HK / US"),
     current_user: dict = Depends(require_admin),
 ):
-    """按市场返回每个源×字段的数据新鲜度（最后成功时间距今天数）。"""
+    """按市场返回每个源×字段的数据新鲜度。
+
+    口径：能解析到本地分区数据的字段，用「预期最新交易日 − 数据最新 trade_date」计算；
+    其余字段/源退回「最后一次成功拉取距今」（仅作最近调用健康参考）。
+    """
     try:
-        from datetime import date as _date, datetime as _dt
+        from datetime import datetime as _dt
 
         rt = _get_routing()
         monitor = _get_monitor()
@@ -731,12 +790,18 @@ async def get_freshness(
         m = market.upper()
 
         now = _dt.now(timezone.utc)
-        today = _date.today()
+        expected_td = _expected_trade_date()
+        hub = _market_hub(m)
         items: list[dict[str, Any]] = []
 
         for f in rt.list_fields(m):
             route = rt.get_route(m, f)
             all_sources = [route.primary] + [s for s in (route.fallbacks or []) if s != route.primary]
+            # 可映射字段：同一 field 的所有源共享同一份本地数据日期
+            data_date_str = None
+            rel_dir = _FIELD_LOCAL_PARTITION.get(f)
+            if rel_dir and hub is not None:
+                data_date_str = _latest_partition_date_str(hub.data_dir, rel_dir)
             for src in all_sources:
                 if src not in reg.list_sources():
                     continue
@@ -744,16 +809,22 @@ async def get_freshness(
                 last_ok = health.get("last_success_at")
                 days_stale = None
                 freshness = "unknown"
-                if last_ok:
+                # 1) 优先：数据最新交易日口径
+                if data_date_str:
+                    try:
+                        dd = _dt.strptime(data_date_str, "%Y%m%d").date()
+                        days_stale = (expected_td - dd).days
+                        freshness = "fresh" if days_stale <= 0 else (
+                            "stale" if days_stale <= 3 else "outdated")
+                    except Exception:
+                        pass
+                # 2) 无法确定数据日期时，退回最近一次成功拉取
+                if freshness in ("unknown",) and last_ok:
                     try:
                         last_dt = _dt.fromisoformat(last_ok.replace("Z", "+00:00"))
                         days_stale = (now - last_dt).days
-                        if days_stale == 0:
-                            freshness = "fresh"
-                        elif days_stale <= 3:
-                            freshness = "stale"
-                        else:
-                            freshness = "outdated"
+                        freshness = "fresh" if days_stale == 0 else (
+                            "stale" if days_stale <= 3 else "outdated")
                     except Exception:
                         pass
                 items.append({
@@ -810,18 +881,23 @@ async def get_online_status(current_user: dict = Depends(require_admin)):
                 status = "online"
                 latency_ms = round((_time.monotonic() - t0) * 1000, 1)
             except InvalidFieldRequest:
-                # 适配器不支持 fetch_meta（如 easyquotation 仅支持 realtime）
+                # 适配器不提供 fetch_meta（如 easyquotation 仅实时），但声明了字段
+                # 则视为功能在线（真实拉取质量由健康矩阵的 error_rate 再判断）。
+                status = "online" if adapter.fields else "unavailable"
+                latency_ms = round((_time.monotonic() - t0) * 1000, 1)
+            except NotImplementedError:
+                # 未实现 fetch_meta 同上：有字段即在线
                 status = "online" if adapter.fields else "unavailable"
                 latency_ms = round((_time.monotonic() - t0) * 1000, 1)
             except Exception as exc:
-                # 适配器不支持 fetch_meta（如 easyquotation 仅支持 realtime）
-                # 检查它是否至少有可用字段
-                status = "online" if adapter.fields else "unavailable"
-                latency_ms = round((_time.monotonic() - t0) * 1000, 1)
-            except Exception as exc:
+                # 真实连通性 / 依赖缺失异常 → 判离线或异常，不再误报在线
                 latency_ms = round((_time.monotonic() - t0) * 1000, 1)
                 msg = str(exc).lower()
-                if "not installed" in msg or "未安装" in msg or "未配置" in msg:
+                if any(k in msg for k in (
+                    "not installed", "未安装", "未配置", "未找到", "not found",
+                    "404", "timeout", "timed out", "time out", "refused", "连接",
+                    "connection", "resolve", "dns", "unreachable",
+                )):
                     status = "unavailable"
                 else:
                     status = "error"

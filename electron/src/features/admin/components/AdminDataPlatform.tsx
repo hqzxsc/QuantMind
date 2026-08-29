@@ -14,6 +14,7 @@ import {
     Space,
     Spin,
     Statistic,
+    Switch,
     Table,
     Tabs,
     Tag,
@@ -59,6 +60,38 @@ function healthScore(cell?: HealthCell): { color: string; label: string } {
     return { color: '#10b981', label: '正常' };
 }
 
+/* 健康状态色板（与 healthScore 对齐） */
+const STATUS_COLORS = { ok: '#10b981', warn: '#f59e0b', err: '#ef4444', na: '#94a3b8' };
+
+const TIER_LABELS: Record<string, string> = {
+    T1: '离线日级',
+    T2: '分钟',
+    T3: '实时报价',
+    T4: '逐笔订单流',
+    T5: '资金流',
+};
+const TIER_ORDER = ['T1', 'T2', 'T3', 'T4', 'T5'];
+
+/** 字段是否命中异常（主/备任一源为告警或严重） */
+function isFieldAbnormal(
+    field: string,
+    cellsByField: Record<string, Record<string, HealthCell>>,
+): boolean {
+    const cells = Object.values(cellsByField[field] || {});
+    return cells.some((c) => {
+        const color = healthScore(c).color;
+        return color === STATUS_COLORS.err || color === STATUS_COLORS.warn;
+    });
+}
+
+/** 图例小圆点 */
+const LegendDot: React.FC<{ color: string; label: string }> = ({ color, label }) => (
+    <span className="inline-flex items-center gap-1.5">
+        <span className="inline-block w-3 h-3 rounded-full" style={{ background: color }} />
+        <span className="text-slate-500">{label}</span>
+    </span>
+);
+
 const severityColor = (s: string) => {
     const map: Record<string, string> = {
         info: 'blue',
@@ -74,6 +107,7 @@ export const AdminDataPlatform: React.FC = () => {
     const [market, setMarket] = useState<Market>('A');
     const [matrix, setMatrix] = useState<HealthMatrix | null>(null);
     const [matrixLoading, setMatrixLoading] = useState(false);
+    const [onlyAbnormal, setOnlyAbnormal] = useState(false);
 
     const [sources, setSources] = useState<SourceSummary[]>([]);
     const [sourcesLoading, setSourcesLoading] = useState(false);
@@ -221,6 +255,24 @@ export const AdminDataPlatform: React.FC = () => {
         return m;
     }, [matrix]);
 
+    /* ---- 派生：健康卡片的分组 / 过滤 ---- */
+    const orderedTiers = useMemo(() => {
+        if (!matrix) return TIER_ORDER;
+        const present = new Set<string>(Object.values(matrix.field_tiers || {}));
+        return TIER_ORDER.filter((t) => present.has(t));
+    }, [matrix]);
+
+    const totalShownFields = useMemo(() => {
+        if (!matrix) return 0;
+        const tierMap = matrix.field_tiers || {};
+        return matrix.fields.filter((f) => {
+            const tier = tierMap[f] || 'T1';
+            if (!orderedTiers.includes(tier)) return false;
+            if (onlyAbnormal && !isFieldAbnormal(f, cellsByField)) return false;
+            return true;
+        }).length;
+    }, [matrix, onlyAbnormal, orderedTiers, cellsByField]);
+
     const totalCells = matrix?.cells.length || 0;
     const okCells = (matrix?.cells || []).filter((c) => healthScore(c).color === '#10b981').length;
     const errorCells = (matrix?.cells || []).filter((c) => healthScore(c).color === '#ef4444').length;
@@ -350,7 +402,7 @@ export const AdminDataPlatform: React.FC = () => {
 
                 <Row gutter={16} className="mt-4">
                     <Col xs={12} sm={6}>
-                        <Statistic title="字段 × 源 总数" value={totalCells} />
+                        <Statistic title="字段 × 源 总数" value={totalCells} style={{ textAlign: 'center' }} />
                     </Col>
                     <Col xs={12} sm={6}>
                         <Statistic
@@ -358,6 +410,7 @@ export const AdminDataPlatform: React.FC = () => {
                             value={okCells}
                             valueStyle={{ color: '#10b981' }}
                             prefix={<CheckCircleFilled />}
+                            style={{ textAlign: 'center' }}
                         />
                     </Col>
                     <Col xs={12} sm={6}>
@@ -366,6 +419,7 @@ export const AdminDataPlatform: React.FC = () => {
                             value={warnCells}
                             valueStyle={{ color: '#f59e0b' }}
                             prefix={<WarningFilled />}
+                            style={{ textAlign: 'center' }}
                         />
                     </Col>
                     <Col xs={12} sm={6}>
@@ -374,6 +428,7 @@ export const AdminDataPlatform: React.FC = () => {
                             value={errorCells}
                             valueStyle={{ color: '#ef4444' }}
                             prefix={<CloseCircleFilled />}
+                            style={{ textAlign: 'center' }}
                         />
                     </Col>
                 </Row>
@@ -388,70 +443,130 @@ export const AdminDataPlatform: React.FC = () => {
                             <Card bordered={false} className="rounded-2xl shadow-sm">
                                 <Spin spinning={matrixLoading}>
                                     {matrix ? (
-                                        <div className="overflow-auto">
-                                            <table className="border-collapse text-xs">
-                                                <thead>
-                                                    <tr>
-                                                        <th className="border border-slate-200 bg-slate-50 px-3 py-2 sticky left-0 z-10">
-                                                            字段 \ 源
-                                                        </th>
-                                                        {matrix.sources.map((s) => (
-                                                            <th
-                                                                key={s}
-                                                                className="border border-slate-200 bg-slate-50 px-3 py-2 font-bold"
-                                                            >
-                                                                {s}
-                                                            </th>
-                                                        ))}
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {matrix.fields.map((f) => (
-                                                        <tr key={f}>
-                                                            <td className="border border-slate-200 bg-white px-3 py-2 font-mono sticky left-0 z-10">
-                                                                {f}
-                                                            </td>
-                                                            {matrix.sources.map((s) => {
-                                                                const cell = cellsByField[f]?.[s];
-                                                                const info = healthScore(cell);
+                                        <div>
+                                            {/* 图例 + 只看异常 */}
+                                            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-4 text-xs">
+                                                <LegendDot color={STATUS_COLORS.ok} label="正常" />
+                                                <LegendDot color={STATUS_COLORS.warn} label="告警" />
+                                                <LegendDot color={STATUS_COLORS.err} label="严重" />
+                                                <LegendDot color={STATUS_COLORS.na} label="未调用" />
+                                                <span className="text-slate-500">标签「主/备」= 该字段路由下的主源/备份源</span>
+                                                <div className="ml-auto flex items-center gap-2">
+                                                    <Switch
+                                                        checked={onlyAbnormal}
+                                                        onChange={setOnlyAbnormal}
+                                                        checkedChildren="只看异常"
+                                                        unCheckedChildren="全部"
+                                                    />
+                                                    <Text type="secondary">
+                                                        显示 {totalShownFields}/{matrix.fields.length} 个字段
+                                                    </Text>
+                                                </div>
+                                            </div>
+
+                                            {orderedTiers.map((tier) => {
+                                                const tierFields = matrix.fields.filter(
+                                                    (f) => (matrix.field_tiers?.[f] || 'T1') === tier,
+                                                );
+                                                if (tierFields.length === 0) return null;
+                                                const shown = onlyAbnormal
+                                                    ? tierFields.filter((f) => isFieldAbnormal(f, cellsByField))
+                                                    : tierFields;
+                                                if (shown.length === 0) return null;
+                                                return (
+                                                    <div key={tier} className="mb-5">
+                                                        <div className="flex items-baseline gap-2 mb-2">
+                                                            <Text strong className="text-sm">{tier}</Text>
+                                                            <Text type="secondary" className="text-xs">
+                                                                {TIER_LABELS[tier] || ''}
+                                                            </Text>
+                                                            <Text type="secondary" className="text-xs">
+                                                                {onlyAbnormal
+                                                                    ? `${shown.length}/${tierFields.length} 个字段有异常`
+                                                                    : `${shown.length} 个字段`}
+                                                            </Text>
+                                                        </div>
+                                                        <Row gutter={[12, 12]}>
+                                                            {shown.map((f) => {
+                                                                const scells = cellsByField[f] || {};
+                                                                const fieldSources = matrix.sources.filter((s) => scells[s]);
+                                                                const primaryCell = fieldSources
+                                                                    .map((s) => scells[s])
+                                                                    .find((c) => c.is_primary) || fieldSources.map((s) => scells[s])[0];
+                                                                const info = healthScore(primaryCell);
                                                                 return (
-                                                                    <td
-                                                                        key={s}
-                                                                        className="border border-slate-200 p-1"
-                                                                    >
-                                                                        {cell ? (
-                                                                            <Tooltip
-                                                                                title={
-                                                                                    <div className="text-xs">
-                                                                                        <div>状态: {info.label}</div>
-                                                                                        <div>错误率(1h): {(cell.error_rate_1h * 100).toFixed(2)}%</div>
-                                                                                        <div>平均时延: {cell.avg_latency_ms.toFixed(0)}ms</div>
-                                                                                        <div>fallback: {cell.fallback_triggered_count}</div>
-                                                                                        <div>上次成功: {formatTime(cell.last_success_at)}</div>
-                                                                                        <div>上次错误: {formatTime(cell.last_error_at)}</div>
-                                                                                    </div>
-                                                                                }
-                                                                            >
-                                                                                <div
-                                                                                    className="w-full h-7 rounded flex items-center justify-center text-white text-[10px] font-bold cursor-pointer"
-                                                                                    style={{ background: info.color }}
+                                                                    <Col xs={24} lg={12} xxl={8} key={f}>
+                                                                        <div className="border border-slate-200 rounded-xl p-3 bg-white h-full flex flex-col gap-2">
+                                                                            <div className="flex items-start justify-between">
+                                                                                <Space size={6}>
+                                                                                    <Text strong className="font-mono">{f}</Text>
+                                                                                    <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>{tier}</Tag>
+                                                                                </Space>
+                                                                                <span
+                                                                                    className="text-xs font-bold shrink-0"
+                                                                                    style={{ color: info.color }}
                                                                                 >
-                                                                                    {cell.is_primary ? 'P' : ''}
+                                                                                    {info.label === '无数据' ? '—' : info.label}
+                                                                                </span>
+                                                                            </div>
+                                                                            {/* 主/备源链路 */}
+                                                                            <div className="flex flex-wrap gap-1.5">
+                                                                                {fieldSources.length === 0 ? (
+                                                                                    <span className="text-xs text-slate-400">该字段暂无路由源</span>
+                                                                                ) : fieldSources.map((s) => {
+                                                                                    const c = scells[s];
+                                                                                    const i = healthScore(c);
+                                                                                    const isP = c?.is_primary;
+                                                                                    return (
+                                                                                        <Tooltip key={s} title={
+                                                                                            <div className="text-xs">
+                                                                                                <div>{isP ? '主源' : '备份'} · {i.label}</div>
+                                                                                                <div>错误率(1h): {c ? `${(c.error_rate_1h * 100).toFixed(2)}%` : '—'}</div>
+                                                                                                <div>平均时延: {c ? `${c.avg_latency_ms.toFixed(0)}ms` : '—'}</div>
+                                                                                                <div>上次成功: {formatTime(c?.last_success_at)}</div>
+                                                                                                {c?.fallback_triggered_count ? (
+                                                                                                    <div>触发备份 × {c.fallback_triggered_count}</div>
+                                                                                                ) : null}
+                                                                                            </div>
+                                                                                        }>
+                                                                                            <span
+                                                                                                className="inline-flex items-center px-2 py-0.5 rounded text-[11px] text-white font-medium cursor-pointer"
+                                                                                                style={{ background: i.color }}
+                                                                                            >
+                                                                                                {isP ? '主' : '备'}·{s}
+                                                                                            </span>
+                                                                                        </Tooltip>
+                                                                                    );
+                                                                                })}
+                                                                            </div>
+                                                                            {/* 指标 */}
+                                                                            <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-400 border-t border-slate-100 pt-2 mt-auto">
+                                                                                <div>错误率(1h)<br />
+                                                                                    <span className="text-slate-600 font-mono">
+                                                                                        {primaryCell ? `${(primaryCell.error_rate_1h * 100).toFixed(1)}%` : '—'}
+                                                                                    </span>
                                                                                 </div>
-                                                                            </Tooltip>
-                                                                        ) : (
-                                                                            <div className="w-full h-7 rounded bg-slate-100" />
-                                                                        )}
-                                                                    </td>
+                                                                                <div>平均时延<br />
+                                                                                    <span className="text-slate-600 font-mono">
+                                                                                        {primaryCell ? `${primaryCell.avg_latency_ms.toFixed(0)}ms` : '—'}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div>最近成功<br />
+                                                                                    <span className="text-slate-600 font-mono">
+                                                                                        {primaryCell ? formatTime(primaryCell.last_success_at) : '—'}
+                                                                                    </span>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </Col>
                                                                 );
                                                             })}
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                            <div className="text-[11px] text-slate-400 mt-3">
-                                                P = 主源；颜色：绿正常 / 黄告警 / 红严重 / 灰未注册或未调用
-                                            </div>
+                                                        </Row>
+                                                    </div>
+                                                );
+                                            })}
+
+                                            {totalShownFields === 0 && <Empty description="无匹配字段" />}
                                         </div>
                                     ) : (
                                         <Empty description="暂无数据" />

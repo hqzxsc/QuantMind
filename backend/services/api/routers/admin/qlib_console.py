@@ -95,12 +95,15 @@ async def get_qlib_status(
 
 
 def _build_from_parquet_job(job_id: str, incremental: bool) -> None:
-    """从本地 parquet 增量/全量重建 Qlib。"""
+    """在系统实际使用的 Qlib 缓存路径上增量/全量重建（不另起新路径）。"""
     quantdb_sync_jobs.upsert_job(job_id, stage="qlib_build", current="开始构建 Qlib", progress=0)
     try:
         from backend.services.engine.qlib_data_builder import QlibDataBuilder
 
-        builder = QlibDataBuilder.for_market("CN")
+        # 目标目录取 resolve_qlib_provider_uri：即系统当前实际读取的缓存，
+        # 避免 build 默认指到 /data/qlib/cn_data 再重建一份并行缓存从而遮蔽完整数据。
+        qlib_dir = _resolve_cn_qlib_dir()
+        builder = QlibDataBuilder.for_market("CN", qlib_dir=qlib_dir)
         build_result = builder.build_all(incremental=incremental)
         status = builder.get_status()
         quantdb_sync_jobs.upsert_job(
@@ -109,7 +112,7 @@ def _build_from_parquet_job(job_id: str, incremental: bool) -> None:
             current="Qlib 构建完成",
             progress=100,
             status="completed",
-            result={"build": build_result, "status": status},
+            result={"qlib_dir": str(qlib_dir), "build": build_result, "status": status},
             finished_at=_now_iso(),
         )
     except Exception as exc:  # noqa: BLE001
@@ -124,7 +127,7 @@ def _build_from_parquet_job(job_id: str, incremental: bool) -> None:
 
 
 def _sync_from_sdk_job(job_id: str) -> None:
-    """先通过 QuantDB SDK 同步 K 线 parquet，再重建 Qlib。"""
+    """先通过 QuantDB SDK 同步 K 线 parquet，再对实际使用的 Qlib 缓存做增量更新。"""
     quantdb_sync_jobs.upsert_job(
         job_id,
         stage="sdk_sync",
@@ -133,6 +136,7 @@ def _sync_from_sdk_job(job_id: str) -> None:
     )
     try:
         from backend.scripts.quantdb_daily_sync import run_daily_sync
+        from backend.services.engine.qlib_data_builder import QlibDataBuilder
 
         def _cb(event: str, **kw: Any) -> None:
             ds = kw.get("dataset") or ""
@@ -151,10 +155,14 @@ def _sync_from_sdk_job(job_id: str) -> None:
             datasets=QLIB_FEED_DATASETS,
             skip_pg=True,
             skip_snapshot=True,
-            skip_qlib=False,
+            skip_qlib=True,  # Qlib 单独在此增量更新实际缓存，避免 rebuild 到错误路径
             progress_cb=_cb,
         )
-        qlib = result.get("qlib_cache") or {}
+        # 增量更新系统实际读取的 Qlib 缓存（仅补缺失交易日，不重建新路径）
+        qlib_dir = _resolve_cn_qlib_dir()
+        builder = QlibDataBuilder.for_market("CN", qlib_dir=qlib_dir)
+        build_result = builder.build_all(incremental=True)
+        qlib_status = builder.get_status()
         quantdb_sync_jobs.upsert_job(
             job_id,
             stage="done",
@@ -162,8 +170,10 @@ def _sync_from_sdk_job(job_id: str) -> None:
             progress=100,
             status="completed",
             result={
+                "qlib_dir": str(qlib_dir),
                 "parquet": result.get("parquet"),
-                "qlib_cache": qlib,
+                "build": build_result,
+                "status": qlib_status,
                 "finished": result.get("finished"),
             },
             finished_at=_now_iso(),

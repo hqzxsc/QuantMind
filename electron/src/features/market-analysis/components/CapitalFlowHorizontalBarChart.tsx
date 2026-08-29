@@ -281,10 +281,8 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
           暂无资金流向数据
         </div>
       ) : (
-        // 🎯 二级纵向滚动：按条数撑高画布，可视高度固定原 height，超出滚动看全 80 个行业
-        <div style={{ width: '100%', maxHeight: typeof height === 'number' ? `${height}px` : height, overflowY: 'auto', overflowX: 'hidden' }}>
-          <div ref={chartRef} style={{ width: '100%', height: `${Math.max((data.length || 1) * 40, 320) + 140}px` }} />
-        </div>
+        // 图表按条数撑高(40px/条)，由页面(一级)滚动查看全量；此处不套内层滚动，避免双层滚动条
+        <div ref={chartRef} style={{ width: '100%', height: `${Math.max((data.length || 1) * 40, 320) + 140}px` }} />
       )}
       {loading && (
         <div className="absolute inset-0 bg-white/60 backdrop-blur-xs flex items-center justify-center rounded-2xl">

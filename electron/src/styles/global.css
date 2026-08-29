@@ -850,16 +850,6 @@ html.platform-win32.os-win10 .module-grid-container {
   background: var(--border-primary);
 }
 
-/* 隐藏滚动条（仍可滚动，仅不显示滚动条外观） */
-.no-scrollbar {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-
 /* 风险控制模块滚动条样式 */
 .risk-config-container::-webkit-scrollbar {
   width: 6px;

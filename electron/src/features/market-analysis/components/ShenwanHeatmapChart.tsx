@@ -140,15 +140,5 @@ export const ShenwanHeatmapChart: React.FC<ShenwanHeatmapChartProps> = ({
     );
   }
 
-  return (
-    <div className="w-full flex flex-col gap-2">
-      <div className="flex items-center justify-end px-1">
-        <span className="text-[11px] text-slate-400 font-mono">
-          包含 {sectorItems.length} 个分析板块
-        </span>
-      </div>
-
-      <div ref={chartRef} style={{ width: '100%', height }} />
-    </div>
-  );
+  return <div ref={chartRef} style={{ width: '100%', height }} className="w-full" />;
 };

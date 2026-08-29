@@ -325,7 +325,7 @@ export const MarketAnalysisPage: React.FC = () => {
 
   return (
     <div
-      className="w-full h-full overflow-y-auto bg-slate-50/60 px-5 pt-4 pb-28 flex flex-col gap-2.5 font-sans"
+      className={`w-full h-full overflow-y-auto ${activeTab === 'panorama' ? 'no-scrollbar' : ''} bg-slate-50/60 px-5 pt-4 pb-28 flex flex-col gap-2.5 font-sans`}
       style={{
         WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
         maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
@@ -592,6 +592,7 @@ export const MarketAnalysisPage: React.FC = () => {
                   <span className="w-2.5 h-2.5 rounded-full bg-purple-600 animate-pulse" />
                   <h3 className="text-sm font-extrabold text-slate-900">
                     {period.toUpperCase()} 资金净流入/净流出{flowDimension === 'sector' ? '板块' : '个股'}排行榜
+                    {chartViewMode === 'treemap' && `（包含 ${treemapData.length || 0} 个分析板块）`}
                   </h3>
                 </div>
                 <span className="text-xs text-slate-400 font-mono">
@@ -725,7 +726,7 @@ export const MarketAnalysisPage: React.FC = () => {
             <div className="flex items-center justify-between border-b border-purple-100/60 pb-3 mb-1">
               <h3 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
                 <Layers className="w-3.5 h-3.5 text-purple-600" />
-                <span>通达信二级分类热力矩形图谱</span>
+                <span>通达信二级分类热力矩形图谱（包含 {heatmapData.length || 0} 个分析板块）</span>
               </h3>
               <span className="text-[10px] text-slate-400 font-mono">市值权重 vs 涨跌幅</span>
             </div>

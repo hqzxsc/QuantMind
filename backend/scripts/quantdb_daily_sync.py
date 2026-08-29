@@ -100,10 +100,11 @@ DB_PASS = os.getenv("DB_PASSWORD", "quantmind")
 # SDK client
 # ---------------------------------------------------------------------------
 def _make_client():
+    from backend.shared.runtime_secrets import get_secret
     from quantdb_sdk import QuantDBClient
-    # 调用时动态读取：API key 可能在进程启动后才经管理台写入 runtime.env
-    # （set_secret 会同步更新 os.environ，但模块级常量在 import 时已固化）
-    api_key = os.getenv("QUANTDB_API_KEY", "").strip()
+    # 任务执行时动态读取：管理台换 key 后，下一次同步（含 Celery 定时任务）
+    # 无需重启进程即用新 key
+    api_key = get_secret("QUANTDB_API_KEY")
     if not api_key:
         raise RuntimeError("QUANTDB_API_KEY 未配置")
     return QuantDBClient(api_key=api_key, timeout=(15, 300), max_retries=3)

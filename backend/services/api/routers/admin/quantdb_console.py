@@ -1223,9 +1223,9 @@ class QuantDBConfigRequest(BaseModel):
 @router.get("/config")
 async def get_quantdb_config(current_user: dict = Depends(require_admin)):
     """返回 API Key 配置状态（脱敏），以及数据目录等运行时配置。"""
-    from backend.shared.runtime_secrets import runtime_env_path
+    from backend.shared.runtime_secrets import get_secret, runtime_env_path
 
-    api_key = os.getenv("QUANTDB_API_KEY", "").strip()
+    api_key = get_secret("QUANTDB_API_KEY")
     return {
         "success": True,
         "data": {

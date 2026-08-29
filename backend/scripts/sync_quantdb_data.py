@@ -82,8 +82,9 @@ def _get_engine():
 # QuantDB SDK client
 # ---------------------------------------------------------------------------
 def _get_qdb_client():
+    from backend.shared.runtime_secrets import get_secret
     from quantdb_sdk import QuantDBClient
-    api_key = os.getenv("QUANTDB_API_KEY", "").strip()
+    api_key = get_secret("QUANTDB_API_KEY")
     if not api_key:
         raise RuntimeError("QUANTDB_API_KEY 未配置")
     client = QuantDBClient(api_key=api_key)

@@ -44,7 +44,9 @@ except ImportError:
 def _get_client() -> QuantDBClient:
     if not _QDB_AVAILABLE:
         raise DataUnavailable("quantdb-sdk 未安装，请运行 pip install quantdb-sdk")
-    api_key = os.getenv("QUANTDB_API_KEY", "").strip()
+    from backend.shared.runtime_secrets import get_secret
+
+    api_key = get_secret("QUANTDB_API_KEY")
     if not api_key:
         raise DataUnavailable("QUANTDB_API_KEY 未配置")
     client = QuantDBClient(api_key=api_key)
@@ -238,9 +240,11 @@ class QuantDBAdapter(OfflineDataSourceAdapter):
 
 def get_sdk_info() -> dict[str, Any]:
     """返回 QuantDB SDK 状态信息。"""
+    from backend.shared.runtime_secrets import get_secret
+
     info: dict[str, Any] = {
         "installed": _QDB_AVAILABLE,
-        "api_key_configured": bool(os.getenv("QUANTDB_API_KEY", "").strip()),
+        "api_key_configured": bool(get_secret("QUANTDB_API_KEY")),
     }
     if _QDB_AVAILABLE:
         info["version"] = getattr(
@@ -267,7 +271,9 @@ def register() -> bool:
     if not _QDB_AVAILABLE:
         logger.info("quantdb-sdk 未安装，跳过 QuantDBAdapter 注册")
         return False
-    if not os.getenv("QUANTDB_API_KEY", "").strip():
+    from backend.shared.runtime_secrets import get_secret
+
+    if not get_secret("QUANTDB_API_KEY"):
         logger.info("QUANTDB_API_KEY 未配置，跳过 QuantDBAdapter 注册")
         return False
     from backend.services.engine.data_platform.registry import get_registry

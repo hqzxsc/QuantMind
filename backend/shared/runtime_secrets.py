@@ -52,8 +52,37 @@ def load_runtime_env() -> int:
     for key, value in entries.items():
         if not os.environ.get(key, "").strip():
             os.environ[key] = value
+            _injected_keys.add(key)
             loaded += 1
     return loaded
+
+
+# 本进程启动时由 runtime.env 注入的键。这类键的权威来源是 runtime.env
+# （管理台随时可改），get_secret 对它们实时重读，避免启动期快照过期。
+_injected_keys: set[str] = set()
+
+
+def get_secret(key: str, default: str = "") -> str:
+    """读取密钥的当前值：管理台改 key 后无需重启进程即生效。
+
+    优先级与模块文档一致（真实环境变量 > runtime.env > default），
+    唯一例外：键是本进程启动时由 runtime.env 注入的（真实环境变量为空），
+    则每次调用实时重读 runtime.env——启动注入的快照不构成优先级。
+    典型场景：Celery worker 常驻运行，用户在管理台换 QuantDB API Key，
+    下一次定时同步任务即用新 key。
+    """
+    try:
+        if key in _injected_keys:
+            fresh = _parse(runtime_env_path()).get(key, "").strip()
+            if fresh:
+                return fresh
+        env_val = os.environ.get(key, "").strip()
+        if env_val:
+            return env_val
+        return _parse(runtime_env_path()).get(key, "").strip() or default
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_secret(%s) 读取失败，回退进程环境变量: %s", key, exc)
+        return os.environ.get(key, "").strip() or default
 
 
 def set_secret(key: str, value: str) -> Path:

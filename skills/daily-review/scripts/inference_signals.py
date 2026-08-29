@@ -71,6 +71,29 @@ def _signals_for_run(cur, run_id: str, limit: int) -> list[dict]:
     return out[:limit]
 
 
+def resolve_latest_model_id(conn=None) -> str:
+    """最近一次 completed 用户推理 run 的 model_id（复盘/补跑跟随最新每日推理模型）。
+
+    跟随最近一次实际执行的推理 run（含系统模型）；无记录时回退 DEFAULT_MODEL_ID。
+    """
+    need_close = conn is None
+    conn = conn or pg_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT model_id FROM qm_model_inference_runs "
+                "WHERE status='completed' AND model_id IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            return str(row[0]) if row and row[0] else DEFAULT_MODEL_ID
+    except Exception:
+        return DEFAULT_MODEL_ID
+    finally:
+        if need_close:
+            conn.close()
+
+
 def load_prev_vs_today(model_id: str, trade_date: date, conn=None, top_n: int = 20,
                      fallback: bool = True) -> dict | None:
     """昨日推理 → 今日信号：prediction_trade_date=trade_date（无论 data 日期，跨周末安全）。

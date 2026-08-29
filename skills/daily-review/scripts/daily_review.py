@@ -1261,7 +1261,7 @@ def main() -> None:
         import inference_signals as isig
         from review_stats import inference_hit_rate
 
-        model_id = args.model or isig.DEFAULT_MODEL_ID
+        model_id = args.model or isig.resolve_latest_model_id()
         td = trade_dt_obj.date()
 
         prev_run = isig.load_prev_vs_today(model_id, td, fallback=False)
@@ -1269,8 +1269,8 @@ def main() -> None:
 
         # 无推理 run 时先自动补跑（用户要求：不能跳过；推理仅 10-30 秒）
         # 补跑特征日 = 复盘日前一交易日（prediction=复盘日供验证）+ 复盘日（供明日信号）
+        inference_attempt: dict[str, Any] = {}
         if not prev_run or not next_run:
-            inference_attempt: dict[str, Any] = {}
             try:
                 import shutil
                 import subprocess

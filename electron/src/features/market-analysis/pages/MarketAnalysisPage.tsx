@@ -604,7 +604,7 @@ export const MarketAnalysisPage: React.FC = () => {
                   period={period}
                   dimension={flowDimension}
                   categoryMode={categoryMode}
-                  height={flowDimension === 'sector' && categoryMode === 'shenwan' ? 780 : 560}
+                  height={940}
                   onItemClick={(item) => setSelectedFlowItem(item)}
                   sortMode={sortMode}
                 />

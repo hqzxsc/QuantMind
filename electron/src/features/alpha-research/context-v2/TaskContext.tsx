@@ -46,6 +46,59 @@ export interface BacktestTask {
   updatedAt: string;
 }
 
+// ========================== Structured factors merge ==========================
+
+/**
+ * 把后端任务状态返回的结构化因子（rd_agent_factors 已落库数据）合并进实时指标。
+ * 数据来自数据库而非日志文本解析，不受后端日志措辞变化影响。
+ */
+function mergeStructuredFactors(
+  metrics: RealtimeMetrics | undefined,
+  rawFactors: any[],
+): RealtimeMetrics {
+  const base: RealtimeMetrics = metrics || {
+    ic: 0, icir: 0, rankIc: 0, rankIcir: 0,
+    annualReturn: 0, sharpeRatio: 0, maxDrawdown: 0,
+    totalFactors: 0, highQualityFactors: 0, mediumQualityFactors: 0, lowQualityFactors: 0,
+    top10Factors: [],
+  };
+  if (!rawFactors.length) return base;
+
+  const mapped = rawFactors.map((f: any) => ({
+    factorId: f.factor_id ?? '',
+    factorName: f.factor_name ?? 'unnamed',
+    factorExpression:
+      f.factor_formulation || f.metadata?.formulation || (f.factor_code || '').slice(0, 120),
+    rankIc: f.rank_ic ?? 0,
+    rankIcir: f.metadata?.rank_icir ?? 0,
+    ic: f.ic_value ?? 0,
+    icir: f.metadata?.icir ?? 0,
+    annualReturn: f.annual_return ?? 0,
+    sharpeRatio: f.sharpe_ratio ?? 0,
+    maxDrawdown: f.max_drawdown ?? 0,
+    calmarRatio: 0,
+    market: f.market,
+    cumulativeCurve: [] as Array<{ date: string; value: number }>,
+  }));
+
+  // RankIC 降序取 Top10，并重算最优因子指标
+  const top10 = [...mapped].sort((a, b) => (b.rankIc || 0) - (a.rankIc || 0)).slice(0, 10);
+  const best = top10.reduce((b, c) => ((c.rankIc || 0) > (b.rankIc || 0) ? c : b), top10[0]);
+  return {
+    ...base,
+    totalFactors: Math.max(base.totalFactors || 0, mapped.length),
+    top10Factors: top10,
+    factorName: best.factorName,
+    rankIc: best.rankIc ?? 0,
+    rankIcir: best.rankIcir ?? 0,
+    ic: best.ic ?? 0,
+    icir: best.icir ?? 0,
+    annualReturn: best.annualReturn ?? 0,
+    sharpeRatio: best.sharpeRatio ?? 0,
+    maxDrawdown: best.maxDrawdown ?? 0,
+  };
+}
+
 // ========================== Context Value ==========================
 
 interface TaskContextValue {
@@ -139,6 +192,10 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updated.status = msg.data.phase === 'completed' ? 'completed' : 'running';
             if (msg.data.timeline) updated.timeline = msg.data.timeline;
             if (msg.data.tokenUsage) updated.tokenUsage = msg.data.tokenUsage;
+            // 结构化因子（后端已落库，优先于日志正则解析），直接更新 Top10 列表
+            if (Array.isArray(msg.data.factors) && msg.data.factors.length > 0) {
+              updated.metrics = mergeStructuredFactors(updated.metrics, msg.data.factors);
+            }
             break;
           case 'log':
             // Increased frontend log retention limit from 99 to 2000

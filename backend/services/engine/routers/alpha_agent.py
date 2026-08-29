@@ -6,6 +6,7 @@
 import asyncio
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -28,6 +29,40 @@ router = APIRouter(prefix="/api/v1/alpha-agent", tags=["AlphaAgent"])
 persistence = RDAgentFactorPersistence()
 
 _running_backtests: set[str] = set()
+# 回测子进程句柄 + 取消标记：cancel 接口据此真正 kill 子进程
+_backtest_processes: dict[str, "subprocess.Popen"] = {}
+_backtest_cancelled: set[str] = set()
+
+
+class FactorBacktestCancelled(RuntimeError):
+    """用户主动取消因子回测（子进程被 kill）。"""
+
+
+async def _run_subprocess_tracked(
+    factor_id: str,
+    args: list[str],
+    timeout: float = 600,
+) -> tuple[int, str, str]:
+    """运行回测子进程并登记句柄，供 cancel 接口 kill。
+
+    Returns: (returncode, stdout, stderr)。用户取消时抛 FactorBacktestCancelled。
+    """
+    import subprocess
+
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _backtest_processes[factor_id] = proc
+    try:
+        try:
+            stdout, stderr = await asyncio.to_thread(proc.communicate, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = await asyncio.to_thread(proc.communicate)
+            raise RuntimeError(f"因子计算超时（>{int(timeout)}s），子进程已终止") from None
+        if factor_id in _backtest_cancelled:
+            raise FactorBacktestCancelled("回测已被用户取消")
+        return proc.returncode, stdout or "", stderr or ""
+    finally:
+        _backtest_processes.pop(factor_id, None)
 
 
 async def _require_owned_task(task_id: str, request: Request) -> dict:
@@ -119,6 +154,22 @@ async def start_evolution(
         )
 
     launcher = get_launcher()
+    # 并发上限：每个任务是 RD-Agent 子进程（烧 LLM token + Qlib 回测），
+    # 必须限流防止 fork 风暴。可用环境变量调整。
+    counts = launcher.count_running()
+    max_per_user = int(os.getenv("ALPHA_AGENT_MAX_RUNNING_PER_USER", "2"))
+    max_global = int(os.getenv("ALPHA_AGENT_MAX_RUNNING_GLOBAL", "4"))
+    user_running = counts["by_user"].get(auth_user_id, 0)
+    if user_running >= max_per_user:
+        raise HTTPException(
+            status_code=429,
+            detail=f"您已有 {user_running} 个挖掘任务在运行（上限 {max_per_user}），请等待完成或先取消任务。",
+        )
+    if counts["global"] >= max_global:
+        raise HTTPException(
+            status_code=429,
+            detail=f"当前全平台挖掘任务数已达上限（{max_global}），请稍后再试。",
+        )
     task_id = await launcher.start_evolution(
         auth_user_id,
         market=market,
@@ -142,8 +193,16 @@ async def start_evolution(
 
 @router.get("/tasks/{task_id}")
 async def get_task_status(task_id: str, request: Request):
-    """查询演化任务状态"""
+    """查询演化任务状态（附带该任务已落库的结构化因子，供前端实时展示）"""
     status = await _require_owned_task(task_id, request)
+    auth_user_id, _ = get_authenticated_identity(request)
+    try:
+        status["factors"] = await persistence.list_factors(
+            user_id=auth_user_id, task_id=task_id, limit=20,
+        )
+    except Exception:
+        logger.exception("[alpha-agent] list factors for task %s failed", task_id)
+        status["factors"] = []
     return {"code": 200, "data": status}
 
 
@@ -343,10 +402,26 @@ async def backtest_factor(
 
 @router.post("/factors/{factor_id}/cancel")
 async def cancel_backtest(factor_id: str, request: Request):
-    """取消一个正在进行的回测（标记为 cancelled；subprocess 自带 600s 超时会自然结束）"""
+    """取消一个正在进行的回测：kill 子进程（不再等 600s 超时）并标记 cancelled"""
     factor = await _require_owned_factor(factor_id, request)
     if factor_id not in _running_backtests:
         return {"code": 200, "data": {"factor_id": factor_id, "status": factor.get("status"), "message": "回测未在运行"}}
+    _backtest_cancelled.add(factor_id)
+    proc = _backtest_processes.get(factor_id)
+    if proc and proc.poll() is None:
+        try:
+            proc.terminate()
+            for _ in range(10):
+                if proc.poll() is not None:
+                    break
+                await asyncio.sleep(0.2)
+            if proc.poll() is None:
+                proc.kill()
+                logger.warning("[alpha-backtest] force-killed subprocess for %s", factor_id)
+        except ProcessLookupError:
+            pass
+        except Exception as e:
+            logger.warning("[alpha-backtest] cancel kill %s failed: %s", factor_id, e)
     _running_backtests.discard(factor_id)
     try:
         await persistence.update_factor_metrics(
@@ -697,6 +772,16 @@ async def _run_factor_backtest(
             await _backtest_via_h5(
                 factor_id, factor_code, kind, universe, start, end
             )
+    except FactorBacktestCancelled:
+        logger.info("[alpha-backtest] %s cancelled by user", factor_id)
+        try:
+            await persistence.update_factor_metrics(
+                factor_id,
+                status="cancelled",
+                metadata={"backtest_error": "cancelled_by_user"},
+            )
+        except Exception:
+            pass
     except Exception as exc:
         logger.exception("[alpha-backtest] %s failed", factor_id)
         tb = getattr(exc, "__traceback__", None)
@@ -715,6 +800,7 @@ async def _run_factor_backtest(
             pass
     finally:
         _running_backtests.discard(factor_id)
+        _backtest_cancelled.discard(factor_id)
 
 
 async def _backtest_via_qlib(
@@ -752,15 +838,16 @@ async def _backtest_via_qlib(
         factor_id, market, universe, len(df), list(df.columns),
     )
 
-    # 计算因子值
+    # 计算因子值（LLM 生成/用户提交的代码一律 subprocess 隔离执行，
+    # 严禁在 engine 主进程 exec——主进程持有 DB 凭证与全部服务状态）
     if kind == "functional":
         # RD-Agent calculate_* 函数式：用 subprocess 跑（隔离 + 捕获 traceback）
         factor_series = await _run_functional_factor_subprocess(
             factor_id, factor_code, df
         )
     else:
-        # Qlib Factor 类：直接 exec + per-stock 调用
-        factor_series = _run_factor_class_inproc(factor_id, factor_code, df)
+        # Qlib Factor 类：subprocess 逐股计算，主进程读结果 H5
+        factor_series = await _run_factor_class_subprocess(factor_id, factor_code, df)
 
     if factor_series is None or len(factor_series) == 0:
         raise RuntimeError("因子计算无输出，请检查 calculate_* 函数或 Factor 类")
@@ -836,7 +923,6 @@ async def _run_functional_factor_subprocess(
 
     准备 daily_pv.h5 在 /tmp（用现有 df 写入，比 337MB 模板小且数据新）。
     """
-    import subprocess
     import sys as _sys
     import shutil
     import tempfile
@@ -899,24 +985,14 @@ except Exception as e:
     print(f"ERROR: {{e}}")
     sys.exit(1)
 """
-    try:
-        proc = await asyncio.to_thread(
-            subprocess.run,
-            [_sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("因子计算超时（>600s），请检查 calculate_* 函数复杂度")
-    except Exception as e:
-        raise RuntimeError(f"subprocess 启动失败: {e}") from e
-
-    if proc.returncode != 0:
+    returncode, stdout, stderr = await _run_subprocess_tracked(
+        factor_id, [_sys.executable, "-c", script], timeout=600
+    )
+    if returncode != 0:
         tb = Path(tb_path).read_text() if Path(tb_path).exists() else ""
-        out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        out = stdout + "\n" + stderr
         raise RuntimeError(
-            f"因子执行失败 (exit={proc.returncode}): {out[-300:]}\n{tb[-1000:]}"
+            f"因子执行失败 (exit={returncode}): {out[-300:]}\n{tb[-1000:]}"
         )
 
     # 读 result.h5
@@ -935,38 +1011,89 @@ except Exception as e:
     return s
 
 
-def _run_factor_class_inproc(
+async def _run_factor_class_subprocess(
     factor_id: str, factor_code: str, df: "pd.DataFrame"
 ) -> "pd.Series | None":
-    """Qlib Factor 类因子：在主进程 exec + 逐股调用（结果合并成 Series）。"""
-    import numpy as np
-    import pandas as pd
+    """Qlib Factor 类因子：subprocess 隔离执行（逐股调用），主进程只读结果 H5。
 
-    ns: dict = {}
-    exec(compile(factor_code, f"<alpha-factor-{factor_id}>", "exec"), ns)
-    factor_cls = None
-    for v in ns.values():
-        if isinstance(v, type) and v.__module__ == "builtins":
-            if getattr(v, "name", None) or v.__name__.lower().endswith("factor"):
-                factor_cls = v
+    因子代码由 LLM 生成或用户提交，绝不能在 engine 主进程 exec。
+    每次运行用独立的临时文件，避免并发回测相互覆盖。
+    """
+    import uuid
+
+    run_id = uuid.uuid4().hex[:8]
+    input_path = f"/tmp/_factor_input_{run_id}.h5"
+    out_path = f"/tmp/_factor_result_{run_id}.h5"
+    tb_path = f"/tmp/_factor_tb_{run_id}.txt"
+    Path(tb_path).unlink(missing_ok=True)
+    Path(out_path).unlink(missing_ok=True)
+
+    try:
+        import pandas as _pd
+        df.to_hdf(input_path, key="data", mode="w")
+    except Exception as e:
+        raise RuntimeError(f"准备因子输入数据失败: {e}") from e
+
+    script = f"""
+import pandas as pd
+import numpy as np
+import sys, os, traceback
+
+try:
+    _factor_ns = {{}}
+    exec({repr(factor_code)}, _factor_ns)
+    _factor_cls = None
+    for _v in _factor_ns.values():
+        if isinstance(_v, type) and _v.__module__ == "builtins":
+            if getattr(_v, "name", None) or _v.__name__.lower().endswith("factor"):
+                _factor_cls = _v
                 break
-    if factor_cls is None:
-        raise RuntimeError("exec 后未找到 Factor 类")
-
-    factor_inst = factor_cls()
-    pieces: list[pd.Series] = []
-    for code, sub in df.groupby(level=0):  # Qlib: level 0 = instrument
-        if len(sub) < 30:
+    if _factor_cls is None:
+        print("NO_FACTOR_CLASS"); sys.exit(1)
+    _df = pd.read_hdf({input_path!r})
+    _factor_inst = _factor_cls()
+    _pieces = []
+    for _code, _sub in _df.groupby(level=0):
+        if len(_sub) < 30:
             continue
         try:
-            fv = factor_inst(sub.copy())
-            fv_col = fv.iloc[:, 0] if hasattr(fv, "iloc") else pd.Series(fv)
-            pieces.append(pd.Series(fv_col.values, index=sub.index, name="f"))
+            _fv = _factor_inst(_sub.copy())
+            _fv_col = _fv.iloc[:, 0] if hasattr(_fv, "iloc") else pd.Series(_fv)
+            _pieces.append(pd.Series(_fv_col.values, index=_sub.index, name="f"))
         except Exception:
             continue
-    if not pieces:
-        return None
-    return pd.concat(pieces)
+    if not _pieces:
+        print("NO_PIECES"); sys.exit(1)
+    pd.concat(_pieces).to_hdf({out_path!r}, key="data", mode="w")
+    print("FACTOR_DONE")
+except Exception:
+    with open({tb_path!r}, "w") as _f:
+        traceback.print_exc(file=_f)
+    sys.exit(1)
+"""
+    returncode, stdout, stderr = await _run_subprocess_tracked(
+        factor_id, [sys.executable, "-c", script], timeout=600
+    )
+    if returncode != 0:
+        tb = Path(tb_path).read_text() if Path(tb_path).exists() else ""
+        raise RuntimeError(
+            f"因子执行失败 (exit={returncode}): {((stdout or '') + stderr)[-300:]}\n{tb[-1000:]}"
+        )
+
+    try:
+        import pandas as _pd
+        result_df = _pd.read_hdf(out_path)
+    except Exception as e:
+        raise RuntimeError(f"读取因子结果失败: {e}") from e
+
+    if isinstance(result_df, _pd.Series):
+        s = result_df
+    elif isinstance(result_df.index, _pd.MultiIndex) and result_df.index.nlevels >= 2:
+        s = result_df.iloc[:, 0]
+    else:
+        s = result_df.stack()
+    s.index.names = ["instrument", "datetime"]
+    return s
 
 
 async def _backtest_via_h5(
@@ -1018,74 +1145,15 @@ async def _run_lightweight_backtest(
     try:
         import numpy as np
         import pandas as pd
-        import tempfile
-        import subprocess
         from qlib.data import D
 
-        # Sandbox: run factor code in subprocess instead of exec()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix=f"factor_{factor_id}_") as tmp:
-            tmp.write(factor_code)
-            tmp_path = tmp.name
-
-        try:
-            result = await asyncio.to_thread(
-                subprocess.run,
-                [sys.executable, "-c", f"""
-import ast, json, sys
-with open({repr(tmp_path)}) as f:
-    tree = ast.parse(f.read())
-# 找 Factor 类（类名含 factor 或定义 name 属性）
-found_class = None
-found_func = None
-for node in ast.walk(tree):
-    if isinstance(node, ast.ClassDef) and ("factor" in node.name.lower() or any(
-        isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "name" for t in n.targets)
-        for n in node.body
-    )):
-        found_class = node.name
-        break
-    if isinstance(node, ast.FunctionDef) and node.name.startswith("calculate_"):
-        found_func = node.name
-if found_class:
-    print(json.dumps({{"found": True, "kind": "class", "name": found_class}}))
-elif found_func:
-    print(json.dumps({{"found": True, "kind": "function", "name": found_func}}))
-else:
-    print(json.dumps({{"found": False}}))
-"""],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            import json as _json
-            check = _json.loads(result.stdout.strip().splitlines()[-1]) if result.stdout.strip() else {"found": False}
-            if not check.get("found"):
-                raise RuntimeError("因子代码中未找到可调用的 Factor 类")
-        finally:
-            os.unlink(tmp_path)
-
-        # NOTE: 下面的 exec 在 engine 进程内运行，上面的 subprocess 只做语法/结构预检，
-        # 并非安全沙箱。因子代码由 LLM 生成，仅因写入前经本服务校验才视为可信。
-        ns: dict = {}
-        exec(compile(factor_code, f"<alpha-factor-{factor_id}>", "exec"), ns)
-
-        # 因子识别：优先 Qlib Factor 类；否则 RD-Agent 函数式（calculate_* 返回 DataFrame）
-        factor_cls = None
-        for v in ns.values():
-            if isinstance(v, type) and callable(v) and v.__module__ == "builtins":
-                if getattr(v, "name", None) or v.__name__.lower().endswith("factor"):
-                    factor_cls = v
-                    break
-
-        # RD-Agent 函数式因子（无 Factor 类，含 calculate_* 函数）→ 走 H5 数据回测
-        if factor_cls is None and any(
-            name.startswith("calculate_") and callable(ns[name])
-            for name in ns
-        ):
+        # 因子识别：优先 Qlib Factor 类；否则 RD-Agent 函数式（calculate_* 返回 DataFrame）。
+        # AST 预检，不执行代码。
+        kind = _detect_factor_kind(factor_code)
+        if kind == "functional":
             await _backtest_functional_factor(factor_id, factor_code, start_date, end_date, universe)
             return
-
-        if factor_cls is None:
+        if kind != "factor_class":
             raise RuntimeError("因子代码中未找到可调用的 Factor 类")
 
         end = end_date or "2024-12-31"
@@ -1120,7 +1188,11 @@ else:
         if df.empty:
             raise RuntimeError("Qlib 数据为空，请检查 QLIB_PROVIDER_URI")
 
-        factor_inst = factor_cls()
+        # 因子计算在 subprocess 内逐股执行，主进程只读结果序列
+        factor_series = await _run_factor_class_subprocess(factor_id, factor_code, df)
+        if factor_series is None or len(factor_series) == 0:
+            raise RuntimeError("因子计算无输出，请检查 Factor 类实现")
+
         sample_codes = df.index.get_level_values(0).unique()[:50]
         ic_list: list[float] = []
         rank_ic_list: list[float] = []
@@ -1132,9 +1204,10 @@ else:
             if len(sub) < 30:
                 continue
             try:
-                fv = factor_inst(sub)
-                fv_col = fv.iloc[:, 0] if hasattr(fv, "iloc") else pd.Series(fv)
-            except Exception:
+                fv_col = factor_series.xs(code, level=0)
+            except KeyError:
+                continue
+            if not isinstance(fv_col, pd.Series) or fv_col.dropna().empty:
                 continue
             fwd_ret = sub["$close"].pct_change(5).shift(-5)
             paired = pd.concat([fv_col, fwd_ret], axis=1).dropna()
@@ -1203,6 +1276,16 @@ else:
             universe,
         )
 
+    except FactorBacktestCancelled:
+        logger.info("[alpha-backtest] %s cancelled by user", factor_id)
+        try:
+            await persistence.update_factor_metrics(
+                factor_id,
+                status="cancelled",
+                metadata={"backtest_error": "cancelled_by_user"},
+            )
+        except Exception:
+            pass
     except Exception as exc:
         logger.exception("[alpha-backtest] %s failed", factor_id)
         try:
@@ -1215,6 +1298,7 @@ else:
             pass
     finally:
         _running_backtests.discard(factor_id)
+        _backtest_cancelled.discard(factor_id)
 
 
 async def _backtest_functional_factor(
@@ -1230,7 +1314,6 @@ async def _backtest_functional_factor(
     写 result.h5，再与价格数据对齐算 IC/RankIC/ICIR。
     """
     try:
-        import subprocess
         import tempfile
         import sys as _sys
         from pathlib import Path
@@ -1325,16 +1408,12 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 """
-        # 用 asyncio.to_thread 执行同步 subprocess，避免阻塞 engine 事件循环
-        proc = await asyncio.to_thread(
-            subprocess.run,
-            [_sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=600,
+        # subprocess 执行（登记句柄，支持 cancel kill；to_thread 避免阻塞事件循环）
+        returncode, stdout, stderr = await _run_subprocess_tracked(
+            factor_id, [_sys.executable, "-c", script], timeout=600
         )
         # 合并 stdout + stderr（因子脚本异常用 stderr 输出 traceback）
-        out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        out = stdout + "\n" + stderr
         ic_mean = rank_ic_mean = None
         for line in out.splitlines():
             if line.startswith("IC="):
@@ -1364,6 +1443,16 @@ except Exception as e:
         )
         logger.info("[alpha-backtest-fn] %s done ic=%.4f rank_ic=%s", factor_id, ic_mean,
                     f"{rank_ic_mean:.4f}" if rank_ic_mean is not None else "N/A")
+    except FactorBacktestCancelled:
+        logger.info("[alpha-backtest-fn] %s cancelled by user", factor_id)
+        try:
+            await persistence.update_factor_metrics(
+                factor_id,
+                status="cancelled",
+                metadata={"backtest_error": "cancelled_by_user"},
+            )
+        except Exception:
+            pass
     except Exception as exc:
         logger.exception("[alpha-backtest-fn] %s failed", factor_id)
         try:
@@ -1376,6 +1465,7 @@ except Exception as e:
             pass
     finally:
         _running_backtests.discard(factor_id)
+        _backtest_cancelled.discard(factor_id)
 
 
 def _resolve_factor_h5_path(universe: str = "csi300") -> str:

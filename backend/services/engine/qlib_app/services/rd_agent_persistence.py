@@ -122,8 +122,9 @@ class RDAgentFactorPersistence:
         market: str | None = None,
         universe: str | None = None,
         limit: int = 50,
+        task_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """列出因子（支持按状态、用户、市场、宇宙过滤）"""
+        """列出因子（支持按状态、用户、市场、宇宙、来源任务过滤）"""
         conditions = []
         params: dict[str, Any] = {"limit": limit}
         if user_id:
@@ -138,6 +139,9 @@ class RDAgentFactorPersistence:
         if universe:
             conditions.append("universe = :universe")
             params["universe"] = universe
+        if task_id:
+            conditions.append("metadata_json->>'task_id' = :task_id")
+            params["task_id"] = task_id
 
         where = " AND ".join(conditions) if conditions else "1=1"
         async with get_session(read_only=True) as session:

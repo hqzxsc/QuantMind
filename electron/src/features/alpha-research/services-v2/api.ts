@@ -141,6 +141,7 @@ function normalizeAgentTask(raw: any, configHint?: any): Task {
     updatedAt: raw?.updated_at ?? new Date().toISOString(),
     timeline: raw?.timeline ?? undefined,
     tokenUsage: raw?.token_usage ?? undefined,
+    factors: Array.isArray(raw?.factors) ? raw.factors.map(normalizeAgentFactor) : [],
   };
 }
 
@@ -570,6 +571,7 @@ export function connectMiningWs(
 
   let lastPhase = '';
   let lastPct = -1;
+  let lastFactorsCount = -1;
   let logOffset = 0;
 
   // Regex to parse RD-Agent log lines like:
@@ -649,11 +651,15 @@ export function connectMiningWs(
       const phaseChanged = backendPhase !== lastPhase;
       const pctChanged = progressPct !== lastPct;
       const statusChanged = status !== lastStatus;
+      // 后端随任务状态返回的结构化因子（rd_agent_factors 已落库），优先于日志正则解析
+      const backendFactors: any[] = Array.isArray(data.factors) ? data.factors : [];
+      const factorsChanged = backendFactors.length !== lastFactorsCount;
 
-      if (statusChanged || phaseChanged || pctChanged) {
+      if (statusChanged || phaseChanged || pctChanged || factorsChanged) {
         lastStatus = status;
         lastPhase = backendPhase;
         lastPct = progressPct;
+        lastFactorsCount = backendFactors.length;
         const phase: ExecutionPhase =
           status === 'completed'
             ? 'completed'
@@ -671,6 +677,7 @@ export function connectMiningWs(
             timestamp: new Date().toISOString(),
             timeline: data.timeline ?? undefined,
             tokenUsage: data.token_usage ?? undefined,
+            factors: backendFactors.length > 0 ? backendFactors : undefined,
           },
           timestamp: new Date().toISOString(),
         });

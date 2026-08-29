@@ -208,6 +208,17 @@ class AlphaAgentLauncher:
             results.append(await self.get_task_status(task.task_id))
         return results
 
+    def count_running(self) -> dict[str, Any]:
+        """统计 pending/running 任务数（全局 + 按用户），供并发上限校验。"""
+        active = (TaskStatus.PENDING, TaskStatus.RUNNING)
+        by_user: dict[str, int] = {}
+        total = 0
+        for task in self._tasks.values():
+            if task.status in active:
+                total += 1
+                by_user[task.user_id] = by_user.get(task.user_id, 0) + 1
+        return {"global": total, "by_user": by_user}
+
     def _persist_task(self, task: EvolutionTask) -> None:
         """Save task state to disk so it survives restarts."""
         state_file = self._log_dir / task.task_id / "task_state.json"

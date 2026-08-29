@@ -52,6 +52,7 @@ const AdminDashboard = lazy(() => import('./features/admin/components/AdminDashb
 const AdminUserTable = lazy(() => import('./features/admin/components/AdminUserTable').then(m => ({ default: m.AdminUserTable })));
 const AdminModelManagement = lazy(() => import('./features/admin/components/AdminModelManagement').then(m => ({ default: m.AdminModelManagement })));
 const AdminDataManagement = lazy(() => import('./features/admin/components/AdminDataManagement').then(m => ({ default: m.AdminDataManagement })));
+const AdminQlibDataPanel = lazy(() => import('./features/admin/components/AdminQlibDataPanel').then(m => ({ default: m.AdminQlibDataPanel })));
 const AdminStrategyTemplates = lazy(() => import('./features/admin/components/AdminStrategyTemplates').then(m => ({ default: m.AdminStrategyTemplates })));
 const AdminNewsPage = lazy(() => import('./features/news/components/NewsPanel').then(m => ({ default: m.NewsPanel })));
 const AdminRssSources = lazy(() => import('./features/admin/components/AdminRssSources').then(m => ({ default: m.AdminRssSources })));
@@ -686,6 +687,7 @@ export default function App() {
                     <Route path="users" element={<Suspense fallback={<Spin size="large" />}><AdminUserTable /></Suspense>} />
                     <Route path="models" element={<Suspense fallback={<Spin size="large" />}><AdminModelManagement /></Suspense>} />
                     <Route path="data" element={<Suspense fallback={<Spin size="large" />}><AdminDataManagement /></Suspense>} />
+                    <Route path="qlib" element={<Suspense fallback={<Spin size="large" />}><AdminQlibDataPanel /></Suspense>} />
                     <Route path="strategies" element={<Suspense fallback={<Spin size="large" />}><AdminStrategyTemplates /></Suspense>} />
                     <Route path="news" element={<Suspense fallback={<Spin size="large" />}><AdminRssSources /></Suspense>} />
                     <Route path="tags" element={<Suspense fallback={<Spin size="large" />}><AdminTagManagement /></Suspense>} />

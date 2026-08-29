@@ -281,6 +281,52 @@ export interface QuantDBDiffResult {
     timestamp: string;
 }
 
+// ---- Qlib 数据管理 ----
+export interface QlibStatus {
+    market: string;
+    qlib_dir: string;
+    ready: boolean;
+    qlib_data: {
+        exists: boolean;
+        calendar_total_days: number;
+        calendar_start_date: string | null;
+        calendar_last_date: string | null;
+        calendar_files: string[];
+        instruments: { total: number; sh: number; sz: number; bj: number; other: number };
+        feature_dirs_total: number;
+    };
+    parquet_latest_date: string | null;
+    lag_days: number | null;
+    lag_hint: string | null;
+    checked_at: string;
+}
+
+export interface QlibJobResult {
+    build?: { calendar: number; instruments: number; features: number; skipped: number };
+    status?: Record<string, any>;
+    parquet?: Record<string, any>;
+    qlib_cache?: { status?: string; provider_uri?: string; reason?: string } | null;
+    finished?: string | null;
+}
+
+export interface QlibJob {
+    job_id: string;
+    kind: string;
+    status: 'running' | 'completed' | 'failed' | 'cancelled' | 'cancelling';
+    stage: string;
+    progress: number;
+    current?: string | null;
+    datasets?: string[] | null;
+    total?: number | null;
+    done?: number;
+    cancel_requested?: boolean;
+    error?: string | null;
+    result?: QlibJobResult | Record<string, any> | null;
+    started_at: string;
+    finished_at?: string | null;
+    started_by?: string;
+}
+
 class DataPlatformService {
     private axiosInstance: AxiosInstance;
     private readonly baseURL =
@@ -727,6 +773,50 @@ class DataPlatformService {
         timestamp: string;
     }> {
         const resp = await this.axiosInstance.post(`${this.marketBase(market)}/data-sources`, { sources });
+        return this.unwrap(resp);
+    }
+
+    // ---- Qlib 数据管理（仅 A 股 CN） ----
+    async getQlibStatus(): Promise<QlibStatus> {
+        const resp = await this.axiosInstance.get('/admin/data-platform/qlib/status', {
+            timeout: 60000,
+        });
+        return this.unwrap(resp);
+    }
+
+    async buildQlib(incremental: boolean): Promise<{ job: QlibJob }> {
+        const resp = await this.axiosInstance.post('/admin/data-platform/qlib/build', null, {
+            params: { incremental },
+            timeout: 30000,
+        });
+        return this.unwrap(resp);
+    }
+
+    async updateQlibFromSdk(): Promise<{ job: QlibJob }> {
+        const resp = await this.axiosInstance.post('/admin/data-platform/qlib/update-from-sdk', null, {
+            timeout: 30000,
+        });
+        return this.unwrap(resp);
+    }
+
+    async listQlibJobs(): Promise<{ jobs: QlibJob[]; timestamp: string }> {
+        const resp = await this.axiosInstance.get('/admin/data-platform/qlib/jobs');
+        return this.unwrap(resp);
+    }
+
+    async getQlibJob(jobId: string): Promise<{ job: QlibJob }> {
+        const resp = await this.axiosInstance.get(`/admin/data-platform/qlib/jobs/${jobId}`);
+        return this.unwrap(resp);
+    }
+
+    async cancelQlibJob(jobId: string): Promise<{
+        job_id: string;
+        status: string;
+        message: string;
+    }> {
+        const resp = await this.axiosInstance.post(
+            `/admin/data-platform/qlib/jobs/${jobId}/cancel`,
+        );
         return this.unwrap(resp);
     }
 }

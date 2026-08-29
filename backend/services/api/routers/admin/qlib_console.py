@@ -1,0 +1,252 @@
+"""Qlib 数据管理控制台（仅 A 股 CN）。
+
+提供 Qlib 缓存的状态查询、从本地 parquet 重建、以及通过 QuantDB SDK
+先同步 parquet 再重建 Qlib 的一键更新。任务进度复用 Redis 基建
+`backend.shared.quantdb_sync_jobs`（与 quantdb 同步任务共用存储）。
+
+路由前缀：/admin/data-platform/qlib
+"""
+from __future__ import annotations
+
+import logging
+import threading
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from backend.services.api.user_app.middleware.auth import require_admin
+from backend.shared import quantdb_sync_jobs
+
+logger = logging.getLogger(__name__)
+
+# Qlib 增量数据依赖的 parquet 数据集（后复权 K 线 + 不复权用于 factor + 指数）
+QLIB_FEED_DATASETS = ["daily_forward", "daily_unadjusted", "index_daily"]
+
+router = APIRouter(dependencies=[Depends(require_admin)])
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat()
+
+
+def _resolve_cn_qlib_dir() -> Path:
+    """A 股 Qlib 目录统一走 qlib_paths 解析。"""
+    from backend.shared.qlib_paths import resolve_qlib_provider_uri
+
+    return Path(resolve_qlib_provider_uri("CN"))
+
+
+def _latest_parquet_date() -> str | None:
+    """daily_forward 最新分区日期（YYYYMMDD）。"""
+    from backend.scripts.quantdb_daily_sync import QUANTDB_DATA_DIR
+
+    fwd = QUANTDB_DATA_DIR / "1_kline_data" / "daily_forward"
+    if not fwd.is_dir():
+        return None
+    parts = [p.name for p in fwd.glob("dt=*")]
+    if not parts:
+        return None
+    latest = max(parts)
+    return latest[len("dt="):] if latest.startswith("dt=") else None
+
+
+@router.get("/status", summary="查询 A 股 Qlib 缓存状态")
+async def get_qlib_status(
+    current_user: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    """返回 CN Qlib 缓存状态，并对比 parquet 上游给出滞后提示。"""
+    _ = current_user
+    qlib_dir = _resolve_cn_qlib_dir()
+
+    from backend.services.api.routers.admin.data_status_scanner import _scan_qlib_info
+    from backend.shared.qlib_paths import is_qlib_provider_ready
+
+    ready = is_qlib_provider_ready(qlib_dir)
+    info = _scan_qlib_info(qlib_dir, "a_share")
+
+    qlib_last = info.get("calendar_last_date")
+    parquet_latest = _latest_parquet_date()
+    lag_days = None
+    lag_hint = None
+    if qlib_last and parquet_latest:
+        try:
+            q_last = date.fromisoformat(qlib_last)
+            p_last = date.fromisoformat(f"{parquet_latest[:4]}-{parquet_latest[4:6]}-{parquet_latest[6:]}")
+            lag_days = max(0, (p_last - q_last).days)
+            if lag_days > 0:
+                lag_hint = f"Qlib 日历最新 {qlib_last}，上游 parquet 已到 {p_last.isoformat()}，落后约 {lag_days} 天"
+            else:
+                lag_hint = "Qlib 已与上游 parquet 对齐"
+        except Exception:
+            lag_hint = None
+
+    return {
+        "market": "CN",
+        "qlib_dir": str(qlib_dir),
+        "ready": ready,
+        "qlib_data": info,
+        "parquet_latest_date": parquet_latest,
+        "lag_days": lag_days,
+        "lag_hint": lag_hint,
+        "checked_at": _now_iso(),
+    }
+
+
+def _build_from_parquet_job(job_id: str, incremental: bool) -> None:
+    """从本地 parquet 增量/全量重建 Qlib。"""
+    quantdb_sync_jobs.upsert_job(job_id, stage="qlib_build", current="开始构建 Qlib", progress=0)
+    try:
+        from backend.services.engine.qlib_data_builder import QlibDataBuilder
+
+        builder = QlibDataBuilder.for_market("CN")
+        build_result = builder.build_all(incremental=incremental)
+        status = builder.get_status()
+        quantdb_sync_jobs.upsert_job(
+            job_id,
+            stage="done",
+            current="Qlib 构建完成",
+            progress=100,
+            status="completed",
+            result={"build": build_result, "status": status},
+            finished_at=_now_iso(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("qlib job %s build failed: %s", job_id, exc, exc_info=True)
+        quantdb_sync_jobs.upsert_job(
+            job_id,
+            stage="error",
+            status="failed",
+            error=str(exc),
+            finished_at=_now_iso(),
+        )
+
+
+def _sync_from_sdk_job(job_id: str) -> None:
+    """先通过 QuantDB SDK 同步 K 线 parquet，再重建 Qlib。"""
+    quantdb_sync_jobs.upsert_job(
+        job_id,
+        stage="sdk_sync",
+        current="通过 SDK 同步 K 线 parquet",
+        progress=5,
+    )
+    try:
+        from backend.scripts.quantdb_daily_sync import run_daily_sync
+
+        def _cb(event: str, **kw: Any) -> None:
+            ds = kw.get("dataset") or ""
+            done = kw.get("done")
+            total = kw.get("total")
+            if event == "dataset_start":
+                quantdb_sync_jobs.upsert_job(job_id, current=f"{ds} 开始同步")
+            elif event == "file":
+                quantdb_sync_jobs.upsert_job(
+                    job_id, current=f"{ds} 下载 {done}/{total}", progress=max(5, min(70, int((done or 0) / max(1, total or 1) * 70)))
+                )
+            elif event == "dataset_done":
+                quantdb_sync_jobs.upsert_job(job_id, current=f"{ds} 完成 (同步 {kw.get('synced', 0)})")
+
+        result = run_daily_sync(
+            datasets=QLIB_FEED_DATASETS,
+            skip_pg=True,
+            skip_snapshot=True,
+            skip_qlib=False,
+            progress_cb=_cb,
+        )
+        qlib = result.get("qlib_cache") or {}
+        quantdb_sync_jobs.upsert_job(
+            job_id,
+            stage="done",
+            current="Qlib 更新完成",
+            progress=100,
+            status="completed",
+            result={
+                "parquet": result.get("parquet"),
+                "qlib_cache": qlib,
+                "finished": result.get("finished"),
+            },
+            finished_at=_now_iso(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("qlib job %s sdk update failed: %s", job_id, exc, exc_info=True)
+        quantdb_sync_jobs.upsert_job(
+            job_id, stage="error", status="failed", error=str(exc), finished_at=_now_iso()
+        )
+
+
+def _launch_job(kind: str, target) -> dict[str, Any]:
+    job_id = f"qlib-{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job = {
+        "job_id": job_id,
+        "kind": kind,
+        "status": "running",
+        "stage": "pending",
+        "progress": 0,
+        "current": "排队中",
+        "datasets": QLIB_FEED_DATASETS if kind == "sdk_update" else None,
+        "total": None,
+        "done": 0,
+        "cancel_requested": False,
+        "started_at": _now_iso(),
+        "started_by": "admin-ui",
+    }
+    quantdb_sync_jobs.upsert_job(job_id, **{k: v for k, v in job.items() if k != "job_id"})
+    threading.Thread(target=target, args=(job_id,), daemon=True).start()
+    return {"job": job}
+
+
+@router.post("/build", summary="从本地 parquet 构建/重建 Qlib")
+async def build_qlib(
+    incremental: bool = Query(True, description="是否增量更新（false=全量重建）"),
+    current_user: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    _ = current_user
+    return _launch_job("build", lambda jid: _build_from_parquet_job(jid, incremental))
+
+
+@router.post("/update-from-sdk", summary="通过 QuantDB SDK 同步并更新 Qlib")
+async def update_qlib_from_sdk(
+    current_user: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    _ = current_user
+    return _launch_job("sdk_update", _sync_from_sdk_job)
+
+
+@router.get("/jobs", summary="Qlib 任务列表")
+async def list_qlib_jobs(
+    current_user: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    _ = current_user
+    jobs = [j for j in quantdb_sync_jobs.list_jobs() if str(j.get("job_id", "")).startswith("qlib-")]
+    jobs.sort(key=lambda j: str(j.get("started_at", "")), reverse=True)
+    return {"jobs": jobs, "timestamp": _now_iso()}
+
+
+@router.get("/jobs/{job_id}", summary="Qlib 任务进度")
+async def get_qlib_job(
+    job_id: str,
+    current_user: dict = Depends(require_admin),
+):
+    _ = current_user
+    job = quantdb_sync_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"job": job}
+
+
+@router.post("/jobs/{job_id}/cancel", summary="取消 Qlib 任务")
+async def cancel_qlib_job(
+    job_id: str,
+    current_user: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    _ = current_user
+    job = quantdb_sync_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.get("status") in ("completed", "failed", "cancelled"):
+        return {"job_id": job_id, "status": job.get("status"), "message": "任务已结束"}
+    quantdb_sync_jobs.upsert_job(
+        job_id, cancel_requested=True, status="cancelling", current="取消请求已提交"
+    )
+    return {"job_id": job_id, "status": "cancelling", "message": "已提交取消请求"}

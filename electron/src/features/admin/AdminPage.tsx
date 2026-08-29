@@ -34,6 +34,7 @@ const AdminPage: React.FC = () => {
             label: '数据管理',
             children: [
                 { key: 'data', label: '数据集目录' },
+                { key: 'qlib', label: 'Qlib 数据管理' },
                 { key: 'quotes', label: '数据源监控' },
                 { key: 'news', label: 'RSS源管理' },
                 { key: 'tags', label: '标签管理' },

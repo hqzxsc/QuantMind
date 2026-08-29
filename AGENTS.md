@@ -1,94 +1,94 @@
-# CLAUDE.md
+# QuantMind 开发指南（AGENTS.md）
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为 AI 编码助手（Claude Code / Codex / QwenPaw 等）在此仓库中工作时提供指导。
 
-## Project Overview
+## 项目概述
 
-QuantMind is a quantitative trading platform with Python backend (FastAPI) and Electron/React/TypeScript frontend. The OSS edition uses single-container deployment where all backend services run in one container.
+QuantMind 是一个量化交易平台，后端为 Python（FastAPI），前端为 Electron/React/TypeScript。开源版（OSS）采用单容器部署，所有后端服务运行在同一个容器中。
 
-## Backend Services (all via `backend/main_oss.py`)
+## 后端服务（统一入口 `backend/main_oss.py`）
 
-| Service | Port | Responsibility |
-|---------|------|----------------|
-| api | 8000 | User auth, strategy management, community |
-| engine | 8001 | Qlib backtesting, AI strategy generation, model inference |
-| trade | 8002 | Order management, positions, risk control |
-| stream | 8003 | Real-time quotes, WebSocket push |
+| 服务 | 端口 | 职责 |
+|------|------|------|
+| api | 8000 | 用户认证、策略管理、社区 |
+| engine | 8001 | Qlib 回测、AI 策略生成、模型推理 |
+| trade | 8002 | 订单管理、持仓、风控 |
+| stream | 8003 | 实时行情、WebSocket 推送 |
 
-## Commands
+## 常用命令
 
-### Backend
+### 后端
 ```bash
-# Start all services (Docker)
+# 启动全部服务（Docker）
 docker-compose up -d
 
-# Run single service locally
+# 本地运行单个服务
 SERVICE_MODE=api python backend/main_oss.py
 
-# Tests (run from project root)
-python backend/run_tests.py unit        # Unit tests
-python backend/run_tests.py integration # Integration tests
-python backend/run_tests.py all         # All tests
-python backend/run_tests.py trade-long-short  # QMT MVP chain tests
+# 测试（在项目根目录执行）
+python backend/run_tests.py unit        # 单元测试
+python backend/run_tests.py integration # 集成测试
+python backend/run_tests.py all         # 全部测试
+python backend/run_tests.py trade-long-short  # QMT MVP 链路测试
 
-# Lint/format
+# 代码检查与格式化
 ruff check backend/
 ruff format backend/
 ```
 
-### Frontend (Electron app in `electron/`)
+### 前端（Electron 应用，位于 `electron/`）
 ```bash
-npm install              # Install dependencies
-npm run dev              # Development (Electron desktop)
-npm run dev:web          # Development (Web browser)
-npm run typecheck        # Type check
-npm run dashboard:build  # Production build
+npm install              # 安装依赖
+npm run dev              # 开发模式（Electron 桌面端）
+npm run dev:web          # 开发模式（Web 浏览器）
+npm run typecheck        # 类型检查
+npm run dashboard:build  # 生产环境构建
 ```
 
-## Architecture Notes
+## 架构要点
 
-- **Feature engineering**: 48-dim features written to `market_data_daily` table by external service
-- **Trade service**: Enforces "local-first" order persistence before external submission
-- **Redis DB allocation**: 0=general, 1=auth, 2=trade, 3=market, 4=backtest, 5=cache
-- **Shared modules**: `backend/shared/` contains cross-service code (DB manager, Redis client, config, logging)
-- **Strategy storage**: `backend/shared/strategy_storage.py` is the single entry point for all strategy CRUD operations
+- **特征工程**：48 维特征由外部服务写入 `market_data_daily` 表
+- **交易服务**：外部报单前强制「本地优先」落库持久化
+- **Redis 库分配**：0=通用，1=认证，2=交易，3=行情，4=回测，5=缓存
+- **共享模块**：`backend/shared/` 存放跨服务代码（DB 管理器、Redis 客户端、配置、日志）
+- **策略存储**：`backend/shared/strategy_storage.py` 是所有策略增删改查的唯一入口
 
-## Stock Code Standardization (CRITICAL)
+## 股票代码标准化（重要）
 
-- **Mandatory Format**: Prefix-based (e.g., `SH600036`). **All internal Redis keys, database fields, and API parameters MUST use this format.**
-- **Forbidden Format**: Suffix-based (e.g., `600036.SH`). **Do NOT use this format in any new code or configuration.**
-- **Normalization Utilities**: 
-  - **Backend**: `backend/shared/stock_utils.py` -> `StockCodeUtil.to_prefix(code)`
-  - **Frontend**: `electron/src/utils/portfolioUtils.ts` -> `normalizeStockCode(code)`
-- **Redis Key Patterns**:
-  - Snapshot: `market:snapshot:sh600036` (lowercase prefix for snapshot keys)
-  - Series: `market:series:SH600036` (Standard Prefix-based for sequences)
-- **Market Auto-Identification**:
-  - `SH`: 6xxxxx, 9xxxxx
-  - `SZ`: 0xxxxx, 3xxxxx, 2xxxxx
-  - `BJ`: 4xxxxx, 8xxxxx
+- **强制格式**：前缀式（如 `SH600036`）。**所有内部 Redis 键、数据库字段、API 参数必须使用此格式。**
+- **禁止格式**：后缀式（如 `600036.SH`）。**任何新代码和配置中不得使用此格式。**
+- **标准化工具**：
+  - 后端：`backend/shared/stock_utils.py` → `StockCodeUtil.to_prefix(code)`
+  - 前端：`electron/src/utils/portfolioUtils.ts` → `normalizeStockCode(code)`
+- **Redis 键格式**：
+  - 快照：`market:snapshot:sh600036`（快照键用小写前缀）
+  - 序列：`market:series:SH600036`（序列用标准前缀式）
+- **市场自动识别**：
+  - `SH`：6xxxxx、9xxxxx
+  - `SZ`：0xxxxx、3xxxxx、2xxxxx
+  - `BJ`：4xxxxx、8xxxxx
 
-## Environment
+## 环境变量
 
-Required `.env` keys (defaults in `docker-compose.yml`):
-- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
-- `REDIS_HOST`, `REDIS_PORT`
-- `SECRET_KEY`, `JWT_SECRET_KEY`
-- `STORAGE_MODE=local` for OSS edition
+必需的 `.env` 键（默认值见 `docker-compose.yml`）：
+- `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`
+- `REDIS_HOST`、`REDIS_PORT`
+- `SECRET_KEY`、`JWT_SECRET_KEY`
+- `STORAGE_MODE=local`（OSS 版必需）
 
-## Code Style
+## 代码风格
 
-- Python: Line length 88, use ruff for linting/formatting
-- TypeScript: Run `npm run typecheck` before committing frontend changes
+- Python：行宽 88，使用 ruff 做检查与格式化
+- TypeScript：提交前端改动前必须运行 `npm run typecheck`
 
-## Development & Deployment Workflow
+## 开发与部署工作流
 
-### 1. Frontend Development (NPM Mode)
-- **Local Dev Mode**: 前端统一使用本地 `npm run dev`（Electron 桌面端 / Vite Web 模式，自带 HMR 热重载）。
-- **前端修改规则**: **修改前端（electron/src）代码后，不需要每次重新构建或重启服务器上的 `web` 容器**，本地可实时热重载预览调试。提交前运行 `npm run typecheck` 保证类型安全即可。
+### 1. 前端开发（NPM 模式）
+- **本地开发模式**：前端统一使用本地 `npm run dev`（Electron 桌面端 / Vite Web 模式，自带 HMR 热重载）。
+- **前端修改规则**：**修改前端（electron/src）代码后，不需要每次重新构建或重启服务器上的 `web` 容器**，本地可实时热重载预览调试。提交前运行 `npm run typecheck` 保证类型安全即可。
 
-### 2. Backend Sync & Deployment
-- **后端修改规则**: **修改后端（backend/）代码后，必须推送到仓库并同步重启远程服务器上的后端容器**。
+### 2. 后端同步与部署
+- **后端修改规则**：**修改后端（backend/）代码后，必须推送到仓库并同步重启远程服务器上的后端容器**。
 
 ```bash
 # 1. 本地提交并推送
@@ -109,9 +109,9 @@ ssh ${SSH_TARGET} "cd ${PROJECT_DIR} && git pull && docker compose restart quant
 - **重build 方式**（利用 Docker build cache，通常仅增量安装新增包）：服务器上执行 `docker compose build quantmind`，再 `docker compose up -d`。
 - 本地 Windows 无法直接构建 linux/amd64 镜像，重build 一律在服务器或 CI 上进行。
 
-## Key Files
+## 关键文件
 
-- `backend/main_oss.py` - Unified entry point for all backend services
-- `backend/run_tests.py` - Test runner with multiple modes
-- `backend/shared/` - Shared modules across services
-- `docker-compose.yml` - Local deployment configuration
+- `backend/main_oss.py` - 全部后端服务的统一入口
+- `backend/run_tests.py` - 多模式测试运行器
+- `backend/shared/` - 跨服务共享模块
+- `docker-compose.yml` - 本地部署配置

@@ -28,6 +28,9 @@ python3 daily_review.py --date 20260814              # 指定日；不带 --date
 python3 daily_review.py --watch 601138.SH,600519.SH  # 可选：自选/持仓股必带
 python3 daily_review.py --model mdl_cn_train_xxx     # 可选：指定推理模型，默认每日推理模型(5eea5418)
 #   ↑ 模型推理信号自动查询 PG：昨日推理→今日信号命中率复盘 + 今日推理→明日信号 Top5；
+#     无推理 run 时脚本**自动补跑**（docker exec trigger_inference.py，10-30 秒），
+#     补跑失败原因如实写入 facts（常见：特征 parquet 滞后——先跑
+#     `docker exec quantmind python3 /app/backend/scripts/update_feature_parquet.py` 补特征再复盘）
 #     无 PG / PG 挂时该章节降级为缺失（facts 无「十一、模型推理信号」）
 
 # ② 容器内：news_review.py 聚合当日新闻情绪（有新闻股票匹配 + 板块聚焦 + 来源/时段质量）

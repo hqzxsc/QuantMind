@@ -71,8 +71,12 @@ def _signals_for_run(cur, run_id: str, limit: int) -> list[dict]:
     return out[:limit]
 
 
-def load_prev_vs_today(model_id: str, trade_date: date, conn=None, top_n: int = 20) -> dict | None:
+def load_prev_vs_today(model_id: str, trade_date: date, conn=None, top_n: int = 20,
+                     fallback: bool = True) -> dict | None:
     """昨日推理 → 今日信号：prediction_trade_date=trade_date（无论 data 日期，跨周末安全）。
+
+    fallback=True 且当日无对应推理 run 时，回退到最近一次已完成 run（验证其
+    prediction_trade_date 的实际表现），返回带 fallback/fallback_note 标记。
 
     Returns: {run: {...}, signals: [top_n 条, 已归一化 symbol]}
     """
@@ -82,6 +86,15 @@ def load_prev_vs_today(model_id: str, trade_date: date, conn=None, top_n: int = 
         with conn.cursor() as cur:
             run = _latest_completed_run(cur, model_id, data_trade_date=None,
                                         prediction_trade_date=trade_date)
+            if not run and fallback:
+                run = _latest_completed_run(cur, model_id, data_trade_date=None,
+                                            prediction_trade_date=None)
+                if run:
+                    run["fallback"] = True
+                    run["fallback_note"] = (
+                        f"当日无 prediction={trade_date} 的推理 run，取最近一次"
+                        f"（推理 {run['data_trade_date']} → 信号 {run['prediction_trade_date']}）"
+                    )
             if not run:
                 return None
             run["signals"] = _signals_for_run(cur, run["run_id"], top_n)

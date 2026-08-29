@@ -263,7 +263,7 @@ export const TagLookupPanel: React.FC = () => {
       </div>
 
       {/* 🌟 2. 视角切换与板块类别过滤 */}
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pt-1">
+      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pt-1 flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex items-center p-1 rounded-2xl bg-slate-100 border border-slate-200/60 shadow-inner">
             <button
@@ -315,7 +315,7 @@ export const TagLookupPanel: React.FC = () => {
       </div>
 
       {/* 🌟 3. 统一搜索输入框与“立即检索”按钮 */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-shrink-0">
         <div className="relative flex-1">
           <Input
             prefix={<Search className="w-4 h-4 text-slate-400 mr-2" />}
@@ -337,6 +337,8 @@ export const TagLookupPanel: React.FC = () => {
         </button>
       </div>
 
+      {/* 下方内容区：顶部(统计/筛选/搜索)固定，此处单独滚动 */}
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-5 pr-1">
       {/* 🌟 4. 主内容渲染区 */}
       {perspective === 'stock' ? (
         <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex flex-col gap-3">
@@ -442,6 +444,7 @@ export const TagLookupPanel: React.FC = () => {
             <span className="text-xs text-slate-400">{statsLoading ? '加载中...' : '暂无热门板块数据'}</span>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

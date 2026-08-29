@@ -231,6 +231,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
             title: '数据集',
             dataIndex: 'name',
             width: 190,
+            align: 'center',
             render: (name: string, row) => (
                 <Space direction="vertical" size={0}>
                     <Text strong>{name}</Text>
@@ -242,6 +243,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
             title: '形态',
             dataIndex: 'layout',
             width: 100,
+            align: 'center',
             render: (layout: QuantDBDataset['layout']) => (
                 <Tag color={LAYOUT_LABELS[layout].color}>{LAYOUT_LABELS[layout].text}</Tag>
             ),
@@ -250,6 +252,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
             title: '本地状态',
             dataIndex: 'synced',
             width: 100,
+            align: 'center',
             render: (synced: boolean, row) => {
                 const diffStatus = diffByDataset.get(row.dataset);
                 if (diffStatus) {
@@ -263,20 +266,21 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
             title: '文件数',
             dataIndex: 'files',
             width: 90,
-            align: 'right',
+            align: 'center',
             render: (files: number) => files.toLocaleString(),
         },
         {
             title: '大小',
             dataIndex: 'size_mb',
             width: 100,
-            align: 'right',
+            align: 'center',
             render: (sizeMb: number) => formatSize(sizeMb),
         },
         {
             title: '数据区间',
             key: 'range',
             width: 200,
+            align: 'center',
             render: (_, row) => (row.start_date
                 ? `${formatPartitionDate(row.start_date)} → ${formatPartitionDate(row.end_date)}`
                 : '—'),
@@ -284,6 +288,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
         {
             title: '说明',
             dataIndex: 'note',
+            align: 'center',
             ellipsis: true,
             render: (note: string) => (note
                 ? <Tooltip title={note}><Text type="secondary" className="text-xs">{note}</Text></Tooltip>

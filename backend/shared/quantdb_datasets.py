@@ -42,41 +42,41 @@ GROUPS: list[dict[str, str]] = [
 
 DATASETS: tuple[DatasetSpec, ...] = (
     # 1 K线行情
-    DatasetSpec("daily_forward", "日线前复权", "1", "kline", "1_kline_data/daily_forward", "partition", "训练/回测主用"),
-    DatasetSpec("daily_backward", "日线后复权", "1", "kline", "1_kline_data/daily_backward", "partition"),
-    DatasetSpec("daily_unadjusted", "日线不复权", "1", "kline", "1_kline_data/daily_unadjusted", "partition", "amount/volume 单位在 20260721 切换"),
-    DatasetSpec("index_daily", "指数日线", "1", "kline", "1_kline_data/index_daily", "partition"),
-    DatasetSpec("min5_kline", "5分钟线", "1", "kline", "1_kline_data/min5_kline", "symbol"),
+    DatasetSpec("daily_forward", "日线前复权", "1", "kline", "1_kline_data/daily_forward", "partition", "训练/回测主用，随除权每日全量重写"),
+    DatasetSpec("daily_backward", "日线后复权", "1", "kline", "1_kline_data/daily_backward", "partition", "当前价×复权因子，除权后整段回溯"),
+    DatasetSpec("daily_unadjusted", "日线不复权", "1", "kline", "1_kline_data/daily_unadjusted", "partition", "原始价，撮合/涨跌停判定用"),
+    DatasetSpec("index_daily", "指数日线", "1", "kline", "1_kline_data/index_daily", "partition", "主要指数日K走势"),
+    DatasetSpec("min5_kline", "5分钟线", "1", "kline", "1_kline_data/min5_kline", "symbol", "5 分钟级日内行情"),
     DatasetSpec("min1_kline", "1分钟线", "1", "kline", "1_kline_data/min1_kline", "symbol", "体积大，按需同步"),
-    DatasetSpec("tick_data", "Tick逐笔", "1", "kline", "1_kline_data/tick_data", "partition", "流量消耗极高"),
+    DatasetSpec("tick_data", "Tick逐笔", "1", "kline", "1_kline_data/tick_data", "partition", "逐笔成交，流量消耗极高"),
     # 2 基础板块
     DatasetSpec("instrument_detail", "个股详情", "2", "base_sector", "2_base_sector/instrument_detail", "single", "152 列基本面快照"),
-    DatasetSpec("sector_concept", "板块概念", "2", "base_sector", "2_base_sector/sector_concept", "single"),
+    DatasetSpec("sector_concept", "板块概念", "2", "base_sector", "2_base_sector/sector_concept", "single", "行业/概念板块成分"),
     DatasetSpec("index_weights", "指数权重", "2", "base_sector", "2_base_sector/index_weights", "symbol", "沪深300/中证500/1000 等"),
-    DatasetSpec("trading_calendar", "交易日历", "2", "base_sector", "2_base_sector/trading_calendar", "single"),
-    DatasetSpec("margin_trading", "融资融券", "2", "base_sector", "2_base_sector/margin_trading", "partition"),
+    DatasetSpec("trading_calendar", "交易日历", "2", "base_sector", "2_base_sector/trading_calendar", "single", "A股交易日历"),
+    DatasetSpec("margin_trading", "融资融券", "2", "base_sector", "2_base_sector/margin_trading", "partition", "两融余额明细"),
     DatasetSpec("hsgt_north", "北向资金(季度)", "2", "base_sector", "2_base_sector/hsgt_north", "partition", "2024-08 起北向个股改季度披露，每季度末+第5交易日抓取，symbol 6位格式"),
     DatasetSpec("hsgt_north_daily", "北向资金日频(akshare)", "2", "base_sector", "2_base_sector/hsgt_north/daily_freq", "symbol", "2017-03~2024-08 北向持股日频，akshare逐股拉取"),
     # 3 财务数据
-    DatasetSpec("balance", "资产负债表", "3", "financial", "3_financial_data/balance", "symbol"),
-    DatasetSpec("income", "利润表", "3", "financial", "3_financial_data/income", "symbol"),
-    DatasetSpec("cashflow", "现金流量表", "3", "financial", "3_financial_data/cashflow", "symbol"),
-    DatasetSpec("capital", "股本结构", "3", "financial", "3_financial_data/capital", "symbol"),
-    DatasetSpec("pershare_index", "每股指标", "3", "financial", "3_financial_data/pershare_index", "symbol"),
-    DatasetSpec("dividend_factors", "分红因子", "3", "financial", "3_financial_data/dividend_factors", "symbol"),
-    DatasetSpec("holder_num", "股东户数", "3", "financial", "3_financial_data/holder_num", "symbol"),
+    DatasetSpec("balance", "资产负债表", "3", "financial", "3_financial_data/balance", "symbol", "资产/负债/权益"),
+    DatasetSpec("income", "利润表", "3", "financial", "3_financial_data/income", "symbol", "营收/净利/每股收益"),
+    DatasetSpec("cashflow", "现金流量表", "3", "financial", "3_financial_data/cashflow", "symbol", "经营/投资/筹资现金流"),
+    DatasetSpec("capital", "股本结构", "3", "financial", "3_financial_data/capital", "symbol", "总股本/流通股本变动"),
+    DatasetSpec("pershare_index", "每股指标", "3", "financial", "3_financial_data/pershare_index", "symbol", "每股收益/净资产等"),
+    DatasetSpec("dividend_factors", "分红因子", "3", "financial", "3_financial_data/dividend_factors", "symbol", "历次分红送转因子"),
+    DatasetSpec("holder_num", "股东户数", "3", "financial", "3_financial_data/holder_num", "symbol", "股东户数变化"),
     # 4 债券/ETF
-    DatasetSpec("etf_pcf", "ETF申赎清单", "4", "bond_etf", "4_bond_etf/etf_pcf", "symbol"),
-    DatasetSpec("convertible_bond", "可转债", "4", "bond_etf", "4_bond_etf/convertible_bond", "symbol"),
+    DatasetSpec("etf_pcf", "ETF申赎清单", "4", "bond_etf", "4_bond_etf/etf_pcf", "symbol", "ETF 申购赎回清单"),
+    DatasetSpec("convertible_bond", "可转债", "4", "bond_etf", "4_bond_etf/convertible_bond", "symbol", "可转债行情与条款"),
     # 5 技术衍生
     DatasetSpec("valuation", "估值", "5", "technical", "5_technical_derived/valuation", "partition", "PE/PB/市值"),
-    DatasetSpec("technical_indicators", "技术指标", "5", "technical", "5_technical_derived/technical_indicators", "partition"),
-    DatasetSpec("market_sentiment", "市场情绪", "5", "technical", "5_technical_derived/market_sentiment", "partition"),
+    DatasetSpec("technical_indicators", "技术指标", "5", "technical", "5_technical_derived/technical_indicators", "partition", "MA/MACD/RSI 等技术指标"),
+    DatasetSpec("market_sentiment", "市场情绪", "5", "technical", "5_technical_derived/market_sentiment", "partition", "市场情绪指标"),
     # 6 ML数据集
     DatasetSpec("features_daily", "日频特征", "6", "ml", "6_ml_datasets/features_daily", "partition", "技术指标 + 估值合并，PG 填充主源"),
     DatasetSpec("l1_factors", "L1 因子", "6", "ml", "6_ml_datasets/l1_factors", "partition", "因子挖掘核心"),
     DatasetSpec("l2_factors", "L2 因子", "6", "ml", "6_ml_datasets/l2_factors", "partition", "高频微观因子"),
-    DatasetSpec("l1_l2_factors", "L1+L2 合并", "6", "ml", "6_ml_datasets/l1_l2_factors", "partition"),
+    DatasetSpec("l1_l2_factors", "L1+L2 合并", "6", "ml", "6_ml_datasets/l1_l2_factors", "partition", "L1 与 L2 因子合并集"),
 )
 
 _BY_NAME: dict[str, DatasetSpec] = {ds.dataset: ds for ds in DATASETS}

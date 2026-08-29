@@ -72,17 +72,20 @@ def _signals_for_run(cur, run_id: str, limit: int) -> list[dict]:
 
 
 def resolve_latest_model_id(conn=None) -> str:
-    """最近一次 completed 用户推理 run 的 model_id（复盘/补跑跟随最新每日推理模型）。
+    """最近一次 celery 自动推理成功用的每日推理用户模型 id（复盘/补跑跟随）。
 
-    跟随最近一次实际执行的推理 run（含系统模型）；无记录时回退 DEFAULT_MODEL_ID。
+    数据源用 qm_model_inference_dispatch_logs（celery 链路不写 qm_model_inference_runs，
+    且补跑会污染 run 表最新记录）；sys-/model_qlib 为系统模型（读 model_features
+    派生层，非每日推理链路）不在此列。无记录时回退 DEFAULT_MODEL_ID。
     """
     need_close = conn is None
     conn = conn or pg_connect()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT model_id FROM qm_model_inference_runs "
-                "WHERE status='completed' AND model_id IS NOT NULL "
+                "SELECT model_id FROM qm_model_inference_dispatch_logs "
+                "WHERE trigger_source='celery_auto_inference_if_needed' "
+                "AND status='success' AND model_id IS NOT NULL "
                 "ORDER BY created_at DESC LIMIT 1"
             )
             row = cur.fetchone()
@@ -92,6 +95,36 @@ def resolve_latest_model_id(conn=None) -> str:
     finally:
         if need_close:
             conn.close()
+
+
+def _latest_dispatch_run(cur, model_id: str, data_trade_date: date | None,
+                           prediction_trade_date: date | None) -> dict | None:
+    """celery 每日推理链路 run（qm_model_inference_dispatch_logs）。
+
+    celery 的 run 只写 dispatch_logs + engine_signal_scores，不写 qm_model_inference_runs；
+    复盘/补跑按此表定位用户模型推理。"""
+    conds = ["trigger_source='celery_auto_inference_if_needed'", "status='success'", "model_id=%s"]
+    args: list = [model_id]
+    if data_trade_date is not None:
+        conds.append("data_trade_date=%s")
+        args.append(data_trade_date)
+    if prediction_trade_date is not None:
+        conds.append("prediction_trade_date=%s")
+        args.append(prediction_trade_date)
+    cur.execute(
+        "SELECT run_id, model_id, data_trade_date, prediction_trade_date, created_at "
+        f"FROM qm_model_inference_dispatch_logs WHERE {' AND '.join(conds)} "
+        "ORDER BY created_at DESC LIMIT 1",
+        args,
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "run_id": row[0], "model_id": row[1],
+        "data_trade_date": row[2], "prediction_trade_date": row[3],
+        "created_at": row[4],
+    }
 
 
 def load_prev_vs_today(model_id: str, trade_date: date, conn=None, top_n: int = 20,
@@ -109,9 +142,17 @@ def load_prev_vs_today(model_id: str, trade_date: date, conn=None, top_n: int = 
         with conn.cursor() as cur:
             run = _latest_completed_run(cur, model_id, data_trade_date=None,
                                         prediction_trade_date=trade_date)
+            if not run:
+                run = _latest_dispatch_run(cur, model_id, data_trade_date=None,
+                                           prediction_trade_date=trade_date)
+                if run:
+                    run["from_dispatch"] = True
             if not run and fallback:
                 run = _latest_completed_run(cur, model_id, data_trade_date=None,
                                             prediction_trade_date=None)
+                if not run:
+                    run = _latest_dispatch_run(cur, model_id, data_trade_date=None,
+                                               prediction_trade_date=None)
                 if run:
                     run["fallback"] = True
                     run["fallback_note"] = (
@@ -140,10 +181,18 @@ def load_next_top_n(model_id: str, trade_date: date, conn=None, top_n: int = 5,
         with conn.cursor() as cur:
             run = _latest_completed_run(cur, model_id, data_trade_date=trade_date,
                                         prediction_trade_date=None)
+            if not run:
+                run = _latest_dispatch_run(cur, model_id, data_trade_date=trade_date,
+                                           prediction_trade_date=None)
+                if run:
+                    run["from_dispatch"] = True
             is_fallback = run is None
             if run is None and fallback:
                 run = _latest_completed_run(cur, model_id, data_trade_date=None,
                                             prediction_trade_date=None)
+                if not run:
+                    run = _latest_dispatch_run(cur, model_id, data_trade_date=None,
+                                               prediction_trade_date=None)
             if not run:
                 return None
             run["signals"] = _signals_for_run(cur, run["run_id"], top_n)

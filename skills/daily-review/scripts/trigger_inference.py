@@ -21,22 +21,25 @@ sys.path.insert(0, "/app")
 def main() -> int:
     ap = argparse.ArgumentParser(description="每日推理补跑")
     ap.add_argument("--date", required=True, help="特征日 YYYYMMDD 或 YYYY-MM-DD")
-    ap.add_argument("--model", default="", help="模型 id（默认取最近一次 completed run 的模型，即每日推理模型）")
-    ap.add_argument("--tenant", default="default")
-    ap.add_argument("--user", default="system")
+    ap.add_argument("--model", default="", help="模型 id（默认取最近一次用户推理 run 的模型，即每日推理模型）")
+    ap.add_argument("--tenant", default="")
+    ap.add_argument("--user", default="")
     args = ap.parse_args()
 
     date_str = args.date.replace("-", "")
     iso = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
 
-    model_id = args.model
+    tenant_id, user_id, model_id = args.tenant, args.user, args.model
     if not model_id:
-        # 与复盘默认一致：取最近一次 completed run 的模型（每日推理模型）
+        # 与每日推理链路一致：取 celery 自动推理最近成功记录的
+        # (tenant, user, model) —— 用户每日推理模型（直读 QuantDB，训练推理特征同源）。
+        # 注意不能从 qm_model_inference_runs 取（celery 链路不写该表，且补跑会污染
+        # 最新记录）；sys-/model_qlib 是系统模型（读 model_features 派生层），排除。
         try:
             import asyncpg
             import os
 
-            async def _latest_model() -> str:
+            async def _latest_run() -> tuple[str, str, str]:
                 conn = await asyncpg.connect(
                     host=os.getenv("DB_HOST", "quantmind-db"),
                     port=int(os.getenv("DB_PORT", "5432")),
@@ -45,29 +48,33 @@ def main() -> int:
                     database=os.getenv("DB_NAME", "quantmind"), timeout=10,
                 )
                 try:
-                    m = await conn.fetchval(
-                        "SELECT model_id FROM qm_model_inference_runs "
-                        "WHERE status='completed' AND model_id IS NOT NULL "
-                        ""
+                    row = await conn.fetchrow(
+                        "SELECT user_id, model_id FROM qm_model_inference_dispatch_logs "
+                        "WHERE trigger_source='celery_auto_inference_if_needed' "
+                        "AND status='success' AND model_id IS NOT NULL "
                         "ORDER BY created_at DESC LIMIT 1"
                     )
-                    return str(m or "")
+                    return (
+                        "default",
+                        str(row["user_id"]) if row else "",
+                        str(row["model_id"]) if row else "",
+                    )
                 finally:
                     await conn.close()
 
             import asyncio
 
-            model_id = asyncio.run(_latest_model())
+            tenant_id, user_id, model_id = asyncio.run(_latest_run())
         except Exception:  # noqa: BLE001
-            model_id = ""
+            pass
 
     from backend.services.engine.inference.router_service import InferenceRouterService
 
     svc = InferenceRouterService()
     result = svc.run_daily_inference_script(
         date=iso,
-        tenant_id=args.tenant,
-        user_id=args.user,
+        tenant_id=tenant_id or "default",
+        user_id=user_id or "system",
         model_id=model_id or None,
     )
     if not result.success:
@@ -118,7 +125,7 @@ def main() -> int:
                       signals_count = EXCLUDED.signals_count,
                       updated_at = NOW()
                     """,
-                    result.run_id, args.tenant, args.user, model_id,
+                    result.run_id, tenant_id or "default", user_id or "system", model_id,
                     data_d, pred_d,
                     result.signals_count, result.fallback_used, model_id,
                 )

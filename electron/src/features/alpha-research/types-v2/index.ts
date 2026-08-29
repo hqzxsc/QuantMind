@@ -79,7 +79,7 @@ export interface TaskConfig {
   universe?: UniverseId;
 
   // Data source selection
-  dataSource?: 'qlib_bin' | 'parquet' | 'pg';
+  dataSource?: 'qlib_bin' | 'parquet';
 
   // Backtest configuration
   market?: 'csi300' | 'csi500' | 'sp500';
@@ -243,6 +243,8 @@ export interface Task {
   updatedAt: string;
   timeline?: TimelineLoop[];
   tokenUsage?: TokenUsage;
+  /** 后端随任务状态返回的已落库因子（结构化，优先于日志解析） */
+  factors?: Factor[];
 }
 
 // API Response

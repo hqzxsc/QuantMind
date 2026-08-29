@@ -148,7 +148,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               {[
                 { id: 'qlib_bin', name: 'Qlib' },
                 { id: 'parquet', name: 'Parquet' },
-                { id: 'pg', name: 'PG' },
               ].map((ds) => (
                 <button
                   key={ds.id}

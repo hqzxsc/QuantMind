@@ -55,7 +55,7 @@ export const FloatingNavBar: React.FC<FloatingNavBarProps> = ({ current, onChang
     { id: 'inference-center', label: '推理中心', icon: Cpu },
     // 4. 智能投研区域
     { id: 'research', label: '投研平台', icon: Search },
-    { id: 'alpha-research', label: 'Alpha研究', icon: TestTube2 },
+    { id: 'alpha-research', label: '因子挖掘', icon: TestTube2 },
     { id: 'skills', label: '技能中心', icon: Sparkles },
     { id: 'agent', label: 'QuantBot', icon: Orbit },
     // 5. 个人中心

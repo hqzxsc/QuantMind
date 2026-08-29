@@ -107,6 +107,8 @@ interface TaskContextValue {
 
   // ---- Mining ----
   miningTask: Task | null;
+  /** POST /evolve 提交进行中（后端同步建缓存时可能耗时较长） */
+  miningStarting: boolean;
   miningEquityCurve: TimeSeriesData[];
   miningDrawdownCurve: TimeSeriesData[];
   miningIcTimeSeries: TimeSeriesData[];
@@ -139,6 +141,9 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // MINING
   // ==================================================================
   const [miningTask, setMiningTask] = useState<Task | null>(null);
+  // 任务提交锁：POST /evolve 进行中（数据源为 parquet 时后端同步建缓存可能耗时 1 分钟+），
+  // 期间禁止重复提交
+  const [miningStarting, setMiningStarting] = useState(false);
   const [miningEquityCurve, setMiningEquityCurve] = useState<TimeSeriesData[]>([]);
   const [miningDrawdownCurve, setMiningDrawdownCurve] = useState<TimeSeriesData[]>([]);
   const [miningIcTimeSeries, setMiningIcTimeSeries] = useState<TimeSeriesData[]>([]);
@@ -148,6 +153,15 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const miningWsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const miningDataPointsRef = useRef(0);
   const mountedRef = useRef(true);
+  // 同步到 ref 供 startRealMining 闭包内读取，避免 stale state
+  const miningStartingRef = useRef(false);
+  const miningTaskRef = useRef<Task | null>(null);
+  useEffect(() => {
+    miningStartingRef.current = miningStarting;
+  }, [miningStarting]);
+  useEffect(() => {
+    miningTaskRef.current = miningTask;
+  }, [miningTask]);
 
   // Cleanup on unmount: clear all polling intervals, WS connections, and
   // the recursive setTimeout inside connectMiningWs, and prevent stale state updates.
@@ -288,7 +302,11 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Start mining (real backend)
   const startRealMining = useCallback(
     async (config: TaskConfig) => {
+      // 任务锁：已有任务在运行或提交进行中时，忽略重复提交
+      if (miningStartingRef.current) return;
+      if (miningTaskRef.current?.status === 'running') return;
       try {
+        setMiningStarting(true);
         // Load defaults from localStorage
         let defaults: any = {};
         const savedConfig = localStorage.getItem('quantaalpha_config');
@@ -391,6 +409,8 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         });
+      } finally {
+        setMiningStarting(false);
       }
     },
     [handleMiningWsMessage],
@@ -588,6 +608,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     backendAvailable,
     // Mining
     miningTask,
+    miningStarting,
     miningEquityCurve,
     miningDrawdownCurve,
     miningIcTimeSeries,

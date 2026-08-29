@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components-v2/ui/Card';
 import { Button } from '../components-v2/ui/Button';
 import { Badge } from '../components-v2/ui/Badge';
-import { Settings, Save, RotateCcw, Check, X, AlertCircle, Loader2, Database, Sliders, Box, Cpu, Compass, Shuffle } from 'lucide-react';
+import { Settings, Save, RotateCcw, Check, X, AlertCircle, Loader2, Database, Sliders, Box, Cpu, Compass, Shuffle, Info, Bot, BarChart3 } from 'lucide-react';
 import { healthCheck, getDataSummary, getUniverses, getLlmConfig, type LlmConfigStatus } from '../services-v2/api';
 import { apiClient } from '../../../services/aiStrategyClients';
 import { REFERENCE_MINING_DIRECTIONS, getDirectionLabel, type MiningDirectionItem, importFeatureCatalogDirections, fetchMiningDirections } from '../utils-v2/miningDirections';
@@ -281,7 +281,7 @@ export const SettingsPage: React.FC = () => {
           <Card className="glass card-hover animate-fade-in-up">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                🤖 LLM 模型配置
+                <Bot className="w-4 h-4" /> LLM 模型配置
                 <Badge variant="default">核心</Badge>
               </CardTitle>
             </CardHeader>
@@ -404,7 +404,7 @@ export const SettingsPage: React.FC = () => {
           <Card className="glass card-hover animate-fade-in-up">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                📊 数据存储路径
+                <BarChart3 className="w-4 h-4" /> 数据存储路径
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -512,7 +512,7 @@ export const SettingsPage: React.FC = () => {
           <Card className="glass card-hover animate-fade-in-up">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                ⚙️ 实验默认参数
+                <Sliders className="w-4 h-4" /> 实验默认参数
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -814,7 +814,7 @@ export const SettingsPage: React.FC = () => {
       {/* Info Footer */}
       <Card className="glass border-primary/20 bg-primary/5">
         <CardContent className="p-4 flex gap-3">
-          <div className="text-xl">💡</div>
+          <Info className="w-5 h-5 text-primary shrink-0 mt-0.5" />
           <div className="text-sm text-muted-foreground">
             <p className="mb-1 font-medium text-foreground">配置提示</p>
             <p>所有配置修改后会自动保存至后端环境文件及本地浏览器缓存。涉及 API 或路径的修改，建议在保存后重启相关服务以确保生效。</p>

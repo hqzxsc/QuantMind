@@ -202,7 +202,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                         : '描述因子挖掘需求 (如：挖掘基于5日动量反转与成交量偏度组合的Alpha因子)，按 Enter 发送'
               }
               disabled={isRunning}
-              className="flex-1 bg-transparent text-sm placeholder:text-slate-400 focus:outline-none resize-none leading-relaxed font-sans"
+              className="flex-1 bg-transparent text-sm placeholder:text-slate-400 focus:outline-none focus:ring-0 resize-none leading-relaxed font-sans rounded-xl border border-transparent focus:border-blue-200"
               rows={2}
               style={{ minHeight: '44px', maxHeight: '100px' }}
             />

@@ -1,7 +1,7 @@
 import React from 'react';
+import { Square } from 'lucide-react';
 import { ProgressSidebar } from '../components-v2/ProgressSidebar';
 import { LiveCharts } from '../components-v2/LiveCharts';
-import { ChatInput } from '../components-v2/ChatInput';
 import { FactorStatsRow } from '../components-v2/FactorStatsRow';
 import { FactorList } from '../components-v2/FactorList';
 import { useTaskContext } from '../context-v2/TaskContext';
@@ -17,7 +17,6 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
     miningTask: task,
     miningEquityCurve: equityCurve,
     miningDrawdownCurve: drawdownCurve,
-    startMining,
     stopMining,
   } = useTaskContext();
 
@@ -48,6 +47,47 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
       onNavigate={onNavigate || (() => {})}
       showNavigation={!!onNavigate}
     >
+      {/* 任务状态栏：状态 + 进度 + 停止（替代原底部悬浮输入框） */}
+      <div className="mb-4 flex items-center gap-3 rounded-2xl border border-border/60 bg-white/80 backdrop-blur-xl px-4 py-3 shadow-xs">
+        {task.status === 'running' ? (
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+          </span>
+        ) : (
+          <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${task.status === 'completed' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+        )}
+        <span className="text-sm font-bold text-slate-800 whitespace-nowrap">
+          {task.status === 'running'
+            ? '任务运行中'
+            : task.status === 'completed'
+              ? '任务已完成'
+              : '任务已失败'}
+        </span>
+        <span className="text-xs text-muted-foreground truncate flex-1 min-w-0" title={task.progress?.message}>
+          {task.progress?.message || `Loop ${task.progress?.currentRound ?? 0}/${task.progress?.totalRounds ?? 0}`}
+        </span>
+        <div className="w-28 h-1.5 rounded-full bg-slate-100 overflow-hidden hidden sm:block">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500"
+            style={{ width: `${Math.min(100, Math.max(0, task.progress?.progress ?? 0))}%` }}
+          />
+        </div>
+        <span className="text-[11px] font-mono text-slate-400 hidden md:block w-9 text-right">
+          {Math.min(100, Math.max(0, task.progress?.progress ?? 0))}%
+        </span>
+        {task.status === 'running' && (
+          <button
+            onClick={stopMining}
+            className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors cursor-pointer"
+            title="停止当前任务"
+          >
+            <Square className="w-3 h-3" />
+            停止任务
+          </button>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="lg:col-span-1">
           <ProgressSidebar progress={task.progress} timeline={task.timeline} tokenUsage={task.tokenUsage} />
@@ -82,13 +122,6 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
            <FactorList metrics={task.metrics || null} onNavigate={onNavigate} />
         </div>
       </div>
-
-      {/* Bottom Chat Input */}
-      <ChatInput
-        onSubmit={startMining}
-        onStop={stopMining}
-        isRunning={task?.status === 'running'}
-      />
     </Layout>
   );
 };

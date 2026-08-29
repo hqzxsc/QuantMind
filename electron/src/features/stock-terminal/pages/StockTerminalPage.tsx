@@ -167,10 +167,10 @@ export default function StockTerminalPage() {
                   return (
                     <Tooltip key={q.symbol} title={`${q.name} ${q.price}`}>
                       <span className="flex flex-col leading-tight">
-                        <span className="text-[9px] text-slate-400 font-bold truncate">{q.name}</span>
+                        <span className="text-[12px] text-slate-400 font-bold truncate">{q.name}</span>
                         <span className="flex items-baseline gap-1 font-mono">
-                          <span className="text-[10px] font-bold text-slate-700">{Number(q.price).toFixed(2)}</span>
-                          <span className={`text-[9px] font-bold ${qup ? 'text-rose-600' : 'text-emerald-600'}`}>
+                          <span className="text-[14px] font-bold text-slate-700">{Number(q.price).toFixed(2)}</span>
+                          <span className={`text-[12px] font-bold ${qup ? 'text-rose-600' : 'text-emerald-600'}`}>
                             {qup ? '+' : ''}{Number(q.change_percent).toFixed(2)}%
                           </span>
                         </span>
@@ -205,80 +205,85 @@ export default function StockTerminalPage() {
         {/* 右侧：股票信息 + 智能标签 + 分数日历 + 信息 Tabs */}
         <div className="flex-1 min-w-0 flex flex-col gap-3 min-h-0">
 
-          {/* 顶部标头：股票名（点击弹整合 K 线）+ 宽基/概念 chips（点击筛选左侧列表） */}
+          {/* 顶部标头：三区布局 — 左 K线入口 / 中 股票信息居中 / 右 宽基概念标签 */}
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, delay: 0.02 }}
-            className="bg-slate-50/70 rounded-2xl border border-slate-200/80 shadow-2xs px-4 py-3 flex items-center justify-between gap-3 shrink-0"
+            className="bg-slate-50/70 rounded-2xl border border-slate-200/80 shadow-2xs px-4 py-3 flex items-center gap-4 shrink-0"
           >
-            <div className="flex items-start gap-2.5 min-w-0 flex-1">
-              <button
-                onClick={() => selected && setKlineOpen(true)}
-                disabled={!selected}
-                className="flex items-center gap-2.5 min-w-0 hover:opacity-80 disabled:opacity-40 transition-opacity text-left shrink-0"
-                title="点击查看完整 K 线"
-              >
-                <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0">
-                  <CandlestickChart className="w-4 h-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-base font-black text-slate-800 truncate">{selected ? selected.name : '选择股票'}</span>
-                    {selected && <span className="text-[11px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-lg border border-blue-100/80">{selected.symbol}</span>}
-                  </div>
-                  {selected && (
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[11px] font-mono font-bold ${up ? 'text-rose-500' : 'text-emerald-500'}`}>
-                        {profile?.close?.toFixed(2) ?? '--'} {up ? '+' : ''}{(profile?.pct_change ?? 0).toFixed(2)}%
-                      </span>
-                      <span className="text-[10px] text-slate-400">{profile?.board} · {profile?.industry ?? '--'}</span>
-                    </div>
-                  )}
-                </div>
-              </button>
-              {/* 宽基归属与标识 + 概念板块（从概况移到顶部，点击筛选） */}
-              {selected && profile && (
-                <div className="flex-1 min-w-0 flex flex-col gap-1.5 pt-0.5">
-                  <div className="flex flex-wrap gap-1.5 items-center">
-                    <span className="text-[10px] font-bold text-slate-400 shrink-0" title="点击筛选成分股">宽基</span>
-                    {profile.index_membership.map(m => {
-                      const active = listFilters.indexCode === m.index_code;
-                      return (
-                        <button key={m.index_code} title={`按 ${m.index_name} 成分筛选`}
-                          onClick={() => setListFilters({ ...listFilters, indexCode: active ? undefined : m.index_code, indexName: active ? undefined : m.index_name })}
-                          className={`text-[11px] rounded px-2 py-0.5 font-bold transition-colors ${
-                            active ? 'bg-violet-600 text-white' : 'bg-violet-50 text-violet-600 hover:bg-violet-100'
-                          }`}>
-                          {m.index_name}{m.weight != null ? ` ${m.weight.toFixed(1)}%` : ''}
-                        </button>
-                      );
-                    })}
-                    {profile.flags.is_st && <span className="text-[10px] bg-rose-50 text-rose-500 rounded px-1.5 py-0.5 font-bold">ST</span>}
-                    {profile.flags.marginable && <span className="text-[10px] bg-blue-50 text-blue-600 rounded px-1.5 py-0.5 font-bold">融资融券</span>}
-                    {profile.flags.sh_hk_connect && <span className="text-[10px] bg-cyan-50 text-cyan-600 rounded px-1.5 py-0.5 font-bold">沪港通</span>}
-                    {!profile.index_membership.length && <span className="text-[10px] text-slate-300">无</span>}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 items-center">
-                    <span className="text-[10px] font-bold text-slate-400 shrink-0" title="点击筛选同概念股">概念</span>
-                    {profile.concepts.length
-                      ? profile.concepts.map(c => {
-                          const active = listFilters.concept === c;
-                          return (
-                            <button key={c} title={`按概念「${c}」筛选`}
-                              onClick={() => setListFilters({ ...listFilters, concept: active ? undefined : c })}
-                              className={`text-[11px] rounded px-2 py-0.5 transition-colors ${
-                                active ? 'bg-amber-500 text-white font-bold' : 'bg-amber-50/70 text-amber-700 hover:bg-amber-100'
-                              }`}>
-                              {c}
-                            </button>
-                          );
-                        })
-                      : <span className="text-[10px] text-slate-300">无</span>}
-                  </div>
+            {/* 左：K 线入口 */}
+            <button
+              onClick={() => selected && setKlineOpen(true)}
+              disabled={!selected}
+              className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0 hover:opacity-80 disabled:opacity-40 transition-opacity"
+              title="点击查看完整 K 线"
+            >
+              <CandlestickChart className="w-4 h-4" />
+            </button>
+
+            {/* 中：股票名称/代码/价格/板块，容器内居中对齐 */}
+            <button
+              onClick={() => selected && setKlineOpen(true)}
+              disabled={!selected}
+              className="flex flex-col items-center justify-center text-center gap-0.5 min-w-0 shrink-0 hover:opacity-80 disabled:opacity-40 transition-opacity"
+              title="点击查看完整 K 线"
+            >
+              <div className="flex items-center justify-center gap-2">
+                <span className="text-base font-black text-slate-800 truncate max-w-[160px]">{selected ? selected.name : '选择股票'}</span>
+                {selected && <span className="text-[11px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-lg border border-blue-100/80">{selected.symbol}</span>}
+              </div>
+              {selected && (
+                <div className="flex items-center justify-center gap-2">
+                  <span className={`text-[11px] font-mono font-bold ${up ? 'text-rose-500' : 'text-emerald-500'}`}>
+                    {profile?.close?.toFixed(2) ?? '--'} {up ? '+' : ''}{(profile?.pct_change ?? 0).toFixed(2)}%
+                  </span>
+                  <span className="text-[10px] text-slate-400">{profile?.board} · {profile?.industry ?? '--'}</span>
                 </div>
               )}
-            </div>
+            </button>
+
+            {/* 右：宽基归属与标识 + 概念板块（点击筛选左侧列表） */}
+            {selected && profile && (
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  <span className="text-[10px] font-bold text-slate-400 shrink-0" title="点击筛选成分股">宽基</span>
+                  {profile.index_membership.map(m => {
+                    const active = listFilters.indexCode === m.index_code;
+                    return (
+                      <button key={m.index_code} title={`按 ${m.index_name} 成分筛选`}
+                        onClick={() => setListFilters({ ...listFilters, indexCode: active ? undefined : m.index_code, indexName: active ? undefined : m.index_name })}
+                        className={`text-[11px] rounded px-2 py-0.5 font-bold transition-colors ${
+                          active ? 'bg-violet-600 text-white' : 'bg-violet-50 text-violet-600 hover:bg-violet-100'
+                        }`}>
+                        {m.index_name}{m.weight != null ? ` ${m.weight.toFixed(1)}%` : ''}
+                      </button>
+                    );
+                  })}
+                  {profile.flags.is_st && <span className="text-[10px] bg-rose-50 text-rose-500 rounded px-1.5 py-0.5 font-bold">ST</span>}
+                  {profile.flags.marginable && <span className="text-[10px] bg-blue-50 text-blue-600 rounded px-1.5 py-0.5 font-bold">融资融券</span>}
+                  {profile.flags.sh_hk_connect && <span className="text-[10px] bg-cyan-50 text-cyan-600 rounded px-1.5 py-0.5 font-bold">沪港通</span>}
+                  {!profile.index_membership.length && <span className="text-[10px] text-slate-300">无</span>}
+                </div>
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  <span className="text-[10px] font-bold text-slate-400 shrink-0" title="点击筛选同概念股">概念</span>
+                  {profile.concepts.length
+                    ? profile.concepts.map(c => {
+                        const active = listFilters.concept === c;
+                        return (
+                          <button key={c} title={`按概念「${c}」筛选`}
+                            onClick={() => setListFilters({ ...listFilters, concept: active ? undefined : c })}
+                            className={`text-[11px] rounded px-2 py-0.5 transition-colors ${
+                              active ? 'bg-amber-500 text-white font-bold' : 'bg-amber-50/70 text-amber-700 hover:bg-amber-100'
+                            }`}>
+                            {c}
+                          </button>
+                        );
+                      })
+                    : <span className="text-[10px] text-slate-300">无</span>}
+                </div>
+              </div>
+            )}
           </motion.div>
 
           {/* 智能标签条：点击筛选按钮 -> 左侧列表按标签过滤；命中组合单独一行 */}

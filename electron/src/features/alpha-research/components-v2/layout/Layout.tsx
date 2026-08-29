@@ -83,8 +83,8 @@ export const Layout: React.FC<LayoutProps> = ({
         )}
       </header>
 
-      {/* Main Content */}
-      <main className="pt-4 pb-20">
+      {/* Main Content（pt 预留顶部悬浮顶栏高度，避免首屏内容被遮挡） */}
+      <main className="pt-[46px] pb-20">
         <div className="max-w-6xl mx-auto">{children}</div>
       </main>
     </div>

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
   Sparkles, Bot, Database, BarChart3, ArrowRight, Zap,
-  Layers, CheckCircle2, TrendingUp, Shield, Activity, Cpu
+  Layers, CheckCircle2, TrendingUp, Shield, Activity, Cpu,
+  Loader2, Square
 } from 'lucide-react';
 import { ChatInput } from '../components-v2/ChatInput';
 import { Layout } from '../components-v2/layout/Layout';
@@ -25,12 +26,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   const {
     backendAvailable,
     miningTask: task,
+    miningStarting,
     startMining,
     stopMining,
   } = useTaskContext();
 
   const [dataSummary, setDataSummary] = useState<DataSummary | null>(null);
   const [activePrompt, setActivePrompt] = useState('');
+
+  // 任务激活 = 正在提交（POST /evolve 进行中）或后端任务运行中
+  const taskActive = miningStarting || task?.status === 'running';
 
   useEffect(() => {
     getDataSummary()
@@ -88,12 +93,61 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
         {/* ================= 2. Central Integrated Prompt Input ================= */}
         <div className="w-full flex flex-col gap-3">
+          {/* 运行中任务进度提示 + 提交锁（避免重复提交） */}
+          {taskActive && (
+            <div className="w-full max-w-4xl mx-auto flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-2.5 shadow-2xs">
+              {miningStarting ? (
+                <Loader2 className="w-4 h-4 text-blue-500 animate-spin shrink-0" />
+              ) : (
+                <span className="relative flex h-2.5 w-2.5 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+                </span>
+              )}
+              <span className="text-xs font-bold text-blue-700 whitespace-nowrap">
+                {miningStarting ? '任务提交中...' : '任务运行中'}
+              </span>
+              <span
+                className="text-xs text-blue-600/70 truncate flex-1 min-w-0"
+                title={task?.progress?.message}
+              >
+                {task?.progress?.message || '正在启动因子挖掘，请稍候...'}
+              </span>
+              {!miningStarting && task && (
+                <>
+                  <div className="w-24 h-1.5 rounded-full bg-blue-100 overflow-hidden hidden sm:block">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500"
+                      style={{ width: `${Math.min(100, Math.max(0, task.progress?.progress ?? 0))}%` }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.('mining_dashboard')}
+                    className="text-xs font-bold text-blue-600 hover:text-blue-700 whitespace-nowrap cursor-pointer"
+                  >
+                    查看演化台
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={stopMining}
+                className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold text-red-600 bg-white hover:bg-red-50 border border-red-100 transition-colors whitespace-nowrap cursor-pointer"
+                title="停止当前任务"
+              >
+                <Square className="w-3 h-3" />
+                停止
+              </button>
+            </div>
+          )}
+
           <ChatInput
             inline={true}
             initialPrompt={activePrompt}
             onSubmit={startMining}
             onStop={stopMining}
-            isRunning={task?.status === 'running'}
+            isRunning={taskActive}
           />
 
           {/* Quick Starter Prompts */}
@@ -120,25 +174,23 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
           {/* AI 因子挖掘 */}
           <div
             onClick={() => onNavigate?.('mining_dashboard')}
-            className="group bg-white/80 hover:bg-white backdrop-blur-xl rounded-2xl p-5 border border-white/90 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+            className="group relative bg-white/80 hover:bg-white backdrop-blur-xl rounded-2xl p-5 border border-white/90 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col items-center text-center"
           >
-            <div>
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 flex items-center justify-center text-blue-600 mb-3 group-hover:scale-105 transition-transform">
-                <Bot className="w-5 h-5" />
-              </div>
-              <div className="flex items-center justify-between mb-1.5">
-                <h3 className="text-sm font-black text-slate-800 group-hover:text-blue-600 transition-colors">
-                  AI 因子挖掘
-                </h3>
-                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                  演化台
-                </span>
-              </div>
+            <div className="absolute top-4 left-4 w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
+              <Bot className="w-5 h-5" />
+            </div>
+            <span className="absolute top-4 right-4 text-[10px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+              演化台
+            </span>
+            <div className="flex-1 flex flex-col justify-center items-center gap-3 pt-6">
+              <h3 className="text-sm font-black text-slate-800 group-hover:text-blue-600 transition-colors m-0">
+                AI 因子挖掘
+              </h3>
               <p className="text-xs text-slate-500 font-normal leading-relaxed m-0">
                 LLM 自动理解需求，生成因子假设并执行多代遗传算法演化
               </p>
             </div>
-            <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-blue-600 group-hover:translate-x-0.5 transition-transform">
+            <div className="w-full pt-3 border-t border-slate-100 flex items-center justify-center gap-2 text-[11px] font-bold text-blue-600 group-hover:translate-x-0.5 transition-transform">
               <span>进入实时演化台</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </div>
@@ -147,25 +199,23 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
           {/* 因子库管理 */}
           <div
             onClick={() => onNavigate?.('library')}
-            className="group bg-white/80 hover:bg-white backdrop-blur-xl rounded-2xl p-5 border border-white/90 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+            className="group relative bg-white/80 hover:bg-white backdrop-blur-xl rounded-2xl p-5 border border-white/90 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col items-center text-center"
           >
-            <div>
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100 flex items-center justify-center text-emerald-600 mb-3 group-hover:scale-105 transition-transform">
-                <Database className="w-5 h-5" />
-              </div>
-              <div className="flex items-center justify-between mb-1.5">
-                <h3 className="text-sm font-black text-slate-800 group-hover:text-emerald-600 transition-colors">
-                  因子库管理
-                </h3>
-                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
-                  全量库
-                </span>
-              </div>
+            <div className="absolute top-4 left-4 w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100 flex items-center justify-center text-emerald-600 group-hover:scale-105 transition-transform">
+              <Database className="w-5 h-5" />
+            </div>
+            <span className="absolute top-4 right-4 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+              全量库
+            </span>
+            <div className="flex-1 flex flex-col justify-center items-center gap-3 pt-6">
+              <h3 className="text-sm font-black text-slate-800 group-hover:text-emerald-600 transition-colors m-0">
+                因子库管理
+              </h3>
               <p className="text-xs text-slate-500 font-normal leading-relaxed m-0">
                 浏览、筛选、分析已挖掘的所有因子及其 IC/IR 与多空收益单调性
               </p>
             </div>
-            <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-emerald-600 group-hover:translate-x-0.5 transition-transform">
+            <div className="w-full pt-3 border-t border-slate-100 flex items-center justify-center gap-2 text-[11px] font-bold text-emerald-600 group-hover:translate-x-0.5 transition-transform">
               <span>查看因子资产库</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </div>
@@ -174,25 +224,23 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
           {/* 独立回测 */}
           <div
             onClick={() => onNavigate?.('backtest')}
-            className="group bg-white/80 hover:bg-white backdrop-blur-xl rounded-2xl p-5 border border-white/90 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+            className="group relative bg-white/80 hover:bg-white backdrop-blur-xl rounded-2xl p-5 border border-white/90 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col items-center text-center"
           >
-            <div>
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 flex items-center justify-center text-purple-600 mb-3 group-hover:scale-105 transition-transform">
-                <BarChart3 className="w-5 h-5" />
-              </div>
-              <div className="flex items-center justify-between mb-1.5">
-                <h3 className="text-sm font-black text-slate-800 group-hover:text-purple-600 transition-colors">
-                  全周期回测
-                </h3>
-                <span className="text-[10px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">
-                  样本外验证
-                </span>
-              </div>
+            <div className="absolute top-4 left-4 w-10 h-10 rounded-xl bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 flex items-center justify-center text-purple-600 group-hover:scale-105 transition-transform">
+              <BarChart3 className="w-5 h-5" />
+            </div>
+            <span className="absolute top-4 right-4 text-[10px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">
+              样本外验证
+            </span>
+            <div className="flex-1 flex flex-col justify-center items-center gap-3 pt-6">
+              <h3 className="text-sm font-black text-slate-800 group-hover:text-purple-600 transition-colors m-0">
+                全周期回测
+              </h3>
               <p className="text-xs text-slate-500 font-normal leading-relaxed m-0">
                 选择已生成的因子库执行全市场、全周期样本外回测评估
               </p>
             </div>
-            <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-purple-600 group-hover:translate-x-0.5 transition-transform">
+            <div className="w-full pt-3 border-t border-slate-100 flex items-center justify-center gap-2 text-[11px] font-bold text-purple-600 group-hover:translate-x-0.5 transition-transform">
               <span>启动独立回测</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </div>
@@ -213,9 +261,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 text-xs">
             {/* 股票池 */}
-            <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col justify-between">
+            <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col justify-center items-center text-center gap-2">
               <div>
-                <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 mb-1">
+                <span className="text-[10px] font-bold text-slate-400 flex items-center justify-center gap-1 mb-1">
                   <Layers className="w-3 h-3 text-blue-500" /> 股票池覆盖
                 </span>
                 <span className="text-xs font-bold text-slate-800 block">
@@ -226,9 +274,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
             </div>
 
             {/* 基础因子集 */}
-            <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col justify-between">
+            <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col justify-center items-center text-center gap-2">
               <div>
-                <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 mb-1">
+                <span className="text-[10px] font-bold text-slate-400 flex items-center justify-center gap-1 mb-1">
                   <Database className="w-3 h-3 text-emerald-500" /> 基础特征集
                 </span>
                 <span className="text-xs font-bold text-slate-800 block">
@@ -239,9 +287,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
             </div>
 
             {/* 数据时间范围 */}
-            <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col justify-between">
+            <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col justify-center items-center text-center gap-2">
               <div>
-                <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 mb-1">
+                <span className="text-[10px] font-bold text-slate-400 flex items-center justify-center gap-1 mb-1">
                   <Activity className="w-3 h-3 text-indigo-500" /> 训练与验证跨度
                 </span>
                 <span className="text-xs font-bold text-slate-800 block font-mono">
@@ -252,9 +300,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
             </div>
 
             {/* 算力与演化 */}
-            <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col justify-between">
+            <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col justify-center items-center text-center gap-2">
               <div>
-                <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 mb-1">
+                <span className="text-[10px] font-bold text-slate-400 flex items-center justify-center gap-1 mb-1">
                   <Cpu className="w-3 h-3 text-purple-500" /> 并行演化架构
                 </span>
                 <span className="text-xs font-bold text-slate-800 block">

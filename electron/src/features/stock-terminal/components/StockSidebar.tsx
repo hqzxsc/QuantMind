@@ -377,7 +377,7 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
       )}
 
       {/* 列表头：单行 10 列，与每行严格对齐；点击表头筛选 */}
-      <div className={`${GRID} px-1 pb-1 pt-2 text-[10px] font-bold text-slate-400 border-b border-slate-100 shrink-0 items-center`}>
+      <div className={`${GRID} px-1 pb-1 pt-2 text-[11px] font-bold text-slate-400 border-b border-slate-100 shrink-0 items-center`}>
         <span className="text-center">排名</span>
         <span>股票</span>
         <span className="text-center" title="近15日收盘价走势（红涨绿跌）">走势</span>
@@ -408,15 +408,15 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
                 key={it.symbol}
                 data-symbol={it.symbol}
                 onClick={() => onSelect(it)}
-                className={`w-full ${GRID} items-center px-1.5 py-1 rounded-lg text-left transition-colors ${
+                className={`w-full ${GRID} items-center px-1.5 py-1.5 rounded-lg text-left transition-colors ${
                   isSel ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-50 border border-transparent'
                 }`}
               >
-                <span className={`text-center text-[10px] font-mono font-bold ${rank <= 3 ? 'text-sm leading-none' : 'text-slate-400'}`}>{rankMedal}</span>
+                <span className={`text-center text-[11px] font-mono font-bold ${rank <= 3 ? 'text-base leading-none' : 'text-slate-400'}`}>{rankMedal}</span>
                 {/* 股票单元格：主行(名称|涨幅) + 副行(代码|价格·市值)，单列内 flex-col */}
                 <span className="flex flex-col min-w-0 gap-0.5">
                   <span className="flex items-center justify-between gap-1">
-                    <span className="text-xs font-bold text-slate-700 truncate flex items-center gap-0.5 min-w-0">
+                    <span className="text-[13px] font-bold text-slate-700 truncate flex items-center gap-0.5 min-w-0">
                       {(() => {
                         const watched = watchlistSymbols.has(toPrefix(it.symbol));
                         return (
@@ -435,16 +435,16 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
                         const kind = positions.get(toPrefix(it.symbol));
                         if (!kind) return null;
                         const badge = POSITION_BADGE[kind];
-                        return <span title={badge.title} className={`text-[8px] font-bold rounded px-0.5 shrink-0 border ${badge.cls}`}>{badge.label}</span>;
+                        return <span title={badge.title} className={`text-[9px] font-bold rounded px-0.5 shrink-0 border ${badge.cls}`}>{badge.label}</span>;
                       })()}
-                      {it.is_st && <span className="text-[9px] bg-rose-50 text-rose-500 rounded px-0.5 shrink-0">ST</span>}
+                      {it.is_st && <span className="text-[10px] bg-rose-50 text-rose-500 rounded px-0.5 shrink-0">ST</span>}
                       <span className="truncate">{it.name}</span>
                     </span>
-                    <span className={`text-[10px] font-mono shrink-0 ${up ? 'text-rose-500' : 'text-emerald-500'}`}>{fmtPct(it.pct_change)}</span>
+                    <span className={`text-[11px] font-mono shrink-0 ${up ? 'text-rose-500' : 'text-emerald-500'}`}>{fmtPct(it.pct_change)}</span>
                   </span>
                   <span className="flex items-center justify-between gap-1">
-                    <span className="text-[9px] text-slate-400 font-mono truncate">{it.symbol}</span>
-                    <span className="text-[9px] text-slate-500 font-mono shrink-0">{it.close?.toFixed(2) ?? '--'} · {fmtMv(it.total_mv)}</span>
+                    <span className="text-[10px] text-slate-400 font-mono truncate">{it.symbol}</span>
+                    <span className="text-[10px] text-slate-500 font-mono shrink-0">{it.close?.toFixed(2) ?? '--'} · {fmtMv(it.total_mv)}</span>
                   </span>
                 </span>
                 {/* 近15日走势微缩折线（懒加载，红涨绿跌） */}
@@ -453,23 +453,23 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
                 </span>
                 {/* 板块 + 当天头部 top10 均分 */}
                 <span className="flex flex-col items-center min-w-0 gap-0" title={`${it.board ?? '--'} · top10 ${it.board_top10_avg != null ? (it.board_top10_avg >= 0 ? '+' : '') + it.board_top10_avg.toFixed(3) : '--'}`}>
-                  <span className={`inline-block text-[8px] font-bold rounded px-0.5 border truncate max-w-full ${boardToneOf(it.board)}`}>{it.board?.replace('市主板', '主板') ?? '--'}</span>
-                  <span className="text-[7px] font-mono text-slate-400 truncate">{it.board_top10_avg != null ? `${it.board_top10_avg >= 0 ? '+' : ''}${it.board_top10_avg.toFixed(3)}` : ''}</span>
+                  <span className={`inline-block text-[10px] font-bold rounded px-0.5 border truncate max-w-full ${boardToneOf(it.board)}`}>{it.board?.replace('市主板', '主板') ?? '--'}</span>
+                  <span className="text-[10px] font-mono text-slate-400 truncate">{it.board_top10_avg != null ? `${it.board_top10_avg >= 0 ? '+' : ''}${it.board_top10_avg.toFixed(3)}` : ''}</span>
                 </span>
                 {/* 行业 + 当天头部 top10 均分 */}
                 <span className="flex flex-col items-center min-w-0 gap-0" title={`${it.industry ?? '--'} · top10 ${it.industry_top10_avg != null ? (it.industry_top10_avg >= 0 ? '+' : '') + it.industry_top10_avg.toFixed(3) : '--'}`}>
-                  <span className="text-[9px] text-slate-600 truncate max-w-full">{it.industry ?? '--'}</span>
-                  <span className="text-[7px] font-mono text-slate-400 truncate">{it.industry_top10_avg != null ? `${it.industry_top10_avg >= 0 ? '+' : ''}${it.industry_top10_avg.toFixed(3)}` : ''}</span>
+                  <span className="text-[10px] text-slate-600 truncate max-w-full">{it.industry ?? '--'}</span>
+                  <span className="text-[10px] font-mono text-slate-400 truncate">{it.industry_top10_avg != null ? `${it.industry_top10_avg >= 0 ? '+' : ''}${it.industry_top10_avg.toFixed(3)}` : ''}</span>
                 </span>
                 {/* 市值档 + 当天头部 top10 均分 */}
                 <span className="flex flex-col items-center min-w-0 gap-0" title={`${it.cap_tier || '--'} · top10 ${it.cap_top10_avg != null ? (it.cap_top10_avg >= 0 ? '+' : '') + it.cap_top10_avg.toFixed(3) : '--'}`}>
-                  <span className="text-[9px] text-slate-600 shrink-0">{it.cap_tier || '--'}</span>
-                  <span className="text-[7px] font-mono text-slate-400 truncate">{it.cap_top10_avg != null ? `${it.cap_top10_avg >= 0 ? '+' : ''}${it.cap_top10_avg.toFixed(3)}` : ''}</span>
+                  <span className="text-[10px] text-slate-600 shrink-0">{it.cap_tier || '--'}</span>
+                  <span className="text-[10px] font-mono text-slate-400 truncate">{it.cap_top10_avg != null ? `${it.cap_top10_avg >= 0 ? '+' : ''}${it.cap_top10_avg.toFixed(3)}` : ''}</span>
                 </span>
                 {/* 趋势 */}
-                <span className={`text-center text-[9px] truncate ${TREND_COLOR[it.trend ?? ''] ?? 'text-slate-400'}`}>{it.trend ?? '-'}</span>
+                <span className={`text-center text-[10px] truncate ${TREND_COLOR[it.trend ?? ''] ?? 'text-slate-400'}`}>{it.trend ?? '-'}</span>
                 {/* 得分 */}
-                <span className={`text-right text-[11px] font-mono font-bold ${(it.fusion ?? 0) >= 0 ? 'text-blue-600' : 'text-slate-400'}`}>
+                <span className={`text-right text-[12px] font-mono font-bold ${(it.fusion ?? 0) >= 0 ? 'text-blue-600' : 'text-slate-400'}`}>
                   {it.fusion != null ? `+${(it.fusion).toFixed(3)}`.replace('+-', '-') : '--'}
                 </span>
                 {/* 仓位信号 */}
@@ -485,7 +485,7 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
                         ? (empty ? '大盘空仓信号，不入场' : (pct != null && pct < 0.8 ? `行业百分位 ${(pct * 100).toFixed(0)}% < 80%，不入场` : '不入场'))
                         : `建议投入 ${Math.round(ps * 100)}%（半凯利）· 行业百分位 ${pct != null ? (pct * 100).toFixed(0) + '%' : '--'}`;
                     return (
-                      <span className={`inline-block text-[9px] font-bold rounded px-0.5 py-0.5 border ${tone.cls}`} title={tip}>
+                      <span className={`inline-block text-[10px] font-bold rounded px-0.5 py-0.5 border ${tone.cls}`} title={tip}>
                         {tone.txt}
                       </span>
                     );
@@ -493,7 +493,7 @@ export function StockSidebar({ selected, onSelect, watchlistSymbols, positions =
                 </span>
                 {/* 信号方向 */}
                 <span className="text-center">
-                  <span className={`text-[9px] rounded px-1 py-0.5 font-bold ${SIDE_COLOR[it.side ?? 'HOLD'] ?? SIDE_COLOR.HOLD}`}>
+                  <span className={`text-[10px] rounded px-1 py-0.5 font-bold ${SIDE_COLOR[it.side ?? 'HOLD'] ?? SIDE_COLOR.HOLD}`}>
                     {(it.side ?? 'HOLD') === 'HOLD' ? '-' : it.side}
                   </span>
                 </span>

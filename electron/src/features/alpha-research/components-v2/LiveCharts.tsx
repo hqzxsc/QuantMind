@@ -123,12 +123,12 @@ export const LiveCharts: React.FC<LiveChartsProps> = ({
     }
   };
 
-  const getLogIcon = (level: LogEntry['level']) => {
+  const getLogMark = (level: LogEntry['level']) => {
     switch (level) {
-      case 'success': return '✅';
-      case 'error': return '❌';
-      case 'warning': return '⚠️';
-      default: return '•';
+      case 'success': return 'text-emerald-500';
+      case 'error': return 'text-red-500';
+      case 'warning': return 'text-amber-500';
+      default: return 'text-slate-300';
     }
   };
 
@@ -214,7 +214,7 @@ export const LiveCharts: React.FC<LiveChartsProps> = ({
                       <span className="text-slate-600 shrink-0 w-14 text-right select-none">
                         {formatDateTime(log.timestamp).split(' ')[1]?.slice(0, 8) ?? ''}
                       </span>
-                      <span className="shrink-0 w-4 text-center">{getLogIcon(log.level)}</span>
+                      <span className={`shrink-0 w-4 text-center text-[10px] leading-5 ${getLogMark(log.level)}`}>●</span>
                       <span className="flex-1 min-w-0 break-all">
                         {renderLogMessage(log.message, log.level)}
                       </span>

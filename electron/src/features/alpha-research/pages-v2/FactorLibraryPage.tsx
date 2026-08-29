@@ -17,6 +17,7 @@ import {
   BarChart3,
   AlertCircle,
   Play,
+  X,
 } from 'lucide-react';
 import { useTaskContext } from '../context-v2/TaskContext';
 
@@ -540,7 +541,7 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
                   </div>
                 </div>
                 <Button variant="ghost" onClick={() => setSelectedFactor(null)}>
-                  ✕
+                  <X className="w-4 h-4" />
                 </Button>
               </div>
             </CardHeader>

@@ -96,8 +96,10 @@ git add .
 git commit -m "descriptive message"
 git push gitee NEXT
 
-# 2. 同步并重启 quant-server 后端服务
-ssh quant-server "cd /root/quantmindoss && git pull && docker compose restart quantmind quantmind-celery"
+# 2. 同步并重启后端服务（服务名见 docker compose config --services）
+# 注意：目标服务器的 SSH 别名/主机与项目目录因人而异，部署前先向用户询问确认。
+# 用 ${SSH_TARGET} 和 ${PROJECT_DIR} 表示用户提供的具体值。
+ssh ${SSH_TARGET} "cd ${PROJECT_DIR} && git pull && docker compose restart quantmind celery-worker celery-beat"
 ```
 
 ### 3. 镜像构建规则（是否需重新打包）

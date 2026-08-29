@@ -124,8 +124,9 @@ git add <changed-files>
 git commit -m "descriptive message"
 git push gitee master
 
-# Deploy to quant-server
-ssh quant-server "cd /opt/quantmind && sudo bash deploy/update.sh"
+# 注意：目标服务器的 SSH 别名/主机与项目目录因人而异，部署前先向用户询问确认。
+# 用 ${SSH_TARGET} 和 ${PROJECT_DIR} 表示用户提供的具体值。
+ssh ${SSH_TARGET} "cd ${PROJECT_DIR} && sudo bash deploy/update.sh"
 ```
 
 Electron 前端在本地开发时使用 Vite HMR；修改 `electron/src` 后运行 `npm run typecheck`，不需要复制构建产物到服务器的 `web` 容器。

@@ -240,6 +240,10 @@ class QuantDBDataHub:
         l1_dir = dd / "6_ml_datasets" / "l1_factors"
         if l1_dir.exists() and any(l1_dir.glob("dt=*")):
             partitioned_views["qdb_l1_factors"] = "6_ml_datasets/l1_factors"
+        # alpha_library: Alpha101 + GTJA191 + Alpha158 三库因子（429 列，训练直读）
+        alpha_dir = dd / "6_ml_datasets" / "alpha_library"
+        if alpha_dir.exists() and any(alpha_dir.glob("dt=*")):
+            partitioned_views["qdb_alpha_library"] = "6_ml_datasets/alpha_library"
 
         for view_name, rel_path in partitioned_views.items():
             full_path = dd / rel_path
@@ -755,6 +759,25 @@ class QuantDBDataHub:
             return pd.DataFrame()
 
         df = pd.concat(dfs, ignore_index=True)
+        return self._normalize_columns(df)
+
+    def fetch_alpha_factors(
+        self,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> pd.DataFrame:
+        """读取 Alpha 库因子（a101_* / gtja_* / a158_*，429 列，训练直读）。
+
+        分区格式: alpha_library/dt=YYYYMMDD/data.parquet（float32）
+        """
+        if not self._view_exists("qdb_alpha_library"):
+            return pd.DataFrame()
+        conn = self._get_duck_conn()
+        conditions = _dt_conditions(start, end)
+        where = " AND ".join(conditions) if conditions else "1=1"
+        df = conn.execute(
+            f"SELECT * FROM qdb_alpha_library WHERE {where} ORDER BY dt"
+        ).fetchdf()
         return self._normalize_columns(df)
 
     def fetch_l2_factors(

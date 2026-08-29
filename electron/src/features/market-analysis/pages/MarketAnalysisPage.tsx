@@ -325,7 +325,7 @@ export const MarketAnalysisPage: React.FC = () => {
 
   return (
     <div
-      className={`w-full h-full overflow-y-auto ${activeTab === 'panorama' ? 'no-scrollbar' : ''} bg-slate-50/60 px-5 pt-4 pb-28 flex flex-col gap-2.5 font-sans`}
+      className={`w-full h-full ${activeTab === 'panorama' ? 'overflow-hidden' : 'overflow-y-auto'} bg-slate-50/60 px-5 pt-4 pb-28 flex flex-col gap-2.5 font-sans`}
       style={{
         WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
         maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',

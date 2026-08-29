@@ -63,6 +63,14 @@ docker cp <repo>/data/reports/market_analysis/{date}_report.pdf quantmind:/app/d
 
 文件名固定：`市场分析_{YYYY-MM-DD}.md` / `.pdf`。
 
+**用户要求「放深度分析那里」时**：额外落一份到 A股市场 分组（与个股深度分析/投研报告同列表展示，报告管理页 → A股市场 → 市场分析）：
+
+```bash
+docker exec quantmind bash -c "mkdir -p '/app/db/trading_agents_results/A股市场/市场分析' && cp /tmp/ma_report.md '/app/db/trading_agents_results/A股市场/市场分析/市场分析_{date}.md' && cp /tmp/ma_report.pdf '/app/db/trading_agents_results/A股市场/市场分析/市场分析_{date}.pdf'"
+```
+
+> 注：`A股市场/` 目录为容器 root 创建，宿主机无写权限，须在容器内操作（docker exec 为 root）。
+
 ### 第 5 步：聊天回复速览
 
 回复用户一段 3-5 行的速览（指数、情绪、最强板块、资金动向、明日关注 1 条）+ 报告文件路径（md + PDF）。

@@ -73,6 +73,17 @@ V2_DATASETS = [
     {"category_id": "6", "sub_category": "l1_l2_factors", "dir": "6_ml_datasets"},
 ]
 
+# 每天全量重写的分区数据集：上游每次 release 都会整段重算（如前复权/后复权
+# K 线，除权除息后历史价格全部回溯改写）。对这些数据集，本地不能只看
+# "key 已存在"就跳过，必须比对服务端 sha256 —— 变化则覆盖重下，否则会
+# 停留在上次 release 的旧复权基准（表现为"前复权只同步了一天"）。
+FULL_REWRITE_V2_DATASETS = {
+    "daily_forward",
+    "daily_backward",
+    "daily_unadjusted",
+    "index_daily",
+}
+
 # V1 非分区数据集 (全量 ETag 增量)
 V1_DATASETS = [
     {"category_id": "2", "sub_category": "sector_concept", "dir": "2_base_sector"},
@@ -258,11 +269,16 @@ def _sync_v2_dataset(client, state, cat_id: str, dataset: str, progress_cb: Call
 
     pending = []
     verify = []
+    is_full_rewrite = dataset in FULL_REWRITE_V2_DATASETS
     for key, obj in latest.items():
         rel_path = obj.get("relative_path") or key
         target = QUANTDB_DATA_DIR / rel_path
         row = state.execute("SELECT path FROM objects WHERE key=?", (key,)).fetchone()
         if row and Path(row[0]).exists() and Path(row[0]).stat().st_size > 0:
+            # 每天全量重写的数据集（前复权等）：已登记也要比对服务端 sha，
+            # 服务端每次 release 重算都会改历史分区，sha 变了必须覆盖重下。
+            if is_full_rewrite:
+                verify.append((key, obj, target))
             continue
         # 状态库无登记但文件已在磁盘：与云端 sha256 对上就登记跳过，
         # 绝不整库重下（2026-08-17 状态库丢失曾把 1.3 万分区全量重拉）
@@ -282,7 +298,7 @@ def _sync_v2_dataset(client, state, cat_id: str, dataset: str, progress_cb: Call
             key, obj, target = item
             expected = str(obj.get("sha256") or "").strip().lower()
             actual = sha256_of(target)
-            return key, obj, target, actual if actual == expected else None
+            return key, obj, target, actual if (actual and actual == expected) else None
 
         with ThreadPoolExecutor(max_workers=SYNC_WORKERS) as pool:
             for key, obj, target, actual in pool.map(verify_work, verify):

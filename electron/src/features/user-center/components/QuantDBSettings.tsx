@@ -74,6 +74,19 @@ export const QuantDBSettings: React.FC = () => {
   const isConfigured = Boolean(config?.api_key_configured);
   const isInstalled = Boolean(info?.installed);
 
+  // 流量数值取整（只显示整数 GB）
+  const fmtGB = (v?: number) => (v != null ? `${Math.floor(v)}` : null);
+  const renderUsedTraffic = () => {
+    const intGb = fmtGB(info?.usage?.used_gb);
+    if (intGb != null) return `${intGb} GB`;
+    return info?.used_bytes_human || (info?.used_traffic != null ? `${Math.floor(Number(info.used_traffic))}` : '0 GB');
+  };
+  const renderRemainingTraffic = () => {
+    const intGb = fmtGB(info?.usage?.remaining_gb);
+    if (intGb != null) return `${intGb} GB`;
+    return info?.remaining_bytes_human || (info?.remaining_traffic != null ? `${Math.floor(Number(info.remaining_traffic))}` : '—');
+  };
+
   return (
     <div className="w-full space-y-3">
       {/* 顶部标题卡片 (精简单行，全宽铺开) */}
@@ -118,12 +131,12 @@ export const QuantDBSettings: React.FC = () => {
       {/* 状态指标条 (4列紧凑卡片) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
         {/* 1. SDK 状态 */}
-        <div className="bg-white rounded-xl border border-slate-200/80 p-3 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-semibold">
+        <div className="bg-white rounded-xl border border-slate-200/80 p-3 shadow-2xs text-center">
+          <div className="flex items-center justify-center text-slate-400 text-[11px] font-semibold gap-1.5">
             <span>SDK 状态</span>
             <HardDrive className="w-3.5 h-3.5 text-blue-500" />
           </div>
-          <div className="mt-1 flex items-center gap-1.5">
+          <div className="mt-1 flex items-center justify-center gap-1.5">
             <span className={`w-1.5 h-1.5 rounded-full ${isInstalled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
             <span className="text-sm font-black text-slate-800">
               {isInstalled ? '已就绪' : '未就绪'}
@@ -135,12 +148,12 @@ export const QuantDBSettings: React.FC = () => {
         </div>
 
         {/* 2. API Key 状态 */}
-        <div className="bg-white rounded-xl border border-slate-200/80 p-3 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-semibold">
+        <div className="bg-white rounded-xl border border-slate-200/80 p-3 shadow-2xs text-center">
+          <div className="flex items-center justify-center text-slate-400 text-[11px] font-semibold gap-1.5">
             <span>API Key 状态</span>
             <Key className="w-3.5 h-3.5 text-indigo-500" />
           </div>
-          <div className="mt-1 flex items-center gap-1.5">
+          <div className="mt-1 flex items-center justify-center gap-1.5">
             <span className={`w-1.5 h-1.5 rounded-full ${isConfigured ? 'bg-emerald-500' : 'bg-rose-400'}`} />
             <span className="text-sm font-black text-slate-800">
               {isConfigured ? '已配置' : '未配置'}
@@ -152,14 +165,14 @@ export const QuantDBSettings: React.FC = () => {
         </div>
 
         {/* 3. 已用流量 */}
-        <div className="bg-white rounded-xl border border-slate-200/80 p-3 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-semibold">
+        <div className="bg-white rounded-xl border border-slate-200/80 p-3 shadow-2xs text-center">
+          <div className="flex items-center justify-center text-slate-400 text-[11px] font-semibold gap-1.5">
             <span>已用流量</span>
             <Activity className="w-3.5 h-3.5 text-amber-500" />
           </div>
           <div className="mt-1">
             <span className="text-sm font-black font-mono text-slate-800">
-              {info?.usage?.used_gb != null ? `${info.usage.used_gb} GB` : info?.used_bytes_human || (info?.used_traffic ? `${info.used_traffic}` : '0.0 GB')}
+              {renderUsedTraffic()}
             </span>
           </div>
           <span className="text-[10px] text-slate-400 block truncate">
@@ -168,14 +181,14 @@ export const QuantDBSettings: React.FC = () => {
         </div>
 
         {/* 4. 剩余配额 */}
-        <div className="bg-white rounded-xl border border-slate-200/80 p-3 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-semibold">
+        <div className="bg-white rounded-xl border border-slate-200/80 p-3 shadow-2xs text-center">
+          <div className="flex items-center justify-center text-slate-400 text-[11px] font-semibold gap-1.5">
             <span>剩余配额</span>
             <Zap className="w-3.5 h-3.5 text-emerald-500" />
           </div>
           <div className="mt-1">
             <span className="text-sm font-black font-mono text-emerald-600">
-              {info?.usage?.remaining_gb != null ? `${info.usage.remaining_gb} GB` : info?.remaining_bytes_human || (info?.remaining_traffic ? `${info.remaining_traffic}` : '—')}
+              {renderRemainingTraffic()}
             </span>
           </div>
           <span className="text-[10px] text-slate-400 block truncate">

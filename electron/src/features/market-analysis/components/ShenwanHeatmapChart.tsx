@@ -33,7 +33,9 @@ export const ShenwanHeatmapChart: React.FC<ShenwanHeatmapChartProps> = ({
 
     const formattedData = sectorItems.map((item) => ({
       name: item.name,
-      value: item.value,
+      // 🎯 非线性压缩(幂0.4)，避免超大板块(如半导体/银行)吞掉整张图；tooltip 用 raw_value 显示真实市值
+      value: Math.pow(Math.max(item.value || 0, 1), 0.4),
+      raw_value: item.value,
       pct_change: item.pct_change,
       leader: item.leader,
       leader_pct: item.leader_pct,
@@ -59,7 +61,7 @@ export const ShenwanHeatmapChart: React.FC<ShenwanHeatmapChartProps> = ({
         textStyle: { color: '#ffffff' },
         formatter: (info: any) => {
           const d = info.data || {};
-          const cap = d.value || info.value || 0;
+          const cap = (d.raw_value ?? d.value) ?? info.value ?? 0;
           const pct = d.pct_change ?? 0;
           const color = pct >= 0 ? '#f87171' : '#34d399';
           const leaderText = d.leader ? `<div style="margin-top: 2px; color: #cbd5e1;">领涨龙头: <b>${d.leader} (${d.leader_pct >= 0 ? '+' : ''}${d.leader_pct}%)</b></div>` : '';

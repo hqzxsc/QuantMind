@@ -202,6 +202,12 @@ export const MarketAnalysisPage: React.FC = () => {
     );
   };
 
+  // 点击个股 → 打开资金流详情(四分结构)并切到个股资金流 tab
+  const openStockDetail = (item: StockMoneyFlowItem) => {
+    setFocusStock(item);
+    setActiveTab('stock-flow');
+  };
+
   /** 手动触发读取 QuantDB 数据，SSE 逐步流式推送，边分析边渲染 */
   const handleTriggerAnalysis = async () => {
     setAnalyzing(true);
@@ -708,7 +714,7 @@ export const MarketAnalysisPage: React.FC = () => {
                   完整排行榜 ➔
                 </span>
               </div>
-              <StockMoneyFlowTable items={stockFlows.slice(0, 5)} isMini={true} />
+              <StockMoneyFlowTable items={stockFlows.slice(0, 5)} isMini={true} onStockClick={openStockDetail} />
             </div>
           </div>
 
@@ -784,7 +790,7 @@ export const MarketAnalysisPage: React.FC = () => {
             </h3>
             <span className="text-xs text-slate-400">包含超大单、大单、中单、小单拆解</span>
           </div>
-          <StockMoneyFlowTable items={stockFlows} loading={loading} latestDate={breadth?.trade_date} />
+          <StockMoneyFlowTable items={stockFlows} loading={loading} latestDate={breadth?.trade_date} onStockClick={openStockDetail} />
         </div>
       )}
 

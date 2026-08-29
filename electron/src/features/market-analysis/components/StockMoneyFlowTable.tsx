@@ -32,6 +32,7 @@ interface StockMoneyFlowTableProps {
   loading?: boolean;
   isMini?: boolean;
   latestDate?: string; // 真实最新交易日 (YYYY-MM-DD)
+  onStockClick?: (item: StockMoneyFlowItem) => void; // 🎯 点击个股打开资金流详情
 }
 
 // 🎨 30个交易日按日交互 SVG 趋势图组件 (鼠标悬浮显示当日详细资金情况)
@@ -193,6 +194,7 @@ export const StockMoneyFlowTable: React.FC<StockMoneyFlowTableProps> = ({
   loading = false,
   isMini = false,
   latestDate,
+  onStockClick,
 }) => {
   const columns: ColumnsType<StockMoneyFlowItem> = [
     {
@@ -457,7 +459,8 @@ export const StockMoneyFlowTable: React.FC<StockMoneyFlowTableProps> = ({
           loading={loading}
           pagination={false}
           size="middle"
-          rowClassName="h-16 hover:bg-purple-50/30 transition-colors"
+          rowClassName={onStockClick ? "h-16 hover:bg-purple-50/30 transition-colors cursor-pointer" : "h-16 hover:bg-purple-50/30 transition-colors"}
+          onRow={onStockClick ? (record) => ({ onClick: () => onStockClick(record) }) : undefined}
           scroll={isMini ? undefined : { x: 1100 }}
         />
       </div>

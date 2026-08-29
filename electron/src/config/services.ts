@@ -75,7 +75,7 @@ export function isElectronEnv(): boolean {
 /**
  * 校验服务器地址是否可达（通过 /health 端点）
  */
-export async function isServerReachable(url: string, timeoutMs = 2500): Promise<boolean> {
+export async function isServerReachable(url: string, timeoutMs = 8000): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -108,21 +108,24 @@ async function clearStaleServerUrl(reason: string): Promise<void> {
 
 /**
  * 初始化动态服务器配置（桌面端启动时调用）
- * 优先级：持久化配置（已校验） > Electron 配置文件（已校验） > 桌面端默认本地地址
+ * 优先级：持久化配置 > Electron 配置文件 > 桌面端默认本地地址
+ *
+ * 关键约定：健康检查失败**绝不删除**用户已保存的服务器地址。
+ * 后端可能正处于重启/冷启动/网络抖动，探测失败只打日志、保留配置并继续使用，
+ * 避免“隔段时间保存的 IP 丢失、需重新配置”的问题。
  */
 export async function initDynamicServerUrl(): Promise<void> {
-  // 1. 新 key 持久化配置，先做连通性校验，失效则清除
+  // 1. 新 key 持久化配置：直接采用，后台非阻塞探测仅用于日志，绝不清除
   const persisted = readPersistedServerUrl();
   if (persisted) {
-    const ok = await isServerReachable(persisted);
-    if (ok) {
-      dynamicServerUrl = persisted;
-      return;
-    }
-    await clearStaleServerUrl(persisted);
+    dynamicServerUrl = persisted;
+    void isServerReachable(persisted).then((ok) => {
+      if (!ok) console.warn(`[services] 服务器 ${persisted} 探测未通过（可能暂不可达），保留用户配置并继续使用`);
+    });
+    return;
   }
 
-  // 2. 旧 key（quantmind_server_url）遗留缓存迁移：同样校验，失效则清除
+  // 2. 旧 key（quantmind_server_url）遗留缓存迁移：可达才采用，失效仅清旧 key（不动新 key）
   const legacy = readLegacyPersistedServerUrl();
   if (legacy) {
     const ok = await isServerReachable(legacy);
@@ -137,24 +140,24 @@ export async function initDynamicServerUrl(): Promise<void> {
     console.warn(`[services] 旧版服务器地址失效，清除缓存: ${legacy}`);
   }
 
+  // 3. Electron 配置文件：同样采用 + 后台探测日志，不清除
   if (isElectronEnv()) {
     try {
       const url = await (window as any).electronAPI.getServerUrl();
       if (url && typeof url === 'string') {
         const normalized = url.replace(/\/+$/, '');
-        const ok = await isServerReachable(normalized);
-        if (ok) {
-          dynamicServerUrl = normalized;
-          persistServerUrl(normalized);
-          return;
-        }
-        await clearStaleServerUrl(normalized);
+        dynamicServerUrl = normalized;
+        persistServerUrl(normalized);
+        void isServerReachable(normalized).then((ok) => {
+          if (!ok) console.warn(`[services] 配置文件服务器 ${normalized} 探测未通过（可能暂不可达），保留并继续使用`);
+        });
+        return;
       }
     } catch (e) {
       console.warn('[services] Failed to get server URL from config:', e);
     }
 
-    // 3. 兜底：本地 OSS Docker 后端
+    // 4. 兜底：本地 OSS Docker 后端
     if (!dynamicServerUrl) {
       const ok = await isServerReachable(DEFAULT_ELECTRON_API_BASE);
       if (ok) {

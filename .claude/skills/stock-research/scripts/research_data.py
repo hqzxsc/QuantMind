@@ -235,6 +235,72 @@ def fetch_market_context(symbol: str) -> dict:
     }
 
 
+# ---------------- 模型推理分数（engine_signal_scores） ----------------
+
+def fetch_model_score(symbol: str) -> dict:
+    """最新推理 run 中目标股票的模型分数（融合/轻量/TFT + 信号方向/预期价/分位）。"""
+    try:
+        import asyncpg
+    except ImportError:
+        return {"ok": False, "reason": "asyncpg 不可用"}
+
+    async def _query():
+        conn = await asyncpg.connect(
+            host=os.getenv("DB_HOST", "quantmind-db"), port=int(os.getenv("DB_PORT", "5432")),
+            user=os.getenv("DB_USER", "quantmind"), password=os.getenv("DB_PASSWORD", "quantmind123"),
+            database=os.getenv("DB_NAME", "quantmind"), timeout=10,
+        )
+        try:
+            run = await conn.fetchrow(
+                "SELECT run_id, model_id, data_trade_date, prediction_trade_date "
+                "FROM qm_model_inference_runs WHERE status='completed' "
+                "ORDER BY prediction_trade_date DESC NULLS LAST LIMIT 1"
+            )
+            if run is None:
+                return {}
+            num = symbol.split(".")[0]  # engine_signal_scores.symbol 纯数字
+            row = await conn.fetchrow(
+                "SELECT light_score, tft_score, fusion_score, signal_side, expected_price, "
+                "       regime, score_rank, trade_date "
+                "FROM engine_signal_scores WHERE run_id=$1 AND symbol=$2",
+                run["run_id"], num,
+            )
+            if row is None:
+                return {"run": dict(run), "found": False}
+            # 全市场分数分位（score_rank 为该 run 内排名）
+            total = await conn.fetchval(
+                "SELECT count(*) FROM engine_signal_scores WHERE run_id=$1", run["run_id"]
+            )
+            return {
+                "run": {
+                    "run_id": run["run_id"],
+                    "model_id": run["model_id"],
+                    "data_trade_date": str(run["data_trade_date"]),
+                    "prediction_trade_date": str(run["prediction_trade_date"]),
+                },
+                "found": True,
+                "light_score": round(float(row["light_score"]), 4) if row["light_score"] is not None else None,
+                "tft_score": round(float(row["tft_score"]), 4) if row["tft_score"] is not None else None,
+                "fusion_score": round(float(row["fusion_score"]), 4) if row["fusion_score"] is not None else None,
+                "signal_side": row["signal_side"],
+                "expected_price": round(float(row["expected_price"]), 2) if row["expected_price"] else None,
+                "regime": row["regime"],
+                "score_rank": int(row["score_rank"]) if row["score_rank"] is not None else None,
+                "rank_pct": round(int(row["score_rank"]) / max(int(total), 1) * 100, 1) if row["score_rank"] else None,
+                "universe_size": int(total),
+            }
+        finally:
+            await conn.close()
+
+    try:
+        import asyncio
+
+        return asyncio.run(_query())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("模型分数查询失败: %s", exc)
+        return {"ok": False, "reason": str(exc)[:100]}
+
+
 # ---------------- 新闻情绪（PG 富集 + Huntly 原文） ----------------
 
 def fetch_news(symbol: str, days: int = 60) -> dict:
@@ -328,6 +394,29 @@ def fetch_news(symbol: str, days: int = 60) -> dict:
 
     tag_counter = Counter(t for e in events for t in e["tags"])
     src_counter = Counter(e["source"] for e in events)
+
+    # 新闻类型聚合（按 event_tags 关键词归类，利好/利空分布）
+    _TYPE_RULES = [
+        ("业绩财报", ("财报", "业绩", "净利", "营收", "盈利", "利润", "中报", "年报")),
+        ("产业景气", ("产业", "行业", "概念", "景气", "出货", "产能", "订单")),
+        ("政策监管", ("政策", "监管", "补贴", "规划", "发改委", "工信部")),
+        ("资本运作", ("减持", "增持", "回购", "融资", "定增", "入股", "收购", "股权")),
+        ("合作签约", ("战略合作", "合作", "签约", "共建", "协议")),
+        ("价格成本", ("涨价", "降价", "价格", "成本", "原材料")),
+        ("技术产品", ("技术", "产品", "发布", "量产", "研发", "新品")),
+    ]
+    type_dist = []
+    for tname, kws in _TYPE_RULES:
+        hit = [e for e in events if any(k in t for t in e["tags"] for k in kws)]
+        if not hit:
+            continue
+        type_dist.append({
+            "type": tname,
+            "total": len(hit),
+            "bullish": sum(1 for e in hit if e["label"] == "bullish"),
+            "bearish": sum(1 for e in hit if e["label"] == "bearish"),
+        })
+
     stats = {
         "total": len(events),
         "bullish": len(bullish),
@@ -337,6 +426,7 @@ def fetch_news(symbol: str, days: int = 60) -> dict:
         "avg_score_bear": round(sum(e["score"] for e in bearish) / max(len(bearish), 1), 3),
         "top_tags": [{"tag": k, "count": v} for k, v in tag_counter.most_common(8)],
         "top_sources": [{"source": k, "count": v} for k, v in src_counter.most_common(5)],
+        "type_dist": type_dist,
     }
     return {"ok": True, "events": events[:30], "stats": stats}
 
@@ -363,6 +453,7 @@ def main() -> int:
         "sector": fetch_sector(hub, symbol),
         "market_context": fetch_market_context(symbol),
         "news": fetch_news(symbol),
+        "model_score": fetch_model_score(symbol),
     }
     out_path = OUT_DIR / f"{symbol.replace('.', '_')}_{date.today():%Y%m%d}.json"
     out_path.write_text(json.dumps(data, ensure_ascii=False, indent=1, default=str), encoding="utf-8")

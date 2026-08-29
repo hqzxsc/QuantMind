@@ -7,7 +7,10 @@ description: "个股深度研究（多 Agent 框架版）— 借鉴 TradingAgent
 
 把 TradingAgents-CN 的多角色投研框架落地到 QuantMind：**数据 100% 走本地**（QuantDB parquet + PG 新闻富集 + Huntly），**新闻双通道**（自家 FinBERT 情绪量化 + WebSearch 实时补充），输出研报级 MD + PDF，落盘深度分析目录（报告管理页 → A股市场 → {股票名}）。
 
-与 [[trading-agents]]（后端深度分析 API）的关系：本 skill 是 Claude Code 直接编排的多 Agent 版本，数据脚本独立、不依赖后端分析服务，可随时对任何股票快速出一份多视角研究；需要 9 层深分（L2 微结构/新闻七维纵深）时仍用后端深度分析。
+与「深度分析某只股票」（后端 TradingAgents 深度分析）**不冲突，互为补充**：
+- 后端深度分析 = TradingAgents 图管线（AI 分析师辩论 → 投资决策报告），在 QuantBot/页面触发，报告落 `A股市场/{股票名}/`；
+- 本 skill = Claude Code 直接编排的多 Agent 版，**数据同源**（QuantDB + PG），并额外整合了**模型推理分数**（engine_signal_scores）与**新闻类型分布**；
+- 结论冲突时以数据为准：skill 的每个数字都可在数据包溯源，后端深度分析的报告也可作为第六维参考（用户要求时读 `A股市场/{股票名}/` 下已有投研报告交叉验证）。
 
 ## 架构
 
@@ -43,7 +46,7 @@ docker exec quantmind python3 /tmp/research_data.py --symbol 600036.SH
 docker cp quantmind:/data/reports/stock_research/600036_SH_YYYYMMDD.json /tmp/
 ```
 
-数据包含：quote（120 日 K 线/60日高低/20-60日涨幅）、indicators（ma5-60/rsi/kdj/macd/vol_std 全列 + close_20d）、valuation（pe_ttm/pb/ps/市值）、l2_flow（近 10 日主力净流入）、financials（三表最新报告期）、sector（CSRC 一级行业）、market_context（5 指数 + 行业涨幅榜 + 板块资金流 1/5/10 日 + 所属行业）、news（近 60 天 FinBERT 情绪事件 + 来源/标签统计）。
+数据包含：quote（120 日 K 线/60日高低/20-60日涨幅）、indicators（量纲无关指标：rsi/kdj/macd/乖离率/量能/波动率/return 系列；均线由 K 线计算）、valuation（pe_ttm/pb/ps/市值）、l2_flow（近 10 日主力净流入）、financials（三表最新报告期）、sector（CSRC 一级行业）、market_context（5 指数 + 行业涨幅榜 + 板块资金流 1/5/10 日 + 所属行业）、news（近 60 天 FinBERT 情绪事件 + 来源/标签统计 + **类型分布**）、model_score（最新推理 run 的融合/轻量/TFT 分数 + 信号方向 + 预期价 + 全市场分位）。
 
 ### 第 2 步：创建报告目录
 

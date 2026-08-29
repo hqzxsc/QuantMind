@@ -51,7 +51,7 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
     try {
       const token = localStorage.getItem('access_token') || '';
       const res = await fetch(
-        `${MARKET_ANALYSIS_API}/money-flow/period?period=${period}&dimension=${dimension}&category=${categoryMode}&limit=25`,
+        `${MARKET_ANALYSIS_API}/money-flow/period?period=${period}&dimension=${dimension}&category=${categoryMode}&limit=80`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.ok) {

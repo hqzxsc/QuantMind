@@ -3,7 +3,7 @@
 # quantbot-init.sh — QuantBot (QwenPaw) 初始化脚本
 # ============================================================================
 # 用途：QwenPaw 容器装好后，一键完成：
-#   1. 将本地 13 个 QuantMind 技能包安装到 QwenPaw 技能池
+#   1. 将本地 skills/ 目录全部技能包安装到 QwenPaw 技能池
 #   2. 广播到目标工作区并启用
 #   3. 写入量化人格（SOUL.md / PROFILE.md / AGENTS.md）
 #
@@ -18,7 +18,7 @@
 # ============================================================================
 set -euo pipefail
 
-SKILLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.claude/skills"
+SKILLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/skills"
 PERSONA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config/qwenpaw"
 QWENPAW_BASE_URL="${QWENPAW_BASE_URL:-http://127.0.0.1:8088}"
 QWENPAW_AGENT_ID="${QWENPAW_AGENT_ID:-default}"
@@ -38,7 +38,7 @@ case "${1:-}" in
 esac
 
 if ! command -v curl >/dev/null 2>&1; then die "需要 curl"; fi
-if ! command -v zip >/dev/null 2>&1; then die "需要 zip"; fi
+if [[ "$MODE" != "persona" ]] && ! command -v zip >/dev/null 2>&1; then die "需要 zip（--persona-only 模式不需要）"; fi
 
 # ---------------------------------------------------------------------------
 # 1. 技能安装
@@ -59,11 +59,14 @@ install_skills() {
   )
 
   # 1.2 删除同名旧技能（池中同名技能会冲突；删除后上传最新版）
-  local -a pool_names
-  pool_names=(ai-ide-strategy-writing backtest-center batch-inference-analysis \
-              daily-review quantdb-sdk quantdb-fields quantmind-deploy \
-              quantmind-operations rd-agent-factor-mining simulation-trading \
-              smart-strategy-stock-picking stock-market-analysis trading-agents)
+  # 技能清单从本地 skills/ 目录动态枚举（含 SKILL.md 的目录），避免硬编码过期
+  local -a pool_names=()
+  local d
+  for d in "$SKILLS_DIR"/*/; do
+    [[ -f "${d}SKILL.md" ]] && pool_names+=("$(basename "$d")")
+  done
+  [[ ${#pool_names[@]} -gt 0 ]] || die "技能目录为空: $SKILLS_DIR"
+  log "    本地技能清单: ${#pool_names[@]} 个"
   for name in "${pool_names[@]}"; do
     local resp
     resp="$(curl -s -X DELETE "$QWENPAW_BASE_URL/api/skills/pool/$name")"
@@ -80,30 +83,17 @@ install_skills() {
     || die "技能池上传失败: $upload_resp"
   log "    技能池导入: $(echo "$upload_resp" | grep -o '"imported":\[[^]]*\]' | head -c 200) ..."
 
-  # 1.4 广播到目标工作区（overwrite 幂等；按池清单遍历，不硬编码列表）
-  local pool_list
-  pool_list="$(curl -s "$QWENPAW_BASE_URL/api/skills/pool" | python3 -c '
-import sys, json
-d = json.load(sys.stdin)
-skills = d if isinstance(d, list) else d.get("skills", [])
-qm = [s["name"] for s in skills if s.get("source") != "builtin"
-      and s["name"] in {
-        "ai-ide-strategy-writing","backtest-center","batch-inference-analysis",
-        "daily-review","quantdb-sdk","quantdb-fields","quantmind-deploy",
-        "quantmind-operations","rd-agent-factor-mining","simulation-trading",
-        "smart-strategy-stock-picking","stock-market-analysis","trading-agents"}]
-print("\n".join(sorted(qm)))')"
+  # 1.4 广播到目标工作区（overwrite 幂等；清单与本地 skills/ 目录一致）
   local count=0
-  while IFS= read -r name; do
-    [[ -z "$name" ]] && continue
-    local dl_resp
+  local dl_resp
+  for name in "${pool_names[@]}"; do
     dl_resp="$(curl -s -X POST "$QWENPAW_BASE_URL/api/skills/pool/download" \
       -H "Content-Type: application/json" \
       -d "{\"skill_name\":\"$name\",\"targets\":[{\"workspace_id\":\"$QWENPAW_AGENT_ID\"}],\"overwrite\":true}")"
     echo "$dl_resp" | grep -q '"downloaded":\[' \
       || die "技能广播失败 [$name]: $dl_resp"
     count=$((count + 1))
-  done <<< "$pool_list"
+  done
   log "    已广播 $count 个量化技能到工作区 '$QWENPAW_AGENT_ID'"
 }
 

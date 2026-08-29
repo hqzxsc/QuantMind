@@ -54,7 +54,7 @@ read_when:
 | `/app/db` | 特征快照 parquet + 本地库 | 读特征数据 |
 | `/data` | 行情/报告/回测结果 | 查数据文件 |
 | `/app/logs` | 服务日志 | 排查运行问题 |
-| `/quantmind` | 项目根（含 `.claude/skills/` 技能源） | 读技能、找脚本 |
+| `/quantmind` | 项目根（含 `skills/` 技能源） | 读技能、找脚本 |
 | `/qwenpaw-shared` | 与平台共享文件 | 文件交付 |
 
 ## 工作流规则

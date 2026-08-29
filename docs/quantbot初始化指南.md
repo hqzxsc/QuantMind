@@ -25,7 +25,7 @@ bash scripts/quantbot_init.sh --persona-only
 | `QWENPAW_AGENT_ID` | `default` | 目标工作区 ID |
 
 脚本做的事：
-1. 把 `.claude/skills/` 下 12 个 QuantMind 技能打成 zip 上传到 QwenPaw 技能池（同名旧技能先删除再传，幂等）
+1. 把 `skills/` 下 12 个 QuantMind 技能打成 zip 上传到 QwenPaw 技能池（同名旧技能先删除再传，幂等）
 2. 广播到目标工作区并启用
 3. 把 `config/qwenpaw/{SOUL,PROFILE,AGENTS}.md` 写入工作区（容器内直接写，宿主机走 docker cp）
 
@@ -54,7 +54,7 @@ docker restart qwenpaw
 | `stock-market-analysis` | 全市场扫描、行业轮动、个股分析、数据导出 |
 | `trading-agents` | 个股深度投研、智能体自主分析报告 |
 
-> 技能源码在 `.claude/skills/<name>/SKILL.md`。更新技能后重跑 `--skills-only` 即可（先删后传，幂等）。
+> 技能源码在 `skills/<name>/SKILL.md`。更新技能后重跑 `--skills-only` 即可（先删后传，幂等）。
 
 ### 量化人格
 
@@ -92,7 +92,7 @@ QwenPaw 容器挂载与 `quantmind` 容器保持一致，AI 可以直接读数�
 
 ```bash
 # 1. 打包（zip 根目录是技能目录）
-cd .claude/skills && zip -qr /tmp/qm_skills.zip ./
+cd skills && zip -qr /tmp/qm_skills.zip ./
 
 # 2. 删除池中同名旧技能（避免冲突）
 curl -X DELETE http://127.0.0.1:8089/api/skills/pool/<skill-name>

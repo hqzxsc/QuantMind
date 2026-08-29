@@ -18,11 +18,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+from datetime import date
 from pathlib import Path
 
 import duckdb
 import pandas as pd
+
+logger = logging.getLogger("daily_review")
+
+
+def _f(v) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return f if f == f else 0.0
+
 
 def _find_repo_root(start: Path) -> Path:
     for p in [start, *start.parents]:
@@ -50,11 +63,26 @@ INDEXES: list[tuple[str, str]] = [
 ]
 
 STALE_NOTES: dict[str, str] = {
-    "l2_factors": "厂商侧停更 2026-02-27，近期无日频资金流明细",
+    "l2_factors": "",  # L2 已恢复日更（2026-08 复测），无滞后
     "min1_kline": "停更 2026-07-24",
     "min5_kline": "停更 2026-07-24",
     "hsgt_north": "北向 2024-08 起改季度披露，只有季度快照",
 }
+
+# ── 因子透视（升级版复盘：L1/L2 全市场截面 + 板块资金流）──
+# 14 个推荐因子皆正向 alpha（值越高=信号越强），见 l2_recommended_factors.csv
+L2_POSITIVE_FACTORS: list[str] = [
+    "micro_vpin_vol_ratio", "micro_vpin_amount_ratio", "micro_pin",
+    "micro_zone_distribution", "micro_zone_vol_ratio_T4", "micro_zone_vol_ratio_T6",
+    "micro_zone_vol_ratio_T5", "micro_zone_vol_ratio_T3", "micro_zone_rv_ratio_close",
+    "vol_price_divergence", "micro_open_gap", "micro_impact_decay_half_life",
+    "micro_liquidity_daily_pattern", "flow_imbalance_revert_speed",
+]
+L2_VPIN_FACTORS: list[str] = ["micro_vpin_vol_ratio", "micro_vpin_amount_ratio", "micro_pin"]
+L1_KEY_FACTORS: list[str] = [
+    "turn_1", "turn_5", "mom_ret_1d", "mom_ret_5d", "mom_ret_10d",
+    "vol_std_20", "vol_atr_14", "style_idio_vol_20",
+]
 
 
 def _yi(v: float | None) -> str:
@@ -131,7 +159,59 @@ def load_tech(db: duckdb.DuckDBPyConnection, data_dir: Path, dts: list[str]) -> 
         f" hive_partitioning=true) WHERE dt IN ({dt_in})",
     )
     df["dt"] = df["dt"].astype(str)
+    # 兜底：官方分区缺行时（供应商发布中断），用后复权序列补 pct_change/ma5/ma20。
+    # 后复权相邻收盘比 = 官方涨跌幅（含除权除息口径）。
+    need_days = load_trading_days(db, data_dir, 25, max(dts))
+    if len(need_days) > 1:
+        day_in = ",".join(f"'{d}'" for d in need_days)
+        closes = q(
+            db,
+            f"SELECT symbol, dt, close FROM read_parquet("
+            f"'{data_dir}/1_kline_data/daily_backward/dt=*/data.parquet',"
+            f" hive_partitioning=true) WHERE dt IN ({day_in})",
+        )
+        closes["dt"] = closes["dt"].astype(str)
+        fb = tech_fallback_from_backward(closes, sorted(need_days))
+        fb = fb[fb["dt"].isin(dts)]
+        if not fb.empty:
+            df = df.merge(fb, on=["symbol", "dt"], how="outer", suffixes=("", "_fb"))
+            for col in ("pct_change", "ma5", "ma20"):
+                df[col] = df[col].combine_first(df[f"{col}_fb"])
+            df = df[["symbol", "dt", "pct_change", "ma5", "ma20"]]
     return df
+
+
+def tech_fallback_from_backward(closes: pd.DataFrame, dts: list[str]) -> pd.DataFrame:
+    """用后复权收盘序列兜底 pct_change/ma5/ma20（官方 tech_ind 缺行时）。
+
+    closes: [symbol, dt, close]；dts: 升序交易日列表。
+    返回 [symbol, dt, pct_change, ma5, ma20]，覆盖 dts[1:]（首日无前收 → 剔除）。
+    停牌缺行按 ffill 处理（pct=0 且参与均线）；历史不足 5/20 日 ma 为 NaN。
+    """
+    closes = closes.drop_duplicates(["symbol", "dt"])
+    full = closes.pivot(index="symbol", columns="dt", values="close")
+    full = full.reindex(columns=dts)
+    full = full.ffill(axis=1)
+    pct = full.diff(axis=1) / full.shift(axis=1) * 100.0
+    ma5 = full.T.rolling(5, min_periods=5).mean().T
+    ma20 = full.T.rolling(20, min_periods=20).mean().T
+    rows: list[pd.DataFrame] = []
+    for d in dts:
+        if d not in pct.columns:
+            continue
+        rows.append(
+            pd.DataFrame(
+                {
+                    "symbol": full.index,
+                    "dt": d,
+                    "pct_change": pct[d].to_numpy(),
+                    "ma5": ma5[d].to_numpy(),
+                    "ma20": ma20[d].to_numpy(),
+                }
+            )
+        )
+    out = pd.concat(rows, ignore_index=True)
+    return out[out["pct_change"].notna()]
 
 
 def build_today(
@@ -237,9 +317,9 @@ def load_index_stats(
     sym_in = ",".join(f"'{s}'" for _, s in INDEXES)
     df = q(
         db,
-        f"SELECT symbol, dt, high, low, close, preClose, amount FROM read_parquet("
+        f"SELECT symbol, dt, high, low, close, amount FROM read_parquet("
         f"'{data_dir}/1_kline_data/index_daily/dt=*/data.parquet', hive_partitioning=true)"
-        f" WHERE dt IN ({dt_in}) AND symbol IN ({sym_in})",
+        f" WHERE CAST(dt AS VARCHAR) IN ({dt_in}) AND CAST(symbol AS VARCHAR) IN ({sym_in})",
     )
     df["dt"] = df["dt"].astype(str)
     rows = []
@@ -326,15 +406,8 @@ def load_market_stats(
     limit_today = today[today["category"] == rs.CAT_LIMIT_UP]["symbol"].tolist()
     if limit_today:
         dts12 = load_trading_days(db, data_dir, 12, trade_date)
-        dt_in = ",".join(f"'{d}'" for d in dts12)
-        sym_in = ",".join(f"'{s}'" for s in limit_today)
-        tech12 = q(
-            db,
-            f"SELECT symbol, dt, pct_change FROM read_parquet("
-            f"'{data_dir}/5_technical_derived/technical_indicators/dt=*/data.parquet',"
-            f" hive_partitioning=true) WHERE dt IN ({dt_in}) AND symbol IN ({sym_in})",
-        )
-        tech12["dt"] = tech12["dt"].astype(str)
+        tech12 = load_tech(db, data_dir, dts12)
+        tech12 = tech12[tech12["symbol"].isin(limit_today)]
         trade_dt_obj = pd.Timestamp(trade_date)
         trade_dt_date = trade_dt_obj.date()
         st_map = today.set_index("symbol")["is_st"].to_dict()
@@ -607,6 +680,106 @@ def load_preflight(db: duckdb.DuckDBPyConnection, data_dir: Path, trade_date: st
     return out
 
 
+def load_factor_stats(
+    db: duckdb.DuckDBPyConnection,
+    data_dir: Path,
+    trade_date: str,
+    prev_date: str,
+    industry_map: dict[str, str],
+) -> dict:
+    """L1/L2 因子全市场截面 + 板块超级大单资金流（升级版复盘数据）。
+
+    返回 { l1: {col: {now, prev, delta}}, l2: {strong_pct, vpin_mean, divergence_mean,
+    divergence_prev, super_net_yi, super_prev_yi}, sector_flow: [{industry, net_yi, n}] }。
+    任一数据集缺失时返回空 dict 对应键。
+    """
+    out: dict = {}
+
+    # ── L1 换手/动量/波动 关键因子均值（当日 vs 前一日）──
+    l1_now: dict[str, float] = {}
+    l1_prev: dict[str, float] = {}
+    try:
+        l1_files = (
+            f"{data_dir}/6_ml_datasets/l1_factors/dt={trade_date}/data.parquet",
+            f"{data_dir}/6_ml_datasets/l1_factors/dt={prev_date}/data.parquet",
+        )
+        dfn = q(db, f"SELECT * FROM read_parquet('{l1_files[0]}')")
+        dfp = q(db, f"SELECT * FROM read_parquet('{l1_files[1]}')")
+        avail = [c for c in L1_KEY_FACTORS if c in dfn.columns]
+        for c in avail:
+            if dfn[c].notna().mean() < 0.3:
+                continue
+            now_v = float(dfn[c].mean())
+            prev_v = float(dfp[c].mean()) if c in dfp.columns and dfp[c].notna().mean() >= 0.3 else None
+            l1_now[c] = round(now_v, 4)
+            if prev_v is not None:
+                l1_prev[c] = round(prev_v, 4)
+        if l1_now:
+            out["l1"] = {
+                c: {"now": l1_now[c], "prev": l1_prev.get(c), "delta": round(l1_now[c] - l1_prev[c], 4) if c in l1_prev else None}
+                for c in l1_now
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load l1 factor stats failed: %s", exc)
+
+    # ── L2 微观结构：正向因子强度 + VPIN + 量价背离 + 超级大单 ──
+    try:
+        l2f_now = f"{data_dir}/6_ml_datasets/l2_factors/dt={trade_date}/data.parquet"
+        l2f_prev = f"{data_dir}/6_ml_datasets/l2_factors/dt={prev_date}/data.parquet"
+        avail = [c for c in L2_POSITIVE_FACTORS if c in q(db, f"SELECT * FROM read_parquet('{l2f_now}') LIMIT 0").columns]
+        sel = ", ".join(avail + ["symbol", "flow_super_net", "vol_price_divergence"])
+        dn_f = q(db, f"SELECT {sel} FROM read_parquet('{l2f_now}')")
+        dp_f = q(db, f"SELECT {sel} FROM read_parquet('{l2f_prev}')")
+        for c in avail:
+            dn_f[c] = pd.to_numeric(dn_f[c], errors="coerce")
+            dp_f[c] = pd.to_numeric(dp_f[c], errors="coerce")
+
+        # 每因子当日截面百分位（0~1），股票 = 各因子平均百分位 → 强信号股（≥0.65）
+        pct_cols = {}
+        for c in avail:
+            s = dn_f[c].rank(pct=True)
+            pct_cols[c] = s
+        strength = pd.concat(pct_cols, axis=1).mean(axis=1)
+        strong_pct = float((strength >= 0.65).mean()) if len(strength) else None
+
+        vpin_avail = [c for c in L2_VPIN_FACTORS if c in avail]
+        vpin_mean = (
+            round(float(pd.concat([pct_cols[c] for c in vpin_avail], axis=1).mean(axis=1).median()), 3)
+            if vpin_avail else None
+        )
+        divergence_mean = round(float(dn_f["vol_price_divergence"].mean()), 3)
+        divergence_prev = round(float(dp_f["vol_price_divergence"].mean()), 3) if not dp_f.empty else None
+        # flow_super_net 单位=元 → 亿
+        super_net_yi = round(float(dn_f["flow_super_net"].sum()) / 1e8, 2) if "flow_super_net" in dn_f.columns else None
+        super_prev_yi = round(float(dp_f["flow_super_net"].sum()) / 1e8, 2) if not dp_f.empty and "flow_super_net" in dp_f.columns else None
+
+        out["l2"] = {
+            "date": trade_date,
+            "strong_pct": round(strong_pct, 4) if strong_pct is not None else None,
+            "vpin_mean": vpin_mean,
+            "divergence_mean": divergence_mean,
+            "divergence_prev": divergence_prev,
+            "super_net_yi": super_net_yi,
+            "super_prev_yi": super_prev_yi,
+        }
+
+        # ── 板块资金流：按申万一级聚合超级大单净额（亿）──
+        sf = dn_f[["symbol", "flow_super_net"]].copy()
+        sf["industry"] = sf["symbol"].map(industry_map).fillna("未知")
+        grp = sf.groupby("industry")["flow_super_net"].sum()
+        cnt = sf.groupby("industry")["flow_super_net"].count()
+        sector_flow = [
+            {"industry": k, "net_yi": round(v / 1e8, 2), "n": int(cnt.get(k, 0))}
+            for k, v in grp.sort_values(ascending=False).items()
+        ]
+        out["sector_flow"] = sector_flow
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load l2 factor stats failed: %s", exc)
+        out.setdefault("l2", None)
+
+    return out
+
+
 def render_facts(stats: dict) -> str:
     L: list[str] = []
     meta = stats["meta"]
@@ -684,6 +857,19 @@ def render_facts(stats: dict) -> str:
             L.append(f"| {s['SectorName']} | {s['n']} | {s['avg_pct']:+.2f}% | {mv_s} |")
         L.append("")
 
+    # ── 升级：行业多日涨跌幅（1/3/5 日，提炼市场分析口径）──
+    smd = stats.get("sector_multiday") or {}
+    smd_items = smd.get("items") or []
+    if smd_items:
+        L.append("### 行业多日涨跌幅（成分股中位数，5 日榜 Top10/Bottom10）\n")
+        L.append("| 行业 | 1日% | 3日% | 5日% |")
+        L.append("|---|---|---|---|")
+        for it in smd_items[:10]:
+            L.append(f"| {it['name']} | {it['pct_1d']:+.2f}% | {it['pct_3d']:+.2f}% | {it['pct_5d']:+.2f}% |")
+        for it in reversed(smd_items[-10:]):
+            L.append(f"| {it['name']} | {it['pct_1d']:+.2f}% | {it['pct_3d']:+.2f}% | {it['pct_5d']:+.2f}% |")
+        L.append("")
+
     st = stats.get("sentiment")
     if st:
         L.append("## 四、市场情绪\n")
@@ -718,7 +904,128 @@ def render_facts(stats: dict) -> str:
     L.append(f"- 主力资金（L2）：{fu.get('l2_note', '')}")
     L.append("")
 
-    L.append("## 六、个股榜（剔除 ST 与新股首日）\n")
+    # ── 升级：板块主力资金 1/5/10 日（提炼市场分析口径）──
+    sf = stats.get("sector_flow") or {}
+    sf_items = sf.get("items") or []
+    if sf_items:
+        L.append("### 板块主力资金净流入（亿元，1/5/10 日 Top10）\n")
+        L.append("| 行业 | 1日 | 5日 | 10日 |")
+        L.append("|---|---|---|---|")
+        for it in sf_items[:10]:
+            L.append(f"| {it['name']} | {it['flow_1d_yi']:+.2f} | {it['flow_5d_yi']:+.2f} | {it['flow_10d_yi']:+.2f} |")
+        L.append("")
+        neg10 = sorted(sf_items, key=lambda x: x["flow_10d_yi"])[:10]
+        L.append("**10 日净流出 Top10**\n")
+        L.append("| 行业 | 1日 | 5日 | 10日 |")
+        L.append("|---|---|---|---|")
+        for it in neg10:
+            L.append(f"| {it['name']} | {it['flow_1d_yi']:+.2f} | {it['flow_5d_yi']:+.2f} | {it['flow_10d_yi']:+.2f} |")
+        L.append("")
+
+    # ── 六、新闻情绪（当日有新闻的股票）──
+    nv = stats.get("news")
+    if nv:
+        stocks = nv.get("stocks") or []
+        stock_count = nv.get("stock_count") or len(stocks)
+        total_n = int(_f(nv.get("n")))
+        bull = int(_f(nv.get("bullish"))); bear = int(_f(nv.get("bearish")))
+        net_ratio = (bull - bear) / total_n if total_n else 0
+        L.append("## 六、新闻情绪（当日有新闻的股票匹配）\n")
+        L.append(
+            f"- 当日命中新闻 **{total_n}** 篇 / 涉及股票 **{stock_count}** 只；"
+            f"利好 {bull} / 利空 {bear} / 中性 {int(_f(nv.get('neutral')))} → 净情绪 {net_ratio:+.0%}"
+        )
+        L.append(
+            f"- 来源质量：高质量源 {int(_f(nv.get('gold_news')))} 篇 / 反向源 {int(_f(nv.get('reverse_news')))} 篇"
+            f"；黄金时段(19-22点)利好 {int(_f(nv.get('golden_hour_bullish')))}/{int(_f(nv.get('golden_hour_total')))} 篇"
+        )
+        # 升级：新闻-股价联动（当日有新闻股票的走势 vs 全市场）
+        pl = nv.get("price_link")
+        if pl:
+            excess_txt = ""
+            if pl.get("market_avg_pct") is not None and pl.get("excess_pct") is not None:
+                win = "跑赢" if pl["excess_pct"] > 0 else "跑输"
+                excess_txt = f"（相对全市场超额 {pl['excess_pct']:+.2f}%，{win}）"
+            L.append(
+                f"- **新闻-股价联动**：当日有新闻的 {pl['n']} 只股票平均涨幅 "
+                f"**{pl['avg_pct']:+.2f}%**{excess_txt}；"
+            )
+            if pl.get("bull_avg_pct") is not None and pl.get("bear_avg_pct") is not None:
+                L.append(
+                    f"  看多新闻股平均 {pl['bull_avg_pct']:+.2f}% vs 看空新闻股 {pl['bear_avg_pct']:+.2f}%"
+                    f"（差 {pl['bull_avg_pct'] - pl['bear_avg_pct']:+.2f}pp，正=新闻情绪对股价有预测力）"
+                )
+        sf = nv.get("sector_focus")
+        if sf:
+            L.append("### 新闻聚焦板块（按有新闻股票的行业聚合）\n")
+            L.append("| 行业 | 有新闻股票数 | 新闻数 | 净情绪 |")
+            L.append("|---|---|---|---|")
+            for sr in sf[:12]:
+                L.append(
+                    f"| {sr['industry']} | {sr['n']} | {sr['news']} | {sr['net_ratio']:+.0%} |"
+                )
+            L.append("")
+        L.append("### 当日有新闻个股（新闻数 + 净情绪 + 当日涨跌，Top15）\n")
+        L.append("| 名称 | 代码 | 当日涨跌 | 篇数 | 利好 | 利空 | 净情绪 | 事件标签 |")
+        L.append("|---|---|---|---|---|---|---|---|")
+        for st in stocks[:15]:
+            tags = "、".join((st.get("tags") or [])[:3]) if st.get("tags") else ""
+            pct_txt = f"{st['today_pct']:+.2f}%" if st.get("today_pct") is not None else "—"
+            L.append(
+                f"| {st.get('name','')} | {st['symbol']} | {pct_txt} | {st['news_count']} | {st.get('bullish',0)}"
+                f" | {st.get('bearish',0)} | {st.get('net_ratio',0):+.0%} | {tags} |"
+            )
+        L.append("")
+    else:
+        L.append("## 六、新闻情绪\n")
+        L.append("- 未运行 news_review.py（容器内）：无当日新闻情绪数据。先执行 `docker exec quantmind python3 /app/skills/daily-review/scripts/news_review.py --date {date}` 补上，方向研判会加回该维度。".replace("{date}", stats.get("meta", {}).get("trade_date", "").replace("-", "")))
+        L.append("")
+
+    # ── 七、L1/L2 因子透视 + 板块资金流 ──
+    fv = stats.get("factors") or {}
+    if fv:
+        L.append("## 七、L1/L2 因子透视\n")
+        l1 = fv.get("l1") or {}
+        if l1:
+            L.append("### L1 换手/动量/波动（全市场均值）\n")
+            L.append("| 因子 | 当日 | 前日 | 变化 |")
+            L.append("|---|---|---|---|")
+            label = {
+                "turn_1": "换手率1日", "turn_5": "换手率5日", "mom_ret_1d": "动量1日",
+                "mom_ret_5d": "动量5日", "mom_ret_10d": "动量10日", "vol_std_20": "波动率20日",
+                "vol_atr_14": "ATR14", "style_idio_vol_20": "特质波动20日",
+            }
+            for c, v in l1.items():
+                p = v.get("prev"); d = v.get("delta")
+                dl = "" if d is None else f"{d:+.3f}" if abs(float(d)) >= 0.001 else ""
+                L.append(f"| {label.get(c, c)} | {v['now']:.4f} | {p if p is not None else '—'} | {dl} |")
+            L.append("")
+        l2 = fv.get("l2") or {}
+        if l2:
+            strong = l2.get("strong_pct")
+            L.append("### L2 微观结构（全市场截面）\n")
+            L.append(f"- 正向因子强信号股占比：**{strong:.0%}**（14 推荐因子截面均值≥65 分位；越高=知情资金越扩散）" if strong is not None else "- 正向因子强信号占比：[缺失]")
+            L.append(f"- VPIN 家族全市场中位分位：**{l2.get('vpin_mean')}**；量价背离均值 {l2.get('divergence_mean')}（前日 {l2.get('divergence_prev')}）")
+            L.append(
+                f"- 超级大单净额：**{l2.get('super_net_yi'):+.2f} 亿**（前日 {l2.get('super_prev_yi'):+.2f} 亿）"
+                if l2.get("super_net_yi") is not None else "- 超级大单净额：[缺失]"
+            )
+            L.append("")
+        sf2 = fv.get("sector_flow") or []
+        if sf2:
+            L.append("### 板块超级大单净额（亿，申万一级）\n")
+            L.append("| 净流入 | 净流出 |")
+            L.append("|---|---|")
+            inflow = [r for r in sf2 if r["net_yi"] >= 0][:8]
+            outflow = [r for r in sf2 if r["net_yi"] < 0][-8:]
+            mlen = max(len(inflow), len(outflow))
+            for i in range(mlen):
+                li = f"{inflow[i]['industry']} {inflow[i]['net_yi']:+.1f}亿" if i < len(inflow) else ""
+                lo = f"{outflow[i]['industry']} {outflow[i]['net_yi']:+.1f}亿" if i < len(outflow) else ""
+                L.append(f"| {li} | {lo} |")
+            L.append("")
+
+    L.append("## 八、个股榜（剔除 ST 与新股首日）\n")
     L.append("### 涨幅榜 Top20\n")
     L.append("| 名称 | 代码 | 涨跌幅 | 行业 | 状态 |")
     L.append("|---|---|---|---|---|")
@@ -745,7 +1052,7 @@ def render_facts(stats: dict) -> str:
     L.append("")
 
     if stats.get("watch"):
-        L.append("## 七、自选/持仓复盘\n")
+        L.append("## 九、自选/持仓复盘\n")
         L.append("| 名称 | 代码 | 收盘 | 涨跌幅 | 成交额 | 换手率 | MA20 | 行业 | 状态 |")
         L.append("|---|---|---|---|---|---|---|---|---|")
         for r in stats["watch"]:
@@ -758,6 +1065,85 @@ def render_facts(stats: dict) -> str:
                 f" | {r['turnover_pct']:.2f}% | {ma20_s} | {r['industry']} | {r['category']} |"
             )
         L.append("")
+
+    # ── 十、次日走势研判（方向引擎，六维加权）──
+    d = stats.get("direction") or {}
+    if d.get("direction"):
+        L.append("## 十、次日走势研判\n")
+        L.append(
+            f"> **方向：{d['direction']}**（得分 {d['total_score']:+.2f} / 满分 {d['max_score']:.1f}）"
+            f" · **置信度 {'★' * int(d.get('confidence') or 0)}**（{d.get('confidence')}/5）\n"
+        )
+        L.append("| 维度 | 得分 | 权重 | 依据 |")
+        L.append("|---|---|---|---|")
+        for dim in d.get("dimensions") or []:
+            L.append(f"| {dim['name']} | {dim['score']:+.2f} | {dim['weight']} | {dim['evidence']} |")
+        L.append("")
+        L.append("**研判口径**：正分=看多证据、负分=看空证据、±0=中性/数据缺失；")
+        L.append("方向只是六维信号的可解释合成，非预测承诺。明日以指数/广度验证：方向 + 置信度星级 + 各维依据。")
+        L.append("")
+
+    # ── 十一、模型推理信号（昨日验证 + 明日 Top5）──
+    mi = stats.get("model_inference")
+    if mi:
+        L.append("## 十一、模型推理信号\n")
+        L.append(f"- 模型：`{mi['model_id']}`（推理信号自动查询 PG，默认每日推理模型）")
+        att = mi.get("inference_attempt")
+        if att:
+            if att.get("error"):
+                L.append(f"- ⚠️ 推理自动补跑异常：{att['error']}")
+            elif att.get("skip"):
+                L.append(f"- ⚠️ 推理自动补跑跳过：{att['skip']}")
+            else:
+                ok_days = [d for d, r in att.items() if isinstance(r, dict) and r.get("ok")]
+                fail_days = [d for d, r in att.items() if isinstance(r, dict) and not r.get("ok")]
+                if ok_days:
+                    L.append(f"- ✅ 无推理 run，已自动补跑成功：{', '.join(ok_days)}（推理约 10-30 秒）")
+                for d in fail_days:
+                    detail = str(att[d].get("detail", ""))[-200:]
+                    L.append(f"- ⚠️ 补跑 {d} 失败：{detail}")
+        prev_block = mi.get("prev_vs_today")
+        if prev_block:
+            runx = prev_block
+            fb_tag = "（当日无推理，取最近一次）" if runx.get("fallback") else ""
+            L.append(f"### 昨日推理 → 今日验证（推理 {runx['data_trade_date']} → 信号 {runx['prediction_trade_date']}）{fb_tag}\n")
+            if runx.get("fallback_note"):
+                L.append(f"- {runx['fallback_note']}")
+            h = runx.get("hit_summary") or {}
+            if h.get("n"):
+                excess = h.get("excess_pct")
+                if excess is None:
+                    excess_txt = "（无全市场对照；"
+                else:
+                    win = "跑赢" if excess > 0 else "跑输"
+                    excess_txt = f"（相对全市场超额 {excess:+.3f}%，{win}市场；"
+                L.append(
+                    f"- 前 {h['n']} 信号今日平均涨幅 **{h['avg_pct']:+.3f}%**"
+                    f"{excess_txt}命中率 {h['hit_rate']*100:.0f}%，"
+                    f"上涨 {h['up']}/下跌 {h['down']}，涨停 {h['limit_up']} / 跌停 {h['limit_down']}）"
+                )
+            L.append("\n| 排名 | 名称 | 代码 | 信号分 | 今日涨跌 | 成交额(亿) | 状态 |")
+            L.append("|---|---|---|---|---|---|---|")
+            for i, sig in enumerate(runx["signals"][:10], 1):
+                pct_txt = f"{sig['today_pct']:+.2f}%" if sig.get("today_pct") is not None else "—"
+                amt_txt = f"{sig['amount_yi']:.1f}" if sig.get("amount_yi") is not None else "—"
+                L.append(f"| {i} | {sig.get('name','')} | {sig['symbol']} | {sig['fusion_score']:.4f} | {pct_txt} | {amt_txt} | {sig.get('category','')} |")
+            L.append("")
+        next_block = mi.get("next_top5")
+        if next_block:
+            runx = next_block
+            tag = "（今日推理未跑，取最近一次推理）" if runx.get("fallback") else ""
+            L.append(f"### 明日信号 Top5（推理 {runx['data_trade_date']} → 预测 {runx['prediction_trade_date']}）{tag}\n")
+            if runx.get("fallback_note"):
+                L.append(f"- {runx['fallback_note']}")
+            L.append("\n| 排名 | 名称 | 代码 | 信号分 | 方向 |")
+            L.append("|---|---|---|---|---|")
+            for i, sig in enumerate(runx["signals"], 1):
+                side = sig.get("signal_side") or "—"
+                L.append(f"| {i} | {sig.get('name','')} | {sig['symbol']} | {sig['fusion_score']:.4f} | {side} |")
+            L.append("")
+        L.append("**口径**：信号来自模型推理 PG（fusion_score 降序）；昨日验证对照当日实际涨跌，"
+                 "命中率=上涨占比，超额=信号股平均涨幅−全市场平均。推理信号仅供研究，不构成投资建议。\n")
 
     L.append("## 数据说明\n")
     L.append("- 单位口径：[quantdb-fields] 技能。个股 volume=股、amount=万元（本清单已折算为亿元）；指数 volume=手。")
@@ -773,6 +1159,7 @@ def main() -> None:
     ap.add_argument("--out-dir", help="输出目录，默认 <repo>/data/reports/daily_review")
     ap.add_argument("--watch", help="自选/持仓股逗号分隔，如 601138.SH,600519.SH")
     ap.add_argument("--include-st", action="store_true", help="个股榜保留 ST")
+    ap.add_argument("--model", help="模型推理信号 model_id，默认每日推理模型")
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir) if args.data_dir else default_data_dir()
@@ -787,14 +1174,10 @@ def main() -> None:
     prev_date = prev_dates[1] if len(prev_dates) > 1 else ""
     trade_dt_obj = pd.Timestamp(trade_date)
 
-    import os as _os
-    _inst_path = f"{data_dir}/2_base_sector/instrument_detail/instrument_list.parquet"
-    if not _os.path.exists(_inst_path):
-        _inst_path = f"{data_dir}/2_base_sector/instrument_detail/instrument_detail.parquet"
     names_df = q(
         db,
         f"SELECT Symbol, Name FROM read_parquet("
-        f"'{_inst_path}')",
+        f"'{data_dir}/2_base_sector/instrument_detail/instrument_detail.parquet')",
     )
     names = dict(zip(names_df["Symbol"], names_df["Name"]))
     st_set = {s for s, n in names.items() if "ST" in n}
@@ -821,6 +1204,8 @@ def main() -> None:
     sectors = load_sector_stats(db, data_dir, pct_series, mv if not mv.empty else None)
     sentiment = load_sentiment_stats(db, data_dir, trade_date)
     funds = load_fund_stats(db, data_dir, trade_date)
+    sector_multiday = load_sector_multiday(db, data_dir, trade_date, industry)
+    sector_flow = load_sector_flow_multiday(db, data_dir, trade_date, industry)
     index_rows = load_index_stats(db, data_dir, trade_date)
     top = load_top_lists(today, names, industry, turnover, include_st=args.include_st)
     watch = (
@@ -836,6 +1221,150 @@ def main() -> None:
         for p in preflight
         if p["status"] == "stale"
     }
+    factors = load_factor_stats(db, data_dir, trade_date, prev_date, industry)
+
+    # 新闻情绪 stats（{date}_news.json 由 news_review.py 在容器内产出；缺失则方向降级）
+    news_stats: dict | None = None
+    news_path = out_dir / f"{trade_dt_obj.date()}_news.json"
+    if news_path.exists():
+        try:
+            news_stats = json.loads(news_path.read_text(encoding="utf-8"))
+            # 升级：给有新闻的股票注入当日涨跌幅 + 汇总（新闻股 vs 全市场、看多 vs 看空）
+            if news_stats and news_stats.get("stocks"):
+                market_avg = float(pct_series.dropna().mean()) if len(pct_series.dropna()) else None
+                for st in news_stats["stocks"]:
+                    sym = st.get("symbol", "")
+                    st["today_pct"] = (
+                        round(float(pct_series[sym]), 2)
+                        if sym in pct_series.index and pd.notna(pct_series[sym])
+                        else None
+                    )
+                with_pct = [s for s in news_stats["stocks"] if s.get("today_pct") is not None]
+                if with_pct:
+                    avg_all = sum(s["today_pct"] for s in with_pct) / len(with_pct)
+                    bull_grp = [s["today_pct"] for s in with_pct if s.get("net_ratio", 0) > 0]
+                    bear_grp = [s["today_pct"] for s in with_pct if s.get("net_ratio", 0) < 0]
+                    news_stats["price_link"] = {
+                        "n": len(with_pct),
+                        "avg_pct": round(avg_all, 2),
+                        "market_avg_pct": round(market_avg, 2) if market_avg is not None else None,
+                        "excess_pct": round(avg_all - market_avg, 2) if market_avg is not None else None,
+                        "bull_avg_pct": round(sum(bull_grp) / len(bull_grp), 2) if bull_grp else None,
+                        "bear_avg_pct": round(sum(bear_grp) / len(bear_grp), 2) if bear_grp else None,
+                    }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("read news stats failed: %s", exc)
+
+    # ── 模型推理信号（昨日→今日验证 + 今日→明日 Top5）──
+    model_inference: dict | None = None
+    try:
+        import inference_signals as isig
+        from review_stats import inference_hit_rate
+
+        model_id = args.model or isig.DEFAULT_MODEL_ID
+        td = trade_dt_obj.date()
+
+        prev_run = isig.load_prev_vs_today(model_id, td, fallback=False)
+        next_run = isig.load_next_top_n(model_id, td, fallback=False)
+
+        # 无推理 run 时先自动补跑（用户要求：不能跳过；推理仅 10-30 秒）
+        # 补跑特征日 = 复盘日前一交易日（prediction=复盘日供验证）+ 复盘日（供明日信号）
+        if not prev_run or not next_run:
+            inference_attempt: dict[str, Any] = {}
+            try:
+                import shutil
+                import subprocess
+
+                if shutil.which("docker"):
+                    script_src = Path(__file__).resolve().parent / "trigger_inference.py"
+                    subprocess.run(
+                        ["docker", "cp", str(script_src), "quantmind:/tmp/"],
+                        capture_output=True, timeout=60,
+                    )
+                    prev_date_str = prev_date if prev_date else ""
+                    for d in (prev_date_str, trade_date):
+                        if not d:
+                            continue
+                        p = subprocess.run(
+                            ["docker", "exec", "quantmind", "python3",
+                             "/tmp/trigger_inference.py", "--date", d],
+                            capture_output=True, text=True, timeout=600,
+                        )
+                        out = (p.stdout or "").strip().splitlines()[-1] if p.stdout else ""
+                        inference_attempt[d] = {
+                            "ok": p.returncode == 0,
+                            "detail": out or (p.stderr or "").strip()[-300:],
+                        }
+                        if p.returncode == 0:
+                            # 补跑成功 → 重新查询
+                            prev_run = isig.load_prev_vs_today(model_id, td, fallback=False)
+                            next_run = isig.load_next_top_n(model_id, td, fallback=False)
+                else:
+                    inference_attempt = {"skip": "docker 不可用（宿主机无 docker CLI）"}
+            except Exception as exc:  # noqa: BLE001
+                inference_attempt = {"error": str(exc)[:200]}
+            # 补跑失败/无 docker → 回退最近一次推理并标注
+            if not prev_run:
+                prev_run = isig.load_prev_vs_today(model_id, td, fallback=True)
+            if not next_run:
+                next_run = isig.load_next_top_n(model_id, td, fallback=True)
+
+        if prev_run or next_run:
+            cat_map = today.set_index("symbol")["category"].to_dict()
+            model_inference = {"model_id": model_id, "trade_date": str(td)}
+            if inference_attempt:
+                model_inference["inference_attempt"] = inference_attempt
+            # 验证基准日：fallback run 的 prediction 日可能 ≠ trade_date（如当日无推理），
+            # 须按 run 自身 prediction 日取涨跌/成交额，避免用错日期验证
+            def _pct_series_for(pred_date: str) -> pd.Series:
+                if str(pred_date).replace("-", "") == trade_date:
+                    return pct_series
+                p_dates = load_trading_days(db, data_dir, 2, str(pred_date).replace("-", ""))
+                if len(p_dates) < 2:
+                    return pct_series
+                df = load_unadj(db, data_dir, p_dates)
+                if df.empty:
+                    return pct_series
+                cur = df[df["dt"] == p_dates[0]]
+                prev = df[df["dt"] == p_dates[1]].set_index("symbol")["close"]
+                s = cur.set_index("symbol")["close"]
+                pct = (s / prev.reindex(s.index) - 1) * 100
+                return pct.dropna()
+
+            all_sigs = (prev_run["signals"] if prev_run else []) + (next_run["signals"] if next_run else [])
+            for sig in all_sigs:
+                sig["name"] = names.get(sig["symbol"], "")
+                sig["category"] = cat_map.get(sig["symbol"], "")
+            for runx in (prev_run, next_run):
+                if not runx:
+                    continue
+                ps = _pct_series_for(runx["prediction_trade_date"])
+                market_avg_run = float(ps.dropna().mean()) if len(ps.dropna()) else None
+                today_run = today.set_index("symbol").get("amount", pd.Series(dtype=float))
+                for sig in runx["signals"]:
+                    sym = sig["symbol"]
+                    sig["today_pct"] = (
+                        round(float(ps[sym]), 2) if sym in ps.index and pd.notna(ps[sym]) else None
+                    )
+                    sig["amount_yi"] = (
+                        round(float(today_run[sym]) / 1e4, 2)
+                        if sym in today_run.index and pd.notna(today_run.get(sym))
+                        else None
+                    )
+                runx["_market_avg"] = market_avg_run
+            if prev_run:
+                prev_run["hit_summary"] = inference_hit_rate(
+                    prev_run["signals"],
+                    _pct_series_for(prev_run["prediction_trade_date"]),
+                    market_avg=prev_run.get("_market_avg"), category_map=cat_map,
+                )
+                model_inference["prev_vs_today"] = prev_run
+            if next_run:
+                model_inference["next_top5"] = next_run
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load model inference failed (降级): %s", exc)
+        model_inference = None
+
     stats = {
         "meta": {
             "trade_date": str(trade_dt_obj.date()),
@@ -849,9 +1378,18 @@ def main() -> None:
         "sectors": sectors,
         "sentiment": sentiment,
         "funds": funds,
+        "factors": factors,
+        "news": news_stats,
+        "model_inference": model_inference,
         "top": top,
         "watch": watch,
+        "sector_multiday": sector_multiday,
+        "sector_flow": sector_flow,
     }
+    # 次日走势方向：六维加权 → 明确方向 + 置信度（news 缺失时自动降级提示）
+    from direction_engine import score_dimensions
+
+    stats["direction"] = score_dimensions(stats)
 
     json_path = out_dir / f"{trade_dt_obj.date()}_stats.json"
     facts_path = out_dir / f"{trade_dt_obj.date()}_facts.md"
@@ -864,6 +1402,111 @@ def main() -> None:
         f"涨停 {market['limit_up']} / 跌停 {market['limit_down']} / 炸板 {market['broke_up']}，"
         f"成交额 {_yi(market['total_amount_yi'])}"
     )
+    d = stats.get("direction") or {}
+    if d.get("direction"):
+        print(
+            f"次日方向研判：{d['direction']}（得分 {d['total_score']}/{d['max_score']}）"
+            f"置信度 {'★' * int(d.get('confidence') or 0)}"
+        )
+
+
+
+# ── 升级：行业多日涨跌幅（1/3/5 日，提炼市场分析口径）──
+
+def load_sector_multiday(
+    db: duckdb.DuckDBPyConnection,
+    data_dir: Path,
+    trade_date: str,
+    industry_map: dict[str, str],
+) -> dict:
+    """行业 1/3/5 日累计涨幅（成分股中位数口径，与 market-analysis 一致）。
+
+    读 daily_unadjusted 最近 6 个交易日 → 按申万一级行业聚合中位数涨幅。
+    """
+    days = load_trading_days(db, data_dir, 6, trade_date)
+    if len(days) < 3:
+        return {"latest": trade_date, "items": []}
+    df = load_unadj(db, data_dir, days)
+    if df.empty:
+        return {"latest": trade_date, "items": []}
+    piv = df.pivot_table(index="symbol", columns="dt", values="close")
+    cols = [c for c in days if c in piv.columns]  # 保持日期顺序（最新在前）
+    if len(cols) < 2:
+        return {"latest": trade_date, "items": []}
+    close_t0 = piv[cols[0]]
+
+    def _pct(offset: int) -> pd.Series:
+        idx = len(cols) - 1 - offset
+        if idx < 0:
+            return pd.Series(dtype=float)
+        return (close_t0 / piv[cols[idx]] - 1) * 100
+
+    p1, p3, p5 = _pct(0), _pct(2), _pct(4)
+    per = pd.DataFrame({"pct_1d": p1, "pct_3d": p3, "pct_5d": p5})
+
+    groups: dict[str, list[str]] = {}
+    for sym, ind in industry_map.items():
+        if ind != "未知":
+            groups.setdefault(ind, []).append(sym)
+
+    items = []
+    for name, syms in groups.items():
+        sub = per.loc[per.index.intersection(syms)]
+        if sub.empty:
+            continue
+        items.append({
+            "name": name,
+            "pct_1d": round(float(sub["pct_1d"].median()), 2),
+            "pct_3d": round(float(sub["pct_3d"].median()), 2),
+            "pct_5d": round(float(sub["pct_5d"].median()), 2),
+        })
+    items.sort(key=lambda x: x["pct_5d"], reverse=True)
+    return {"latest": trade_date, "items": items}
+
+
+def load_sector_flow_multiday(
+    db: duckdb.DuckDBPyConnection,
+    data_dir: Path,
+    trade_date: str,
+    industry_map: dict[str, str],
+) -> dict:
+    """板块主力资金净流入 1/5/10 日（L2 flow_net_amount 按行业聚合，亿元）。"""
+    days = load_trading_days(db, data_dir, 10, trade_date)
+    if not days:
+        return {"latest": trade_date, "items": []}
+    dt_in = ",".join(f"'{d}'" for d in days)
+    df = q(
+        db,
+        f"SELECT symbol, dt, flow_net_amount FROM read_parquet("
+        f"'{data_dir}/6_ml_datasets/l2_factors/dt=*/data.parquet', hive_partitioning=true)"
+        f" WHERE dt IN ({dt_in})",
+    )
+    if df.empty:
+        return {"latest": trade_date, "items": []}
+    df["dt"] = df["dt"].astype(str)  # l2_factors dt 为 int（20260828），统一字符串
+    df["ind"] = df["symbol"].map(industry_map).fillna("未知")
+    df = df[df["ind"] != "未知"]
+    if df.empty:
+        return {"latest": trade_date, "items": []}
+    df["net_yi"] = df["flow_net_amount"] / 1e8
+    idx_of = {d: i for i, d in enumerate(days)}
+
+    def _agg(n: int) -> pd.Series:
+        keep = [d for d in days[:n] if d in idx_of]
+        sub = df[df["dt"].isin(keep)]
+        return sub.groupby("ind")["net_yi"].sum()
+
+    g1, g5, g10 = _agg(1), _agg(5), _agg(10)
+    items = []
+    for ind in g10.index:
+        items.append({
+            "name": ind,
+            "flow_1d_yi": round(float(g1.get(ind, 0.0)), 2),
+            "flow_5d_yi": round(float(g5.get(ind, 0.0)), 2),
+            "flow_10d_yi": round(float(g10.get(ind, 0.0)), 2),
+        })
+    items.sort(key=lambda x: x["flow_10d_yi"], reverse=True)
+    return {"latest": trade_date, "items": items}
 
 
 if __name__ == "__main__":

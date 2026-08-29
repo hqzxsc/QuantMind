@@ -456,7 +456,12 @@ class QuantDBDataHub:
             col_map["rs_hycode_sim"] = "ind_code_l1"
         if not col_map:
             return pd.DataFrame()
-        symbol_col = "symbol" if "symbol" in df.columns else "wind_code" if "wind_code" in df.columns else None
+        symbol_col = (
+            "symbol" if "symbol" in df.columns
+            else "wind_code" if "wind_code" in df.columns
+            else "Symbol" if "Symbol" in df.columns  # QuantDB 实测为大写 Symbol
+            else None
+        )
         if symbol_col is None:
             return pd.DataFrame()
         result = df[[symbol_col] + list(col_map.keys())].rename(columns={**col_map, symbol_col: "symbol"})

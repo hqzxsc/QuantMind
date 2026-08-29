@@ -7,16 +7,18 @@ import React from 'react';
 interface PdfPreviewProps {
   url: string;
   filename: string;
+  /** iframe 高度，默认 calc(88vh - 45px)（整页内嵌场景）；弹窗场景传视口自适应值 */
+  height?: string;
 }
 
-const PdfPreview: React.FC<PdfPreviewProps> = ({ url }) => {
+const PdfPreview: React.FC<PdfPreviewProps> = ({ url, height = 'calc(88vh - 45px)' }) => {
   return (
     <iframe
       src={url}
       style={{
         width: '100%',
         border: 'none',
-        height: 'calc(88vh - 45px)',
+        height,
         minHeight: 500,
         background: '#f8fafc',
       }}

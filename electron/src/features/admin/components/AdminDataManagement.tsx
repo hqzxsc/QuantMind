@@ -36,6 +36,7 @@ export const AdminDataManagement: React.FC = () => {
         <span className="flex items-center gap-2 font-bold text-sm">
           <span>🇭🇰</span>
           <span>港股市场 (QuantHK)</span>
+          <Tag className="m-0 border-orange-200 text-orange-500 bg-orange-50 rounded-full px-1.5 py-0 text-[10px] font-black">Beta</Tag>
         </span>
       ),
       children: (
@@ -52,6 +53,7 @@ export const AdminDataManagement: React.FC = () => {
         <span className="flex items-center gap-2 font-bold text-sm">
           <span>🇺🇸</span>
           <span>美股市场 (QuantUS)</span>
+          <Tag className="m-0 border-orange-200 text-orange-500 bg-orange-50 rounded-full px-1.5 py-0 text-[10px] font-black">Beta</Tag>
         </span>
       ),
       children: (
@@ -68,6 +70,7 @@ export const AdminDataManagement: React.FC = () => {
         <span className="flex items-center gap-2 font-bold text-sm">
           <span>⚡</span>
           <span>国内期货 (QuantFutures)</span>
+          <Tag className="m-0 border-orange-200 text-orange-500 bg-orange-50 rounded-full px-1.5 py-0 text-[10px] font-black">Beta</Tag>
         </span>
       ),
       children: (
@@ -84,6 +87,7 @@ export const AdminDataManagement: React.FC = () => {
         <span className="flex items-center gap-2 font-bold text-sm">
           <span>🪙</span>
           <span>加密货币 (QuantBC)</span>
+          <Tag className="m-0 border-orange-200 text-orange-500 bg-orange-50 rounded-full px-1.5 py-0 text-[10px] font-black">Beta</Tag>
         </span>
       ),
       children: (

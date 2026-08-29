@@ -1,10 +1,10 @@
 /** Qlib 数据管理（仅 A 股 CN）：查看 Qlib 数据集状态，通过 QuantDB SDK 更新 / 本地重建 */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, Button, Card, Descriptions, Modal, Progress, Space, Switch, Table, Tag, Typography, message,
+  Alert, Button, Card, Descriptions, Modal, Progress, Space, Table, Tag, Typography, message,
 } from 'antd';
 import {
-  DatabaseOutlined, ReloadOutlined, RocketOutlined, SyncOutlined, StopOutlined,
+  DatabaseOutlined, ReloadOutlined, SyncOutlined, StopOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { dataPlatformService } from '../services/dataPlatformService';
@@ -39,8 +39,7 @@ export const AdminQlibDataPanel: React.FC = () => {
   const [status, setStatus] = useState<QlibStatus | null>(null);
   const [jobs, setJobs] = useState<QlibJob[]>([]);
   const [loading, setLoading] = useState(false);
-  const [incremental, setIncremental] = useState(true);
-  const [acting, setActing] = useState<string | null>(null);
+  const [acting, setActing] = useState(false);
 
   const hasRunning = useMemo(() => jobs.some((j) => RUNNING_STATUS.includes(j.status)), [jobs]);
   const activeJobId = useMemo(() => jobs.find((j) => RUNNING_STATUS.includes(j.status))?.job_id, [jobs]);
@@ -77,43 +76,23 @@ export const AdminQlibDataPanel: React.FC = () => {
     return () => clearInterval(timer);
   }, [hasRunning, loadStatus, loadJobs]);
 
-  const doBuild = () => {
-    if (acting) return;
-    Modal.confirm({
-      title: '构建 / 更新 Qlib',
-      content: incremental ? '将从本地 parquet 增量更新 Qlib 缓存（仅追加新交易日）。' : '将全量重建 Qlib 缓存（耗时较长，会重写全部标的）。确定继续？',
-      okText: '开始构建',
-      cancelText: '取消',
-      onOk: async () => {
-        setActing('build');
-        try {
-          await dataPlatformService.buildQlib(incremental);
-          message.success(incremental ? '已提交增量更新任务' : '已提交全量重建任务');
-          loadJobs();
-        } catch (e: any) {
-          message.error(e?.response?.data?.detail || '提交构建失败');
-        } finally { setActing(null); }
-      },
-    });
-  };
-
   const doSdkUpdate = () => {
     if (acting) return;
     Modal.confirm({
-      title: '通过 QuantDB SDK 更新',
-      content: '将先通过 QuantDB SDK 同步 K 线 parquet（daily_forward / daily_unadjusted / index_daily），再重建 Qlib 缓存。此操作会消耗 SDK 流量配额。确定继续？',
+      title: '更新 Qlib',
+      content: '将通过 QuantDB SDK 同步 K 线 parquet（daily_forward / daily_unadjusted / index_daily）并重建 Qlib 缓存。此操作会消耗 SDK 流量配额。确定继续？',
       okText: '开始更新',
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
-        setActing('sdk_update');
+        setActing(true);
         try {
           await dataPlatformService.updateQlibFromSdk();
           message.success('已提交 SDK 同步 + Qlib 更新任务');
           loadJobs();
         } catch (e: any) {
           message.error(e?.response?.data?.detail || '提交更新失败');
-        } finally { setActing(null); }
+        } finally { setActing(false); }
       },
     });
   };
@@ -154,7 +133,7 @@ export const AdminQlibDataPanel: React.FC = () => {
               <Tag className="m-0 rounded-full font-black">A 股 CN</Tag>
             </div>
             <Text className="text-slate-400 text-xs mt-1 block">
-              查看当前系统 Qlib 数据集状态，并本地增量/全量重建，或通过 QuantDB SDK 同步 K 线后重建。
+              查看当前系统 Qlib 数据集状态，通过 QuantDB SDK 同步 K 线后重建缓存。
             </Text>
           </div>
         </div>
@@ -197,16 +176,10 @@ export const AdminQlibDataPanel: React.FC = () => {
 
       <Card title="操作" className="rounded-3xl border-none shadow-xl shadow-slate-200/40 bg-white">
         <Space size="large" wrap>
-          <Space>
-            <span className="text-sm text-slate-600">增量更新</span>
-            <Switch checked={incremental} onChange={setIncremental} checkedChildren="增量" unCheckedChildren="全量" />
-          </Space>
-          <Button icon={<RocketOutlined />} type="primary" loading={acting === 'build'} disabled={!!activeJobId} onClick={doBuild}>
-            构建 / 更新 Qlib
+          <Button icon={<SyncOutlined />} danger loading={acting} disabled={!!activeJobId} onClick={doSdkUpdate}>
+            更新 Qlib（QuantDB SDK 同步 + 重建）
           </Button>
-          <Button icon={<SyncOutlined />} danger loading={acting === 'sdk_update'} disabled={!!activeJobId} onClick={doSdkUpdate}>
-            通过 QuantDB SDK 更新
-          </Button>
+          <Text type="secondary" className="text-xs">数据均通过 QuantDB SDK 同步更新，无需本地单独构建。</Text>
         </Space>
         {activeJobId && <Alert className="mt-4" type="info" showIcon message="有任务正在执行，请勿重复提交" description="任务完成后自动刷新状态。" />}
       </Card>

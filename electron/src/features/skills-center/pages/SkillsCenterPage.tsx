@@ -1,38 +1,58 @@
 /**
  * 技能中心（Skills Center）— 原「股票报告」页面升级版
  *
- * 上区：提示词库（复制到 QuantBot 即可使用对应技能）
- * 下区：报告档案（复用 ReportManagerPage 的文件树 + PDF 预览，
- *        数据源为统一报告目录 /data/reports/trading_agents）
+ * 与项目风格一致的单卡片布局：
+ *   左列：提示词分类 + 标题列表
+ *   中列：提示词详情（复制到 QuantBot 即可使用）
+ *   右列：报告目录（仅文件树，PDF 点击后弹窗预览）
  */
 
-import React from 'react';
+import React, { useState } from 'react';
+import { Modal } from 'antd';
 import PromptsLibrary from '../components/PromptsLibrary';
 import ReportManagerPage from '../../trading-agents/pages/ReportManagerPage';
+import PdfPreview from '../../trading-agents/components/PdfPreview';
+
+const ENGINE_BASE = '/api/v1/trading-agents';
 
 const SkillsCenterPage: React.FC = () => {
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
+
   return (
-    <div className="h-full w-full overflow-y-auto bg-[#f1f5f9] p-6 font-sans box-border">
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-6">
-        <div>
-          <h1 className="text-[20px] font-bold text-slate-900">技能中心</h1>
-          <p className="mt-1 text-[13px] text-slate-500">
-            一键复制提示词给 QuantBot 执行量化任务，或直接浏览已生成的分析报告
-          </p>
+    <div className="w-full h-full bg-[#f8fafc] p-6 flex overflow-hidden font-sans box-border select-none">
+      {/* 主一体化框架 (32px 大圆角，与全站页面风格一致) — 横向三列：左提示词分类 / 中提示词详情 / 右报告档案 */}
+      <div className="bg-white border border-gray-200 shadow-sm w-full h-full rounded-[32px] flex overflow-hidden">
+        {/* 左 + 中：提示词库（分类列表 / 提示词详情） */}
+        <div className="flex-1 min-w-0 flex overflow-hidden">
+          <PromptsLibrary />
         </div>
 
-        <PromptsLibrary />
-
-        <div className="flex items-baseline justify-between pt-2">
-          <h2 className="text-[16px] font-semibold text-slate-800">报告档案</h2>
-          <span className="text-[12px] text-slate-400">
-            QuantBot 生成的报告自动落盘，可在线预览 PDF
-          </span>
-        </div>
-        <div className="h-[640px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <ReportManagerPage />
+        {/* 右列：报告目录（单列文件树，PDF 弹窗预览），与左列提示词分类列表等宽 */}
+        <div className="w-64 shrink-0 border-l border-gray-200 overflow-hidden">
+          <ReportManagerPage embedded previewMode="modal" onPreviewFile={setPreviewFile} />
         </div>
       </div>
+
+      {/* PDF 预览弹窗 */}
+      <Modal
+        open={!!previewFile}
+        title={
+          <span className="text-sm font-bold text-slate-800 break-all">{previewFile}</span>
+        }
+        onCancel={() => setPreviewFile(null)}
+        footer={null}
+        width="82vw"
+        centered
+        destroyOnClose
+      >
+        {previewFile && (
+          <PdfPreview
+            url={`${ENGINE_BASE}/files/pdf/${encodeURIComponent(previewFile)}`}
+            filename={previewFile}
+            height="calc(100vh - 220px)"
+          />
+        )}
+      </Modal>
     </div>
   );
 };

@@ -784,14 +784,6 @@ class DataPlatformService {
         return this.unwrap(resp);
     }
 
-    async buildQlib(incremental: boolean): Promise<{ job: QlibJob }> {
-        const resp = await this.axiosInstance.post('/admin/data-platform/qlib/build', null, {
-            params: { incremental },
-            timeout: 30000,
-        });
-        return this.unwrap(resp);
-    }
-
     async updateQlibFromSdk(): Promise<{ job: QlibJob }> {
         const resp = await this.axiosInstance.post('/admin/data-platform/qlib/update-from-sdk', null, {
             timeout: 30000,

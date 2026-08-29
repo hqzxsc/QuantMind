@@ -106,7 +106,19 @@ const SIGNAL_COLORS: Record<string, string> = {
   Sell: '#dc2626',
 };
 
-const ReportManagerPage: React.FC = () => {
+interface ReportManagerPageProps {
+  /** 嵌入模式：去掉页面级 padding 与 32px 圆角卡片外壳，供技能中心三列布局复用 */
+  embedded?: boolean;
+  /** 预览方式：inline = 右侧内嵌预览面板（默认）；modal = 不渲染预览面板，点击文件经 onPreviewFile 回调给宿主弹窗预览 */
+  previewMode?: 'inline' | 'modal';
+  onPreviewFile?: (filename: string) => void;
+}
+
+const ReportManagerPage: React.FC<ReportManagerPageProps> = ({
+  embedded = false,
+  previewMode = 'inline',
+  onPreviewFile,
+}) => {
   const [list, setList] = useState<FileListResponse>({ root: '', folders: [], files: [] });
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null); // 当前预览的文件
@@ -182,6 +194,10 @@ const ReportManagerPage: React.FC = () => {
   };
 
   const handlePreview = (filename: string) => {
+    if (previewMode === 'modal') {
+      onPreviewFile?.(filename);
+      return;
+    }
     setSelected(filename);
     (setPreviewKey as any)((k: number) => k + 1);
   };
@@ -302,11 +318,11 @@ const ReportManagerPage: React.FC = () => {
           <FileIcon style={{ width: 15, height: 15, color: '#94a3b8', flexShrink: 0 }} />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 500, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ fontSize: 11.5, fontWeight: 600, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {file.name || file.ticker || file.filename}
           </div>
-          <div style={{ fontSize: 10, color: '#94a3b8' }}>
-            {file.ticker || ''} {file.date || ''} {formatTime(file.modified)}
+          <div style={{ fontSize: 10, color: '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {[file.ticker, file.date, formatTime(file.modified)].filter(Boolean).join(' · ')}
           </div>
         </div>
         {file.signal && (
@@ -330,10 +346,22 @@ const ReportManagerPage: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full bg-[#f8fafc] p-6 flex flex-col overflow-hidden font-sans box-border select-none">
-      {/* 主一体化框架 (32px 大圆角) */}
-      <div className="bg-white border border-gray-200 shadow-sm w-full h-full rounded-[32px] flex overflow-hidden">
-        <div className="w-80 shrink-0 flex flex-col border-r border-gray-200 bg-white overflow-hidden">
+    <div
+      className={`w-full h-full flex flex-col overflow-hidden font-sans box-border select-none ${
+        embedded ? '' : 'bg-[#f8fafc] p-6'
+      }`}
+    >
+      {/* 主一体化框架 (32px 大圆角，嵌入模式由外层容器提供) */}
+      <div
+        className={`w-full h-full flex overflow-hidden ${
+          embedded ? '' : 'bg-white border border-gray-200 shadow-sm rounded-[32px]'
+        }`}
+      >
+        <div
+          className={`shrink-0 flex flex-col bg-white overflow-hidden ${
+            previewMode === 'modal' ? 'w-full flex-1' : 'w-80 border-r border-gray-200'
+          }`}
+        >
           <div className="p-4 border-b border-gray-200">
             <div className="text-sm font-bold text-slate-800 flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
@@ -368,7 +396,7 @@ const ReportManagerPage: React.FC = () => {
                   cursor: 'pointer',
                 }}
               >
-                <FolderPlus style={{ width: 13, height: 13 }} /> 新建文件夹
+                <FolderPlus style={{ width: 13, height: 13 }} /> 新建
               </button>
               <button
                 onClick={handleDeleteSelected}
@@ -387,7 +415,7 @@ const ReportManagerPage: React.FC = () => {
                   cursor: selectedForDelete.size ? 'pointer' : 'not-allowed',
                 }}
               >
-                <Trash2 style={{ width: 13, height: 13 }} /> 删除({selectedForDelete.size})
+                <Trash2 style={{ width: 13, height: 13 }} /> 删除
               </button>
               <button
                 onClick={() => setShowMoveFolder(!showMoveFolder)}
@@ -406,7 +434,7 @@ const ReportManagerPage: React.FC = () => {
                   cursor: selectedForDelete.size ? 'pointer' : 'not-allowed',
                 }}
               >
-                移动到...
+                移动
               </button>
             </div>
             {showMoveFolder && (
@@ -612,6 +640,7 @@ const ReportManagerPage: React.FC = () => {
             提示：勾选文件可多选删除；分析完成后 md + PDF 自动归档到「市场文件夹 → 股票名文件夹」。
           </div>
         </div>
+        {previewMode !== 'modal' && (
         <div className="flex-1 min-w-0 flex flex-col bg-gray-50/50 overflow-hidden">
           {selected ? (
             <>
@@ -652,6 +681,7 @@ const ReportManagerPage: React.FC = () => {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { message, Input, Button, Spin, Select } from 'antd';
-import { Key, Save, Eye, EyeOff, CheckCircle, AlertCircle, Trash2 } from 'lucide-react';
+import { message, Input, Button, Spin, Select, Radio } from 'antd';
+import { Key, Save, Eye, EyeOff, CheckCircle, AlertCircle, Trash2, Zap } from 'lucide-react';
 import { userCenterService } from '../services/userCenterService';
 
 interface OtherSettingsProps {
@@ -8,17 +8,65 @@ interface OtherSettingsProps {
   tenantId: string;
 }
 
-const MODEL_PRESETS = [
-  { label: 'GLM-5.1 (SiliconFlow)', value: 'Pro/zai-org/GLM-5.1', baseUrl: 'https://api.siliconflow.cn/v1' },
-  { label: 'DeepSeek-V3', value: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' },
-  { label: 'DeepSeek-R1 (推理)', value: 'deepseek-reasoner', baseUrl: 'https://api.deepseek.com/v1' },
-  { label: 'Qwen-Max (通义千问)', value: 'qwen-max', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { label: 'Qwen-Plus', value: 'qwen-plus', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { label: 'GPT-4o', value: 'gpt-4o', baseUrl: 'https://api.openai.com/v1' },
-  { label: 'GPT-4o-mini', value: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' },
-  { label: 'Claude Sonnet 4', value: 'claude-sonnet-4-20250514', baseUrl: 'https://api.anthropic.com/v1' },
-  { label: '自定义', value: '__custom__', baseUrl: '' },
+// 供应商及其地址选项
+interface ProviderMeta {
+  id: string;
+  label: string;
+  baseUrls: { id: string; label: string; url: string }[];
+  defaultBaseUrlId: string;
+  models: { label: string; value: string }[];
+  defaultModel: string;
+}
+
+const PROVIDERS: ProviderMeta[] = [
+  {
+    id: 'deepseek',
+    label: 'DeepSeek（深度求索）',
+    baseUrls: [
+      { id: 'openai', label: 'OpenAI 兼容', url: 'https://api.deepseek.com' },
+      { id: 'anthropic', label: 'Anthropic 兼容', url: 'https://api.deepseek.com/anthropic' },
+    ],
+    defaultBaseUrlId: 'openai',
+    models: [
+      { label: 'deepseek-v4-flash', value: 'deepseek-v4-flash' },
+      { label: 'deepseek-v4-pro', value: 'deepseek-v4-pro' },
+      { label: 'deepseek-v4-flash-vision-exp', value: 'deepseek-v4-flash-vision-exp' },
+    ],
+    defaultModel: 'deepseek-v4-flash',
+  },
+  {
+    id: 'qwen',
+    label: '阿里云百炼（通义千问）',
+    baseUrls: [
+      { id: 'dashscope', label: 'DashScope 兼容', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+    ],
+    defaultBaseUrlId: 'dashscope',
+    models: [
+      { label: 'qwen3.8-max', value: 'qwen3.8-max' },
+      { label: 'qwen3.8-flash', value: 'qwen3.8-flash' },
+      { label: 'qwen3.7-max', value: 'qwen3.7-max' },
+      { label: 'qwen3.7-flash', value: 'qwen3.7-flash' },
+      { label: 'qwen3.6-max-preview', value: 'qwen3.6-max-preview' },
+      { label: 'qwen-max', value: 'qwen-max' },
+      { label: 'qwen-plus', value: 'qwen-plus' },
+      { label: 'qwen-turbo', value: 'qwen-turbo' },
+      { label: 'qwen3-coder-plus', value: 'qwen3-coder-plus' },
+      { label: 'qwen3-vl-plus', value: 'qwen3-vl-plus' },
+    ],
+    defaultModel: 'qwen3.8-max',
+  },
+  {
+    id: 'custom',
+    label: '自定义模型',
+    baseUrls: [],
+    defaultBaseUrlId: '__custom__',
+    models: [],
+    defaultModel: '',
+  },
 ];
+
+const getProvider = (id: string): ProviderMeta =>
+  PROVIDERS.find((p) => p.id === id) || PROVIDERS[0];
 
 export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }) => {
   const [apiKey, setApiKey] = useState('');
@@ -26,15 +74,24 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
   const [hasKey, setHasKey] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   const [showKey, setShowKey] = useState(false);
 
-  const [selectedModel, setSelectedModel] = useState(MODEL_PRESETS[0].value);
+  // 供应商选择
+  const [providerId, setProviderId] = useState(PROVIDERS[0].id);
+
+  // 地址区：供应商内置地址 id / 自定义
+  const [baseUrlOption, setBaseUrlOption] = useState<string>(PROVIDERS[0].defaultBaseUrlId);
+  const [customBaseUrl, setCustomBaseUrl] = useState('');
+
+  // 模型区：下拉 + 自定义模型名
+  const [selectedModel, setSelectedModel] = useState<string>(PROVIDERS[0].defaultModel);
   const [customModel, setCustomModel] = useState('');
-  const [baseUrl, setBaseUrl] = useState(MODEL_PRESETS[0].baseUrl);
   const [isCustomModel, setIsCustomModel] = useState(false);
 
   useEffect(() => {
     loadApiKeyStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   const loadApiKeyStatus = async () => {
@@ -44,24 +101,40 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
       setHasKey(result.has_key || false);
       setMaskedKey(result.masked_key || '');
 
-      // 恢复模型配置
-      const savedModel = result.model || '';
-      const savedBaseUrl = result.base_url || '';
-      if (savedBaseUrl) {
-        setBaseUrl(savedBaseUrl);
+      // 恢复供应商
+      const savedProvider = (result.provider as string) || '';
+      if (PROVIDERS.some((p) => p.id === savedProvider)) {
+        setProviderId(savedProvider);
       }
-      if (savedModel) {
-        const preset = MODEL_PRESETS.find(p => p.value === savedModel);
-        if (preset && preset.value !== '__custom__') {
-          setSelectedModel(preset.value);
-          setBaseUrl(savedBaseUrl || preset.baseUrl);
-          setIsCustomModel(false);
-        } else {
-          setSelectedModel('__custom__');
-          setCustomModel(savedModel);
-          setBaseUrl(savedBaseUrl);
-          setIsCustomModel(true);
-        }
+      const active = savedProvider && PROVIDERS.some((p) => p.id === savedProvider) ? savedProvider : providerId;
+      const meta = getProvider(active);
+
+      // 恢复接口地址
+      const savedBaseUrl = result.base_url || '';
+      const matched = meta.baseUrls.find((b) => b.url === savedBaseUrl);
+      if (matched) {
+        setBaseUrlOption(matched.id);
+        setCustomBaseUrl('');
+      } else if (savedBaseUrl) {
+        setBaseUrlOption('__custom__');
+        setCustomBaseUrl(savedBaseUrl);
+      } else {
+        setBaseUrlOption(meta.defaultBaseUrlId);
+      }
+
+      // 恢复模型
+      const savedModel = result.model || '';
+      const isPreset = meta.models.some((m) => m.value === savedModel);
+      if (savedModel && isPreset) {
+        setSelectedModel(savedModel);
+        setIsCustomModel(false);
+      } else if (savedModel) {
+        setSelectedModel('__custom__');
+        setCustomModel(savedModel);
+        setIsCustomModel(true);
+      } else {
+        setSelectedModel(meta.defaultModel);
+        setIsCustomModel(false);
       }
     } catch (error: any) {
       console.error('Failed to load API key status:', error);
@@ -71,15 +144,28 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
     }
   };
 
+  // 供应商切换
+  const handleProviderChange = (id: string) => {
+    setProviderId(id);
+    const meta = getProvider(id);
+    setBaseUrlOption(meta.defaultBaseUrlId);
+    setCustomBaseUrl('');
+    setSelectedModel(meta.defaultModel);
+    setCustomModel('');
+    setIsCustomModel(false);
+  };
+
   const handleModelChange = (value: string) => {
     setSelectedModel(value);
-    if (value === '__custom__') {
-      setIsCustomModel(true);
-    } else {
-      setIsCustomModel(false);
-      const preset = MODEL_PRESETS.find(p => p.value === value);
-      if (preset) setBaseUrl(preset.baseUrl);
-    }
+    setIsCustomModel(value === '__custom__');
+  };
+
+  const meta = getProvider(providerId);
+
+  const resolveBaseUrl = (): string => {
+    if (baseUrlOption === '__custom__') return customBaseUrl.trim();
+    const opt = meta.baseUrls.find((b) => b.id === baseUrlOption);
+    return opt ? opt.url : '';
   };
 
   const handleSaveApiKey = async () => {
@@ -95,10 +181,16 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
       return;
     }
 
+    const baseUrl = resolveBaseUrl();
+    if (!baseUrl) {
+      message.warning('请输入接口地址');
+      return;
+    }
+
     setIsSaving(true);
     try {
-      await userCenterService.saveLLMConfig(trimmedKey, model, baseUrl.trim());
-      message.success(trimmedKey ? '配置保存成功' : '模型与接口地址已更新');
+      await userCenterService.saveLLMConfig(trimmedKey, model, baseUrl, providerId);
+      message.success(trimmedKey ? `${meta.label} 配置保存成功` : '模型与接口地址已更新');
       setApiKey('');
       await loadApiKeyStatus();
     } catch (error: any) {
@@ -124,6 +216,41 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
     }
   };
 
+  const handleTest = async () => {
+    const trimmedKey = apiKey.trim();
+    if (!trimmedKey) {
+      message.warning('请先在下方输入新的 API Key 后测试');
+      return;
+    }
+
+    const model = isCustomModel ? customModel.trim() : selectedModel;
+    if (!model) {
+      message.warning('请输入或选择模型名称');
+      return;
+    }
+
+    const baseUrl = resolveBaseUrl();
+    if (!baseUrl) {
+      message.warning('请输入接口地址');
+      return;
+    }
+
+    setIsTesting(true);
+    try {
+      const result = await userCenterService.testLLMConfig(trimmedKey, model, baseUrl);
+      if (result && result.success) {
+        message.success(result.message || '连接成功');
+      } else {
+        message.error((result?.message as string) || '连接失败');
+      }
+    } catch (error: any) {
+      console.error('Failed to test config:', error);
+      message.error(error.message || '测试失败');
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="w-full pt-1">
@@ -144,8 +271,20 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
             </div>
             <div>
               <h3 className="text-sm font-semibold text-gray-800">AI 服务配置</h3>
-              <p className="text-[11px] text-gray-500">配置 API Key、模型和接口地址，用于 AI-IDE 智能助手</p>
+              <p className="text-[11px] text-gray-500">配置模型供应商的 API Key、模型和接口地址，用于 AI-IDE 智能助手</p>
             </div>
+          </div>
+
+          {/* 供应商下拉 */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-gray-600">模型供应商</label>
+            <Select
+              value={providerId}
+              onChange={handleProviderChange}
+              style={{ width: '100%' }}
+              className="[&_.ant-select-selector]:!h-8 [&_.ant-select-selector]:!rounded-[8px] [&_.ant-select-selector]:!items-center"
+              options={PROVIDERS.map((p) => ({ label: p.label, value: p.id }))}
+            />
           </div>
 
           <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs ${hasKey ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>
@@ -169,72 +308,131 @@ export const OtherSettings: React.FC<OtherSettingsProps> = ({ userId, tenantId }
             )}
           </div>
 
-          {/* 模型选择 */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-gray-600">模型</label>
-            <Select
-              value={selectedModel}
-              onChange={handleModelChange}
-              style={{ width: '100%' }}
-              className="[&_.ant-select-selector]:!h-8 [&_.ant-select-selector]:!rounded-[8px] [&_.ant-select-selector]:!items-center"
-              options={MODEL_PRESETS.map(p => ({ label: p.label, value: p.value }))}
-            />
-            {isCustomModel && (
-              <Input
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                placeholder="输入模型名称，如 gpt-4o、deepseek-chat"
-                className="!h-8 !rounded-[8px]"
-              />
-            )}
-          </div>
-
-          {/* Base URL */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-gray-600">API 地址</label>
-            <Input
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.openai.com/v1"
-              className="!h-8 !rounded-[8px]"
-            />
-          </div>
-
-          {/* API Key */}
-          <div className="flex gap-2 items-center">
-            <div className="relative flex-1">
-              <Input
-                type={showKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={hasKey ? '输入新 Key 以更新' : 'sk-xxxxxxxxxxxxxxxx'}
-                className="!pr-9 !h-8 !rounded-[8px]"
-                onPressEnter={handleSaveApiKey}
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey(!showKey)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 z-10"
-              >
-                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
+          {/* 两列：左=接口地址，右=模型 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* 左列：接口地址 */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-gray-600">接口地址 Base URL</label>
+              {meta.baseUrls.length > 0 ? (
+                <>
+                  <Radio.Group
+                    value={baseUrlOption}
+                    onChange={(e) => setBaseUrlOption(e.target.value)}
+                    size="small"
+                    className="flex flex-col !gap-1"
+                  >
+                    {meta.baseUrls.map((b) => (
+                      <Radio key={b.id} value={b.id} className="!text-xs">{b.label}</Radio>
+                    ))}
+                    <Radio value="__custom__" className="!text-xs">自定义</Radio>
+                  </Radio.Group>
+                  {baseUrlOption === '__custom__' && (
+                    <Input
+                      value={customBaseUrl}
+                      onChange={(e) => setCustomBaseUrl(e.target.value)}
+                      placeholder="输入接口地址，如 https://api.openai.com/v1"
+                      className="!h-8 !rounded-[8px]"
+                    />
+                  )}
+                </>
+              ) : (
+                <Input
+                  value={customBaseUrl}
+                  onChange={(e) => setCustomBaseUrl(e.target.value)}
+                  placeholder="输入接口地址，如 https://api.openai.com/v1"
+                  className="!h-8 !rounded-[8px]"
+                />
+              )}
+              <div className="text-[11px] text-gray-400 font-mono break-all">
+                {resolveBaseUrl() || '未选择接口地址'}
+              </div>
             </div>
-            <Button
-              type="primary"
-              icon={<Save className="w-4 h-4" />}
-              onClick={handleSaveApiKey}
-              loading={isSaving}
-              disabled={!apiKey.trim() && !hasKey}
-              className="!h-8 !rounded-[8px]"
-            >
-              保存
-            </Button>
+
+            {/* 右列：模型 */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-gray-600">模型 Model</label>
+              {meta.models.length > 0 ? (
+                <>
+                  <Select
+                    value={selectedModel}
+                    onChange={handleModelChange}
+                    style={{ width: '100%' }}
+                    className="[&_.ant-select-selector]:!h-8 [&_.ant-select-selector]:!rounded-[8px] [&_.ant-select-selector]:!items-center"
+                    options={[
+                      ...meta.models.map((m) => ({ label: m.label, value: m.value })),
+                      { label: '自定义', value: '__custom__' },
+                    ]}
+                  />
+                  {isCustomModel && (
+                    <Input
+                      value={customModel}
+                      onChange={(e) => setCustomModel(e.target.value)}
+                      placeholder="输入模型名称"
+                      className="!h-8 !rounded-[8px]"
+                    />
+                  )}
+                </>
+              ) : (
+                <Input
+                  value={isCustomModel ? customModel : selectedModel}
+                  onChange={(e) => {
+                    setSelectedModel(e.target.value);
+                    setCustomModel(e.target.value);
+                    setIsCustomModel(true);
+                  }}
+                  placeholder="输入模型名称"
+                  className="!h-8 !rounded-[8px]"
+                />
+              )}
+            </div>
+          </div>
+
+          {/* 下方：API Key */}
+          <div className="space-y-1.5 border-t border-gray-100 pt-3">
+            <label className="text-xs font-medium text-gray-600">{meta.label} API Key</label>
+            <div className="flex gap-2 items-center">
+              <div className="relative flex-1">
+                <Input
+                  type={showKey ? 'text' : 'password'}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={hasKey ? '输入新 Key 以更新' : 'sk-xxxxxxxxxxxxxxxx'}
+                  className="!pr-9 !h-8 !rounded-[8px]"
+                  onPressEnter={handleSaveApiKey}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey(!showKey)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 z-10"
+                >
+                  {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <Button
+                type="primary"
+                icon={<Save className="w-4 h-4" />}
+                onClick={handleSaveApiKey}
+                loading={isSaving}
+                disabled={!apiKey.trim() && !hasKey}
+                className="!h-8 !rounded-[8px]"
+              >
+                保存
+              </Button>
+              <Button
+                icon={<Zap className="w-4 h-4" />}
+                onClick={handleTest}
+                loading={isTesting}
+                className="!h-8 !rounded-[8px]"
+              >
+                测试
+              </Button>
+            </div>
           </div>
 
           <div className="text-[11px] text-gray-400 space-y-0.5 pt-1 border-t border-gray-100">
             <p>• API Key 安全存储在您的个人档案中，仅用于 AI-IDE 智能助手</p>
-            <p>• 支持 OpenAI 兼容接口：DeepSeek、通义千问、SiliconFlow、OpenAI 等</p>
-            <p>• 获取 Key：<a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">阿里云百炼</a> | <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">DeepSeek</a> | <a href="https://cloud.siliconflow.cn/" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">SiliconFlow</a></p>
+            <p>• 支持多供应商：DeepSeek、阿里云百炼，可自定义接口地址与模型</p>
+            <p>• 获取 Key：<a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">DeepSeek</a> | <a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">阿里云百炼</a></p>
           </div>
         </div>
       </div>

@@ -101,6 +101,7 @@ class UserProfileUpdate(BaseModel):
         None, max_length=512, description="LLM API 接口地址（OpenAI 兼容 base_url）"
     )
     llm_model: str | None = Field(None, max_length=128, description="LLM 模型名称")
+    llm_provider: str | None = Field(None, max_length=32, description="LLM 供应商（deepseek/qwen 等）")
 
 
 # ============ 响应模型 ============

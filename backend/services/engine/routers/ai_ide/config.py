@@ -15,6 +15,7 @@ class LLMConfig(BaseModel):
     qwen_api_key: str = ""
     model: str | None = None
     base_url: str | None = None
+    provider: str | None = None
 
 
 def _get_user_info(request: Request):
@@ -44,6 +45,8 @@ def _build_profile_payload(config: LLMConfig) -> dict:
         payload["llm_model"] = config.model.strip()
     if config.base_url is not None and config.base_url.strip():
         payload["llm_base_url"] = config.base_url.strip()
+    if config.provider is not None and config.provider.strip():
+        payload["llm_provider"] = config.provider.strip()
     return payload
 
 
@@ -77,13 +80,14 @@ async def get_llm_config(request: Request):
                     "masked_key": masked,
                     "model": data.get("llm_model") or "",
                     "base_url": data.get("llm_base_url") or "",
+                    "provider": data.get("llm_provider") or "",
                 }
             else:
                 logger.warning(f"Failed to fetch profile: {resp.status_code} {resp.text}")
     except Exception as e:
         logger.error(f"Failed to fetch profile for user {user_id}: {e}")
 
-    return {"success": True, "has_key": False, "masked_key": "", "model": "", "base_url": ""}
+    return {"success": True, "has_key": False, "masked_key": "", "model": "", "base_url": "", "provider": ""}
 
 
 @router.post("/llm")
@@ -122,3 +126,64 @@ async def save_llm_config(request: Request, config: LLMConfig):
     except Exception as e:
         logger.error(f"Failed to save config for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class LLMTestConfig(BaseModel):
+    qwen_api_key: str = ""
+    model: str | None = None
+    base_url: str | None = None
+
+
+@router.post("/llm/test")
+async def test_llm_config(request: Request, config: LLMTestConfig):
+    """测试 LLM 配置连通性（不落库）：用传入的 Key / 模型 / 地址发一个最小 chat 请求"""
+    user = _get_user_info(request)
+
+    api_key = config.qwen_api_key.strip()
+    base_url = (config.base_url or "").strip()
+    model = (config.model or "").strip()
+
+    if not api_key:
+        raise HTTPException(status_code=400, detail="请填写 API Key 后再测试")
+    if not base_url:
+        raise HTTPException(status_code=400, detail="请填写接口地址后再测试")
+    if not model:
+        raise HTTPException(status_code=400, detail="请填写模型名称后再测试")
+
+    # 拼接 OpenAI 兼容的 chat 端点；兼容 base_url 带/不带 /v1
+    endpoint = base_url.rstrip("/")
+    if not endpoint.endswith("/v1"):
+        endpoint += "/v1"
+    endpoint += "/chat/completions"
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 8,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(endpoint, headers=headers, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "success": True,
+                    "status_code": resp.status_code,
+                    "model": data.get("model", ""),
+                    "message": "连接成功，API 配置有效",
+                }
+            return {
+                "success": False,
+                "status_code": resp.status_code,
+                "message": f"HTTP {resp.status_code}: {(resp.text or '')[:200]}",
+            }
+    except httpx.TimeoutException:
+        return {"success": False, "message": "请求超时，请检查接口地址或网络"}
+    except Exception as e:
+        logger.error(f"LLM test failed for user {user.get('user_id')}: {e}")
+        return {"success": False, "message": f"连接失败: {e}"}

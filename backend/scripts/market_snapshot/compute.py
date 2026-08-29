@@ -374,7 +374,8 @@ def get_sector_heatmap(con, data_dir: Path, category: str = "shenwan") -> list[d
         return []
     today = str(dates).zfill(8) if dates else ""
     mv_map: dict[str, float] = {}
-    if today and category == "shenwan":
+    # 全部分类统一用估值总市值作为矩形面积(市值权重)，不再仅限 shenwan
+    if today:
         vdf = _q(con, f"SELECT symbol, total_mv FROM qdb_valuation WHERE dt = {today}")
         if not vdf.empty:
             for r in vdf.itertuples(index=False):
@@ -395,13 +396,9 @@ def get_sector_heatmap(con, data_dir: Path, category: str = "shenwan") -> list[d
             if tot_mv > 0:
                 val_yi = round(tot_mv / 1e8, 1)
         if val_yi is None:
+            # 估值缺失时统一按成交额(亿)兜底，单位一致，避免多分支换算比例错乱
             tot_amt = float(sub["amount"].sum() or 0.0)
-            if tot_amt > 1e11:
-                val_yi = round(tot_amt / 1e8, 1)
-            elif tot_amt > 1e7:
-                val_yi = round(tot_amt / 1e4, 1)
-            else:
-                val_yi = round(tot_amt, 1)
+            val_yi = round(tot_amt / 1e8, 1)
         leader_row = sub.sort_values("pct_change", ascending=False).iloc[0]
         items.append({
             "name": sname, "value": max(val_yi, 10.0), "pct_change": avg_pct,

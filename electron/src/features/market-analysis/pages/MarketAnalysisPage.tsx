@@ -716,7 +716,7 @@ export const MarketAnalysisPage: React.FC = () => {
             <div className="flex items-center justify-between border-b border-purple-100/60 pb-3 mb-1">
               <h3 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
                 <Layers className="w-3.5 h-3.5 text-purple-600" />
-                <span>申万一级分类热力矩形图谱</span>
+                <span>通达信二级分类热力矩形图谱</span>
               </h3>
               <span className="text-[10px] text-slate-400 font-mono">市值权重 vs 涨跌幅</span>
             </div>

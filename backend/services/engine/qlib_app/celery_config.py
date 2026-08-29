@@ -21,6 +21,19 @@ except ImportError:
 if load_dotenv:
     load_dotenv(PROJECT_ROOT / ".env")
 
+# worker/beat 不经过 main_oss 启动，管理台写入的 runtime.env（如
+# QUANTDB_API_KEY）必须在此注入，否则定时同步拿不到运行时密钥。
+# 真实环境变量优先，runtime.env 只补空缺，与 main_oss 语义一致。
+from backend.shared.runtime_secrets import load_runtime_env
+
+_runtime_secrets_loaded = load_runtime_env()
+if _runtime_secrets_loaded:
+    import logging
+
+    logging.getLogger(__name__).info(
+        "Loaded %d runtime secrets from runtime.env", _runtime_secrets_loaded
+    )
+
 
 # Redis连接配置
 def _is_running_in_docker() -> bool:

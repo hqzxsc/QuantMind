@@ -192,7 +192,7 @@ def match_symbol(
         for i, j in enumerate(jump_list):
             if i in used or int(j["dt"]) < ev_dt_int:
                 continue
-            jump_dt = pd.Timestamp(str(int(j["dt"])), format="%Y%m%d")
+            jump_dt = pd.to_datetime(str(int(j["dt"])), format="%Y%m%d")
             if (jump_dt - ev_date).days > MATCH_WINDOW_DAYS:
                 break
             cand_idx = i

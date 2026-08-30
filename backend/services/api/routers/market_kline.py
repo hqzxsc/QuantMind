@@ -47,8 +47,8 @@ _KLINE_CACHE_TTL = int(__import__("os").getenv("KLINE_CACHE_TTL_SECONDS", "300")
 _KLINE_CACHE_MAX = 2048
 
 
-def _kline_cache_key(market: str, symbol: str, start: str, end: str) -> str:
-    return f"{market}:{symbol}:{start}:{end}"
+def _kline_cache_key(market: str, symbol: str, start: str, end: str, adjust: str) -> str:
+    return f"{market}:{symbol}:{adjust}:{start}:{end}"
 
 
 def _kline_cache_get(key: str) -> list[dict[str, Any]] | None:
@@ -78,7 +78,7 @@ def _parse_date(s: Optional[str]) -> Optional[date]:
         raise HTTPException(status_code=400, detail=f"invalid date: {s}")
 
 
-async def _try_quantdb_parquet(symbol: str, start: Optional[date], end: Optional[date], days: int):
+async def _try_quantdb_parquet(symbol: str, start: Optional[date], end: Optional[date], days: int, adjust: str = "qfq"):
     """A 股最快路径：从 QuantDB 本地 parquet 读取（DuckDB）。"""
     try:
         from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
@@ -96,7 +96,7 @@ async def _try_quantdb_parquet(symbol: str, start: Optional[date], end: Optional
             start = start or (end - timedelta(days=days * 2))
 
         def _read():
-            df = hub.fetch_daily_kline(symbol, start, end)
+            df = hub.fetch_daily_kline(symbol, start, end, adjust=adjust)
             if df is None or df.empty:
                 return None
             items = []
@@ -119,22 +119,23 @@ async def _try_quantdb_parquet(symbol: str, start: Optional[date], end: Optional
 
 
 async def _try_stock_daily_latest(symbol: str, start: Optional[date], end: Optional[date], days: int):
-    """A 股快路径：从 stock_daily_latest 直接拉。"""
+    """A 股快路径：从 stock_daily_latest 直接拉。
+
+    该表由 quantdb_daily_sync 从 qdb_daily_forward 写入，存储的是前复权价（adj_factor 恒为 1.0），
+    因此仅对 adjust=qfq 有效，直接原价返回；不做任何因子换算，
+    避免未来写入真实复权因子时产生口径漂移。
+    """
     try:
         from sqlalchemy import text
         from backend.shared.database_manager_v2 import get_session
     except Exception:
         return None
-    try:
-        from backend.services.api.routers.research_service import _to_nominal_price  # type: ignore
-    except Exception:
-        _to_nominal_price = lambda v, _f: float(v) if v is not None else None  # noqa: E731
 
     async with get_session(read_only=True) as session:
         if start and end:
             res = await session.execute(
                 text(
-                    "SELECT trade_date, open, high, low, close, volume, adj_factor "
+                    "SELECT trade_date, open, high, low, close, volume "
                     "FROM stock_daily_latest "
                     "WHERE symbol = :s AND trade_date BETWEEN :a AND :b "
                     "ORDER BY trade_date ASC"
@@ -144,7 +145,7 @@ async def _try_stock_daily_latest(symbol: str, start: Optional[date], end: Optio
         else:
             res = await session.execute(
                 text(
-                    "SELECT trade_date, open, high, low, close, volume, adj_factor "
+                    "SELECT trade_date, open, high, low, close, volume "
                     "FROM stock_daily_latest "
                     "WHERE symbol = :s ORDER BY trade_date DESC LIMIT :l"
                 ),
@@ -155,13 +156,12 @@ async def _try_stock_daily_latest(symbol: str, start: Optional[date], end: Optio
             return None
         items = []
         for r in rows:
-            adj = r[6]
             items.append({
                 "date": str(r[0]),
-                "open": _to_nominal_price(r[1], adj),
-                "high": _to_nominal_price(r[2], adj),
-                "low": _to_nominal_price(r[3], adj),
-                "close": _to_nominal_price(r[4], adj),
+                "open": _safe_float(r[1]),
+                "high": _safe_float(r[2]),
+                "low": _safe_float(r[3]),
+                "close": _safe_float(r[4]),
                 "volume": float(r[5]) if r[5] is not None else 0.0,
             })
         if not (start and end):
@@ -279,10 +279,14 @@ async def get_kline(
     start: Optional[str] = Query(None, description="YYYY-MM-DD"),
     end: Optional[str] = Query(None, description="YYYY-MM-DD"),
     days: int = Query(120, ge=5, le=4000),
+    adjust: str = Query("qfq", description="复权方式：qfq=前复权（默认）/ hfq=后复权 / none=不复权，仅 A 股生效"),
     current_user: dict = Depends(get_current_user),
 ):
     if period != "daily":
         raise HTTPException(status_code=400, detail=f"period {period} 暂未支持")
+    adj = adjust.lower()
+    if adj not in ("qfq", "hfq", "none"):
+        raise HTTPException(status_code=400, detail=f"adjust {adjust} 非法，可选 qfq / hfq / none")
 
     m = market.upper()
     sym = symbol.upper()
@@ -293,7 +297,8 @@ async def get_kline(
         sd = sd or (ed - timedelta(days=days * 2))
 
     # 历史行情静态不变：命中内存缓存直接返回（冷读 2s+ → 缓存命中 <5ms）
-    cache_key = _kline_cache_key(m, sym, sd.isoformat(), ed.isoformat())
+    # 缓存键含复权方式，不同口径互不污染；A 股外市场忽略 adjust（yahoo 等源不提供复权）
+    cache_key = _kline_cache_key(m, sym, sd.isoformat(), ed.isoformat(), adj if m == "A" else "raw")
     cached = _kline_cache_get(cache_key)
     if cached is not None:
         return {
@@ -308,13 +313,14 @@ async def get_kline(
     # A 股优先走 QuantDB 本地 parquet（最快路径，无 DB 依赖）
     if m == "A":
         try:
-            items = await _try_quantdb_parquet(sym, sd, ed, days)
+            items = await _try_quantdb_parquet(sym, sd, ed, days, adjust=adj)
             if items:
                 _kline_cache_set(cache_key, items)
                 return {
                     "success": True,
                     "data": {
                         "market": m, "symbol": sym, "period": period,
+                        "adjust": adj,
                         "source_used": "quantdb_parquet",
                         "items": items, "fallbacks_tried": [], "cleaning_report": {},
                     },
@@ -322,8 +328,8 @@ async def get_kline(
         except Exception as exc:  # noqa: BLE001
             logger.warning("quantdb_parquet fast-path failed: %s", exc)
 
-    # A 股其次走 latest 表
-    if m == "A":
+    # A 股其次走 latest 表（表内为前复权口径，仅 qfq 可用）
+    if m == "A" and adj == "qfq":
         try:
             items = await _try_stock_daily_latest(sym, sd, ed, days)
             if items:
@@ -332,6 +338,7 @@ async def get_kline(
                     "success": True,
                     "data": {
                         "market": m, "symbol": sym, "period": period,
+                        "adjust": adj,
                         "source_used": "stock_daily_latest",
                         "items": items, "fallbacks_tried": [], "cleaning_report": {},
                     },
@@ -376,12 +383,13 @@ async def get_kline_by_path(
     symbol: str,
     market: str = Query("A"),
     days: int = Query(120, ge=5, le=4000),
+    adjust: str = Query("qfq", description="复权方式：qfq / hfq / none，仅 A 股生效"),
     current_user: dict = Depends(get_current_user),
 ):
     """路径参数风格，方便前端写 /api/v1/market/kline/600519.SH?market=A&days=120"""
     return await get_kline(
         symbol=symbol, market=market, period="daily",
-        start=None, end=None, days=days, current_user=current_user,
+        start=None, end=None, days=days, adjust=adjust, current_user=current_user,
     )
 
 

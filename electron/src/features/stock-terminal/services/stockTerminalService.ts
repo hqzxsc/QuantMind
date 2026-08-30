@@ -5,6 +5,9 @@ import { SERVICE_ENDPOINTS } from '../../../config/services';
 import { authService } from '../../auth/services/authService';
 import { KlineBar, StockListResponse, StockProfile } from '../types';
 
+/** 复权方式：qfq=前复权（默认）/ hfq=后复权 / none=不复权，仅 A 股日线生效 */
+export type KlineAdjust = 'qfq' | 'hfq' | 'none';
+
 class StockTerminalService {
   private get client(): AxiosInstance {
     const baseURL = (import.meta as any).env?.VITE_USER_API_URL || SERVICE_ENDPOINTS.API_GATEWAY || SERVICE_ENDPOINTS.USER_SERVICE;
@@ -76,10 +79,10 @@ class StockTerminalService {
     }
   }
 
-  async getDailyKline(symbol: string, days = 500): Promise<KlineBar[]> {
+  async getDailyKline(symbol: string, days = 500, adjust: KlineAdjust = 'qfq'): Promise<KlineBar[]> {
     try {
       const resp = await this.client.get('/market/kline', {
-        params: { symbol, market: 'A', days },
+        params: { symbol, market: 'A', days, adjust },
       });
       const items = resp.data?.data?.items ?? [];
       return items.map((it: any) => ({

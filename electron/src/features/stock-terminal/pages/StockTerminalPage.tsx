@@ -4,7 +4,7 @@ import { CandlestickChart, Search, Layers, Building2, Link2 } from 'lucide-react
 import { message, Tooltip } from 'antd';
 import { PAGE_LAYOUT } from '../../../config/pageLayout';
 import { StockListItem, StockProfile, KlineBar } from '../types';
-import { stockTerminalService } from '../services/stockTerminalService';
+import { stockTerminalService, type KlineAdjust } from '../services/stockTerminalService';
 import { StockSearchBar } from '../components/StockSearchBar';
 import { InferenceScoreChart, type Point as ScorePoint } from '../components/InferenceScoreChart';
 import { KlineChart } from '../components/kline/KlineChart';
@@ -32,6 +32,13 @@ const KLINE_PERIODS: { key: 'daily' | 'weekly' | 'monthly'; label: string }[] = 
   { key: 'daily', label: '日K' },
   { key: 'weekly', label: '周K' },
   { key: 'monthly', label: '月K' },
+];
+
+/** 复权方式切换项：与后端 /market/kline 的 adjust 参数对应 */
+const KLINE_ADJUSTS: { key: KlineAdjust; label: string }[] = [
+  { key: 'none', label: '不复权' },
+  { key: 'qfq', label: '前复权' },
+  { key: 'hfq', label: '后复权' },
 ];
 
 function resampleBars(bars: KlineBar[], period: 'weekly' | 'monthly'): KlineBar[] {
@@ -64,6 +71,7 @@ export default function StockTerminalPage() {
   const [bars, setBars] = useState<KlineBar[]>([]);
   const [barsLoading, setBarsLoading] = useState(false);
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [adjust, setAdjust] = useState<KlineAdjust>('qfq');
   const [signalDate, setSignalDate] = useState<string | undefined>(undefined);
   const [detailTab, setDetailTab] = useState<DetailTab>('overview');
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
@@ -109,7 +117,7 @@ export default function StockTerminalPage() {
     };
   }, [selected, signalDate]);
 
-  // K线随选中+周期联动
+  // K线随选中+周期+复权方式联动
   useEffect(() => {
     if (!selected) {
       setBars([]);
@@ -118,7 +126,7 @@ export default function StockTerminalPage() {
     let cancelled = false;
     setBarsLoading(true);
     stockTerminalService
-      .getDailyKline(selected.symbol, 250)
+      .getDailyKline(selected.symbol, 250, adjust)
       .then((items) => {
         if (cancelled) return;
         if (period !== 'daily' && items.length) {
@@ -139,7 +147,7 @@ export default function StockTerminalPage() {
     return () => {
       cancelled = true;
     };
-  }, [selected, period]);
+  }, [selected, period, adjust]);
 
   const up = (profile?.pct_change ?? selected?.pct_change ?? 0) >= 0;
 
@@ -240,6 +248,16 @@ export default function StockTerminalPage() {
                         className={`px-3 py-1 rounded-full text-[11px] font-bold transition-colors ${period === p.key ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                       >
                         {p.label}
+                      </button>
+                    ))}
+                    <div className="w-px h-4 bg-slate-200 mx-1" />
+                    {KLINE_ADJUSTS.map((a) => (
+                      <button
+                        key={a.key}
+                        onClick={() => setAdjust(a.key)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${adjust === a.key ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        {a.label}
                       </button>
                     ))}
                   </div>

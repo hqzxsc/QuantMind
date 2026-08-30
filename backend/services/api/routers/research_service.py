@@ -1514,7 +1514,7 @@ async def get_research_universe_by_date(
     if cached is not None:
         return cached
 
-    storage_path, market = await _model_market(tid, uid, model_id)
+    storage_path, _market = await _model_market(tid, uid, model_id)
     pred_rows = _read_model_pred_day(storage_path, trade_date) if storage_path else []
     if not pred_rows:
         # 兜底：该日无 parquet 分数 → 候选池快照（同日行数最多的 run）
@@ -1526,43 +1526,32 @@ async def get_research_universe_by_date(
         return payload
 
     try:
-        day = date.fromisoformat(trade_date)
+        date.fromisoformat(trade_date)
     except ValueError:
         payload = {"code": 200, "data": {"items": [], "summary": dict(_EMPTY_UNIVERSE_SUMMARY)}}
         return payload
 
-    async with get_session(read_only=True) as session:
-        sdl_map = await _load_sdl_pg_map(session, day, market=market)
-
+    # 页面减负：不再合并 PG stock_daily_latest（该表已 0 行，合并查询纯开销），
+    # 选中日期后个股数据只加载 QuantDB 50 维宽表（前端 batch-features 投影，
+    # 已按 selectedDate 读同日截面）。这里只返回 分数 + 排名 + 简称 的轻量骨架，
+    # 响应体从 ~5.3MB（54 字段×5194 只）降到几十 KB 级别。
     pseudo_run_id = f"pred_{trade_date.replace('-', '')}"
-    page = pred_rows[offset : offset + limit]
-    merged_rows: list[dict[str, Any]] = []
-    quantdb_names: dict[str, str] | None = None
-    for r in page:
-        row: dict[str, Any] = {
-            "run_id": pseudo_run_id,
-            "model_id": model_id,
-            "symbol": r["symbol"],
-            "fusion_score": r["score"],
-            "score_rank": r["rank"],
-            "data_trade_date": day,
-            "signal_side": None,
-            "confidence_level": None,
+    try:
+        quantdb_names = _get_quantdb_stock_names()
+    except Exception:  # noqa: BLE001
+        quantdb_names = {}
+    items = [
+        {
+            "key": f"{pseudo_run_id}:{r['symbol']}",
+            "modelId": model_id,
+            "runId": pseudo_run_id,
+            "rank": int(r["rank"]),
+            "code": r["symbol"],
+            "name": quantdb_names.get(StockCodeUtil.to_suffix(r["symbol"])) or "",
+            "score": float(r["score"]),
         }
-        sdl = sdl_map.get(r["symbol"])
-        if sdl:
-            row.update(sdl)
-            row["symbol"] = r["symbol"]  # sdl 原始 symbol 可能是后缀式，覆盖回前缀式
-        if not row.get("stock_name"):
-            # 历史日期 SDL 可能无数据，用 QuantDB 股票简称兜底
-            try:
-                if quantdb_names is None:
-                    quantdb_names = _get_quantdb_stock_names()
-                row["stock_name"] = quantdb_names.get(StockCodeUtil.to_suffix(r["symbol"])) or ""
-            except Exception:
-                pass
-        merged_rows.append(row)
-    items = [_format_candidate_record(r) for r in merged_rows]
+        for r in pred_rows[offset : offset + limit]
+    ]
 
     score_vals = [float(r["score"]) for r in pred_rows]
     score_dist: dict[str, Any] = {}
@@ -1574,24 +1563,12 @@ async def get_research_universe_by_date(
         logger.debug("pred day score distribution failed: %s", exc)
 
     total = len(pred_rows)
-    tradable = 0
-    hs300 = 0
-    zz1000 = 0
-    for r in pred_rows:
-        sdl = sdl_map.get(r["symbol"])
-        if not sdl:
-            continue
-        if sdl.get("close_price"):
-            tradable += 1
-        if sdl.get("is_hs300"):
-            hs300 += 1
-        if sdl.get("is_csi1000"):
-            zz1000 += 1
     summary = {
         "total": total,
-        "totalMarket": tradable,
-        "hs300": hs300,
-        "zz1000": zz1000,
+        # pred.parquet 截面已剔除 B 股/北交所/指数，全部为可交易 A 股
+        "totalMarket": total,
+        "hs300": 0,
+        "zz1000": 0,
         "margin": 0,
         "chinext": 0,
         "avgScore": round(sum(score_vals) / total, 4) if total else 0.0,

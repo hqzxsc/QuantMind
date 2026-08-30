@@ -1955,6 +1955,14 @@ async def predict_single_stock(
     score_rows = []
     try:
         async with get_session(read_only=True) as session:
+            # 仅非 execute 路径保留「目标日不晚于落库日」的上限过滤（历史查询语义）。
+            # execute=True 刚对目标股票现场补推并落库，落库 trade_date 可能晚于
+            # latest_date/今日（如补推成交到最新交易日），故去掉上限，直接取最新，
+            # 否则刚补推的分数会被过滤成 404「该标的没有真实模型推理结果」。
+            date_filter = "" if execute else " AND e.trade_date <= :d"
+            params = dict(score_params)
+            if not date_filter:
+                params.pop("d", None)  # SQL 无 :d 占位符时不能传多余绑定
             score_rows = (
                 await session.execute(
                     text(
@@ -1965,11 +1973,14 @@ async def predict_single_stock(
                         FROM engine_signal_scores e
                         LEFT JOIN qm_model_inference_runs r ON r.run_id = e.run_id
                         WHERE e.tenant_id = :tid
-                          AND e.symbol = ANY(:s_variants) AND e.trade_date <= :d
+                          AND e.symbol = ANY(:s_variants)
+                        """
+                        + date_filter
+                        + """
                         ORDER BY e.trade_date DESC, e.created_at DESC
                         """
                     ),
-                    {**score_params, "s_variants": _sym_variants},
+                    {**params, "s_variants": _sym_variants},
                 )
             ).mappings().all()
     except Exception as exc:

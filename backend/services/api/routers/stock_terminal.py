@@ -1392,7 +1392,7 @@ async def list_stocks(
         df = df[df["rs_hyname"] == industry]
     if q and q.strip():
         kw = q.strip()
-        df = df[df["Symbol"].str.contains(kw) | df["Name"].astype(str).str.contains(kw)]
+        df = df[df["Symbol"].str.contains(kw, case=False, regex=False, na=False) | df["Name"].astype(str).str.contains(kw, case=False, regex=False, na=False)]
     if only_st:
         df = df[_st_mask(df)]
     if exclude_st:

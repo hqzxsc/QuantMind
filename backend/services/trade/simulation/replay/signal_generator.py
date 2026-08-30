@@ -130,6 +130,52 @@ def _parquet_paths_for_range(data_dir: Path, start: date, end: date) -> list[Pat
     return paths
 
 
+def _load_quantdb_features(
+    meta: dict[str, Any], feature_cols: list[str], start: date, end: date
+) -> pd.DataFrame | None:
+    """QuantDB 直读模型（data_source=quantdb_factors）的特征读取。
+
+    与推理模板 inference_parquet.py 的 _quantdb_reader 同口径：优先用模型
+    metadata 固化的 quantdb_dir，缺失时由 reader 按市场解析（CN → /data/quantdb）。
+    返回 symbol（前缀式）/trade_date/特征列；失败返回 None。
+    """
+    try:
+        from backend.services.engine.data_platform.quantdb_factor_reader import (
+            QuantDBFactorReader,
+        )
+
+        pinned_dir = Path(str(meta.get("quantdb_dir") or ""))
+        reader = QuantDBFactorReader(pinned_dir if pinned_dir.is_dir() else None)
+        source = str(meta.get("factor_source") or "l1_l2_factors")
+
+        # 分区目录名快速路径：先看区间内是否有已发布分区，避免 assert_ready
+        # 对全量 dt=* 做 DESCRIBE 扫描（回放默认近半年，全量扫描无谓耗时）。
+        try:
+            available = reader.available_dates(
+                source,
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+            )
+        except Exception:  # noqa: BLE001 - 快速路径失败回退全量校验
+            available = None
+        if available is not None and not available:
+            logger.error(
+                "回放信号: QuantDB %s 在 %s~%s 无分区", source, start, end
+            )
+            return None
+
+        return reader.read_range(
+            source,
+            features=list(feature_cols),
+            feature_sources=meta.get("factor_field_sources") or None,
+            start=start,
+            end=end,
+        )
+    except Exception as exc:  # noqa: BLE001 - 直读失败降级为快照路径报错
+        logger.error("回放信号: QuantDB 直读失败: %s", exc)
+        return None
+
+
 def _filter_untradable(df: pd.DataFrame) -> pd.DataFrame:
     """过滤停牌/零成交行。用行内历史 is_st，不用今天的 ST 名单。"""
     if "volume" in df.columns:
@@ -202,7 +248,6 @@ class ReplaySignalGenerator:
         }
         """
         model_dir = self._model_dir or _resolve_model_dir(self._model_id)
-        data_dir = _resolve_data_dir()
         meta = _load_metadata(model_dir)
         model = _load_model(model_dir, meta)
         feature_cols = meta.get("feature_columns") or meta.get("features", [])
@@ -229,40 +274,54 @@ class ReplaySignalGenerator:
                 "errors": ["区间内无交易日"],
             }
 
-        # 2. 读 parquet（按年合并，只读一次）
-        parquet_paths = _parquet_paths_for_range(
-            data_dir, _dt_int_to_date(data_start_int), end_date
-        )
-        if not parquet_paths:
-            return {
-                "total_days": total,
-                "signals_by_date": {},
-                "errors": ["无 parquet 数据文件"],
-            }
+        # 2. 读特征数据：QuantDB 直读模型走因子 reader（Hive 分区），
+        #    旧模型回退年度快照 parquet。
+        if str(meta.get("data_source") or "") == "quantdb_factors":
+            df_all = _load_quantdb_features(
+                meta, feature_cols, _dt_int_to_date(data_start_int), end_date
+            )
+            if df_all is None or df_all.empty:
+                return {
+                    "total_days": total,
+                    "signals_by_date": {},
+                    "errors": ["QuantDB 因子数据读取失败或区间内无分区"],
+                }
+        else:
+            data_dir = _resolve_data_dir()
+            parquet_paths = _parquet_paths_for_range(
+                data_dir, _dt_int_to_date(data_start_int), end_date
+            )
+            if not parquet_paths:
+                return {
+                    "total_days": total,
+                    "signals_by_date": {},
+                    "errors": ["无 parquet 数据文件"],
+                }
 
-        needed_cols = {"trade_date", "symbol"}
-        needed_cols.update(feature_cols)
-        optional_cols = {"is_st", "volume"}
-        all_cols = needed_cols | optional_cols
+            needed_cols = {"trade_date", "symbol"}
+            needed_cols.update(feature_cols)
+            optional_cols = {"is_st", "volume"}
+            all_cols = needed_cols | optional_cols
 
-        dfs: list[pd.DataFrame] = []
-        for p in parquet_paths:
-            try:
-                available = set(pd.read_parquet(p, engine="pyarrow").columns)
-                read_cols = [c for c in all_cols if c in available]
-                chunk = pd.read_parquet(p, columns=read_cols, engine="pyarrow")
-                dfs.append(chunk)
-            except Exception as exc:
-                logger.error("读取 parquet 失败 %s: %s", p, exc)
+            dfs: list[pd.DataFrame] = []
+            for p in parquet_paths:
+                try:
+                    available = set(pd.read_parquet(p, engine="pyarrow").columns)
+                    read_cols = [c for c in all_cols if c in available]
+                    chunk = pd.read_parquet(p, columns=read_cols, engine="pyarrow")
+                    dfs.append(chunk)
+                except Exception as exc:
+                    logger.error("读取 parquet 失败 %s: %s", p, exc)
 
-        if not dfs:
-            return {
-                "total_days": total,
-                "signals_by_date": {},
-                "errors": ["parquet 读取全部失败"],
-            }
+            if not dfs:
+                return {
+                    "total_days": total,
+                    "signals_by_date": {},
+                    "errors": ["parquet 读取全部失败"],
+                }
 
-        df_all = pd.concat(dfs, ignore_index=True)
+            df_all = pd.concat(dfs, ignore_index=True)
+
         df_all["trade_date"] = pd.to_datetime(df_all["trade_date"]).dt.strftime(
             "%Y-%m-%d"
         )

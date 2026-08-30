@@ -163,46 +163,51 @@ export const DriftTabPanel: React.FC<{ modelId: string }> = ({ modelId }) => {
           dataSource={filtered}
           pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 项` }}
           columns={[
-            { title: '因子', dataIndex: 'feature', key: 'feature', render: (v: string) => <Text code className="text-xs">{v}</Text> },
+            { title: '因子', dataIndex: 'feature', key: 'feature', align: 'center', render: (v: string) => <Text code className="text-xs whitespace-nowrap">{v}</Text> },
             {
               title: 'PSI(水平)',
               dataIndex: 'psi',
               key: 'psi',
+              align: 'center',
               sorter: (a: DriftFeature, b: DriftFeature) => a.psi - b.psi,
-              render: (v: number) => <span className="font-mono text-xs">{Number(v).toFixed(4)}</span>,
+              render: (v: number) => <span className="font-mono text-xs whitespace-nowrap">{Number(v).toFixed(4)}</span>,
             },
             {
               title: 'rank_disp(结构)',
               dataIndex: 'rank_disp',
               key: 'rank_disp',
+              align: 'center',
               sorter: (a: DriftFeature, b: DriftFeature) => a.rank_disp - b.rank_disp,
               defaultSortOrder: 'descend',
-              render: (v: number) => <span className="font-mono text-xs font-bold">{Number(v).toFixed(4)}</span>,
+              render: (v: number) => <span className="font-mono text-xs font-bold whitespace-nowrap">{Number(v).toFixed(4)}</span>,
             },
             {
               title: '等级',
               dataIndex: 'level',
               key: 'level',
+              align: 'center',
               render: (v: string) =>
                 v === 'severe' ? (
-                  <Tag color="red" icon={<AlertTriangle size={10} />}>severe</Tag>
+                  <Tag color="red" icon={<AlertTriangle size={10} />} className="whitespace-nowrap inline-flex items-center gap-1">严重</Tag>
                 ) : v === 'medium' ? (
-                  <Tag color="gold">medium</Tag>
+                  <Tag color="gold" className="whitespace-nowrap">中等</Tag>
                 ) : (
-                  <Tag color="green" icon={<CheckCircle2 size={10} />}>stable</Tag>
+                  <Tag color="green" icon={<CheckCircle2 size={10} />} className="whitespace-nowrap inline-flex items-center gap-1">稳定</Tag>
                 ),
             },
             {
               title: '良性膨胀',
               dataIndex: 'benign_scale',
               key: 'benign_scale',
-              render: (v: boolean) => (v ? <Tag color="blue">benign</Tag> : <span className="text-slate-300">—</span>),
+              align: 'center',
+              render: (v: boolean) => (v ? <Tag color="blue" className="whitespace-nowrap">良性</Tag> : <span className="text-slate-300 whitespace-nowrap">—</span>),
             },
             {
               title: '可靠',
               dataIndex: 'rank_reliable',
               key: 'rank_reliable',
-              render: (v: boolean) => (v ? <span className="text-emerald-600 text-xs">是</span> : <Tooltip title="交集<50，rank不可估计，已回退按水平判级"><span className="text-amber-600 text-xs">否</span></Tooltip>),
+              align: 'center',
+              render: (v: boolean) => (v ? <span className="text-emerald-600 text-xs whitespace-nowrap inline-flex items-center gap-1"><CheckCircle2 size={10} />是</span> : <Tooltip title="交集<50，rank不可估计，已回退按水平判级"><span className="text-amber-600 text-xs whitespace-nowrap inline-flex items-center gap-1"><AlertTriangle size={10} />否</span></Tooltip>),
             },
           ]}
         />

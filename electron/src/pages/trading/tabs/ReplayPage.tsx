@@ -920,10 +920,15 @@ function SessionCard({
     const [lastResult, setLastResult] = useState<StepResult | null>(null);
     const [stepError, setStepError] = useState<string | null>(null);
     const [showTrades, setShowTrades] = useState(false);
+    // 自动推演逐日快照（每步即时更新，完成后保留最后一日即终值）
+    const [liveSnap, setLiveSnap] = useState<StepResult['snapshot'] | null>(null);
 
     // Auto-advance hook (R5)
     const autoAdvance = useAutoAdvance({
-        onDay: () => { onRefresh(); },
+        onDay: (record) => {
+            if (record.snapshot) setLiveSnap(record.snapshot);
+            onRefresh();
+        },
         onDone: () => {
             onRefresh();
         },
@@ -1009,8 +1014,8 @@ function SessionCard({
     const isManual = !session.auto_trade;
     const canStep = session.status === 'ready' && session.next_date !== null;
     const canPropose = isManual && (session.status === 'ready' || session.status === 'awaiting_confirm') && session.next_date !== null;
-    // 资产数据：优先取本步结果，其次取后端最新快照（随推演日期同步）
-    const snap = (lastResult?.snapshot ?? session.latest_snapshot ?? null) as {
+    // 资产数据：自动推演逐日快照 → 手动单步结果 → 后端最新快照（完成后固定为终值）
+    const snap = (liveSnap ?? lastResult?.snapshot ?? session.latest_snapshot ?? null) as {
         trade_date?: string;
         total_asset?: number;
         cum_pnl?: number;

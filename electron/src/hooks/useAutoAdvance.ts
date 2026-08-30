@@ -33,6 +33,8 @@ export interface DailyRecord {
     cum_pnl: number;
     rejected: number;
     error?: string;
+    /** 当日收盘估值快照（供资产卡实时展示） */
+    snapshot?: StepResult['snapshot'];
 }
 
 export interface UseAutoAdvanceOptions {
@@ -159,6 +161,7 @@ export function useAutoAdvance(opts: UseAutoAdvanceOptions = {}): UseAutoAdvance
                     day_pnl: result.snapshot.day_pnl,
                     cum_pnl: result.snapshot.cum_pnl,
                     rejected: result.rejected.length,
+                    snapshot: result.snapshot,
                 };
                 const newRecords = [...recordsRef.current, record];
                 recordsRef.current = newRecords;

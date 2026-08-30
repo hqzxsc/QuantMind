@@ -928,7 +928,7 @@ async def get_model_market_regime(
                                 FROM engine_signal_scores s
                                 WHERE s.run_id = r.run_id AND s.tenant_id = r.tenant_id AND s.user_id = r.user_id
                                 ORDER BY s.fusion_score DESC
-                                LIMIT 20
+                                LIMIT 100
                             ) top ON true
                             WHERE r.tenant_id = :tenant_id AND r.user_id = :user_id
                               AND r.model_id = :model_id AND r.status = 'completed'
@@ -986,7 +986,7 @@ async def get_model_market_regime(
                                     FROM read_parquet('{str(parquet_file)}')
                                     WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
                                 )
-                                WHERE rn <= 20
+                                WHERE rn <= 100
                                 GROUP BY trade_date
                                 ORDER BY trade_date DESC
                                 LIMIT {int(window)}

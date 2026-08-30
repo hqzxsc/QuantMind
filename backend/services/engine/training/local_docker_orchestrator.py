@@ -933,6 +933,9 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                     _MARKET_MOUNT_ENV_VARS[_train_market]: _market_data_mount(_train_market)[1],
                     # 透传 IC 并行度覆盖（不设置时 parallel_utils 按剩余内存预算收缩）
                     "TRAIN_IC_WORKERS": os.getenv("TRAIN_IC_WORKERS", ""),
+                    # 透传树模型线程数覆盖（不设置时 train.py 默认 -1 用满所有核心）。
+                    # 宿主环境可设 TRAIN_NTHREADS=4 限流，避免训练抢破产线/行情等其它服务。
+                    "TRAIN_NTHREADS": os.getenv("TRAIN_NTHREADS", ""),
                 },
                 volumes=volumes,
                 network=_DOCKER_NETWORK,

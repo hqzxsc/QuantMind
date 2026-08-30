@@ -503,7 +503,9 @@ def _build_projected_payload(
             continue
         available.append(view.removeprefix("qdb_"))
         for column, raw in row.items():
-            if column in _META_COLUMNS:
+            # close 列在 _META_COLUMNS（基础价格列），但投影路径经别名映射为
+            # closePrice（UI 收盘价列）——有别名映射的列不能当元数据跳过
+            if column in _META_COLUMNS and column not in _CAMEL_ALIASES:
                 continue
             name = _camel_name(column, view)
             is_wanted = name in wanted and name not in values

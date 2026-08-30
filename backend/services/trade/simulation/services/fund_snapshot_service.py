@@ -89,10 +89,9 @@ class SimulationFundSnapshotService:
         initial_capital = _to_decimal(account.get("initial_capital"))
         today_pnl = _to_decimal(account.get("today_pnl"))
         total_pnl = _to_decimal(account.get("total_pnl"))
-        if initial_capital == 0:
-            initial_capital = total_asset
-        if total_pnl == 0:
-            total_pnl = total_asset - initial_capital
+        # 注意：这里不能用 total_asset 预填 initial_capital，
+        # 否则 capture_all 的 settings.initial_cash 回退永远不会命中，
+        # 导致 total_pnl 恒为 0。缺失时保留 0，由调用方做回退。
 
         return {
             "tenant_id": tenant_id,

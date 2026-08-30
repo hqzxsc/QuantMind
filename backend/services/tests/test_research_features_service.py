@@ -438,7 +438,7 @@ def test_market_cap_converted_to_yi(monkeypatch):
 
 
 def test_turnover_rate_computed_from_volume_and_float_shares(monkeypatch):
-    """换手率 = 成交量(手)×100 / 流通股本 ×100%。两个数据源都没有直接可用的百分比列。"""
+    """换手率 = 成交量(股) / 流通股本(股) ×100%。qdb_daily_unadjusted.volume 单位是股。"""
     hub = _install_hub(
         monkeypatch,
         _FakeHub(
@@ -447,7 +447,7 @@ def test_turnover_rate_computed_from_volume_and_float_shares(monkeypatch):
                     {"symbol": "600036.SH", "dt": 1, "circulating_capital": 2.062894e10}
                 ],
                 "qdb_daily_unadjusted": [
-                    {"symbol": "600036.SH", "dt": 1, "volume": 1050187.0}
+                    {"symbol": "600036.SH", "dt": 1, "volume": 105018700.0}
                 ],
             }
         ),
@@ -456,7 +456,7 @@ def test_turnover_rate_computed_from_volume_and_float_shares(monkeypatch):
     result = asyncio.run(
         svc.get_batch_full_features(["600036.SH"], fields=["turnoverRate"])
     )
-    # 1050187 手 × 100 股 / 206.29 亿股 ≈ 0.509%
+    # 105018700 股 / 206.29 亿股 × 100 ≈ 0.509%
     assert result["data"]["items"][0]["values"]["turnoverRate"] == pytest.approx(0.509, abs=0.01)
     # 日线视图只在需要换手率时挂载
     assert any("qdb_daily_unadjusted" in q for q in hub.queries)

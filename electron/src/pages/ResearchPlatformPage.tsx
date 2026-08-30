@@ -276,11 +276,8 @@ const COLUMN_DEFS: Record<string, ColumnDef> = {  // ---- 标识 ----
   return20d: { title: '20日收益', width: 96, render: rSigned(2) },
   return60d: { title: '60日收益', width: 96, render: rSigned(2) },
 
-  // ---- 连板 ----
-  consecutiveLimitUpDays: { title: '连板', width: 54 },
-  volumeTrend3d: { title: '3日量能', width: 92, render: rVolumeTrend },
-
   // ---- 流动性 ----
+  volumeTrend3d: { title: '3日量能', width: 92, render: rVolumeTrend },
   turnoverRate: { title: '换手率', width: 90, render: rNum(2, '%') },
   amount: { title: '成交额', width: 108, render: rNum(2, '亿') },
   volRatio5: { title: '5日量比', width: 90, render: rNum(2) },
@@ -391,7 +388,6 @@ const FILTER_SECTIONS: FilterSectionConfig[] = [
     label: '核心指标',
     fields: [
       { key: 'minScore', label: '模型分数 (≥)', step: 0.01 },
-      { key: 'limitUpDays', label: '连板天数 (≥)', suffix: '天' },
     ],
   },
   {
@@ -499,7 +495,6 @@ const RANGE_FILTER_BINDINGS: RangeFilterBinding[] = [
 
 const SORT_OPTIONS: Array<{ key: SortKey; label: string; field: keyof ResearchStockRow }> = [
   { key: 'score', label: '分数', field: 'score' },
-  { key: 'limitUp', label: '连板', field: 'consecutiveLimitUpDays' },
   { key: 'turnover', label: '换手', field: 'turnoverRate' },
   { key: 'amount', label: '成交额', field: 'amount' },
   { key: 'return1d', label: '1日', field: 'return1d' },
@@ -533,7 +528,6 @@ const makeFallbackRow = (key: string, code: string, name: string, score: number)
   signal: 'hold' as SignalType,
   latestChange: 0,
   totalReturn: null,
-  consecutiveLimitUpDays: 0,
   volumeTrend3d: 0,
   volumeTrend5d: false,
   turnoverRate: 0,
@@ -975,8 +969,6 @@ export const ResearchPlatformPage: React.FC = () => {
       if (cut !== null) (next[key] as [number, number]) = [lower, cut];
     };
 
-    if (config.limitUpDays !== undefined) next.limitUpDays = config.limitUpDays;
-
     // 模型评分没有固定量纲（不同模型/批次可能整体为负），绝对阈值会失效
     if (config.scoreTopPercent !== undefined) {
       const cut = quantile('score', 1 - config.scoreTopPercent / 100);
@@ -1079,7 +1071,6 @@ export const ResearchPlatformPage: React.FC = () => {
               // null 保留：universe（SDL 缺失）无值时留给 QuantDB 投影填充，
               // 若默认 0 会被 mergePoolFeatures 视为合法涨跌幅而不覆盖
               latestChange: item?.latestChange != null ? safeNum(item?.latestChange, 0) : null,
-              consecutiveLimitUpDays: safeNum(item?.consecutiveLimitUpDays, 0),
               turnoverRate: item?.turnoverRate != null ? safeNum(item?.turnoverRate, 0) : null,
               amount: item?.amount != null ? safeNum(item?.amount, 0) : null,
               pe: item?.pe != null ? safeNum(item?.pe, 0) : null,
@@ -1356,7 +1347,6 @@ export const ResearchPlatformPage: React.FC = () => {
     enrichedPool.forEach((item) => {
       // --- 核心阈值 ---
       if (safeNum(item.score, 0) < appliedFilters.minScore) return;
-      if (safeNum(item.consecutiveLimitUpDays, 0) < appliedFilters.limitUpDays) return;
 
       // --- 高置信标的 ---
       if (appliedFilters.highConfidenceOnly && item.confidence !== 'high') return;
@@ -2004,7 +1994,6 @@ export const ResearchPlatformPage: React.FC = () => {
     if (appliedFilters.minScore > DEFAULT_RESEARCH_FILTERS.minScore) {
       summary.push(`模型分数 ≥ ${appliedFilters.minScore.toFixed(2)}`);
     }
-    if (appliedFilters.limitUpDays > 0) summary.push(`连板天数 ≥ ${appliedFilters.limitUpDays}`);
     if (appliedFilters.excludeSt) summary.push('剔除 ST / 退市');
     if (appliedFilters.highConfidenceOnly) summary.push('仅保留高置信标的');
     if (appliedFilters.volumeTrendOnly) summary.push('近 5 日量能持续放大');
@@ -2222,7 +2211,8 @@ export const ResearchPlatformPage: React.FC = () => {
   return (
     <>
       <div className={`${PAGE_LAYOUT.outerClass} research-platform-page`}>
-        <div className={`${PAGE_LAYOUT.frameClass} overflow-y-auto custom-scrollbar`}>
+        {/* 左右分栏各自独立滚动：桌面宽度下外层框架不再整体滚动，左侧筛选区保持固定 */}
+        <div className={`${PAGE_LAYOUT.frameClass} custom-scrollbar overflow-y-auto xl:overflow-hidden`}>
           <header className={`${PAGE_LAYOUT.headerClass}`} style={{ height: `${PAGE_LAYOUT.headerHeight}px` }}>
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-400 text-white shadow-lg shadow-blue-900/20">
@@ -2253,11 +2243,12 @@ export const ResearchPlatformPage: React.FC = () => {
             </div>
           </header>
 
-          <div className="flex flex-1 flex-col">
-            <div className={`${PAGE_LAYOUT.contentOuterClass}`}>
-              <div className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
-                {/* ---------------- 左侧筛选侧栏 ---------------- */}
-                <div className="sticky top-4 z-30 flex h-[calc(var(--app-h)-120px)] flex-col gap-4">
+          <div className="flex min-h-0 flex-1 flex-col">
+            {/* 底部预留 Dock 高度，避免固定后的左栏被悬浮导航栏遮挡 */}
+            <div className={`${PAGE_LAYOUT.contentOuterClass} flex min-h-0 flex-1 flex-col pb-[calc(var(--dock-height)+8px)]`}>
+              <div className="grid min-h-0 flex-1 gap-4 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
+                {/* ---------------- 左侧筛选侧栏（固定，不随右侧滚动） ---------------- */}
+                <div className="flex min-h-0 flex-col gap-4">
                   <div className="flex-shrink-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="mb-3 flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">
                       <LibraryBig className="h-3.5 w-3.5" />
@@ -2489,7 +2480,7 @@ export const ResearchPlatformPage: React.FC = () => {
 
                 {/* ---------------- 右侧主内容 ---------------- */}
                 <motion.div
-                  className="flex min-w-0 flex-1 flex-col gap-4 pb-4"
+                  className="custom-scrollbar flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto pb-4"
                   initial="hidden"
                   animate="visible"
                   variants={{
@@ -2533,7 +2524,7 @@ export const ResearchPlatformPage: React.FC = () => {
 
                   <motion.div
                     variants={{ hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0 } }}
-                    className="glass-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl p-1 shadow-sm"
+                    className="glass-panel flex min-h-0 min-w-0 shrink-0 grow flex-col overflow-hidden rounded-3xl p-1 shadow-sm"
                   >
                     <motion.div
                       initial={{ opacity: 0, y: 15 }}
@@ -2919,7 +2910,6 @@ export const ResearchPlatformPage: React.FC = () => {
               <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-6">
                 {[
                   { label: '模型分数', val: safeNum(selectedStock.score, 0).toFixed(3) },
-                  { label: '连板天数', val: `${safeNum(selectedStock.consecutiveLimitUpDays, 0)} 天` },
                   { label: '成交额', val: `${safeNum(selectedStock.amount, 0).toFixed(2)} 亿` },
                   { label: '换手率', val: fmtPercent2(selectedStock.turnoverRate) },
                   { label: '涨跌幅', val: fmtSignedPercent2(selectedStock.latestChange) },

@@ -1,6 +1,6 @@
 export type SignalType = 'buy' | 'hold' | 'sell';
 export type ConfidenceLevel = 'high' | 'medium' | 'watch';
-export type SortKey = 'score' | 'limitUp' | 'turnover' | 'amount' | 'return1d' | 'volStd20';
+export type SortKey = 'score' | 'turnover' | 'amount' | 'return1d' | 'volStd20';
 export type FilterSectionKey =
   | 'common'
   | 'market'
@@ -52,7 +52,6 @@ export interface ResearchStockRow {
   score: number;
   latestChange: number | null;
   totalReturn?: number | null;
-  consecutiveLimitUpDays: number;
   volumeTrend3d: number | null;
   volumeTrend5d: boolean;
   turnoverRate: number | null;
@@ -113,7 +112,6 @@ export interface ResearchStockRow {
 export interface ResearchFiltersState {
   // Core
   minScore: number;
-  limitUpDays: number;
   excludeSt: boolean;
   highConfidenceOnly: boolean;
   // Market & Liquidity

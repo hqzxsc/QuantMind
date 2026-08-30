@@ -9,7 +9,6 @@ import type { ResearchFiltersState } from './types';
  */
 export const PRESET_FILTER_MAP: Record<string, any> = {
   高分优选: { scoreTopPercent: 10 },
-  连板突破: { limitUpDays: 2 },
   白马蓝筹: { roeTop: 0.3, totalMvTop: 0.3 },
   题材活跃: { turnoverTop: 0.25, amountTop: 0.25 },
   低位反弹: { maGap20Bottom: 0.25, rsiBottom: 0.25 },
@@ -20,7 +19,6 @@ export const PRESET_FILTER_MAP: Record<string, any> = {
 export const DEFAULT_RESEARCH_FILTERS: ResearchFiltersState = {
   // Core
   minScore: -1.0,
-  limitUpDays: 0,
   excludeSt: false,
   highConfidenceOnly: false,
   // Market & Liquidity
@@ -114,15 +112,9 @@ export const COLUMN_GROUPS: ColumnGroup[] = [
     defaultVisible: true,
   },
   {
-    key: 'limitUp',
-    label: '连板',
-    columns: ['consecutiveLimitUpDays', 'volumeTrend3d'],
-    defaultVisible: true,
-  },
-  {
     key: 'liquidity',
     label: '流动性',
-    columns: ['turnoverRate', 'amount', 'volRatio5', 'volRatio20'],
+    columns: ['turnoverRate', 'amount', 'volRatio5', 'volRatio20', 'volumeTrend3d'],
     defaultVisible: true,
   },
   {

@@ -660,7 +660,9 @@ def _format_candidate_record(row: dict[str, Any]) -> dict[str, Any]:
         "latestChange": latest_change_pct,
         "consecutiveLimitUpDays": consecutive_lu_raw if consecutive_lu_raw is not None else 0,
         "turnoverRate": round(turnover_raw, 2) if turnover_raw is not None else None,
-        "amount": round(to_yi(amount_raw), 4) if amount_raw is not None else None,
+        # amount 单位是「万元」（QuantDB kline 口径：成交量(股)×价 → 万元），
+        # 而 totalMv/floatMv 是「元」走 to_yi；这里单独按 万元→亿元 换算。
+        "amount": round(amount_raw / 1e4, 4) if amount_raw is not None else None,
         "marketCap": round(to_yi(total_mv_raw), 2) if total_mv_raw is not None else None,
         "totalMv": round(to_yi(total_mv_raw), 2) if total_mv_raw is not None else None,
         "floatMv": round(to_yi(float_mv_raw), 2) if float_mv_raw is not None else None,

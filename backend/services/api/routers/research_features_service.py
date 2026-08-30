@@ -113,11 +113,16 @@ _CAMEL_ALIASES: dict[str, str] = {
     # 序列化后变成 0，前端显示 “PE 0.0 / ROE 0.0%”）。这些别名让 QuantDB 顶上同名 UI 字段。
     "pe_ttm": "pe",
     "fun_roe": "roe",
+    "fun_np_growth": "profitGrowth",
     # features_daily 的原始列名与 UI 字段名不对齐：
     # 涨跌幅 = pct_change（当日涨跌），收盘价 = close。
     # 不加别名时 toCamel 产出 pctChange/close，前端列（latestChange/closePrice）取不到值。
     "pct_change": "latestChange",
     "close": "closePrice",
+    # 量比：features_daily 列名是 vol_to_ma5/vol_to_ma20（toCamel → volToMa5），
+    # 前端列（volRatio5/volRatio20）取不到值。
+    "vol_to_ma5": "volRatio5",
+    "vol_to_ma20": "volRatio20",
 }
 
 # market_sentiment 视图的列没有前缀，前端统一加 sentiment 前缀避免与基础字段冲突。
@@ -169,6 +174,9 @@ _DERIVED_FALLBACKS: dict[str, tuple[str, float]] = {
 _UNIT_SCALES: dict[str, float] = {
     "totalMv": 1e-8,
     "floatMv": 1e-8,
+    # 成交额：qdb_daily_unadjusted.amount 单位是「万元」（如 11754.99 万 ≈ 1.18 亿），
+    # universe 已按 to_yi 口径给「亿元」，这里 ×1e-4 对齐（万元 → 亿元）。
+    "amount": 1e-4,
     "mainFlow": 1e-6,
     "flowNetAmount": 1e-6,
     "flowBuyAmount": 1e-6,
@@ -212,13 +220,15 @@ def _to_jsonable(value: Any) -> Any:
 
 
 def _latest_rows(
-    view: str, symbols: list[str], dt: int | None = None
+    view: str, symbols: list[str], dt: int | None = None, columns: list[str] | None = None
 ) -> dict[str, dict[str, Any]]:
     """读取指定视图中每个 symbol 的最新一行。
 
     dt（YYYYMMDD 整数）传入时读取「不晚于该日的最新一行」——投研平台按选中
     数据日 T 查看历史截面：return_*（T 后 N 日真实收益）只在 T 所在行有值，
     读最新行会永远取到 NaN。
+    columns 传入时做列裁剪（只 SELECT symbol + 指定列），用于 l2/l1 等宽表
+    （100+ 列）按需取 2~3 列，避免整表扫描拖慢投研页面。
     返回 {symbol: row_dict}；视图不存在或无数据时返回空字典（优雅降级）。
     """
     quoted = ", ".join(f"'{s}'" for s in symbols)
@@ -226,9 +236,18 @@ def _latest_rows(
         dt_cond = f"dt BETWEEN {dt - _DT_LOOKBACK} AND {dt}"
     else:
         dt_cond = f"dt >= (SELECT MAX(dt) - {_DT_LOOKBACK} FROM {view})"
+    if columns:
+        select_cols = ["symbol"] + [f'"{c}"' for c in columns]
+        inner_sel = ", ".join(
+            select_cols + ["ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY dt DESC) AS rn"]
+        )
+        outer_sel = ", ".join(select_cols)
+    else:
+        inner_sel = "*, ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY dt DESC) AS rn"
+        outer_sel = "*"
     sql = f"""
-        SELECT * FROM (
-            SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY dt DESC) AS rn
+        SELECT {outer_sel} FROM (
+            SELECT {inner_sel}
             FROM {view}
             WHERE symbol IN ({quoted})
               AND {dt_cond}
@@ -271,9 +290,11 @@ def _latest_l1_from_files(symbols: list[str]) -> dict[str, dict[str, Any]]:
     return {str(row[symbol_col]): dict(row) for _, row in df.iterrows()}
 
 
-def _fetch_l1(symbols: list[str], dt: int | None = None) -> dict[str, dict[str, Any]]:
+def _fetch_l1(
+    symbols: list[str], dt: int | None = None, columns: list[str] | None = None
+) -> dict[str, dict[str, Any]]:
     """L1 因子：优先分区视图，缺失时回落到平铺文件。"""
-    rows = _latest_rows("qdb_l1_factors", symbols, dt)
+    rows = _latest_rows("qdb_l1_factors", symbols, dt, columns=columns)
     if rows:
         return rows
     return _latest_l1_from_files(symbols)
@@ -352,14 +373,14 @@ def _build_projected_payload(
         if target not in values and src in spare:
             values[target] = spare[src] * scale
 
-    # 换手率：PG 从 2026-06-26 起完全没有该列，QuantDB 也没有直接可用的百分比字段
-    # （fun_turnover_1 是另一套量纲）。按定义现算：成交量(手)×100 / 流通股本 × 100%。
-    # 校验：全市场中位 1.86%、p95 8.66%，与 PG 早期有效行（2.02% / 2.84%）一致。
+    # 换手率：PG 从 2026-06-26 起完全没有该列，现算兜底。
+    # qdb_daily_unadjusted.volume 与 features_daily.circulating_capital 单位均为「股」，
+    # 相除 ×100 即得百分比（无需再 ×100 手→股，否则会放大 100 倍）。
     if "turnoverRate" in wanted and "turnoverRate" not in values:
         volume = spare.get("volume")
         circulating = spare.get("circulatingCapital")
         if volume and circulating and circulating > 0:
-            values["turnoverRate"] = volume * 100.0 * 100.0 / circulating
+            values["turnoverRate"] = volume * 100.0 / circulating
 
     # 与 universe 行的单位对齐（亿元 / 百万元）
     _apply_unit_scales(values)
@@ -375,18 +396,20 @@ def _build_projected_payload(
 
 
 def _query_sources(
-    symbols: list[str], *, include_daily: bool = False, dt: int | None = None
+    symbols: list[str], *, wanted: frozenset[str] = frozenset(), dt: int | None = None
 ) -> dict[str, dict[str, Any]] | None:
-    """查询全部 QuantDB 视图。数据目录不可用时返回 None。
+    """查询 QuantDB 视图（按 wanted 字段集做分段式加载）。数据目录不可用时返回 None。
 
     优先使用 52 维核心宽表 qdb_features_daily 替代旧的 qdb_valuation 与 qdb_technical_indicators，
     未落盘 features_daily 时自动回退至旧分散视图。
-    include_daily 额外挂载日线视图（提供 volume，用于现算换手率）。仅投影路径需要。
     dt（YYYYMMDD 整数）传入时各视图读「不晚于该日的最新一行」（投研历史截面）。
 
-    页面减负：dt 模式（投研选中日期）只查 50 维宽表 features_daily 单视图，
-    不再合并情绪面/L1/L2/日线视图（5 次扫描 → 1 次，约 14s → 4s）。
-    宽表未覆盖的日期（历史早于宽表起始日）回退多视图。
+    页面减负 + IO 分段：
+    - dt 模式（投研选中日期）以 features_daily 单视图为主源；
+    - 仅在 wanted 需要宽表缺失字段时，才额外按需只读所需列：
+        roe/profitGrowth → qdb_l1_factors（2 列）；amount/turnoverRate → qdb_daily_unadjusted（2 列）。
+      这样既补齐空值字段，又避免恢复「5 视图全扫」的旧成本。
+    - 宽表未覆盖的日期（历史早于宽表起始日）回退多视图。
     """
     hub = _get_hub()
     if not hub.available:
@@ -399,8 +422,26 @@ def _query_sources(
     features_daily_rows = _latest_rows("qdb_features_daily", symbols, dt)
     if features_daily_rows:
         sources["qdb_features_daily"] = features_daily_rows
+
         if dt is not None:
-            # 减负模式：只加载 50 维宽表，直接返回
+            # 减负模式：主源之后按需分段补 L1 与日线（列裁剪，只取必要列）
+            l1_cols: list[str] = []
+            if "roe" in wanted:
+                l1_cols.append("fun_roe")
+            if "profitGrowth" in wanted:
+                l1_cols.append("fun_np_growth")
+            if l1_cols:
+                sources["qdb_l1_factors"] = _fetch_l1(symbols, dt, columns=l1_cols)
+
+            kline_cols: list[str] = []
+            if "amount" in wanted:
+                kline_cols.append("amount")
+            if "turnoverRate" in wanted:
+                kline_cols.append("volume")
+            if kline_cols:
+                daily = _latest_rows("qdb_daily_unadjusted", symbols, dt, columns=kline_cols)
+                if daily:
+                    sources["qdb_daily_unadjusted"] = daily
             return sources
     else:
         # 回退至旧分散视图
@@ -409,12 +450,12 @@ def _query_sources(
             "qdb_technical_indicators", symbols, dt
         )
 
-    # 2. 情绪面、L1 因子、L2 因子
+    # 2. 情绪面、L1 因子、L2 因子（非 dt 模式沿用全量）
     sources["qdb_market_sentiment"] = _latest_rows("qdb_market_sentiment", symbols, dt)
     sources["qdb_l1_factors"] = _fetch_l1(symbols, dt)
     sources["qdb_l2_factors"] = _latest_rows("qdb_l2_factors", symbols, dt)
 
-    if include_daily:
+    if "turnoverRate" in wanted:
         # 日线视图只用于取 volume（现算换手率的原料）。其余列必须丢弃：
         # amount/open/high/low 与 UI 字段同名但量纲不同（amount 是元，UI 期望亿元），
         # 一旦混入就会污染成交额筛选。
@@ -423,6 +464,72 @@ def _query_sources(
             sym: {"volume": row.get("volume")} for sym, row in daily.items()
         }
     return sources
+
+
+# instrument_list 上市日期缓存：静态数据，进程内读一次即可复用（跨请求、跨日期）。
+_LISTING_DATE_CACHE: dict[str, str] | None = None
+_LISTING_DATE_CACHE_LOCK = threading.Lock()
+
+
+def _load_listing_dates() -> dict[str, str]:
+    """读取 QuantDB instrument_list 的上市日期，返回 {suffix_symbol: "YYYYMMDD"}。"""
+    global _LISTING_DATE_CACHE
+    with _LISTING_DATE_CACHE_LOCK:
+        if _LISTING_DATE_CACHE is not None:
+            return _LISTING_DATE_CACHE
+        result: dict[str, str] = {}
+        try:
+            df = _get_hub().fetch_stock_list()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("读取 instrument_list 失败（listedDays 缺失）: %s", exc)
+            _LISTING_DATE_CACHE = result
+            return result
+        if df is None or df.empty or "J_start" not in df.columns:
+            _LISTING_DATE_CACHE = result
+            return result
+        symbol_col = "symbol" if "symbol" in df.columns else "Symbol"
+        for _, row in df[[symbol_col, "J_start"]].iterrows():
+            try:
+                sym = StockCodeUtil.to_suffix(str(row[symbol_col]).strip())
+                start = str(int(row["J_start"]))
+            except (ValueError, TypeError):
+                continue
+            if sym and len(start) >= 8:
+                result[sym] = start[:8]
+        _LISTING_DATE_CACHE = result
+        return result
+
+
+def _apply_listed_days(
+    result: dict[str, dict[str, Any]],
+    symbols: list[str],
+    wanted: frozenset[str],
+    dt: int,
+) -> None:
+    """补上市天数：listedDays = 选中交易日 - 上市日期（静态，无需扫描行情）。"""
+    if "listedDays" not in wanted:
+        return
+    listing = _load_listing_dates()
+    if not listing:
+        return
+    from datetime import datetime
+
+    try:
+        base = datetime.strptime(str(dt), "%Y%m%d").date()
+    except ValueError:
+        return
+    for s in symbols:
+        start = listing.get(s)
+        if not start:
+            continue
+        try:
+            start_date = datetime.strptime(start, "%Y%m%d").date()
+        except ValueError:
+            continue
+        item = result.get(s)
+        if item is None:
+            continue
+        item.setdefault("values", {})["listedDays"] = (base - start_date).days
 
 
 def _load_projected_features(
@@ -444,10 +551,12 @@ def _load_projected_features(
             if hit and time.monotonic() - hit[0] < _PROJ_DAY_CACHE_TTL:
                 return hit[1]
 
-    sources = _query_sources(symbols, include_daily="turnoverRate" in wanted, dt=dt)
+    sources = _query_sources(symbols, wanted=wanted, dt=dt)
     if sources is None:
         return {}
     result = {s: _build_projected_payload(s, sources, wanted) for s in symbols}
+    if dt is not None:
+        _apply_listed_days(result, symbols, wanted, dt)
 
     if dt is not None and len(symbols) > 1000:
         # 只缓存全池量级请求（投研宇宙）；小批量（详情面板等）不值得占缓存槽

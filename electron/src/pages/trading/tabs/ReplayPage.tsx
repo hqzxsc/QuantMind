@@ -1211,7 +1211,7 @@ function SessionCard({
                                     >
                                         <span className="font-mono text-gray-600">{r.trade_date}</span>
                                         <span className="text-gray-400">{r.fill_count} 笔</span>
-                                        <span className={r.day_pnl >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                        <span className={r.day_pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}>
                                             {r.day_pnl >= 0 ? '+' : ''}{r.day_pnl.toFixed(0)}
                                         </span>
                                     </div>
@@ -1254,7 +1254,7 @@ function SessionCard({
                     {/* 2. Total Assets */}
                     <div className="bg-slate-50/80 rounded-xl p-3.5 border border-slate-200/70 flex flex-col justify-between">
                         <div className="text-xs font-semibold text-slate-500 mb-0.5">当前总资产</div>
-                        <div className="text-xl font-black text-slate-900 font-mono tracking-tight my-0.5">
+                        <div className="text-xl font-black text-slate-900 font-mono tracking-tight my-0.5 text-center">
                             ¥ {(lastResult?.snapshot?.total_asset ?? session.initial_cash ?? 1000000).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
                         </div>
                         <div className="text-[11px] text-slate-400">
@@ -1274,7 +1274,7 @@ function SessionCard({
                                 {pnl >= 0 ? '+' : ''}{((pnl / (session.initial_cash || 1000000)) * 100).toFixed(2)}%
                             </span>
                         </div>
-                        <div className={`text-xl font-black font-mono tracking-tight my-0.5 ${pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                        <div className={`text-xl font-black font-mono tracking-tight my-0.5 text-center ${pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                             {pnl >= 0 ? '+' : ''}{pnl.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="text-[11px] text-slate-400">

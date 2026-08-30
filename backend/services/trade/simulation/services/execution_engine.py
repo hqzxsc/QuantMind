@@ -3,7 +3,6 @@ Synthetic execution engine for simulation orders.
 """
 
 import logging
-import random
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -22,7 +21,10 @@ from backend.services.trade.simulation.services.simulation_manager import (
 )
 from backend.services.trade.trade_config import settings
 from backend.shared.auth import get_internal_call_secret
-from backend.shared.trade_account_cache import write_trade_account_cache
+from backend.shared.trade_account_cache import (
+    write_json_cache,
+    write_trade_account_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,9 @@ class ExecutionResult:
         price: float = 0.0,
         quantity: float = 0.0,
         commission: float = 0.0,
+        stamp_duty: float = 0.0,
+        market: str = "CN",
+        account_snapshot: dict | None = None,
         price_source: str | None = None,
         message: str = "",
     ):
@@ -42,6 +47,9 @@ class ExecutionResult:
         self.price = price
         self.quantity = quantity
         self.commission = commission
+        self.stamp_duty = stamp_duty
+        self.market = market
+        self.account_snapshot = account_snapshot
         self.price_source = price_source
         self.message = message
 
@@ -208,11 +216,9 @@ class SimulationExecutionEngine:
         except Exception as e:
             logger.error("Database fallback failed for %s: %s", symbol, e)
 
-        # Level 3: 最终保底
-        return MarketSnapshot(
-            price=100.0 + random.uniform(-1, 1),
-            price_source="random_fallback",
-        )
+        # Level 3: 无法获取行情 —— 不伪造随机价格，交由 execute_order 拒单，
+        # 避免以虚假价格成交污染模拟盘资产/持仓。
+        return MarketSnapshot(price=0.0, price_source="unavailable")
 
     async def execute_order(self, order: SimOrder, market: str | None = None) -> ExecutionResult:
         snapshot = await self._latest_price(
@@ -222,6 +228,15 @@ class SimulationExecutionEngine:
         )
         base_price = snapshot.price
         fetched_source = snapshot.price_source
+
+        # 行情不可用（实时行情与 DB 兜底都失败时 price=0 / unavailable）：
+        # 市价与限价单都无从定价，直接拒单，避免随机价格或空价格成交污染账户。
+        if base_price <= 0 or fetched_source == "unavailable":
+            return ExecutionResult(
+                success=False,
+                message=f"无法获取 {order.symbol} 实时行情，模拟单拒绝成交",
+            )
+
         slippage = settings.SIMULATION_SLIPPAGE_BPS / 10000
 
         # 市场规则：由标的代码推断（信号/订单来自同一市场），佣金、
@@ -232,6 +247,13 @@ class SimulationExecutionEngine:
         )
 
         rules = rules_for(market or infer_market(order.symbol))
+        market_str = rules.market.value
+
+        # 记录更新前的账户快照：供 apply_filled 落库失败时补偿恢复，
+        # 保证 Redis 余额/持仓与 sim_orders/sim_trades 的数据一致性（T+1 语义下无法用反向增减安全回退）。
+        account_snapshot = await self.manager.get_account(
+            order.user_id, tenant_id=order.tenant_id, market=market_str
+        )
 
         side = str(order.side.value).lower()
         if snapshot.suspended:
@@ -248,24 +270,46 @@ class SimulationExecutionEngine:
         elif order.order_type == OrderType.LIMIT:
             if order.price is None or order.price <= 0:
                 return ExecutionResult(success=False, message="Limit price required")
-            exec_price = round(float(order.price), 4)
-            price_source = "limit_price"
+            # 限价单需校验当前市价可成交性，并以更优市价成交（与 PaperTradingBroker 口径一致）：
+            # 买单：委托价 >= 市价才成交，成交价=市价；卖单：委托价 <= 市价才成交，成交价=市价。
+            if side == "buy":
+                if order.price < base_price:
+                    return ExecutionResult(
+                        success=False,
+                        message=f"买单委托价 {order.price} 低于市价 {base_price}，限价单未成交",
+                    )
+            else:
+                if order.price > base_price:
+                    return ExecutionResult(
+                        success=False,
+                        message=f"卖单委托价 {order.price} 高于市价 {base_price}，限价单未成交",
+                    )
+            exec_price = round(float(base_price), 4)
+            price_source = "market_price"
         else:
             return ExecutionResult(success=False, message=f"Unsupported order type: {order.order_type}")
 
+        gross = order.quantity * exec_price
         if rules.market.value == "CN":
-            # A 股保持既有全局费率口径（可由 env 覆盖），行为不变
+            # A 股保持既有全局费率口径（可由 env 覆盖），并设最低佣金（默认 5 元）
             commission = round(
                 order.quantity * exec_price * settings.SIMULATION_COMMISSION_RATE, 2
             )
+            commission = max(commission, float(settings.SIMULATION_COMMISSION_MIN))
+            # 证券交易印花税：A 股卖出单边收取（买入不收取）
+            stamp_duty = (
+                round(gross * float(settings.SIMULATION_STAMP_DUTY_RATE), 2)
+                if order.side.value == "sell"
+                else 0.0
+            )
         else:
             commission = rules.compute_commission(order.quantity, exec_price, side)
-        gross = order.quantity * exec_price
+            stamp_duty = 0.0
         if order.side.value == "buy":
             delta_cash = -(gross + commission)
             delta_volume = order.quantity
         else:
-            delta_cash = gross - commission
+            delta_cash = gross - commission - stamp_duty
             delta_volume = -order.quantity
 
         update = await self.manager.update_balance(
@@ -291,11 +335,15 @@ class SimulationExecutionEngine:
             price=exec_price,
             quantity=order.quantity,
             commission=commission,
+            stamp_duty=stamp_duty,
+            market=market_str,
+            account_snapshot=account_snapshot,
             price_source=price_source,
         )
 
     async def apply_filled(self, order: SimOrder, result: ExecutionResult) -> SimTrade:
         trade_value = result.quantity * result.price
+        total_fee = result.commission + result.stamp_duty
         trade = SimTrade(
             order_id=order.order_id,
             tenant_id=order.tenant_id,
@@ -307,6 +355,8 @@ class SimulationExecutionEngine:
             price=result.price,
             trade_value=trade_value,
             commission=result.commission,
+            stamp_duty=result.stamp_duty,
+            total_fee=total_fee,
             executed_at=datetime.now(),
             price_source=result.price_source,
         )
@@ -319,11 +369,42 @@ class SimulationExecutionEngine:
         order.average_price = result.price
         order.filled_value = trade_value
         order.commission = result.commission
-        order.order_value = order.quantity * (order.price or 0)
+        order.total_fee = total_fee
+        # 委托金额以实际成交金额为准（市价单无委托价，此前 quantity*(price or 0)=0 失真）
+        order.order_value = trade_value
         order.execution_model = "synthetic_price"
         order.price_source = result.price_source
 
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except Exception:
+            # #5 兜底：DB 落成交失败时，Redis 账户已在 execute_order 被扣款/加仓，
+            # 此处回滚 DB 并把 Redis 账户恢复到执行前快照，避免资金与订单不一致。
+            await self.db.rollback()
+            if self.manager.redis and self.manager.redis.client:
+                try:
+                    key = self.manager._get_key(
+                        order.user_id, order.tenant_id, result.market
+                    )
+                    if result.account_snapshot is not None:
+                        write_json_cache(
+                            self.manager.redis, key, result.account_snapshot
+                        )
+                    else:
+                        self.manager.redis.client.delete(key)
+                except Exception as restore_err:  # noqa: BLE001
+                    logger.error(
+                        "Failed to restore sim account after commit failure: %s",
+                        restore_err,
+                        exc_info=True,
+                    )
+            logger.error(
+                "Sim order %s apply_filled commit failed; DB rolled back and account restored",
+                order.order_id,
+                exc_info=True,
+            )
+            raise
+
         await self.db.refresh(order)
         await self.db.refresh(trade)
         await self._sync_trade_account(order.tenant_id, order.user_id)

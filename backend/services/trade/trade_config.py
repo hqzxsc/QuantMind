@@ -146,6 +146,14 @@ class Settings(BaseSettings):
     SIMULATION_COMMISSION_RATE: float = float(
         os.getenv("SIMULATION_COMMISSION_RATE", "0.0003")
     )
+    # 模拟盘最低佣金（元），对齐真实券商，单笔 < 最低佣金按最低收取
+    SIMULATION_COMMISSION_MIN: float = float(
+        os.getenv("SIMULATION_COMMISSION_MIN", "5")
+    )
+    # 证券交易印花税（卖出单边费率）。A 股当前 0.05%，仅 CN 卖出收取。
+    SIMULATION_STAMP_DUTY_RATE: float = float(
+        os.getenv("SIMULATION_STAMP_DUTY_RATE", "0.0005")
+    )
 
     # Commission rates for risk purchasing-power check
     # A 股买入佣金约 0.03%（券商最低 5 元）；卖出另含印花税 0.1%+过户费 0.001%

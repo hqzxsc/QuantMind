@@ -2,8 +2,8 @@ import { useAppSelector } from '../../../store';
 import { selectCurrentMarket } from '../../../store/slices/uiSlice';
 import BrokerChannelCard from '../components/BrokerChannelCard';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Play, Square, CheckCircle, Activity, Cpu, FileText, RefreshCw, AlertCircle, Settings2, Clock3, TerminalSquare, Undo2 } from 'lucide-react';
-import { Input, Select, message, Modal } from 'antd';
+import { Play, Square, CheckCircle, Activity, Cpu, FileText, RefreshCw, AlertCircle, Settings2, Clock3, TerminalSquare } from 'lucide-react';
+import { Select } from 'antd';
 import { strategyManagementService } from '../../../services/strategyManagementService';
 import { modelTrainingService, UserModelRecord, LatestInferenceRunInfo } from '../../../services/modelTrainingService';
 import type { RealTradingStatus, PreflightCheckItem } from '../../../services/realTradingService';
@@ -45,73 +45,6 @@ const taskStatusTone = (value?: string | null) => {
     }
     if (status === 'failed' || status === 'cancelled') return 'bg-rose-50 text-rose-700 border-rose-200';
     return 'bg-slate-50 text-slate-600 border-slate-200';
-};
-
-// ============ 今日委托 / 一键撤单 ============
-
-const WORKING_ORDER_STATUSES = new Set(['submitted', 'partial_fill', 'pending']);
-
-const WORKING_STATUS_LABEL: Record<string, string> = {
-    submitted: '已报待成交',
-    partial_fill: '部分成交',
-    pending: '待报',
-    filled: '全部成交',
-    partial_cancelled: '部分撤单',
-    cancelled: '全部撤单',
-    rejected: '废单',
-    needs_confirm: '待确认',
-    expired: '已过期',
-    cancel_failed: '撤单失败',
-};
-
-const orderStatusTone = (status?: string | null) => {
-    const s = String(status || '').toLowerCase();
-    if (s === 'filled' || s === 'partial_fill') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-    if (s === 'cancelled' || s === 'partial_cancelled' || s === 'rejected' || s === 'expired') return 'bg-slate-100 text-slate-500 border-slate-200';
-    if (s === 'cancel_failed') return 'bg-amber-50 text-amber-700 border-amber-200';
-    return 'bg-blue-50 text-blue-700 border-blue-200';
-};
-
-interface TdxOrderQuote {
-    order_id?: string;
-    plan_id?: string;
-    symbol?: string;
-    name?: string;
-    side?: string;
-    volume?: number;
-    amount?: number;
-    quote_price?: number;
-    filled_price?: number;
-    filled_volume?: number;
-    status?: string;
-    ts?: string;
-    market_detail?: string;
-}
-
-interface TdxOrdersResponse {
-    success?: boolean;
-    orders?: Array<Record<string, any>>;
-    inflight?: Record<string, any>;
-    order_quotes?: Record<string, TdxOrderQuote>;
-    quotes?: Record<string, TdxOrderQuote>;
-}
-
-const formatPrice = (v?: number | string | null) => {
-    const n = Number(v);
-    return Number.isFinite(n) && n > 0 ? n.toFixed(2) : '-';
-};
-
-const formatTimeHHMMSS = (raw?: string | null) => {
-    if (!raw) return '-';
-    const s = String(raw).trim();
-    // 通达信委托时间为纯 HH:MM:SS 字符串，直接返回（new Date 解析有歧义/失败）
-    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) {
-        // 00:00:00 是通达信未提供委托时间时的占位值，A股无午夜委托，显示 - 避免误导
-        return s === '00:00:00' ? '-' : s;
-    }
-    const value = new Date(s);
-    if (Number.isNaN(value.getTime())) return s;
-    return value.toLocaleTimeString('zh-CN', { hour12: false });
 };
 
 const formatInferenceStatus = (value?: string | null) => {
@@ -295,13 +228,6 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
     const [hostedLogsVisible, setHostedLogsVisible] = useState<boolean>(false);
     const [latestInferenceRunIsNew, setLatestInferenceRunIsNew] = useState(false);
     const [batchRuleExpanded, setBatchRuleExpanded] = useState(false);
-    // 今日委托 / 一键撤单
-    const [todayOrders, setTodayOrders] = useState<Array<Record<string, any>>>([]);
-    const [orderQuotes, setOrderQuotes] = useState<Record<string, TdxOrderQuote>>({});
-    const [symbolQuotes, setSymbolQuotes] = useState<Record<string, TdxOrderQuote>>({});
-    const [ordersLoading, setOrdersLoading] = useState(false);
-    const [ordersError, setOrdersError] = useState<string | null>(null);
-    const [cancelingId, setCancelingId] = useState<string | null>(null);
     const apiGatewayBase = SERVICE_URLS.API_GATEWAY.replace(/\/+$/, '');
     const hostedCursorRef = useRef('0-0');
     const hostedLogsRef = useRef<string[]>([]);
@@ -554,75 +480,6 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
             onDeploy(selectedStrategyId, isShadowMode, strategy || null);
         }
     };
-
-    // ===== 今日委托 / 一键撤单 =====
-    const authHeader = () => ({
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('access_token') || ''}`,
-    });
-
-    const fetchTodayOrders = useCallback(async () => {
-        try {
-            const res = await fetch(`${apiGatewayBase}/api/v1/tdx/orders`, { headers: authHeader() });
-            if (!res.ok) {
-                setOrdersError(`委托查询失败(HTTP ${res.status})`);
-                return;
-            }
-            const data = (await res.json()) as TdxOrdersResponse;
-            setTodayOrders(Array.isArray(data.orders) ? data.orders : []);
-            setOrderQuotes(data.order_quotes || {});
-            setSymbolQuotes(data.quotes || {});
-            setOrdersError(null);
-        } catch (e) {
-            setOrdersError('桥不可达，委托查询失败');
-            console.error('Failed to fetch today orders', e);
-        } finally {
-            setOrdersLoading(false);
-        }
-    }, [apiGatewayBase]);
-
-    useEffect(() => {
-        setOrdersLoading(true);
-        fetchTodayOrders();
-        const timer = setInterval(fetchTodayOrders, 20000);
-        return () => clearInterval(timer);
-    }, [fetchTodayOrders]);
-
-    const handleCancelOrder = useCallback((order: Record<string, any>) => {
-        const symbol = String(order.stock_code || '').trim();
-        const orderId = String(order.order_id || '').trim();
-        const stockName = String(order.stock_name || '').trim();
-        if (!symbol || !orderId) return;
-        Modal.confirm({
-          title: '撤销委托',
-          content: `确认撤销委托？\n${stockName || symbol} ${String(order.side || '').toUpperCase()} 委托量 ${order.total_volume ?? order.volume ?? '-'} 股`,
-          okText: '撤销',
-          okType: 'danger',
-          cancelText: '取消',
-          onOk: async () => {
-            setCancelingId(orderId);
-            try {
-              const res = await fetch(`${apiGatewayBase}/api/v1/tdx/orders/cancel`, {
-                method: 'POST',
-                headers: authHeader(),
-                body: JSON.stringify({ symbol, order_id: orderId }),
-              });
-              const data = await res.json().catch(() => ({}));
-              if (!res.ok || data.success === false) {
-                message.error(data.message || `撤单失败(HTTP ${res.status})`);
-                return;
-              }
-              message.success(data.message || '撤单已受理');
-              fetchTodayOrders();
-            } catch (e) {
-              message.error('桥不可达，撤单失败');
-              console.error('Failed to cancel order', e);
-            } finally {
-              setCancelingId(null);
-            }
-          },
-        });
-    }, [apiGatewayBase, fetchTodayOrders]);
 
     const selectedStrategy = strategies.find(s => s.id === selectedStrategyId);
     const isGlobalSim = tradingMode === 'simulation';
@@ -1389,146 +1246,18 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
                     </div>
                 </div>
 
-                {/* 今日委托 · 一键撤单（TDX 桥专属，仅 A 股） */}
-                <div className={`bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden ${currentMarket !== 'CN' ? 'hidden' : ''}`}>
-                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5">
-                            <div className="p-1.5 bg-rose-50 rounded-lg">
-                                <Clock3 className="text-rose-600" size={16} />
-                            </div>
-                            <h3 className="font-bold text-slate-800 text-sm">今日委托 · 一键撤单</h3>
-                            {ordersError && (
-                                <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
-                                    {ordersError}
-                                </span>
-                            )}
-                        </div>
-                        <button
-                            onClick={() => { setOrdersLoading(true); fetchTodayOrders(); }}
-                            className="p-2 text-slate-400 hover:text-blue-600 border border-slate-200 rounded-xl"
-                            title="刷新委托"
-                        >
-                            <RefreshCw size={15} className={ordersLoading ? 'animate-spin' : ''} />
-                        </button>
-                    </div>
-                    <div className="p-4">
-                        {todayOrders.length === 0 ? (
-                            <div className="text-center py-10 text-slate-400 text-xs">
-                                {ordersLoading ? '拉取通达信当日委托...' : '今日暂无委托'}
-                            </div>
-                        ) : (
-                            <div className="overflow-x-auto custom-scrollbar">
-                                <table className="w-full text-left text-[11px]">
-                                    <thead>
-                                        <tr className="text-[9px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                                            <th className="py-2 pr-3">时间</th>
-                                            <th className="py-2 pr-3">代码 / 名称</th>
-                                            <th className="py-2 pr-3">方向</th>
-                                            <th className="py-2 pr-3">委托量 / 已成交</th>
-                                            <th className="py-2 pr-3">委托价</th>
-                                            <th className="py-2 pr-3">成交均价</th>
-                                            <th className="py-2 pr-3">决策时行情</th>
-                                            <th className="py-2 pr-3">大盘点位</th>
-                                            <th className="py-2 pr-3">状态</th>
-                                            <th className="py-2 pr-3">操作</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {[...todayOrders]
-                                            .sort((a, b) => {
-                                                const ta = String((orderQuotes[String(a.order_id || '')]?.ts) || a.time || '');
-                                                const tb = String((orderQuotes[String(b.order_id || '')]?.ts) || b.time || '');
-                                                return tb.localeCompare(ta);
-                                            })
-                                            .map((o) => {
-                                                const oid = String(o.order_id || '');
-                                                const quote = orderQuotes[oid];
-                                                const side = String(o.side || quote?.side || 'buy').toLowerCase();
-                                                const status = String(o.status || quote?.status || '').toLowerCase();
-                                                const isBuy = side === 'buy';
-                                                const working = WORKING_ORDER_STATUSES.has(status) || WORKING_ORDER_STATUSES.has(String(o.status || '').toLowerCase());
-                                                const symbol = String(o.stock_code || quote?.symbol || '');
-                                                const name = String(o.stock_name || quote?.name || '');
-                                                const totalVol = Number(o.total_volume ?? o.volume ?? quote?.volume ?? 0);
-                                                const filledVol = Number(o.filled_volume ?? quote?.filled_volume ?? 0);
-                                                const orderPrice = Number(o.order_price ?? o.price ?? 0);
-                                                const filledPrice = Number(o.filled_price ?? quote?.filled_price ?? 0);
-                                                const quotePrice = Number(quote?.quote_price ?? 0);
-                                                const ts = quote?.ts || o.time || o.submitted_at || '';
-                                                return (
-                                                    <tr key={oid || `${symbol}-${o.time}`} className="border-b border-slate-50 hover:bg-slate-50/60">
-                                                        <td className="py-2 pr-3 text-slate-600 whitespace-nowrap">{formatTimeHHMMSS(ts)}</td>
-                                                        <td className="py-2 pr-3">
-                                                            <span className="font-mono font-bold text-slate-800">{symbol || '-'}</span>
-                                                            {name && <span className="text-slate-400 ml-1">{name}</span>}
-                                                        </td>
-                                                        <td className={`py-2 pr-3 font-black ${isBuy ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                                            {isBuy ? '买入' : '卖出'}
-                                                        </td>
-                                                        <td className="py-2 pr-3 text-slate-700 whitespace-nowrap">
-                                                            {totalVol > 0 ? totalVol : '-'}
-                                                            {filledVol > 0 && <span className="text-slate-400"> / {filledVol}</span>}
-                                                        </td>
-                                                        <td className="py-2 pr-3 font-mono text-slate-700">{formatPrice(orderPrice)}</td>
-                                                        <td className="py-2 pr-3 font-mono font-bold text-slate-900">
-                                                            {filledVol > 0 ? formatPrice(filledPrice) : '-'}
-                                                        </td>
-                                                        <td className="py-2 pr-3 font-mono text-slate-500">
-                                                            {quotePrice > 0 ? formatPrice(quotePrice) : '-'}
-                                                        </td>
-                                                        <td className="py-2 pr-3 text-slate-500 whitespace-nowrap" title={quote?.market_detail || ''}>
-                                                            {quote?.market_detail ? quote.market_detail.split(' (')[0] : '-'}
-                                                        </td>
-                                                        <td className="py-2 pr-3">
-                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-black border ${orderStatusTone(status)}`}>
-                                                                {WORKING_STATUS_LABEL[status] || status || '未知'}
-                                                            </span>
-                                                        </td>
-                                                        <td className="py-2 pr-3">
-                                                            {working ? (
-                                                                <button
-                                                                    onClick={() => handleCancelOrder(o)}
-                                                                    disabled={cancelingId === oid}
-                                                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 text-rose-600 text-[10px] font-black border border-rose-100 hover:bg-rose-100 transition-all disabled:opacity-50"
-                                                                >
-                                                                    <Undo2 size={11} />
-                                                                    {cancelingId === oid ? '撤单中...' : '撤单'}
-                                                                </button>
-                                                            ) : (
-                                                                <span className="text-slate-300 text-[10px]">-</span>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                        {Object.keys(symbolQuotes).length > 0 && (
-                            <div className="mt-3 pt-3 border-t border-slate-100 text-[10px] text-slate-400 flex flex-wrap items-center gap-x-4 gap-y-1">
-                                <span className="font-black uppercase text-slate-300 tracking-wider">最近委托时点行情</span>
-                                {Object.entries(symbolQuotes).slice(0, 6).map(([sym, q]) => (
-                                    <span key={sym} className="font-mono">
-                                        {sym} <span className="text-slate-500 font-bold">{formatPrice(q.quote_price)}</span>
-                                        {Number(q.filled_price) > 0 && <span className="text-emerald-600"> 成交{formatPrice(q.filled_price)}</span>}
-                                        <span className="text-slate-300"> {formatTimeHHMMSS(q.ts)}</span>
-                                    </span>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Logs Stream */}
-                {hostedLogsVisible && latestHostedTask?.task_id && (
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden mt-6">
+                {hostedLogsVisible && (
+                    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
                         <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Execution Logstream</span>
                             <button onClick={() => setHostedLogsVisible(false)} className="text-slate-400 hover:text-slate-700"><Square size={14} /></button>
                         </div>
-                        <div className="p-4 h-64 overflow-y-auto font-mono text-[10px] text-slate-600 custom-scrollbar bg-white">
-                            {hostedLogs.length === 0 ? <div className="text-slate-400 animate-pulse text-center mt-20">Waiting for logs...</div> : hostedLogs.map((line, i) => (
+                        <div className="p-4 h-72 overflow-y-auto font-mono text-[10px] text-slate-600 custom-scrollbar bg-white">
+                            {!latestHostedTask?.task_id ? (
+                                <div className="text-slate-400 text-center text-xs py-12">暂无最新任务运行日志</div>
+                            ) : hostedLogs.length === 0 ? (
+                                <div className="text-slate-400 animate-pulse text-center mt-20">Waiting for logs...</div>
+                            ) : hostedLogs.map((line, i) => (
                                 <div key={i} className="hover:bg-slate-50 px-2 py-0.5 whitespace-pre-wrap">{line}</div>
                             ))}
                         </div>

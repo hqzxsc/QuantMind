@@ -9,13 +9,13 @@
 
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import redis.asyncio as aioredis
 
-from ..market_config import settings
 from .data_source import DataSourceAdapter
 from backend.shared.stock_utils import StockCodeUtil
 
@@ -29,10 +29,12 @@ class RemoteRedisDataSource(DataSourceAdapter):
     """
 
     def __init__(self):
-        self._host = (settings.REDIS_HOST or "quantmind-redis").strip()
-        self._port = int(settings.REDIS_PORT or 6379)
-        self._password = (settings.REDIS_PASSWORD or "").strip() or None
-        self._db = int(settings.REDIS_DB or 3)
+        # 行情专用远程 Redis：默认硬编码免费行情服务器（www.quantmindai.cn:6379 / db3），
+        # 无需 .env 即可部署开箱即用；REMOTE_QUOTE_REDIS_* 环境变量仅在需要覆盖时生效。
+        self._host = (os.getenv("REMOTE_QUOTE_REDIS_HOST") or "www.quantmindai.cn").strip()
+        self._port = int(os.getenv("REMOTE_QUOTE_REDIS_PORT") or "6379")
+        self._password = (os.getenv("REMOTE_QUOTE_REDIS_PASSWORD") or "quantmind2026").strip() or None
+        self._db = int(os.getenv("REMOTE_QUOTE_REDIS_DB") or "3")
         self._client: aioredis.Redis | None = None
 
     def _get_client(self) -> aioredis.Redis:

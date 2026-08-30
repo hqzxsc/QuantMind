@@ -319,9 +319,13 @@ return cjson.encode({success=true, unlocked=unlocked})
         tenant_id = self._normalize_tenant(tenant_id)
         key = self._get_key(user_id, tenant_id, market)
 
-        # 如果账户不存在，先初始化（交易时需要账户存在）
+        # 如果账户不存在，先初始化（交易时需要账户存在）。
+        # 新注册/默认用户统一按 100 万初始资金建账；
+        # 用户对初始资金的修改已废弃（模拟盘设置修改 deprecated），故不读取 settings 残留值。
         if not self.redis.client.get(key):
-            await self.init_account(user_id, tenant_id=tenant_id, market=market)
+            await self.init_account(
+                user_id, initial_cash=1_000_000.0, tenant_id=tenant_id, market=market
+            )
 
         if (
             is_margin_trade

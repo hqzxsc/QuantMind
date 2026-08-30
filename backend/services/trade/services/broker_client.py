@@ -8,6 +8,7 @@ import abc
 import logging
 import os
 import random
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 
 from sqlalchemy import text
 
+from backend.services.trade.trade_config import settings
 from backend.shared.auth import get_internal_call_secret
 from backend.shared.database_manager_v2 import get_session
 
@@ -230,8 +232,9 @@ class PaperTradingBroker(BaseBroker):
         except Exception as e:
             logger.error(f"[PaperTrading] Database fallback failed for {symbol}: {e}")
 
-        # Level 3: 最终保底
-        return MarketQuoteSnapshot(price=100.0 + random.uniform(-1, 1))
+        # Level 3: 无法获取行情 —— 不伪造随机价格，交由 place_order 拒单，
+        # 避免以虚假价格成交污染模拟盘资产/持仓。
+        return MarketQuoteSnapshot(price=0.0)
 
     async def _get_market_price(self, symbol: str) -> float:
         """Fetch real-time price from Market Data Service with L2 DB fallback"""
@@ -249,6 +252,11 @@ class PaperTradingBroker(BaseBroker):
     ) -> BrokerResult:
         snapshot = await self._get_market_snapshot(symbol)
         market_price = snapshot.price
+        if market_price <= 0:
+            return BrokerResult(
+                success=False,
+                message=f"无法获取 {symbol} 实时行情，模拟单拒绝成交",
+            )
         exec_price = 0.0
         slippage = random.uniform(-0.0005, 0.0005)
 
@@ -285,14 +293,33 @@ class PaperTradingBroker(BaseBroker):
             )
 
         exec_price = round(exec_price, 4)
-        commission = round(quantity * exec_price * self.COMMISSION_RATE, 2)
+        # 佣金：与 SimulationExecutionEngine 口径一致 —— 按费率计算并设最低佣金（默认 5 元）
+        brute_commission = round(
+            quantity * exec_price * self.COMMISSION_RATE, 2
+        )
+        commission = max(brute_commission, float(settings.SIMULATION_COMMISSION_MIN))
+        # 证券交易印花税：A 股卖出单边收取
+        try:
+            from backend.services.trade.simulation.services.market_rules import (
+                infer_market,
+            )
+
+            cn_market = str(infer_market(symbol).value).upper() == "CN"
+        except Exception:  # noqa: BLE001
+            cn_market = True
+        stamp_duty = (
+            round(quantity * exec_price * float(settings.SIMULATION_STAMP_DUTY_RATE), 2)
+            if cn_market and str(side).lower() == "sell"
+            else 0.0
+        )
+        total_fee = round(commission + stamp_duty, 2)
         cost_or_proceeds = quantity * exec_price
 
         if side == "buy":
-            delta_cash = -(cost_or_proceeds + commission)
+            delta_cash = -(cost_or_proceeds + total_fee)
             delta_volume = quantity
         else:
-            delta_cash = cost_or_proceeds - commission
+            delta_cash = cost_or_proceeds - total_fee
             delta_volume = -quantity
 
         # Update State
@@ -324,7 +351,7 @@ class PaperTradingBroker(BaseBroker):
             success=True,
             filled_price=exec_price,
             filled_quantity=quantity,
-            commission=commission,
+            commission=total_fee,
             exchange_order_id=exchange_id,
             message="Paper Trading Fill",
         )

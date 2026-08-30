@@ -1,31 +1,20 @@
-"""模拟盘撮合拒单测试：涨跌停、停牌、T+1 可卖量。
+"""模拟盘撮合拒单测试：涨跌停、停牌、无行情、T+1 可卖量、费用。
 
-行情来源已从实时 HTTP 改为本地 quantdb（LocalMarketData），撮合规则
-由 ashare_matcher 承载，因此这里注入假的 DailyBar 而非假的行情快照。
+适配当前 SimulationExecutionEngine 接口：行情经 `_latest_price` 返回
+`MarketSnapshot`，成交量/资金经 `SimulationAccountManager.update_balance`
+（这里用 mock 模拟，含可卖量不足的失败分支）。错误以文本消息返回。
 """
 
-from datetime import date
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from backend.services.trade.simulation.models.order import OrderSide, OrderType, SimOrder
 from backend.services.trade.simulation.services.execution_engine import (
+    MarketSnapshot,
     SimulationExecutionEngine,
 )
-from backend.services.trade.simulation.services.local_market_data import DailyBar
-
-
-class _FakeManager:
-    def __init__(self, positions: dict | None = None):
-        self.called = False
-        self._positions = positions or {}
-
-    async def get_account(self, **_kwargs):
-        return {"positions": self._positions}
-
-    async def update_balance(self, **_kwargs):
-        self.called = True
-        return {"success": True}
 
 
 class _FakeDb:
@@ -33,39 +22,42 @@ class _FakeDb:
         raise AssertionError("db.execute should not be called in these tests")
 
 
-class _FakeMarketData:
-    """只回放单个 DailyBar 的行情替身。"""
+def _manager(balance_result: dict | None = None) -> SimpleNamespace:
+    """账户替身：默认成交成功；传入 balance_result 可模拟资金/可卖量不足。"""
+    m = SimpleNamespace()
+    m.update_balance = AsyncMock(
+        return_value={"success": True} if balance_result is None else balance_result
+    )
+    m.get_account = AsyncMock(return_value={"cash": 1_000_000.0})
+    m.redis = None
+    return m
 
-    def __init__(self, bar: DailyBar | None):
-        self._bar = bar
 
-    def get_bar(self, _symbol: str, _trade_date: date) -> DailyBar | None:
-        return self._bar
-
-
-def _bar(
+def _snapshot(
     *,
-    close: float = 10.0,
-    limit_up: float = 11.0,
-    limit_down: float = 9.0,
+    price: float = 10.0,
+    source: str = "market_data_service",
+    limit_up: bool = False,
+    limit_down: bool = False,
     suspended: bool = False,
-) -> DailyBar:
-    return DailyBar(
-        symbol="600000.SH",
-        trade_date=date(2026, 7, 30),
-        open=close,
-        high=close,
-        low=close,
-        close=close,
-        volume=0 if suspended else 1_000_000,
-        amount=0 if suspended else 10_000_000,
-        vwap=close,
-        pre_close=10.0,
+) -> MarketSnapshot:
+    return MarketSnapshot(
+        price=price,
+        price_source=source,
         limit_up=limit_up,
         limit_down=limit_down,
-        is_st=False,
         suspended=suspended,
     )
+
+
+def _engine(
+    snapshot: MarketSnapshot | None,
+    manager: SimpleNamespace | None = None,
+) -> SimulationExecutionEngine:
+    mgr = manager or _manager()
+    eng = SimulationExecutionEngine(db=_FakeDb(), manager=mgr)
+    eng._latest_price = AsyncMock(return_value=snapshot)
+    return eng, mgr
 
 
 def _make_order(side: OrderSide, quantity: float = 100.0) -> SimOrder:
@@ -80,85 +72,91 @@ def _make_order(side: OrderSide, quantity: float = 100.0) -> SimOrder:
     )
 
 
-def _engine(bar: DailyBar | None, manager: _FakeManager) -> SimulationExecutionEngine:
-    return SimulationExecutionEngine(
-        _FakeDb(), manager, market_data=_FakeMarketData(bar)
-    )
-
-
 @pytest.mark.asyncio
 async def test_execute_order_blocks_buy_when_limit_up():
-    manager = _FakeManager()
-    engine = _engine(_bar(close=11.0, limit_up=11.0), manager)
+    engine, manager = _engine(_snapshot(price=11.0, limit_up=True))
 
     result = await engine.execute_order(_make_order(OrderSide.BUY))
 
     assert result.success is False
-    assert result.message == "LIMIT_UP"
-    assert manager.called is False
+    assert "Limit-up locked" in result.message
+    assert manager.update_balance.called is False
 
 
 @pytest.mark.asyncio
 async def test_execute_order_blocks_sell_when_limit_down():
-    manager = _FakeManager({"SH600000": {"volume": 100, "available_volume": 100}})
-    engine = _engine(_bar(close=9.0, limit_down=9.0), manager)
+    engine, manager = _engine(_snapshot(price=9.0, limit_down=True))
 
     result = await engine.execute_order(_make_order(OrderSide.SELL))
 
     assert result.success is False
-    assert result.message == "LIMIT_DOWN"
-    assert manager.called is False
+    assert "Limit-down locked" in result.message
+    assert manager.update_balance.called is False
 
 
 @pytest.mark.asyncio
 async def test_execute_order_blocks_when_suspended():
-    manager = _FakeManager()
-    engine = _engine(_bar(suspended=True), manager)
+    engine, manager = _engine(_snapshot(suspended=True))
 
     result = await engine.execute_order(_make_order(OrderSide.BUY))
 
     assert result.success is False
-    assert result.message == "SUSPENDED"
-    assert manager.called is False
+    assert "suspended" in result.message.lower()
+    assert manager.update_balance.called is False
 
 
 @pytest.mark.asyncio
 async def test_execute_order_blocks_when_no_market_data():
-    """本地无当日 bar 时必须拒单，绝不能虚构价格成交。"""
-    manager = _FakeManager()
-    engine = _engine(None, manager)
+    """无行情（实时+DB 兜底都失败）必须拒单，绝不虚构价格成交。"""
+    engine, manager = _engine(_snapshot(price=0.0, source="unavailable"))
 
     result = await engine.execute_order(_make_order(OrderSide.BUY))
 
     assert result.success is False
-    assert result.message == "NO_MARKET_DATA"
-    assert manager.called is False
+    assert "无法获取" in result.message
+    assert manager.update_balance.called is False
 
 
 @pytest.mark.asyncio
 async def test_execute_order_blocks_sell_exceeding_available_volume():
-    """T+1：当日买入的部分不可卖。"""
-    manager = _FakeManager({"SH600000": {"volume": 500, "available_volume": 100}})
-    engine = _engine(_bar(), manager)
+    """T+1：可卖量不足时，账户层拒绝，撮合不落地成交。"""
+    engine, manager = _engine(
+        _snapshot(),
+        _manager(balance_result={"success": False, "reason": "INSUFFICIENT_AVAILABLE_VOLUME"}),
+    )
 
     result = await engine.execute_order(_make_order(OrderSide.SELL, quantity=300.0))
 
     assert result.success is False
     assert "INSUFFICIENT_AVAILABLE_VOLUME" in result.message
-    assert manager.called is False
+    assert manager.update_balance.called is True
 
 
 @pytest.mark.asyncio
-async def test_execute_order_fills_and_charges_all_fees():
-    manager = _FakeManager()
-    engine = _engine(_bar(), manager)
+async def test_execute_order_fills_buy_and_charges_min_commission_no_stamp():
+    engine, manager = _engine(_snapshot(price=10.0))
 
     result = await engine.execute_order(_make_order(OrderSide.BUY))
 
     assert result.success is True
     assert result.quantity == 100
-    assert result.commission > 0
+    assert result.commission >= 5.0  # 最低佣金（默认 5 元）
     assert result.stamp_duty == 0.0  # 买入不收印花税
-    assert result.transfer_fee > 0
-    assert result.total_fee == result.commission + result.transfer_fee
-    assert manager.called is True
+    assert result.price == pytest.approx(10.0, abs=0.01)
+    assert manager.update_balance.called is True
+    _, kwargs = manager.update_balance.call_args
+    assert kwargs["delta_volume"] == 100
+    assert kwargs["delta_cash"] < 0
+
+
+@pytest.mark.asyncio
+async def test_execute_order_fills_sell_and_charges_stamp_duty():
+    engine, manager = _engine(_snapshot(price=10.0))
+
+    result = await engine.execute_order(_make_order(OrderSide.SELL))
+
+    assert result.success is True
+    assert result.stamp_duty > 0  # A 股卖出征收印花税
+    assert manager.update_balance.called is True
+    _, kwargs = manager.update_balance.call_args
+    assert kwargs["delta_volume"] == -100

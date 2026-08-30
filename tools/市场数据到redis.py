@@ -45,7 +45,8 @@ load_dotenv()
 # Redis 配置（请根据实际情况修改）
 # ============================================
 REDIS_CONFIG = {
-    "host": os.getenv("REMOTE_QUOTE_REDIS_HOST", ""),
+    # 免费行情服务器数据库；密码不硬编码，请通过 REMOTE_QUOTE_REDIS_PASSWORD 或 .env 提供
+    "host": os.getenv("REMOTE_QUOTE_REDIS_HOST", "www.quantmindai.cn"),
     "port": int(os.getenv("REMOTE_QUOTE_REDIS_PORT", "6379")),
     "password": os.getenv("REMOTE_QUOTE_REDIS_PASSWORD", ""),
     # QuantDB 实时行情专用库；不要与 QuantMind 的缓存/交易 Redis 混用。
@@ -204,15 +205,27 @@ class MarketDataToRedis:
             else:
                 return None
         except Exception as e:
-            print(f"  ✗ 获取 {stock_code} 快照失败: {e}")
+            print(f"✗ 获取 {stock_code} 快照失败: {e}")
             return None
+
+    def _snapshot_key(self, stock_code: str) -> str:
+        """把通用代码（600000.SH / 600000）转为 market:snapshot:{prefix} key"""
+        code = str(stock_code).strip()
+        if '.' in code:
+            code_part, _, market = code.partition('.')
+            market = market.upper()
+            prefix = 'sh' if market == 'SH' else ('sz' if market == 'SZ' else 'bj')
+        else:
+            code_part = code
+            prefix = 'sh' if code_part.startswith('6') else ('sz' if code_part.startswith(('0', '3')) else 'bj')
+        return f"market:snapshot:{prefix}{code_part}"
 
     def _validate_data(self, snapshot):
         """验证数据有效性
-        
+
         Args:
             snapshot (dict): 股票快照数据
-            
+
         Returns:
             bool: 数据是否有效
         """
@@ -343,41 +356,44 @@ class MarketDataToRedis:
                         pass
                 
                 if snapshot and self._validate_data(snapshot):
-                    # 构造符合规范的Redis Key
-                    # 确保格式为 stock:{code}.{market}
+                    # 构造符合 QuantMind 行情快照规范V1.0 的 Redis Key
+                    # market:snapshot:{sh|sz|bj}{code}（与 stream/remote_redis_source 优先格式一致）
                     if '.' in stock_code:
-                        code_parts = stock_code.split('.')
-                        if len(code_parts) == 2:
-                            redis_key = f"stock:{code_parts[0]}.{code_parts[1].upper()}"
-                        else:
-                            redis_key = f"stock:{stock_code}"
+                        code, _, market = stock_code.partition('.')
+                        market = market.upper()
+                        prefix = 'sh' if market == 'SH' else ('sz' if market == 'SZ' else 'bj')
+                        redis_key = f"market:snapshot:{prefix}{code}"
+                        symbol = redis_key.removeprefix('market:snapshot:')
                     else:
-                        redis_key = f"stock:{stock_code}"
-                    
-                    # 构造符合规范的数据结构
+                        redis_key = f"market:snapshot:{str(stock_code).lower()}"
+                        symbol = str(stock_code).lower()
+
+                    # 构造符合规范的数据结构（字段与 stream/remote_redis_source 消费完全一致）
                     try:
                         now_price = float(snapshot.get('Now', 0))
                         source_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                        symbol = redis_key.removeprefix('stock:')
                         data = {
-                            'symbol': symbol, 'last': now_price,
-                            'open': float(snapshot.get('Open', 0)),
-                            'high': float(snapshot.get('High', 0)),
-                            'low': float(snapshot.get('Low', 0)),
-                            'prev_close': float(snapshot.get('LastClose', 0)),
-                            'volume': int(float(snapshot.get('Volume', 0))),
-                            'amount': float(snapshot.get('Amount', 0)),
+                            'symbol': symbol,
+                            'Now': now_price,
+                            'Open': float(snapshot.get('Open', 0)),
+                            'High': float(snapshot.get('High', 0)),
+                            'Low': float(snapshot.get('Low', 0)),
+                            'PreClose': float(snapshot.get('LastClose', 0)),
+                            'Volume': int(float(snapshot.get('Volume', 0))),
+                            'Amount': float(snapshot.get('Amount', 0)),
+                            # Unix 秒时间戳：remote_redis_source 据此判断新鲜度/可用性
+                            'timestamp': int(time.time()),
                             'source': 'tdx', 'source_ts': source_ts,
                             'ingested_at': source_ts,
                         }
                         previous = self.redis_client.hmget(
-                            redis_key, 'last', 'volume', 'amount', 'seq'
+                            redis_key, 'Now', 'Volume', 'Amount', 'seq'
                         )
-                        changed = tuple(str(data[k]) for k in ('last', 'volume', 'amount')) != tuple(
+                        changed = tuple(str(data[k]) for k in ('Now', 'Volume', 'Amount')) != tuple(
                             v.decode('utf-8') if isinstance(v, bytes) else str(v or '') for v in previous[:3]
                         )
                         data['seq'] = self.redis_client.incr('qdb:rt:seq') if changed else int(previous[3] or 0)
-                        
+
                         # 使用Pipeline批量写入
                         pipe.hset(redis_key, mapping=data)
                         pipe.expire(redis_key, 300)  # 设置5分钟过期时间
@@ -386,7 +402,7 @@ class MarketDataToRedis:
                                 f"qdb:rt:quote:{symbol}",
                                 __import__('json').dumps({'type': 'quote', **data}, ensure_ascii=False),
                             )
-                        
+
                         success_count += 1
                         batch_success += 1
                     except (ValueError, TypeError) as e:
@@ -445,15 +461,8 @@ class MarketDataToRedis:
             dict: 股票数据字典，包含所有字段
         """
         try:
-            # 构造符合规范的Redis Key
-            if '.' in stock_code:
-                code_parts = stock_code.split('.')
-                if len(code_parts) == 2:
-                    redis_key = f"stock:{code_parts[0]}.{code_parts[1].upper()}"
-                else:
-                    redis_key = f"stock:{stock_code}"
-            else:
-                redis_key = f"stock:{stock_code}"
+            # 构造符合 QuantMind 快照规范的 Redis Key
+            redis_key = self._snapshot_key(stock_code)
             
             data = self.redis_client.hgetall(redis_key)
             
@@ -479,7 +488,7 @@ class MarketDataToRedis:
     def clear_all_data(self):
         """清除Redis中所有股票数据"""
         try:
-            keys = self.redis_client.keys("stock:*")
+            keys = self.redis_client.keys("market:snapshot:*")
             
             if keys:
                 # 批量删除，每批次1000个

@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from backend.services.api.routers.admin.admin_training import (
     complete_training_run,
+    get_latest_training_run_for_owner,
     get_training_run_for_owner,
     submit_training_job,
 )
@@ -703,6 +704,21 @@ async def run_training(
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     return await submit_training_job(payload, background_tasks, current_user)
+
+
+@router.get("/training-runs/active", summary="获取当前用户最近/活跃的训练任务（切页恢复用）")
+async def get_active_training_run(
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
+    """优先从 redis 活跃索引返回该用户最近一次的进行中/最近训练任务快照。
+
+    前端切页后再回到训练页时，用此接口恢复进度与日志（轮询的心智保持连续）。
+    无任何记录时返回 404。
+    """
+    latest = await get_latest_training_run_for_owner(current_user)
+    if latest is None:
+        raise HTTPException(status_code=404, detail="No training run found")
+    return latest
 
 
 @router.get("/training-runs/{run_id}", summary="获取训练任务状态（用户态）")
@@ -2136,6 +2152,7 @@ async def _execute_single_day_inference(
     tenant_id: str,
     user_id: str,
     batch_id: str | None = None,
+    symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     """单日推理执行体：预检 → 数据回退 → 执行 → 落库 → 返回 run payload。
 
@@ -2293,6 +2310,7 @@ async def _execute_single_day_inference(
                 user_id=user_id,
                 model_id=requested_model_id,
                 resolved_model=resolved.to_dict(),
+                symbols=symbols,
             )
         )
     except Exception as exc:

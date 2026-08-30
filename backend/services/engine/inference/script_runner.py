@@ -66,6 +66,7 @@ def _cached_describe(reader, source: str) -> Any:
 from sqlalchemy.orm import sessionmaker
 
 from backend.services.engine.services.event_stream import EngineSignalStreamPublisher
+from backend.shared.stock_utils import StockCodeUtil
 
 logger = logging.getLogger(__name__)
 
@@ -927,6 +928,7 @@ class InferenceScriptRunner:
         tenant_id: str = "default",
         user_id: str = "system",
         redis_client=None,
+        symbols: list[str] | None = None,
     ) -> ExecutionResult:
         """
         执行 inference.py 脚本，解析信号输出，写库并发布 Redis Stream。
@@ -937,6 +939,8 @@ class InferenceScriptRunner:
         tenant_id   : 租户 ID（用于写库和信号流）
         user_id     : 用户 ID
         redis_client: 可选 Redis 客户端，用于写完成标记
+        symbols     : 可选股票代码子集（前缀式，如 ["SH600036"]）。非空时仅对匹配
+                      的股票落库与返回，用于「单股补推」；为 None 时全市场（原行为）。
         """
         script_path = self.primary_model_dir / self.primary_script_name
         primary_meta = self._read_primary_metadata()
@@ -1205,6 +1209,39 @@ class InferenceScriptRunner:
                 active_model_id=self.primary_model_id,
                 active_data_source=self.primary_data_dir,
             )
+
+        # 单股补推：非空 symbols 时仅保留目标股票，后续落库/返回只针对这些股票。
+        # 推理脚本仍对全池出分（不改子进程与模板），只裁剪写库与返回，
+        # 从而 predict-stock 能立即读到该股的真实分数，又不破坏全市场批量路径。
+        if symbols:
+            target_norm = set()
+            for s in symbols:
+                try:
+                    target_norm.add(StockCodeUtil.to_prefix(s))
+                except Exception:
+                    target_norm.add(str(s).strip())
+            kept = []
+            dropped = 0
+            for sig in signals:
+                try:
+                    sig_sym = StockCodeUtil.to_prefix(str(sig.get("symbol") or ""))
+                except Exception:
+                    sig_sym = str(sig.get("symbol") or "")
+                if sig_sym in target_norm:
+                    kept.append(sig)
+                else:
+                    dropped += 1
+            if kept:
+                signals = kept
+                logger.info(
+                    "[InferenceScriptRunner] 单股补推过滤: %d/%d 条入选 (target=%s), run_id=%s",
+                    len(kept), len(kept) + dropped, sorted(target_norm), run_id,
+                )
+            else:
+                logger.warning(
+                    "[InferenceScriptRunner] 单股补推未命中任何目标股票 (target=%s)，保留全量信号避免空库, run_id=%s",
+                    sorted(target_norm), run_id,
+                )
 
         logger.info(
             f"[InferenceScriptRunner] 解析到 {len(signals)} 条信号, run_id={run_id}"

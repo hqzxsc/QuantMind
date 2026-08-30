@@ -280,7 +280,7 @@ def _psi_single(a: np.ndarray, b: np.ndarray, n_bins: int = 10) -> float:
 
     PSI = Σ (actual% - expected%) * ln(actual% / expected%)
     以 a 为基准分布（expected），b 为待检分布（actual）。
-    <0.1 无显著漂移；0.1~0.25 中等漂移；>0.25 显著漂移。
+    <0.05 无显著漂移；0.05~0.2 中等漂移；>0.2 显著漂移（compute_psi_drift 判级用）。
     """
     a = np.asarray(a, dtype=np.float64)
     b = np.asarray(b, dtype=np.float64)
@@ -456,17 +456,18 @@ def compute_psi_drift(
         else:
             rank_disp = float(rank_disp)
         # 判级以 rank_disp 为主；水平高但 rank 稳定 = 良性量能膨胀
-        # 阈值：rank_disp 是位移均值（0~1），0.3 即平均位移近 1/3 截面宽度（收紧以抑误报）
-        benign_scale = rank_reliable and level_psi >= 0.1 and rank_disp < 0.15
-        if rank_disp >= 0.3:
+        # 阈值（2026-08 下调以提高灵敏度）：rank_disp 中等 ≥0.10 / 严重 ≥0.25，
+        # level_psi 兜底 中等 ≥0.20 / 起判 ≥0.05；benign 要求 rank_disp <0.10
+        benign_scale = rank_reliable and level_psi >= 0.05 and rank_disp < 0.10
+        if rank_disp >= 0.25:
             level = "severe"
-        elif rank_disp >= 0.15:
+        elif rank_disp >= 0.10:
             level = "medium"
         elif benign_scale:
             level = "stable"  # 仅水平平移，截面结构未变
-        elif level_psi >= 0.25:
+        elif level_psi >= 0.20:
             level = "medium"  # 水平漂移且 rank 位移未解 → 保守中警
-        elif level_psi >= 0.1:
+        elif level_psi >= 0.05:
             level = "stable"
         else:
             level = "stable"
@@ -490,11 +491,11 @@ def compute_psi_drift(
     # overall 判定基于 rank_disp（真实结构漂移），而非水平量纲
     severe_count = drift_counts["severe"]
     medium_count = drift_counts["medium"]
-    # 收紧以抑误报：48维中量能簇高相关，重复计数易夸大
+    # 2026-08 下调阈值以提高灵敏度：更少的 severe/medium 数即可触发告警
     severe_ratio = severe_count / max(1, len(results))
-    if severe_count >= 5 or severe_ratio >= 0.4 or (severe_count + medium_count) >= max(7, len(results) * 0.4):
+    if severe_count >= 3 or severe_ratio >= 0.3 or (severe_count + medium_count) >= max(5, len(results) * 0.3):
         overall = "severe"
-    elif severe_count >= 2 or medium_count >= 5:
+    elif severe_count >= 1 or medium_count >= 3:
         overall = "warning"
     else:
         overall = "stable"
@@ -3060,10 +3061,10 @@ def select_top_factors(
     df: pd.DataFrame,
     features: list[str],
     label_col: str = "label",
-    n_top: int = 60,
-    ic_threshold: float = 0.02,
-    icir_threshold: float = 0.3,
-    correlation_threshold: float = 0.85,
+    n_top: int = 80,
+    ic_threshold: float = 0.01,
+    icir_threshold: float = 0.15,
+    correlation_threshold: float = 0.9,
 ) -> tuple[list[str], dict[str, Any]]:
     """专业因子筛选：IC/ICIR 初筛 → 相关性去冗余 → 稳定性检验。
 
@@ -4004,10 +4005,10 @@ def main() -> int:
         factor_selection_method = str(factor_selection_cfg.get("method", "")).strip().lower()
         factor_selection_report: dict[str, Any] | None = None
         if factor_selection_method in ("ic_icir", "combined") or submitted_features and len(submitted_features) == 1 and submitted_features[0].lower().startswith("auto_top"):
-            n_top = int(factor_selection_cfg.get("n_top", 60))
-            ic_thresh = float(factor_selection_cfg.get("ic_threshold", 0.02))
-            icir_thresh = float(factor_selection_cfg.get("icir_threshold", 0.3))
-            corr_thresh = float(factor_selection_cfg.get("correlation_threshold", 0.85))
+            n_top = int(factor_selection_cfg.get("n_top", 80))
+            ic_thresh = float(factor_selection_cfg.get("ic_threshold", 0.01))
+            icir_thresh = float(factor_selection_cfg.get("icir_threshold", 0.15))
+            corr_thresh = float(factor_selection_cfg.get("correlation_threshold", 0.9))
             logger.info("=== Auto Factor Selection: top-%d ===", n_top)
             # 特征选择属于拟合过程的一部分：只能看到训练段。此前直接把完整
             # train/valid/test df 传入，会让 test 标签影响入选因子及最终样本外指标。

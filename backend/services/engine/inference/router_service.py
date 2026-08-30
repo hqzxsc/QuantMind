@@ -494,6 +494,7 @@ class InferenceRouterService:
         model_id: str | None = None,
         resolved_model: dict[str, Any] | None = None,
         redis_client=None,
+        symbols: list[str] | None = None,
     ) -> ExecutionResult:
         if resolved_model is not None:
             resolved = dict(resolved_model)
@@ -558,7 +559,7 @@ class InferenceRouterService:
             fallback_model_id=fallback_id,
             enable_fallback=not independent_execution,
         )
-        result = runner.execute(date, tenant_id=tenant_id, user_id=user_id, redis_client=redis_client)
+        result = runner.execute(date, tenant_id=tenant_id, user_id=user_id, redis_client=redis_client, symbols=symbols)
         execution_meta = _build_execution_meta(
             fallback_used=bool(result.fallback_used),
             fallback_reason=result.fallback_reason or fallback_reason,
@@ -586,7 +587,7 @@ class InferenceRouterService:
                 fallback_model_id=self.fallback_model_id,
                 enable_fallback=False,
             )
-            final_result = final_runner.execute(date, tenant_id=tenant_id, user_id=user_id, redis_client=redis_client)
+            final_result = final_runner.execute(date, tenant_id=tenant_id, user_id=user_id, redis_client=redis_client, symbols=symbols)
             if final_result.success:
                 final_result.fallback_used = True
                 reason = fallback_reason or result.fallback_reason or result.error or "fallback to alpha158"

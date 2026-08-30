@@ -1926,6 +1926,7 @@ async def predict_single_stock(
                 requested_date=requested_date,
                 tenant_id=tid,
                 user_id=uid,
+                symbols=[normalized_symbol],
             )
         except HTTPException:
             raise

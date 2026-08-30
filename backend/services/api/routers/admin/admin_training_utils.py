@@ -1067,6 +1067,69 @@ async def get_training_run_for_owner(run_id: str, current_user: dict[str, Any]) 
     }
 
 
+async def get_latest_training_run_for_owner(
+    current_user: dict[str, Any],
+) -> dict[str, Any] | None:
+    """查询当前用户「最近/活跃」的训练主任务，用于前端切页后恢复进度。
+
+    优先从 redis 的用户活跃索引读（训练实时流会持续维护该 key，TTL 与状态一致）；
+    索引失效/无缓存时回退 DB：先找进行中主任务，再回退最近创建主任务。
+    跳过多周期子任务与父占位。都没有时返回 None。
+    """
+    tenant_id = str(current_user.get("tenant_id") or "default")
+    user_id = str(current_user.get("user_id") or current_user.get("sub") or "unknown")
+
+    # 1) 优先 redis 活跃索引 -> run_id -> 复用单任务查询（含实时快照合并）
+    idx = _training_log_stream.fetch_active_run_id(tenant_id, user_id)
+    if idx and idx.get("run_id"):
+        try:
+            return await get_training_run_for_owner(str(idx["run_id"]), current_user)
+        except HTTPException:
+            # redis 里的 run 在 DB 已不存在（被清理），落到 DB 兜底
+            pass
+
+    active_statuses = ("pending", "provisioning", "running", "waiting_callback")
+
+    def _is_root(rec: TrainingJobRecord) -> bool:
+        payload = rec.request_payload if isinstance(rec.request_payload, dict) else {}
+        return not (payload.get("_parent") or payload.get("_parent_run_id"))
+
+    async with get_session(read_only=True) as session:
+        # 先找进行中的主任务（倒序最新一条）
+        stmt = (
+            select(TrainingJobRecord)
+            .where(
+                TrainingJobRecord.tenant_id == tenant_id,
+                TrainingJobRecord.user_id == user_id,
+                TrainingJobRecord.status.in_(active_statuses),
+            )
+            .order_by(TrainingJobRecord.updated_at.desc(), TrainingJobRecord.created_at.desc())
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+
+        root_active = next((r for r in rows if _is_root(r)), None)
+
+        # 无进行中任务时，回退最近创建的主任务
+        if root_active is None:
+            stmt_all = (
+                select(TrainingJobRecord)
+                .where(
+                    TrainingJobRecord.tenant_id == tenant_id,
+                    TrainingJobRecord.user_id == user_id,
+                )
+                .order_by(TrainingJobRecord.created_at.desc())
+            )
+            all_rows = (await session.execute(stmt_all)).scalars().all()
+            root_recent = next((r for r in all_rows if _is_root(r)), None)
+            candidate = root_recent
+        else:
+            candidate = root_active
+
+    if candidate is None:
+        return None
+    return await get_training_run_for_owner(candidate.id, current_user)
+
+
 def _verify_internal_call_secret(provided: str) -> None:
     """P0-3: 强制 fail-closed 的 internal secret 校验。
 

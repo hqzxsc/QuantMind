@@ -106,6 +106,10 @@ class TrainingRunLogStream:
     def _state_key(self, run_id: str) -> str:
         return f"{self.stream_prefix}:state:{run_id}"
 
+    def _user_active_key(self, tenant_id: str, user_id: str) -> str:
+        # 记录「该用户最近活跃的训练 run」，供前端切页后从 redis 恢复进度/状态。
+        return f"{self.stream_prefix}:user:active:{tenant_id}:{user_id}"
+
     @staticmethod
     def _decode(raw: Any) -> str:
         if raw is None:
@@ -207,6 +211,40 @@ class TrainingRunLogStream:
             )
         except Exception:
             return
+
+        # 维护「该用户最近活跃 run」索引（TTL 与状态一致），供前端切页后恢复进度。
+        try:
+            client.setex(
+                self._user_active_key(tenant_id, user_id),
+                self.state_ttl_sec,
+                json.dumps(
+                    {"run_id": str(run_id), "status": state.get("status", ""), "updated_at": now_iso},
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception:
+            return
+
+    def fetch_active_run_id(
+        self, tenant_id: str, user_id: str
+    ) -> dict[str, Any] | None:
+        """返回该用户最近活跃训练 run 的索引快照（redis 缓存，查不到返回 None）。"""
+        client = self._get_client()
+        if client is None:
+            return None
+        try:
+            raw = client.get(self._user_active_key(tenant_id, user_id))
+        except Exception:
+            return None
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(self._decode(raw))
+        except Exception:
+            return None
+        if not isinstance(parsed, dict) or not parsed.get("run_id"):
+            return None
+        return parsed
 
     def fetch_snapshot(
         self, run_id: str, *, line_limit: int = 200

@@ -20,6 +20,7 @@ from backend.shared.database_manager_v2 import get_session
 from backend.shared.model_registry import model_registry_service
 from .admin_training_utils import *
 from .admin_training_utils import _resolve_admin_scope, _SetDefaultModelRequest, _SetStrategyBindingRequest
+from .admin_training_utils import get_latest_training_run_for_owner
 
 router = APIRouter(dependencies=[Depends(require_admin)])  # 路由器级认证兜底
 logger = logging.getLogger(__name__)

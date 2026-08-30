@@ -204,19 +204,29 @@ class QuantDBFactorReader:
         return f"read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"
 
     def _daily_backward_relation(self) -> str | None:
-        """返回后复权日线关系；数据未部署时保持因子表原有行为。"""
+        """返回后复权日线关系；数据未部署时保持因子表原有行为。
+
+        严格按 dt=YYYYMMDD/ 的 Hive 分区布局读取，只匹配已发布分区文件。
+        不使用 **/*.parquet 递归：数据目录里若同时存在旧版按股票单文件
+        （如 000001.SZ.parquet）与新版 dt= 分区文件，递归 glob 会把两种
+        Hive 结构一并读入，抛出 "Hive partition mismatch" 导致训练失败。
+        """
         root = self.data_dir / DAILY_BACKWARD_DIR
-        if not root.is_dir() or not any(root.rglob("*.parquet")):
+        if not root.is_dir() or not any(root.glob("dt=*/*.parquet")):
             return None
-        parquet_glob = str(root / "**" / "*.parquet").replace("'", "''")
-        return f"read_parquet('{parquet_glob}', hive_partitioning=true)"
+        parquet_glob = str(root / "dt=*" / "*.parquet").replace("'", "''")
+        return f"read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"
 
     def _ohlcv_donor_relation(self) -> str | None:
-        """返回同目录 l1_factors 关系，作为无 OHLCV 次要源（ccass/south）的行情补给。"""
+        """返回同目录 l1_factors 关系，作为无 OHLCV 次要源（ccass/south）的行情补给。
+
+        与全库统一，严格读取已发布的 dt=YYYYMMDD/ 分区布局，避免误把顶层
+        残留单文件 glob 进来造成 "Hive partition mismatch"。
+        """
         root = self.data_dir / FACTOR_SOURCE_DIRS[OHLCV_DONOR_SOURCE]
-        if not root.is_dir() or not any(root.rglob("*.parquet")):
+        if not root.is_dir() or not any(root.glob("dt=*/*.parquet")):
             return None
-        parquet_glob = str(root / "**" / "*.parquet").replace("'", "''")
+        parquet_glob = str(root / "dt=*" / "*.parquet").replace("'", "''")
         return f"read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"
 
     @staticmethod

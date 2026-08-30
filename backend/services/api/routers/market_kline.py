@@ -89,6 +89,12 @@ async def _try_quantdb_parquet(symbol: str, start: Optional[date], end: Optional
     if not hub.available:
         return None
 
+    # QuantDB parquet 内 symbol 为后缀式（600519.SH），入参可能是前缀式（SH600519），
+    # 不转换会永远查不到行而静默跌入聚合器兜底（聚合器仅前复权口径）
+    from backend.shared.stock_utils import StockCodeUtil
+
+    qdb_symbol = StockCodeUtil.to_suffix(symbol)
+
     try:
         import asyncio
         if not start or not end:
@@ -96,7 +102,7 @@ async def _try_quantdb_parquet(symbol: str, start: Optional[date], end: Optional
             start = start or (end - timedelta(days=days * 2))
 
         def _read():
-            df = hub.fetch_daily_kline(symbol, start, end, adjust=adjust)
+            df = hub.fetch_daily_kline(qdb_symbol, start, end, adjust=adjust)
             if df is None or df.empty:
                 return None
             items = []

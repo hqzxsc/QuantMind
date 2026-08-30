@@ -264,7 +264,7 @@ function TradesTable({ sessionId }: { sessionId: string }) {
                                     <td className="py-1 px-2 text-right font-mono text-gray-400">{t.total_fee.toFixed(2)}</td>
                                     <td className="py-1 px-2 text-right font-mono">
                                         {t.realized_pnl != null ? (
-                                            <span className={t.realized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                            <span className={t.realized_pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}>
                                                 {t.realized_pnl >= 0 ? '+' : ''}{t.realized_pnl.toFixed(0)}
                                             </span>
                                         ) : '—'}
@@ -320,7 +320,7 @@ function AttributionTable({ rows }: { rows: AttrRow[] }) {
                         <tr key={r.symbol} className="border-b border-gray-50">
                             <td className="py-1.5 px-2 font-mono">{r.symbol}</td>
                             <td className="py-1.5 px-2 text-right">
-                                <span className={r.realized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                <span className={r.realized_pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}>
                                     {r.realized_pnl >= 0 ? '+' : ''}{r.realized_pnl.toFixed(0)}
                                 </span>
                             </td>
@@ -412,7 +412,8 @@ const ReplayReportPage: React.FC<ReplayReportPageProps> = ({ sessionId, onBack }
     }
 
     const pct = (v: number) => `${(v * 100).toFixed(2)}%`;
-    const pnlColor = (v: number) => v >= 0 ? 'text-green-600' : 'text-red-600';
+    // A 股口径：红涨绿跌（盈利红、亏损绿），与会话资产卡一致
+    const pnlColor = (v: number) => v >= 0 ? 'text-red-600' : 'text-emerald-600';
 
     return (
         <div className="h-full overflow-y-auto p-4 space-y-4">

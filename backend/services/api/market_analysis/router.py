@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+import datetime as _dt
 from datetime import date, datetime
 from typing import Any
 
@@ -228,7 +229,7 @@ async def get_heatmap(
     real_items = quantdb_feed.get_sector_heatmap(category=category)
     if real_items:
         return {
-            "trade_date": str(trade_date or date.today()),
+            "trade_date": str(trade_date or _dt.date.today()),
             "category": category,
             "items": real_items,
         }
@@ -241,7 +242,7 @@ async def get_heatmap(
                 trade_date=str(trade_date),
                 items=[HeatmapItem(**item) for item in items],
             )
-    return {"trade_date": str(date.today()), "category": category, "items": []}
+    return {"trade_date": str(_dt.date.today()), "category": category, "items": []}
 
 
 # ---- Anomalies ----

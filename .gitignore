@@ -179,6 +179,10 @@ db/db.zip
 
 # Large data / model / experiment directories — too big for git
 /data/
+# 股票搜索索引：可由 build_stock_index.py 从 QuantDB 重建，但保留一份在仓库便于开箱即用
+!/data/
+/data/*
+!/data/stocks/
 /db/*
 !/db/sql/
 /db/sql/*

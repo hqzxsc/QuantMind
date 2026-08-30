@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-从数据库构建股票搜索索引 JSON。
+从 QuantDB instrument_list 构建股票搜索索引 JSON。
+
+数据源已从 PG（stocks/symbols 表）迁移到 QuantDB：
+  2_base_sector/instrument_detail/instrument_list.parquet
 
 默认输出：
   data/stocks/stocks_index.json
 可通过环境变量覆盖：
   STOCK_INDEX_JSON_PATH=/abs/path/stocks_index.json
+  QM_QUANTDB_DATA_DIR=/data/quantdb
 """
 
 from __future__ import annotations
@@ -13,59 +17,82 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List
-from urllib.parse import quote_plus
+from pathlib import Path
+from typing import Any, List
 
-from sqlalchemy import create_engine, text
+import pandas as pd
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _build_sync_db_url() -> str:
-    db_url = os.getenv("DATABASE_URL", "").strip()
-    if db_url:
-        if "asyncpg" in db_url:
-            return db_url.replace("asyncpg", "psycopg2")
-        if db_url.startswith("postgresql://"):
-            return db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
-        return db_url
-
-    host = os.getenv("DB_MASTER_HOST", "localhost")
-    port = os.getenv("DB_MASTER_PORT", "5432")
-    user = os.getenv("DB_USER", "quantmind")
-    password = quote_plus(os.getenv("DB_PASSWORD", ""))
-    db_name = os.getenv("DB_NAME", "quantmind")
-    return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db_name}"
-
-
-def _guess_exchange(code: str) -> str:
-    c = str(code or "").strip()
-    if c.startswith(("000", "001", "002", "003", "300")):
-        return "SZ"
-    if c.startswith(("600", "601", "603", "605", "688")):
-        return "SH"
-    if c.startswith(("4", "8")):
-        return "BJ"
-    return "SZ"
+# 候选数据目录：容器内挂载点 / 环境变量 / 本地项目根
+def _candidate_instrument_paths() -> List[Path]:
+    qdb_dir = os.getenv("QM_QUANTDB_DATA_DIR", "").strip()
+    candidates: List[Path] = []
+    if qdb_dir:
+        candidates.append(Path(qdb_dir) / "2_base_sector" / "instrument_detail")
+    candidates.append(Path("/data/quantdb") / "2_base_sector" / "instrument_detail")
+    candidates.append(Path("/app/data/quantdb") / "2_base_sector" / "instrument_detail")
+    project_root = Path(__file__).resolve().parents[4]
+    candidates.append(project_root / "data" / "quantdb" / "2_base_sector" / "instrument_detail")
+    for fname in ("instrument_detail.parquet", "instrument_list.parquet"):
+        for base in candidates:
+            p = base / fname
+            if p.exists():
+                return [p]
+    return []
 
 
-def _normalize_symbol(code: str, exchange: str) -> str:
-    c = str(code or "").strip()
-    ex = str(exchange or "").strip().upper() or _guess_exchange(c)
-    return f"{c}.{ex}"
+def _load_instrument_df() -> pd.DataFrame:
+    paths = _candidate_instrument_paths()
+    if not paths:
+        raise FileNotFoundError(
+            "未找到 QuantDB instrument_list/instrument_detail.parquet（候选目录见脚本注释）"
+        )
+    df = pd.read_parquet(paths[0])
+    # 统一列名：Symbol -> symbol
+    if "Symbol" in df.columns and "symbol" not in df.columns:
+        df = df.rename(columns={"Symbol": "symbol"})
+    if "Name" in df.columns and "name" not in df.columns:
+        df = df.rename(columns={"Name": "name"})
+    return df
 
 
-def build_items(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    items: List[Dict[str, Any]] = []
+def _is_a_share(symbol: str) -> bool:
+    """按 A 股市场规则识别：SH 6/9 开头、SZ 0/3/2 开头、BJ 4/8 开头。"""
+    s = str(symbol or "").strip().upper()
+    if "." not in s:
+        return False
+    code, ex = s.split(".", 1)
+    if ex == "SH":
+        return code.startswith(("6", "9"))
+    if ex == "SZ":
+        return code.startswith(("0", "3", "2"))
+    if ex == "BJ":
+        return code.startswith(("4", "8"))
+    return False
+
+
+def build_items(rows: List[Any]) -> List[dict[str, Any]]:
+    items: List[dict[str, Any]] = []
     for row in rows:
-        code = str(row.get("stock_code") or "").strip()
-        name = str(row.get("stock_name") or "").strip()
-        if not code or not name:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol or not _is_a_share(symbol):
             continue
-        exchange = str(row.get("exchange") or "").strip().upper() or _guess_exchange(code)
-        symbol = _normalize_symbol(code, exchange)
+        # 排除退市股（IsQuitGP=1）
+        quit_flag = row.get("IsQuitGP")
+        if pd.notna(quit_flag):
+            try:
+                if int(float(quit_flag)) == 1:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        name = str(row.get("name") or "").strip()
+        if not name:
+            continue
+        code, exchange = symbol.split(".", 1)
         items.append(
             {
                 "symbol": symbol,
@@ -80,53 +107,12 @@ def build_items(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return items
 
 
-def _table_exists(conn, table_name: str) -> bool:
-    row = conn.execute(
-        text("""
-            SELECT 1
-            FROM information_schema.tables
-            WHERE table_schema='public' AND table_name=:table
-            LIMIT 1
-            """),
-        {"table": table_name},
-    ).fetchone()
-    return bool(row)
-
-
 def main() -> None:
     output_path = os.path.abspath(os.getenv("STOCK_INDEX_JSON_PATH", "data/stocks/stocks_index.json"))
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    db_url = _build_sync_db_url()
-    engine = create_engine(db_url)
-
-    with engine.begin() as conn:
-        if _table_exists(conn, "stocks"):
-            sql = text("""
-                SELECT
-                  split_part(symbol, '.', 1) AS stock_code,
-                  name AS stock_name,
-                  COALESCE(NULLIF(exchange, ''), split_part(symbol, '.', 2)) AS exchange
-                FROM stocks
-                WHERE COALESCE(is_active, true) = true
-                ORDER BY symbol
-                """)
-        elif _table_exists(conn, "symbols"):
-            sql = text("""
-                SELECT
-                  split_part(symbol, '.', 1) AS stock_code,
-                  name AS stock_name,
-                  COALESCE(NULLIF(exchange, ''), split_part(symbol, '.', 2)) AS exchange
-                FROM symbols
-                WHERE COALESCE(is_active, true) = true
-                ORDER BY symbol
-                """)
-        else:
-            raise RuntimeError("未找到可用股票表（stocks 或 symbols）")
-
-        result = conn.execute(sql)
-        rows = [dict(r._mapping) for r in result]
-
+    df = _load_instrument_df()
+    rows = [dict(r) for r in df.to_dict("records")]
     items = build_items(rows)
     payload = {
         "generated_at": _now_iso(),

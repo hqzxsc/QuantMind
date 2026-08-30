@@ -28,7 +28,6 @@ from .schemas import (
     CreateSectorRequest,
     HeatmapItem,
     HeatmapResponse,
-    HeatmapSectorItem,
     MarketBreadthResponse,
     MoneyFlowPeriodItem,
     MoneyFlowPeriodResponse,
@@ -334,10 +333,15 @@ async def get_stock_money_flow_full(
     date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
     current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
-    """全市场个股资金流（供前端本地搜索）；仅快照模式提供，缺失返回空。"""
+    """全市场个股资金流（供前端本地搜索）；优先快照，无快照时回退实时单日全市场。"""
     _ = current_user
     data = _snap.stock_flow_full(date)
-    return data or []
+    if data:
+        return data
+    if date:
+        # 显式历史日期无快照 → 返回空，不回落实时，避免日期错配
+        return []
+    return await asyncio.to_thread(quantdb_feed.get_stock_money_flow_full)
 
 
 @router.get("/money-flow/sankey")

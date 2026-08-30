@@ -242,7 +242,7 @@ def _instrument_names() -> dict[str, str]:
     if df.empty:
         return {}
     if "symbol" in df.columns and "Name" in df.columns:
-        return dict(zip(df["symbol"].astype(str), df["Name"].astype(str)))
+        return dict(zip(df["symbol"].astype(str), df["Name"].astype(str), strict=False))
     return {}
 
 
@@ -384,6 +384,60 @@ def _stock_money_flow_impl(limit: int) -> list[dict[str, Any]]:
             "trend_30d": trend_map.get(sym_prefix, []),
             "daily_details_30d": detail_map.get(sym_prefix, []),
         })
+    return items
+
+
+def get_stock_money_flow_full() -> list[dict[str, Any]]:
+    """全市场个股资金流（单日快照缺失时的实时兜底，供前端本地搜索）。
+
+    只读最新一个交易日的 L2 明细，不构建 30 日趋势与逐日明细，控制全市场开销。
+    """
+    if not _available():
+        return []
+
+    return _cached("stock_flow_full", _QUERY_TTL, _stock_money_flow_full_impl)
+
+
+def _stock_money_flow_full_impl() -> list[dict[str, Any]]:
+    ref = _latest_l2_date()
+    if not ref:
+        return []
+    days = _trading_days(ref, 1)
+    if not days:
+        return []
+    today = days[0]
+    flow = _load_l2_flow([today])
+    if flow.empty:
+        return []
+
+    prices = _load_prices([today])
+    names = _instrument_names()
+    flow = flow.merge(prices[["symbol", "close", "pct_change"]], on="symbol", how="left")
+
+    items: list[dict[str, Any]] = []
+    for row in flow.itertuples(index=False):
+        net = _f(row.flow_net_amount)
+        items.append({
+            "symbol": _normalize_prefix(row.symbol),
+            "name": names.get(row.symbol, ""),
+            "close_price": round(_f(row.close), 2),
+            "pct_change": round(_f(row.pct_change), 2),
+            "net_inflow": int(net),
+            "gross_inflow": int(_f(row.flow_buy_amount)),
+            "gross_outflow": int(_f(row.flow_sell_amount)),
+            "main_ratio": _main_ratio(
+                net,
+                row.flow_super_net,
+                row.flow_large_net,
+                row.flow_buy_amount,
+                row.flow_sell_amount,
+            ),
+            "super_large": int(_f(row.flow_super_net)),
+            "large": int(_f(row.flow_large_net)),
+            "medium": int(_f(row.flow_medium_net)),
+            "small": int(_f(row.flow_small_net)),
+        })
+    items.sort(key=lambda x: x["net_inflow"], reverse=True)
     return items
 
 

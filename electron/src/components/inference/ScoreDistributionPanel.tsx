@@ -95,7 +95,7 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
   }, [rankings]);
 
   const W = 480;
-  const H = 56;
+  const H = 68;
   const PL = 4;
   const PR = 4;
   const PT = 4;
@@ -130,8 +130,8 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
   return (
     <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 space-y-3">
       <div className="flex items-center justify-between">
-        <Text className="text-[10px] text-slate-400 font-black uppercase tracking-wide">分数分布</Text>
-        <Text className="text-[10px] text-slate-400 font-mono">N={dist.count.toLocaleString()}</Text>
+        <Text className="text-xs text-slate-400 font-black uppercase tracking-wide">分数分布</Text>
+        <Text className="text-xs text-slate-400 font-mono">N={dist.count.toLocaleString()}</Text>
       </div>
 
       {/* 策略分数区间：可点击筛选 */}
@@ -149,9 +149,9 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
                 >
                   <div className="flex items-center gap-1.5 mb-0.5">
                     <span className={clsx('w-1.5 h-1.5 rounded-full', st.dot)} />
-                    <Text className="text-[10px] font-black text-slate-700">{b.label}</Text>
+                    <Text className="text-xs font-black text-slate-700">{b.label}</Text>
                   </div>
-                  <Text className="block text-[9px] text-slate-400 truncate">{b.action}</Text>
+                  <Text className="block text-[11px] text-slate-400 truncate">{b.action}</Text>
                 </button>
               </Tooltip>
             );
@@ -161,38 +161,38 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
 
       {/* 4 张紧凑统计卡 */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div className="rounded-xl bg-rose-50 border border-rose-100 px-3 py-2">
-          <div className="text-[10px] text-rose-600 font-black uppercase">正分占比</div>
+        <div className="rounded-2xl bg-rose-50 border border-rose-100 px-3 py-2">
+          <div className="text-xs text-rose-600 font-black uppercase">正分占比</div>
           <div className="flex items-baseline gap-1 mt-0.5">
-            <span className="text-base font-black text-rose-700 font-mono">{fmtPct(dist.positive_pct)}</span>
-            <span className="text-[10px] text-rose-500 font-mono">{dist.positive_count.toLocaleString()}</span>
+            <span className="text-lg font-black text-rose-700 font-mono">{fmtPct(dist.positive_pct)}</span>
+            <span className="text-xs text-rose-500 font-mono">{dist.positive_count.toLocaleString()}</span>
           </div>
         </div>
-        <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2">
-          <div className="text-[10px] text-emerald-600 font-black uppercase">负分占比</div>
+        <div className="rounded-2xl bg-emerald-50 border border-emerald-100 px-3 py-2">
+          <div className="text-xs text-emerald-600 font-black uppercase">负分占比</div>
           <div className="flex items-baseline gap-1 mt-0.5">
-            <span className="text-base font-black text-emerald-700 font-mono">{fmtPct(dist.negative_pct)}</span>
-            <span className="text-[10px] text-emerald-500 font-mono">{dist.negative_count.toLocaleString()}</span>
+            <span className="text-lg font-black text-emerald-700 font-mono">{fmtPct(dist.negative_pct)}</span>
+            <span className="text-xs text-emerald-500 font-mono">{dist.negative_count.toLocaleString()}</span>
           </div>
         </div>
-        <div className="rounded-xl bg-white border border-slate-100 px-3 py-2">
-          <div className="text-[10px] text-slate-500 font-black uppercase">中位数</div>
-          <div className="text-base font-black text-slate-800 font-mono mt-0.5">{fmt(dist.median)}</div>
+        <div className="rounded-2xl bg-white border border-slate-100 px-3 py-2">
+          <div className="text-xs text-slate-500 font-black uppercase">中位数</div>
+          <div className="text-lg font-black text-slate-800 font-mono mt-0.5">{fmt(dist.median)}</div>
         </div>
-        <div className="rounded-xl bg-white border border-slate-100 px-3 py-2">
+        <div className="rounded-2xl bg-white border border-slate-100 px-3 py-2">
           <Tooltip title="Top 10% 股票的分数门槛">
-            <div className="text-[10px] text-slate-500 font-black uppercase cursor-help">Top10% 门槛</div>
+            <div className="text-xs text-slate-500 font-black uppercase cursor-help">Top10% 门槛</div>
           </Tooltip>
-          <div className="text-base font-black text-slate-800 font-mono mt-0.5">{fmt(dist.p90)}</div>
+          <div className="text-lg font-black text-slate-800 font-mono mt-0.5">{fmt(dist.p90)}</div>
         </div>
       </div>
 
       {/* 直方图 */}
-      <div className="rounded-xl bg-white border border-slate-100 px-3 py-2">
+      <div className="rounded-2xl bg-white border border-slate-100 px-3 py-2">
         <div className="flex items-center justify-between mb-1">
-          <Text className="text-[10px] text-slate-400 font-mono">{fmt(lo)}</Text>
-          <Text className="text-[10px] text-slate-400 font-black">分布直方图（20 桶）</Text>
-          <Text className="text-[10px] text-slate-400 font-mono">{fmt(hi)}</Text>
+          <Text className="text-xs text-slate-400 font-mono">{fmt(lo)}</Text>
+          <Text className="text-xs text-slate-400 font-black">分布直方图（20 桶）</Text>
+          <Text className="text-xs text-slate-400 font-mono">{fmt(hi)}</Text>
         </div>
         <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
           {dist.histogram.map((b, i) => {
@@ -204,7 +204,7 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
               <Tooltip
                 key={i}
                 title={
-                  <div className="font-mono text-[11px]">
+                  <div className="font-mono text-xs">
                     <div>区间: [{fmt(b.x0)} , {fmt(b.x1)}]</div>
                     <div>数量: {b.count.toLocaleString()} ({((b.count / dist.count) * 100).toFixed(1)}%)</div>
                   </div>
@@ -272,10 +272,10 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
 
       {/* 负分细分统计 */}
       {negStats && (
-        <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 space-y-2.5">
+        <div className="rounded-2xl bg-white border border-slate-100 px-3 py-2.5 space-y-2.5">
           <div className="flex items-center justify-between">
-            <Text className="text-[10px] text-slate-400 font-black uppercase tracking-wide">负分细分（{dist.negative_count.toLocaleString()} 只）</Text>
-            <Text className="text-[9px] text-slate-400">点击分数段可筛选</Text>
+            <Text className="text-xs text-slate-400 font-black uppercase tracking-wide">负分细分（{dist.negative_count.toLocaleString()} 只）</Text>
+            <Text className="text-[11px] text-slate-400">点击分数段可筛选</Text>
           </div>
 
           {/* 负分分数段 */}
@@ -300,8 +300,8 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
                   }}
                   className={clsx('rounded-xl border px-2.5 py-2 text-left transition-all', seg.cls, isActive && 'ring-2 ring-rose-400')}
                 >
-                  <Text className="block text-[9px] font-black opacity-90">{seg.label}</Text>
-                  <Text className="block font-black font-mono text-sm mt-0.5">{seg.count} 只</Text>
+                  <Text className="block text-[11px] font-black opacity-90">{seg.label}</Text>
+                  <Text className="block font-black font-mono text-base mt-0.5">{seg.count} 只</Text>
                 </button>
               );
             })}
@@ -309,10 +309,10 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
 
           {/* 负分×市值 */}
           <div>
-            <Text className="block text-[9px] text-slate-400 font-bold mb-1">按市值</Text>
+            <Text className="block text-[11px] text-slate-400 font-bold mb-1">按市值</Text>
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(negStats.tierCounts).map(([tier, count]) => (
-                <Tag key={tier} className={clsx('m-0 rounded-full border px-2 py-0.5 text-[9px] font-black',
+                <Tag key={tier} className={clsx('m-0 rounded-full border px-2 py-0.5 text-[11px] font-black',
                   tier === '微盘' ? 'text-rose-600 bg-rose-50 border-rose-100'
                   : tier === '小盘' ? 'text-orange-600 bg-orange-50 border-orange-100'
                   : tier === '中盘' ? 'text-amber-600 bg-amber-50 border-amber-100'
@@ -327,10 +327,10 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
 
           {/* 负分×板块 */}
           <div>
-            <Text className="block text-[9px] text-slate-400 font-bold mb-1">按板块</Text>
+            <Text className="block text-[11px] text-slate-400 font-bold mb-1">按板块</Text>
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(negStats.boardCounts).map(([board, count]) => (
-                <Tag key={board} className="m-0 rounded-full border-0 bg-slate-100 text-slate-600 font-bold text-[9px] px-2 py-0.5">
+                <Tag key={board} className="m-0 rounded-full border-0 bg-slate-100 text-slate-600 font-bold text-[11px] px-2 py-0.5">
                   {board} {count}
                 </Tag>
               ))}
@@ -340,10 +340,10 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
           {/* 负分集中行业 */}
           {negStats.topIndustries.length > 0 && (
             <div>
-              <Text className="block text-[9px] text-slate-400 font-bold mb-1">负分集中行业（下跌持续 · 做空参考）</Text>
+              <Text className="block text-[11px] text-slate-400 font-bold mb-1">负分集中行业（下跌持续 · 做空参考）</Text>
               <div className="flex flex-wrap gap-1.5">
                 {negStats.topIndustries.map(x => (
-                  <Tag key={x.industry} className="m-0 rounded-full border-0 bg-rose-50 text-rose-600 font-bold text-[9px] px-2 py-0.5">
+                  <Tag key={x.industry} className="m-0 rounded-full border-0 bg-rose-50 text-rose-600 font-bold text-[11px] px-2 py-0.5">
                     {x.industry} ×{x.count}
                   </Tag>
                 ))}
@@ -365,12 +365,12 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
           <div
             key={pt.label}
             className={clsx(
-              'rounded-lg border px-2 py-1 text-center',
+              'rounded-xl border px-2 py-1 text-center',
               pt.value >= 0 ? 'border-rose-100 bg-rose-50/40' : 'border-emerald-100 bg-emerald-50/40',
             )}
           >
-            <div className="text-[9px] text-slate-500 font-black uppercase">{pt.label}</div>
-            <div className={clsx('text-[11px] font-black font-mono', pt.value >= 0 ? 'text-rose-700' : 'text-emerald-700')}>
+            <div className="text-[11px] text-slate-500 font-black uppercase">{pt.label}</div>
+            <div className={clsx('text-xs font-black font-mono', pt.value >= 0 ? 'text-rose-700' : 'text-emerald-700')}>
               {fmt(pt.value)}
             </div>
           </div>
@@ -378,7 +378,7 @@ export const ScoreDistributionPanel: React.FC<Props> = ({ dist, rankings, active
       </div>
 
       {/* 辅助行：均值/标准差/极值 */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500 font-mono">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-mono">
         <span>均值 <span className="text-slate-800 font-black">{fmt(dist.mean)}</span></span>
         <span>σ <span className="text-slate-800 font-black">{fmt(dist.stdev)}</span></span>
         <span>极小 <span className="text-rose-700 font-black">{fmt(dist.min)}</span></span>

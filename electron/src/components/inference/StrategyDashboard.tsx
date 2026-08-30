@@ -2,20 +2,16 @@ import React from 'react';
 import { Tag, Typography, Tooltip } from 'antd';
 import { clsx } from 'clsx';
 import {
-  TrendingUp, BarChart3, Activity, Shield, AlertTriangle, Repeat, ArrowDownRight,
+  BarChart3, Shield, AlertTriangle, Repeat, ArrowDownRight,
 } from 'lucide-react';
 import type {
-  InferenceRunRecord, IndustryTop1Stat, ScoreBucketStat, TrendStats, MarketMAFilter, NegativeAnalysis,
+  InferenceRunRecord, IndustryTop1Stat, MarketMAFilter, NegativeAnalysis,
 } from '../../services/modelTrainingService';
 
 const { Text } = Typography;
 
 interface Props {
   summary: InferenceRunRecord;
-  /** 当前选中的分数区间 key（null 表示未筛选） */
-  activeBucket?: string | null;
-  /** 点击分数区间时回调（null 表示清除筛选） */
-  onSelectBucket?: (key: string | null) => void;
 }
 
 const fmt4 = (n: number | null | undefined): string =>
@@ -33,10 +29,10 @@ function BoardCard({ icon, title, subtitle, right, children }: {
     <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-slate-50 flex items-center justify-center">{icon}</div>
+          <div className="w-9 h-9 rounded-2xl bg-slate-50 flex items-center justify-center">{icon}</div>
           <div>
-            <Text className="block text-sm font-black text-slate-800 leading-tight">{title}</Text>
-            {subtitle && <Text className="block text-[10px] text-slate-400 mt-0.5">{subtitle}</Text>}
+            <Text className="block text-base font-black text-slate-800 leading-tight">{title}</Text>
+            {subtitle && <Text className="block text-xs text-slate-400 mt-0.5">{subtitle}</Text>}
           </div>
         </div>
         {right}
@@ -50,8 +46,10 @@ function BoardCard({ icon, title, subtitle, right, children }: {
 function MarketMAFilterCard({ filter }: { filter?: MarketMAFilter }) {
   if (!filter || filter.close === null || filter.close === undefined) {
     return (
-      <BoardCard icon={<Shield size={15} className="text-slate-400" />} title="大盘均线过滤" subtitle="上证指数 vs 20日均线">
-        <Text className="text-[11px] text-slate-400">暂无指数数据</Text>
+      <BoardCard icon={<Shield size={16} className="text-slate-400" />} title="大盘均线过滤" subtitle="上证指数 vs 20日均线">
+        <div className="flex justify-center py-2">
+          <Text className="text-xs text-slate-400">暂无指数数据</Text>
+        </div>
       </BoardCard>
     );
   }
@@ -59,28 +57,28 @@ function MarketMAFilterCard({ filter }: { filter?: MarketMAFilter }) {
   const ma20 = filter.mavg.ma20 !== null && filter.mavg.ma20 !== undefined ? Number(filter.mavg.ma20).toFixed(2) : '—';
   return (
     <BoardCard
-      icon={<Shield size={15} className={below ? 'text-rose-500' : 'text-emerald-500'} />}
+      icon={<Shield size={16} className={below ? 'text-rose-500' : 'text-emerald-500'} />}
       title="大盘均线过滤"
       subtitle={`${filter.ref_date} · 上证指数`}
       right={below ? (
-        <Tag color="red" className="m-0 rounded-full text-[10px] font-black px-3 py-0.5">跌破 MA20 · 强制空仓</Tag>
+        <Tag color="red" className="m-0 rounded-full text-xs font-black px-3 py-0.5">跌破 MA20 · 强制空仓</Tag>
       ) : (
-        <Tag color="green" className="m-0 rounded-full text-[10px] font-black px-3 py-0.5">MA20 上方 · 可持仓</Tag>
+        <Tag color="green" className="m-0 rounded-full text-xs font-black px-3 py-0.5">MA20 上方 · 可持仓</Tag>
       )}
     >
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
         <div className="flex items-baseline gap-2">
-          <Text className="text-[11px] text-slate-400 font-bold">收盘</Text>
+          <Text className="text-xs text-slate-400 font-bold">收盘</Text>
           <Text className="font-black font-mono text-xl text-slate-800">{Number(filter.close).toFixed(2)}</Text>
         </div>
         <div className="flex items-baseline gap-2">
-          <Text className="text-[11px] text-slate-400 font-bold">MA20</Text>
+          <Text className="text-xs text-slate-400 font-bold">MA20</Text>
           <Text className={clsx('font-black font-mono text-xl', below ? 'text-rose-600' : 'text-emerald-600')}>{ma20}</Text>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {(['ma5', 'ma10', 'ma20', 'ma30', 'ma60'] as const).map(k => (
             <Tooltip key={k} title={`MA${k.replace('ma', '')}`}>
-              <span className="rounded-lg bg-slate-50 border border-slate-100 px-2 py-1 text-[10px] font-mono text-slate-500">
+              <span className="rounded-lg bg-slate-50 border border-slate-100 px-2 py-1 text-xs font-mono text-slate-500">
                 MA{k.replace('ma', '')}: {filter.mavg[k] !== null && filter.mavg[k] !== undefined ? Number(filter.mavg[k]).toFixed(0) : '—'}
               </span>
             </Tooltip>
@@ -93,7 +91,7 @@ function MarketMAFilterCard({ filter }: { filter?: MarketMAFilter }) {
               style={{ width: '100%' }}
             />
           </div>
-          <Text className={clsx('block text-[10px] font-bold mt-1', below ? 'text-rose-500' : 'text-emerald-600')}>
+          <Text className={clsx('block text-xs font-bold mt-1', below ? 'text-rose-500' : 'text-emerald-600')}>
             {below ? '指数在 MA20 下方，模型信号不可靠，强制空仓' : '指数在 MA20 上方，可正常按信号操作'}
           </Text>
         </div>
@@ -124,170 +122,52 @@ function IndustrySignalCard({
     ? Number(signal.empty_threshold) : 0.06;
   return (
     <BoardCard
-      icon={<BarChart3 size={15} className="text-indigo-500" />}
+      icon={<BarChart3 size={16} className="text-indigo-500" />}
       title="行业信号强度"
       subtitle="每天推理后取 Top20 股票，按申万128行业分组统计各行业 Top1 分数"
-      right={<Tag color={signalColor} className="m-0 rounded-full text-[10px] font-black px-3 py-0.5">{signalLabel}</Tag>}
+      right={<Tag color={signalColor} className="m-0 rounded-full text-xs font-black px-3 py-0.5">{signalLabel}</Tag>}
     >
       {/* 顶部 3 个关键指标 */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
-          <Text className="block text-[11px] text-slate-400 font-bold mb-1">行业 avg Top1</Text>
+        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3 text-center">
+          <Text className="block text-xs text-slate-400 font-bold mb-1">行业 avg Top1</Text>
           <Text className={clsx('block font-black font-mono text-2xl', avg !== null && avg !== undefined && avg >= entryThr ? 'text-rose-600' : 'text-slate-800')}>
             {fmt4(avg)}
           </Text>
-          <Text className="block text-[10px] text-slate-400 mt-0.5">≥{entryThr.toFixed(2)} 可入场 · ≥{emptyThr.toFixed(2)} 空仓线</Text>
+          <Text className="block text-xs text-slate-400 mt-0.5">≥{entryThr.toFixed(2)} 可入场 · ≥{emptyThr.toFixed(2)} 空仓线</Text>
         </div>
-        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
-          <Text className="block text-[11px] text-slate-400 font-bold mb-1">强行业数 (Top1 ≥ {strongThr.toFixed(2)})</Text>
+        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3 text-center">
+          <Text className="block text-xs text-slate-400 font-bold mb-1">强行业数 (Top1 ≥ {strongThr.toFixed(2)})</Text>
           <Text className={clsx('block font-black font-mono text-2xl', strong >= 2 ? 'text-rose-600' : 'text-slate-800')}>{strong}</Text>
-          <Text className="block text-[10px] text-slate-400 mt-0.5">≥2 个可参与 · ≥3 个有行情</Text>
+          <Text className="block text-xs text-slate-400 mt-0.5">≥2 个可参与 · ≥3 个有行情</Text>
         </div>
-        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
-          <Text className="block text-[11px] text-slate-400 font-bold mb-1">覆盖行业数</Text>
+        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3 text-center">
+          <Text className="block text-xs text-slate-400 font-bold mb-1">覆盖行业数</Text>
           <Text className="block font-black font-mono text-2xl text-slate-800">{stats?.length ?? 0}</Text>
-          <Text className="block text-[10px] text-slate-400 mt-0.5">Top20 涉及的申万行业</Text>
+          <Text className="block text-xs text-slate-400 mt-0.5">Top20 涉及的申万行业</Text>
         </div>
       </div>
 
-      {/* 行业 Top1 列表：两列网格 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+      {/* 行业 Top1 列表：两列居中排布，避免宽屏下偏左显乱 */}
+      <div className="mx-auto max-w-5xl flex flex-wrap justify-center gap-2.5">
         {top.map(x => (
-          <div key={x.industry} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50/60 border border-slate-100 px-3.5 py-2.5">
+          <div key={x.industry} className="w-full sm:w-[calc(50%-5px)] flex items-center justify-between gap-3 rounded-2xl bg-slate-50/60 border border-slate-100 px-4 py-3">
             <div className="min-w-0 flex items-center gap-3">
               <span className={clsx('w-1.5 h-1.5 rounded-full flex-shrink-0', Number(x.top1_score) >= strongThr ? 'bg-rose-500' : 'bg-slate-300')} />
               <div className="min-w-0">
-                <Text className="block text-[11px] font-black text-slate-700 truncate">{x.industry}</Text>
-                <Text className="block text-[9px] font-mono text-slate-400 truncate">{x.top1_symbol} · {x.top1_name}</Text>
+                <Text className="block text-xs font-black text-slate-700 truncate">{x.industry}</Text>
+                <Text className="block text-xs font-mono text-slate-400 truncate">{x.top1_symbol} · {x.top1_name}</Text>
               </div>
             </div>
-            <Text className={clsx('font-black font-mono text-xs flex-shrink-0', Number(x.top1_score) >= strongThr ? 'text-rose-600' : 'text-slate-600')}>
+            <Text className={clsx('font-black font-mono text-sm flex-shrink-0', Number(x.top1_score) >= strongThr ? 'text-rose-600' : 'text-slate-600')}>
               {Number(x.top1_score).toFixed(4)}
             </Text>
           </div>
         ))}
       </div>
-      {(!stats || stats.length === 0) && <Text className="text-[11px] text-slate-400">暂无行业数据</Text>}
-    </BoardCard>
-  );
-}
-
-/** 分数区间卡片：5档区间统计 + 黄金区间 + 假信号区 */
-function ScoreBucketCard({ buckets, goldZone, fakeSignal, activeBucket, onSelectBucket }: {
-  buckets?: ScoreBucketStat[];
-  goldZone?: number;
-  fakeSignal?: number;
-  activeBucket?: string | null;
-  onSelectBucket?: (key: string | null) => void;
-}) {
-  const colors: Record<string, { text: string; border: string; bar: string }> = {
-    slate: { text: 'text-slate-600', border: 'border-slate-100', bar: 'bg-slate-300' },
-    emerald: { text: 'text-emerald-700', border: 'border-emerald-200', bar: 'bg-emerald-500' },
-    amber: { text: 'text-amber-700', border: 'border-amber-200', bar: 'bg-amber-400' },
-    orange: { text: 'text-orange-700', border: 'border-orange-200', bar: 'bg-orange-400' },
-    rose: { text: 'text-rose-700', border: 'border-rose-200', bar: 'bg-rose-500' },
-  };
-  // 按分数区间自然顺序排列（不买 → 黄金 → 可选 → 谨慎 → 极谨慎）
-  const order = ['lt_010', 'gold', 'opt_012_015', 'warn_015_020', 'gte_020'];
-  const sorted = [...(buckets || [])].sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
-  const maxCount = Math.max(...sorted.map(b => b.count), 1);
-  return (
-    <BoardCard
-      icon={<Activity size={15} className="text-emerald-500" />}
-      title="个股分数区间"
-      subtitle="按区间统计推理结果，决定买哪只"
-      right={
-        <div className="flex items-center gap-2">
-          {goldZone !== undefined && goldZone > 0 && (
-            <Tag color="green" className="m-0 rounded-full text-[10px] font-black px-3 py-0.5">黄金区间 {goldZone} 只</Tag>
-          )}
-        </div>
-      }
-    >
-      <div className="space-y-2">
-        {sorted.map(b => {
-          const c = colors[b.color] || colors.slate;
-          const isGold = b.key === 'gold';
-          const isActive = activeBucket === b.key;
-          const pct = Math.round((b.count / maxCount) * 100);
-          const Wrapper = onSelectBucket ? 'button' : 'div';
-          return (
-            <Wrapper
-              key={b.key}
-              {...(onSelectBucket
-                ? { type: 'button', onClick: () => onSelectBucket(isActive ? null : b.key) }
-                : {})}
-              className={clsx(
-                'w-full rounded-xl border px-3.5 py-2.5 text-left transition-all',
-                onSelectBucket && 'cursor-pointer',
-                isGold ? 'border-emerald-300 bg-emerald-50/70' : 'bg-slate-50/60 border-slate-100',
-                isActive && 'ring-2 ring-emerald-400',
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <span className={clsx('font-black font-mono text-xs w-24 flex-shrink-0', isGold ? 'text-emerald-700' : 'text-slate-700')}>{b.label}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <Text className={clsx('text-[11px] font-bold truncate', isGold ? 'text-emerald-700' : 'text-slate-600')}>
-                      {b.action}
-                    </Text>
-                    <Text className="font-black font-mono text-sm flex-shrink-0 ml-2">{b.count} 只</Text>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                    <div className={clsx('h-full rounded-full', c.bar)} style={{ width: `${Math.max(pct, 2)}%` }} />
-                  </div>
-                </div>
-              </div>
-            </Wrapper>
-          );
-        })}
-      </div>
-      {fakeSignal !== undefined && fakeSignal > 0 && (
-        <div className="mt-3 rounded-xl bg-amber-50 border border-amber-100 px-3.5 py-2.5">
-          <Text className="text-[10px] text-amber-600 font-bold">⚠ 0.10-0.11 假信号区共 {fakeSignal} 只，单看胜率低，须配合行业 avgTop1 ≥ 0.09 才可买</Text>
-        </div>
-      )}
-    </BoardCard>
-  );
-}
-
-/** 3天趋势卡片：T-2 → T-1 → T 走势分布 */
-function TrendCard({ stats }: { stats?: TrendStats }) {
-  const total = stats ? Object.values(stats).reduce((a, b) => a + (b || 0), 0) : 0;
-  const items = [
-    { key: '先升后降', label: '先升后降', desc: 'T-2 < T-1 > T', hint: '最佳买点', cls: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
-    { key: '连续上升', label: '连续上升', desc: 'T-2 < T-1 < T', hint: '过热不追', cls: 'text-rose-600 bg-rose-50 border-rose-100' },
-    { key: '连续下降', label: '连续下降', desc: 'T-2 > T-1 > T', hint: '信号衰退', cls: 'text-slate-500 bg-slate-100 border-slate-200' },
-  ];
-  return (
-    <BoardCard
-      icon={<TrendingUp size={15} className="text-blue-500" />}
-      title="3天分数趋势"
-      subtitle="T-2 → T-1 → T 已发生分数，决定买点"
-    >
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {items.map(it => {
-          const n = stats?.[it.key] || 0;
-          const pct = total ? Math.round((n / total) * 100) : 0;
-          return (
-            <div key={it.key} className={clsx('rounded-2xl border px-4 py-3', it.cls)}>
-              <div className="flex items-center justify-between mb-1">
-                <Text className="text-[11px] font-black text-slate-700">{it.label}</Text>
-                <Text className="font-black font-mono text-xl">{n}</Text>
-              </div>
-              <Text className="block text-[10px] font-mono text-slate-500">{it.desc}</Text>
-              <div className="mt-1.5 flex items-center justify-between">
-                <Text className="text-[10px] font-bold text-slate-500">{it.hint}</Text>
-                <Text className="text-[10px] font-mono text-slate-400">{pct}%</Text>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {stats?.上升 !== undefined && (
-        <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50 border border-slate-100 px-3.5 py-2.5">
-          <Text className="text-[10px] text-slate-500">仅单日方向（缺 T-2 历史分数）</Text>
-          <Text className="text-[11px] font-mono text-slate-600 font-bold">↑ {stats.上升 || 0} · ↓ {stats.下降 || 0} · 平 {stats.持平 || 0}</Text>
+      {(!stats || stats.length === 0) && (
+        <div className="flex justify-center py-2">
+          <Text className="text-xs text-slate-400">暂无行业数据</Text>
         </div>
       )}
     </BoardCard>
@@ -306,29 +186,33 @@ function RotationHint({ stats, strongCount, signal }: {
   const n = strongCount ?? 0;
   return (
     <BoardCard
-      icon={<Repeat size={15} className="text-purple-500" />}
+      icon={<Repeat size={16} className="text-purple-500" />}
       title="行业轮动"
       subtitle={`看哪些行业 Top1 ≥ ${strongThr.toFixed(2)} 出现天数最多，就是当前主线`}
       right={
-        <Tag color={n >= 3 ? 'red' : n >= 2 ? 'orange' : 'default'} className="m-0 rounded-full text-[10px] font-black px-3 py-0.5">
+        <Tag color={n >= 3 ? 'red' : n >= 2 ? 'orange' : 'default'} className="m-0 rounded-full text-xs font-black px-3 py-0.5">
           强行业 {n} 个
         </Tag>
       }
     >
       <div className="flex items-start gap-4 mb-3">
-        <div className="flex-1 rounded-xl bg-slate-50 border border-slate-100 px-3.5 py-2.5">
-          <Text className={clsx('block text-[11px] font-bold', n >= 3 ? 'text-rose-600' : n >= 2 ? 'text-amber-600' : 'text-slate-500')}>
+        <div className="flex-1 rounded-2xl bg-slate-50 border border-slate-100 px-3.5 py-2.5">
+          <Text className={clsx('block text-xs font-bold', n >= 3 ? 'text-rose-600' : n >= 2 ? 'text-amber-600' : 'text-slate-500')}>
             {n >= 3 ? '≥3 个强行业，有行情可做' : n >= 2 ? '2 个强行业，震荡可轻仓' : '≤1 个强行业，应空仓'}
           </Text>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
         {strong.slice(0, 8).map(x => (
-          <Tag key={x.industry} color="red" className="m-0 rounded-full text-[10px] font-bold px-3 py-0.5">
+          <Tag key={x.industry} color="red" className="m-0 rounded-full text-xs font-bold px-3 py-0.5">
             {x.industry} {Number(x.top1_score).toFixed(3)}
           </Tag>
         ))}
-        {strong.length === 0 && <Text className="text-[10px] text-slate-400">暂无行业 Top1 ≥ {strongThr.toFixed(2)}</Text>}
+        {strong.length === 0 && (
+          <div className="flex w-full justify-center py-2">
+            <Text className="text-xs text-slate-400">暂无行业 Top1 ≥ {strongThr.toFixed(2)}</Text>
+          </div>
+        )}
       </div>
     </BoardCard>
   );
@@ -359,22 +243,22 @@ function PitfallCard({ marketSignal, belowMa20, fakeCount }: {
   if (fakeCount && fakeCount > 0) active.push('fake');
   return (
     <BoardCard
-      icon={<AlertTriangle size={15} className="text-amber-500" />}
+      icon={<AlertTriangle size={16} className="text-amber-500" />}
       title="避坑清单"
       subtitle="高亮项为当前批次已触发的风险"
-      right={active.length > 0 && <Tag color="warning" className="m-0 rounded-full text-[10px] font-black px-3 py-0.5">{active.length} 项当前触发</Tag>}
+      right={active.length > 0 && <Tag color="warning" className="m-0 rounded-full text-xs font-black px-3 py-0.5">{active.length} 项当前触发</Tag>}
     >
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {PITFALLS.map(p => {
           const isActive = active.includes(p.key);
           return (
             <Tooltip key={p.key} title={p.detail}>
-              <div className={clsx('rounded-xl border px-3 py-2.5 cursor-default transition-all',
+              <div className={clsx('rounded-2xl border px-3 py-2.5 cursor-default transition-all',
                 isActive
                   ? 'border-amber-200 bg-amber-50'
                   : 'border-slate-100 bg-slate-50/60')}>
-                <Text className={clsx('block text-[10px] font-black', isActive ? 'text-amber-600' : 'text-slate-500')}>{p.label}</Text>
-                <Text className="block text-[9px] text-slate-400 mt-0.5 leading-snug">{p.detail}</Text>
+                <Text className={clsx('block text-xs font-black', isActive ? 'text-amber-600' : 'text-slate-500')}>{p.label}</Text>
+                <Text className="block text-[11px] text-slate-400 mt-0.5 leading-snug">{p.detail}</Text>
               </div>
             </Tooltip>
           );
@@ -397,14 +281,14 @@ function NegativeAnalysisCard({ na }: { na?: NegativeAnalysis }) {
   };
   return (
     <BoardCard
-      icon={<ArrowDownRight size={15} className="text-rose-500" />}
+      icon={<ArrowDownRight size={16} className="text-rose-500" />}
       title="负分分析"
       subtitle="做空/回避决策矩阵 · 微盘+低分做空 · 大盘负分常被错杀"
       right={
         <div className="flex items-center gap-2">
-          <Tag color="red" className="m-0 rounded-full text-[10px] font-black px-3 py-0.5">负分 {na.negative_count} 只 ({na.negative_pct}%)</Tag>
+          <Tag color="red" className="m-0 rounded-full text-xs font-black px-3 py-0.5">负分 {na.negative_count} 只 ({na.negative_pct}%)</Tag>
           {na.extreme_neg_count > 0 && (
-            <Tag className="m-0 rounded-full border-0 bg-rose-100 text-rose-700 font-bold text-[10px] px-3 py-0.5">极端 ≤-0.20 ×{na.extreme_neg_count}</Tag>
+            <Tag className="m-0 rounded-full border-0 bg-rose-100 text-rose-700 font-bold text-xs px-3 py-0.5">极端 ≤-0.20 ×{na.extreme_neg_count}</Tag>
           )}
         </div>
       }
@@ -413,7 +297,7 @@ function NegativeAnalysisCard({ na }: { na?: NegativeAnalysis }) {
       <div className="grid grid-cols-3 gap-3 mb-4">
         {Object.entries(na.neg_buckets || {}).map(([label, count]) => (
           <div key={label} className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
-            <Text className="block text-[10px] text-slate-400 font-bold mb-1">{label}</Text>
+            <Text className="block text-xs text-slate-400 font-bold mb-1">{label}</Text>
             <Text className="block font-black font-mono text-2xl text-slate-800">{count}</Text>
           </div>
         ))}
@@ -423,20 +307,22 @@ function NegativeAnalysisCard({ na }: { na?: NegativeAnalysis }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <div className="rounded-2xl border border-rose-100 bg-rose-50/50 px-4 py-3">
           <div className="flex items-center justify-between mb-2">
-            <Text className="text-[11px] font-black text-rose-600">做空候选（微盘/小盘 + ≤-0.15）</Text>
+            <Text className="text-xs font-black text-rose-600">做空候选（微盘/小盘 + ≤-0.15）</Text>
             <Text className="font-black font-mono text-sm text-rose-600">{na.short_candidates_count}</Text>
           </div>
           {na.short_candidates_count === 0 ? (
-            <Text className="text-[10px] text-slate-400">本批次无微盘/小盘强负分股票</Text>
+            <div className="flex justify-center py-2">
+              <Text className="text-xs text-slate-400">本批次无微盘/小盘强负分股票</Text>
+            </div>
           ) : (
             <div className="space-y-1.5">
               {na.short_candidates.slice(0, 6).map(c => (
-                <div key={c.symbol} className="flex items-center justify-between gap-2 rounded-lg bg-white/70 border border-rose-100 px-2.5 py-1.5">
+                <div key={c.symbol} className="flex items-center justify-between gap-2 rounded-xl bg-white/70 border border-rose-100 px-2.5 py-1.5">
                   <div className="min-w-0">
-                    <Text className="block text-[10px] font-black text-slate-700 truncate">{c.name}</Text>
-                    <Text className="block text-[9px] font-mono text-slate-400 truncate">{c.symbol} · {c.tier}</Text>
+                    <Text className="block text-xs font-black text-slate-700 truncate">{c.name}</Text>
+                    <Text className="block text-[11px] font-mono text-slate-400 truncate">{c.symbol} · {c.tier}</Text>
                   </div>
-                  <Text className="font-black font-mono text-[11px] text-rose-600 flex-shrink-0">{c.score.toFixed(4)}</Text>
+                  <Text className="font-black font-mono text-xs text-rose-600 flex-shrink-0">{c.score.toFixed(4)}</Text>
                 </div>
               ))}
             </div>
@@ -444,20 +330,22 @@ function NegativeAnalysisCard({ na }: { na?: NegativeAnalysis }) {
         </div>
         <div className="rounded-2xl border border-blue-100 bg-blue-50/50 px-4 py-3">
           <div className="flex items-center justify-between mb-2">
-            <Text className="text-[11px] font-black text-blue-600">错杀候选（大盘/超大盘负分）</Text>
+            <Text className="text-xs font-black text-blue-600">错杀候选（大盘/超大盘负分）</Text>
             <Text className="font-black font-mono text-sm text-blue-600">{na.mistake_candidates_count}</Text>
           </div>
           {na.mistake_candidates_count === 0 ? (
-            <Text className="text-[10px] text-slate-400">本批次无大盘/超大盘负分</Text>
+            <div className="flex justify-center py-2">
+              <Text className="text-xs text-slate-400">本批次无大盘/超大盘负分</Text>
+            </div>
           ) : (
             <div className="space-y-1.5">
               {na.mistake_candidates.slice(0, 6).map(c => (
-                <div key={c.symbol} className="flex items-center justify-between gap-2 rounded-lg bg-white/70 border border-blue-100 px-2.5 py-1.5">
+                <div key={c.symbol} className="flex items-center justify-between gap-2 rounded-xl bg-white/70 border border-blue-100 px-2.5 py-1.5">
                   <div className="min-w-0">
-                    <Text className="block text-[10px] font-black text-slate-700 truncate">{c.name}</Text>
-                    <Text className="block text-[9px] font-mono text-slate-400 truncate">{c.symbol} · {c.tier} · {c.industry}</Text>
+                    <Text className="block text-xs font-black text-slate-700 truncate">{c.name}</Text>
+                    <Text className="block text-[11px] font-mono text-slate-400 truncate">{c.symbol} · {c.tier} · {c.industry}</Text>
                   </div>
-                  <Text className="font-black font-mono text-[11px] text-blue-600 flex-shrink-0">{c.score.toFixed(4)}</Text>
+                  <Text className="font-black font-mono text-xs text-blue-600 flex-shrink-0">{c.score.toFixed(4)}</Text>
                 </div>
               ))}
             </div>
@@ -467,10 +355,10 @@ function NegativeAnalysisCard({ na }: { na?: NegativeAnalysis }) {
 
       {/* 市值分档负分分布 */}
       <div className="rounded-2xl bg-slate-50/60 border border-slate-100 px-4 py-3 mb-4">
-        <Text className="block text-[10px] font-black text-slate-400 uppercase tracking-wide mb-2">负分 × 市值分布</Text>
+        <Text className="block text-xs font-black text-slate-400 uppercase tracking-wide mb-2">负分 × 市值分布</Text>
         <div className="flex flex-wrap gap-2">
           {Object.entries(na.neg_by_tier || {}).map(([tier, count]) => (
-            <Tag key={tier} className={clsx('m-0 rounded-full border px-3 py-0.5 text-[10px] font-black', tierColor[tier] || tierColor.未知)}>
+            <Tag key={tier} className={clsx('m-0 rounded-full border px-3 py-0.5 text-xs font-black', tierColor[tier] || tierColor.未知)}>
               {tier} {count}
             </Tag>
           ))}
@@ -481,24 +369,28 @@ function NegativeAnalysisCard({ na }: { na?: NegativeAnalysis }) {
       {(na.short_industries.length > 0 || na.resistant_industries.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
-            <Text className="block text-[10px] font-black text-slate-500 mb-2">负分集中行业（下跌持续 · 做空参考）</Text>
+            <Text className="block text-xs font-black text-slate-500 mb-2">负分集中行业（下跌持续 · 做空参考）</Text>
             <div className="flex flex-wrap gap-2">
               {na.short_industries.slice(0, 6).map(x => (
-                <Tag key={x.industry} className="m-0 rounded-full border-0 bg-rose-50 text-rose-600 font-bold text-[10px] px-3 py-0.5">
+                <Tag key={x.industry} className="m-0 rounded-full border-0 bg-rose-50 text-rose-600 font-bold text-xs px-3 py-0.5">
                   {x.industry} ×{x.count}
                 </Tag>
               ))}
             </div>
           </div>
           <div>
-            <Text className="block text-[10px] font-black text-slate-500 mb-2">抗跌行业（负分常错杀 · 银行/半导体）</Text>
+            <Text className="block text-xs font-black text-slate-500 mb-2">抗跌行业（负分常错杀 · 银行/半导体）</Text>
             <div className="flex flex-wrap gap-2">
               {na.resistant_industries.slice(0, 6).map(x => (
-                <Tag key={x.industry} className="m-0 rounded-full border-0 bg-emerald-50 text-emerald-600 font-bold text-[10px] px-3 py-0.5">
+                <Tag key={x.industry} className="m-0 rounded-full border-0 bg-emerald-50 text-emerald-600 font-bold text-xs px-3 py-0.5">
                   {x.industry} ×{x.count}
                 </Tag>
               ))}
-              {na.resistant_industries.length === 0 && <Text className="text-[10px] text-slate-400">无匹配抗跌行业</Text>}
+              {na.resistant_industries.length === 0 && (
+                <div className="flex w-full justify-center py-2">
+                  <Text className="text-xs text-slate-400">无匹配抗跌行业</Text>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -507,7 +399,7 @@ function NegativeAnalysisCard({ na }: { na?: NegativeAnalysis }) {
   );
 }
 
-export const StrategyDashboard: React.FC<Props> = ({ summary, activeBucket, onSelectBucket }) => {
+export const StrategyDashboard: React.FC<Props> = ({ summary }) => {
   const maFilter = summary.market_ma_filter;
   return (
     <div className="space-y-4">
@@ -524,18 +416,6 @@ export const StrategyDashboard: React.FC<Props> = ({ summary, activeBucket, onSe
         strongCount={summary.strong_industry_count}
         signal={summary.market_signal}
       />
-
-      {/* 第二行：分数区间 + 3天趋势 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ScoreBucketCard
-          buckets={summary.score_buckets}
-          goldZone={summary.gold_zone_count}
-          fakeSignal={summary.fake_signal_count}
-          activeBucket={activeBucket}
-          onSelectBucket={onSelectBucket}
-        />
-        <TrendCard stats={summary.trend_stats} />
-      </div>
 
       {/* 负分分析 */}
       <NegativeAnalysisCard na={summary.negative_analysis} />

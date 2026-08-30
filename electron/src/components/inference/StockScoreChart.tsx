@@ -793,29 +793,29 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
       {/* 股票信息卡 */}
       <div className="rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3 grid grid-cols-2 sm:grid-cols-6 gap-3">
         <div>
-          <Text className="block text-[9px] text-slate-400 font-black uppercase">股票</Text>
+          <Text className="block text-[11px] text-slate-400 font-black uppercase">股票</Text>
           <Text className="block text-xs font-black text-slate-800">{name || symbol}</Text>
         </div>
         <div>
-          <Text className="block text-[9px] text-slate-400 font-black uppercase">板块</Text>
+          <Text className="block text-[11px] text-slate-400 font-black uppercase">板块</Text>
           <Text className="block text-xs font-black text-slate-700">{stockInfo?.board || '—'}</Text>
         </div>
         <div>
-          <Text className="block text-[9px] text-slate-400 font-black uppercase">行业</Text>
+          <Text className="block text-[11px] text-slate-400 font-black uppercase">行业</Text>
           <Text className="block text-xs font-black text-slate-700">{stockInfo?.industry || '—'}</Text>
         </div>
         <div>
-          <Text className="block text-[9px] text-slate-400 font-black uppercase">市值</Text>
+          <Text className="block text-[11px] text-slate-400 font-black uppercase">市值</Text>
           <Text className="block text-xs font-black text-slate-700">
             {stockInfo?.market_cap_tier ? `${stockInfo.market_cap_tier}${stockInfo.market_cap_yi ? ` ${stockInfo.market_cap_yi}亿` : ''}` : '—'}
           </Text>
         </div>
         <div>
-          <Text className="block text-[9px] text-slate-400 font-black uppercase">当前排名</Text>
+          <Text className="block text-[11px] text-slate-400 font-black uppercase">当前排名</Text>
           <Text className="block text-xs font-black text-slate-700">#{stockInfo?.rank ?? '—'}</Text>
         </div>
         <div>
-          <Text className="block text-[9px] text-slate-400 font-black uppercase">当前分数</Text>
+          <Text className="block text-[11px] text-slate-400 font-black uppercase">当前分数</Text>
           <Text className={clsx('block text-xs font-black', (stockInfo?.score ?? 0) >= 0 ? 'text-rose-600' : 'text-emerald-600')}>
             {stockInfo?.score?.toFixed(4) ?? '—'}
           </Text>
@@ -824,27 +824,27 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
 
       {/* 策略汇总条 + 模型选择器（合并一行：策略靠左，模型选择器靠右） */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2">
-        <Text className="text-[9px] text-slate-400 font-black uppercase flex-shrink-0">策略</Text>
+        <Text className="text-[11px] text-slate-400 font-black uppercase flex-shrink-0">策略</Text>
         {strategySummary.total > 0 ? (
           <>
-            <Tag color="green" className="m-0 rounded-full text-[9px] font-bold px-2">黄金区间 {strategySummary.golden}天</Tag>
-            <Tag color="volcano" className="m-0 rounded-full text-[9px] font-bold px-2">危险分 {strategySummary.danger}天</Tag>
-            <Tag color="red" className="m-0 rounded-full text-[9px] font-bold px-2">负分 {strategySummary.neg}天</Tag>
-            <Tag color="blue" className="m-0 rounded-full text-[9px] font-bold px-2">买入信号 {strategySummary.buyPoint}天</Tag>
-            <Tag color="geekblue" className="m-0 rounded-full text-[9px] font-bold px-2">共 {strategySummary.total} 推理日</Tag>
+            <Tag color="green" className="m-0 rounded-full text-[11px] font-bold px-2">黄金区间 {strategySummary.golden}天</Tag>
+            <Tag color="volcano" className="m-0 rounded-full text-[11px] font-bold px-2">危险分 {strategySummary.danger}天</Tag>
+            <Tag color="red" className="m-0 rounded-full text-[11px] font-bold px-2">负分 {strategySummary.neg}天</Tag>
+            <Tag color="blue" className="m-0 rounded-full text-[11px] font-bold px-2">买入信号 {strategySummary.buyPoint}天</Tag>
+            <Tag color="geekblue" className="m-0 rounded-full text-[11px] font-bold px-2">共 {strategySummary.total} 推理日</Tag>
           </>
         ) : (
-          <Text className="text-[10px] text-slate-400">无历史推理数据</Text>
+          <Text className="text-xs text-slate-400">无历史推理数据</Text>
         )}
         {strategySummary.staticWarnings.length > 0 && (
-          <Tag color="gold" className="m-0 rounded-full text-[9px] font-bold px-2">
+          <Tag color="gold" className="m-0 rounded-full text-[11px] font-bold px-2">
             ⚠ {strategySummary.staticWarnings.join(' · ')}
           </Tag>
         )}
 
         {/* 大盘状态：上证指数 vs MA20 */}
         {indexData && indexData.latest_close != null && (
-          <Tag className={clsx('m-0 rounded-full text-[9px] font-bold px-2', indexData.below_ma20 ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-emerald-50 text-emerald-600 border-emerald-200')}>
+          <Tag className={clsx('m-0 rounded-full text-[11px] font-bold px-2', indexData.below_ma20 ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-emerald-50 text-emerald-600 border-emerald-200')}>
             {indexData.below_ma20 ? '📉 大盘空' : '📈 大盘多'} 上证{indexData.latest_close}
             {indexData.latest_ma20 != null ? ` / MA20 ${indexData.latest_ma20}` : ''}
           </Tag>
@@ -853,7 +853,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
         {/* 模型选择器：靠右，切换不同模型推理分数 */}
         {availableModels.length > 1 && (
           <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
-            <Text className="text-[9px] font-black text-slate-400 uppercase tracking-wide">模型</Text>
+            <Text className="text-[11px] font-black text-slate-400 uppercase tracking-wide">模型</Text>
             <Select
               value={selectedModel}
               onChange={setSelectedModel}
@@ -886,14 +886,14 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
             setReplayIdx(startIdx);
             setReplayEnabled(true);
           }
-        }} className="rounded-lg text-[10px] font-bold h-7 px-3">
+        }} className="rounded-lg text-xs font-bold h-7 px-3">
           {replayEnabled ? '退出回放' : '开始回放'}
         </Button>
         {replayEnabled && klineItems.length > 0 && (
           <>
             {/* 开始日期选择 */}
             <div className="flex items-center gap-1.5">
-              <Text className="text-[9px] text-slate-400 font-bold flex-shrink-0">开始日期</Text>
+              <Text className="text-[11px] text-slate-400 font-bold flex-shrink-0">开始日期</Text>
               <input
                 type="date"
                 value={klineItems[Math.min(startIdx, klineItems.length - 1)]?.date || ''}
@@ -905,12 +905,12 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
                   const idx = klineItems.findIndex(k => k.date === v);
                   if (idx >= 0) { setStartIdx(idx); setReplayIdx(Math.max(idx, replayIdx)); }
                 }}
-                className="rounded-lg border border-slate-200 text-[10px] font-mono px-2 py-1 h-7"
+                className="rounded-lg border border-slate-200 text-xs font-mono px-2 py-1 h-7"
               />
             </div>
             {/* 推进控制 */}
             <div className="flex items-center gap-1.5 flex-1 min-w-[220px]">
-              <Text className="text-[9px] text-slate-400 font-bold flex-shrink-0">当前</Text>
+              <Text className="text-[11px] text-slate-400 font-bold flex-shrink-0">当前</Text>
               <Slider
                 min={Math.min(startIdx, klineItems.length - 1)}
                 max={klineItems.length - 1}
@@ -919,13 +919,13 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
                 className="flex-1"
                 tooltip={{ formatter: (v: any) => klineItems[v]?.date }}
               />
-              <Text className="text-[10px] font-mono text-slate-600 flex-shrink-0 w-24">{replayDate}</Text>
+              <Text className="text-xs font-mono text-slate-600 flex-shrink-0 w-24">{replayDate}</Text>
               <Button size="small" onClick={() => setReplayIdx(Math.min(replayIdx + 1, klineItems.length - 1))}
-                className="rounded-lg text-[10px] font-bold h-7 px-2.5 flex-shrink-0">下一步</Button>
+                className="rounded-lg text-xs font-bold h-7 px-2.5 flex-shrink-0">下一步</Button>
             </div>
           </>
         )}
-        <div className="flex items-center gap-3 text-[10px] font-mono text-slate-600 flex-shrink-0">
+        <div className="flex items-center gap-3 text-xs font-mono text-slate-600 flex-shrink-0">
           <span>持仓 <b className="text-slate-800">{stats.remainingShares}</b> 股</span>
           {stats.remainingShares > 0 && (
             <span>市值 <b className="text-slate-800">{stats.holdingValue.toFixed(2)}</b>（现价 {stats.curPrice.toFixed(2)}）</span>
@@ -966,7 +966,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
       </div>
 
       {/* 分数区间图例 */}
-      <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         <span className="rounded-md bg-emerald-50 text-emerald-600 px-1.5 py-0.5 font-bold">黄金 0.10-0.12</span>
         <span className="rounded-md bg-amber-50 text-amber-600 px-1.5 py-0.5 font-bold">可选 0.12-0.15</span>
         <span className="rounded-md bg-orange-50 text-orange-600 px-1.5 py-0.5 font-bold">谨慎 0.15-0.20</span>
@@ -976,7 +976,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
         <span className="rounded-md bg-amber-50 text-amber-600 px-1.5 py-0.5 font-bold">◆风险提示</span>
         <Button
           size="small"
-          className="rounded-lg text-[9px] font-bold h-6 px-2 ml-auto"
+          className="rounded-lg text-[11px] font-bold h-6 px-2 ml-auto"
           onClick={() => setShowRefLineModal(true)}
         >
           参考线 {refLines.length > 0 ? `(${refLines.length})` : ''}
@@ -999,16 +999,16 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2 text-center">
               <div className="rounded-xl bg-emerald-50 border border-emerald-100 py-2">
-                <Text className="block text-[10px] text-emerald-600 font-black">开盘价（买入价）</Text>
+                <Text className="block text-xs text-emerald-600 font-black">开盘价（买入价）</Text>
                 <Text className="block font-black font-mono text-lg text-emerald-700">{tradeModal.open.toFixed(2)}</Text>
               </div>
               <div className="rounded-xl bg-rose-50 border border-rose-100 py-2">
-                <Text className="block text-[10px] text-rose-600 font-black">收盘价（卖出价）</Text>
+                <Text className="block text-xs text-rose-600 font-black">收盘价（卖出价）</Text>
                 <Text className="block font-black font-mono text-lg text-rose-700">{tradeModal.close.toFixed(2)}</Text>
               </div>
             </div>
             <div>
-              <Text className="block text-[10px] text-slate-500 font-bold mb-1">数量（股）</Text>
+              <Text className="block text-xs text-slate-500 font-bold mb-1">数量（股）</Text>
               <InputNumber min={100} step={100} value={tradeShares} onChange={(v) => setTradeShares(Number(v) || 100)} className="w-full" />
             </div>
             <div className="flex gap-2">
@@ -1017,7 +1017,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
                 卖出（收盘价 {tradeModal.close.toFixed(2)}）
               </Button>
             </div>
-            <Text className="block text-[9px] text-slate-400">买入按当日开盘价成交，卖出按当日收盘价成交。交易需按时间顺序进行。</Text>
+            <Text className="block text-[11px] text-slate-400">买入按当日开盘价成交，卖出按当日收盘价成交。交易需按时间顺序进行。</Text>
           </div>
         )}
       </Modal>
@@ -1032,12 +1032,12 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
         title={<span className="text-sm font-black text-slate-800">自定义参考线 · {selectedModel !== 'all' ? '当前模型' : '全部'}</span>}
       >
         <div className="space-y-3">
-          <Text className="block text-[10px] text-slate-400">
+          <Text className="block text-xs text-slate-400">
             在分数轴上画虚线，标注不同分数对应的含义（可买 / 热门 / 危险等）。同一模型的股票共用此配置。每行左侧开关可单独控制该线的显示/隐藏。
           </Text>
           {refLines.length === 0 && (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center">
-              <Text className="text-[11px] text-slate-400">暂无参考线，点击下方按钮添加</Text>
+              <Text className="text-xs text-slate-400">暂无参考线，点击下方按钮添加</Text>
             </div>
           )}
           {refLines.map((l, idx) => (
@@ -1055,7 +1055,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
                 size="small"
                 value={l.label}
                 placeholder="名称（如 可买/热门/危险）"
-                className="w-28 text-[11px]"
+                className="w-28 text-xs"
                 onChange={e => {
                   const next = refLines.map((x, i) => i === idx ? { ...x, label: e.target.value } : x);
                   saveRefLines(next);
@@ -1065,7 +1065,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
                 size="small"
                 value={l.value}
                 step={0.05}
-                className="w-24 text-[11px]"
+                className="w-24 text-xs"
                 onChange={v => {
                   if (v === null) return;
                   const next = refLines.map((x, i) => i === idx ? { ...x, value: Number(v) } : x);
@@ -1104,7 +1104,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
             <Button
               size="small"
               type="dashed"
-              className="rounded-lg text-[10px] font-bold"
+              className="rounded-lg text-xs font-bold"
               onClick={() => saveRefLines([...refLines, { id: `rl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, value: 0.1, label: '', color: '#6366f1' }])}
             >
               + 添加参考线
@@ -1112,7 +1112,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
             <Button
               size="small"
               type="text"
-              className="ml-auto rounded-lg text-[10px] font-bold"
+              className="ml-auto rounded-lg text-xs font-bold"
               onClick={() => saveRefLines([])}
             >
               清空
@@ -1120,7 +1120,7 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
             <Button
               size="small"
               type="primary"
-              className="rounded-lg text-[10px] font-bold bg-blue-600"
+              className="rounded-lg text-xs font-bold bg-blue-600"
               onClick={() => setShowRefLineModal(false)}
             >
               完成
@@ -1170,7 +1170,7 @@ const ScoreCalendar: React.FC<{
   if (items.length === 0) {
     return (
       <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
-        <Text className="text-[11px] text-slate-400">暂无历史推理分数</Text>
+        <Text className="text-xs text-slate-400">暂无历史推理分数</Text>
       </div>
     );
   }
@@ -1198,19 +1198,19 @@ const ScoreCalendar: React.FC<{
       {/* 月份切换 */}
       <div className="flex items-center justify-between mb-3">
         <Button size="small" disabled={!months.includes(ym) || ym === months[months.length - 1]} onClick={prevMonth}
-          className="rounded-lg text-[10px] font-bold h-7 px-3">‹ 上个月</Button>
+          className="rounded-lg text-xs font-bold h-7 px-3">‹ 上个月</Button>
         <div className="flex items-center gap-2">
           <Text className="text-sm font-black text-slate-800">{ym}</Text>
-          <Text className="text-[9px] text-slate-400">该月 {byDate.size} 个推理日</Text>
+          <Text className="text-[11px] text-slate-400">该月 {byDate.size} 个推理日</Text>
         </div>
         <Button size="small" disabled={ym === months[0]} onClick={nextMonth}
-          className="rounded-lg text-[10px] font-bold h-7 px-3">下个月 ›</Button>
+          className="rounded-lg text-xs font-bold h-7 px-3">下个月 ›</Button>
       </div>
 
       {/* 星期表头 */}
       <div className="grid grid-cols-7 gap-1 mb-1.5">
         {WEEKDAYS.map(w => (
-          <div key={w} className="text-center text-[9px] font-black text-slate-400 py-1">周{w}</div>
+          <div key={w} className="text-center text-[11px] font-black text-slate-400 py-1">周{w}</div>
         ))}
       </div>
 
@@ -1236,7 +1236,7 @@ const ScoreCalendar: React.FC<{
               )}
             >
               <div className="flex items-center justify-between">
-                <Text className={clsx('text-[9px] font-mono', it ? 'text-slate-600 font-bold' : 'text-slate-300')}>{day}</Text>
+                <Text className={clsx('text-[11px] font-mono', it ? 'text-slate-600 font-bold' : 'text-slate-300')}>{day}</Text>
                 {it?.signal_side && (
                   <Tag color={it.signal_side.toUpperCase() === 'SELL' ? 'green' : it.signal_side.toUpperCase() === 'BUY' ? 'red' : 'default'}
                     className="m-0 rounded-full text-[7px] font-black px-1">
@@ -1246,7 +1246,7 @@ const ScoreCalendar: React.FC<{
               </div>
               {it ? (
                 <>
-                  <Text className={clsx('block font-black font-mono text-[11px] mt-0.5', Number(it.fusion_score) >= 0 ? 'text-rose-600' : 'text-emerald-600')}>
+                  <Text className={clsx('block font-black font-mono text-xs mt-0.5', Number(it.fusion_score) >= 0 ? 'text-rose-600' : 'text-emerald-600')}>
                     {Number(it.fusion_score).toFixed(3)}
                   </Text>
                   <Text className="block text-[7px] font-bold truncate" style={{ color: annotateScore(Number(it.fusion_score), wideScale)?.color }}>

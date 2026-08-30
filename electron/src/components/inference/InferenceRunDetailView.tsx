@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import { clsx } from 'clsx';
 import {
-  ArrowLeft, TrendingUp, Download, Search, CheckCircle2, XCircle,
+  ArrowLeft, ArrowRight, TrendingUp, Download, Search, CheckCircle2, XCircle,
 } from 'lucide-react';
 import type { InferenceRankingResult, InferenceRankingItem } from '../../services/modelTrainingService';
 import { ScoreDistributionPanel } from './ScoreDistributionPanel';
@@ -223,9 +223,9 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
         <div className="flex items-center gap-3">
           <Button
             size="small"
-            icon={<ArrowLeft size={14} />}
+            icon={<ArrowLeft size={13} />}
             onClick={onBack}
-            className="rounded-lg text-[10px] font-bold h-8 px-3 flex-shrink-0"
+            className="rounded-xl h-8 px-3 text-xs font-bold border-slate-200 flex-shrink-0"
           >
             返回列表
           </Button>
@@ -233,15 +233,15 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
             <TrendingUp size={18} />
           </div>
           <div className="flex flex-col min-w-0 flex-1">
-            <span className="font-black text-slate-800 text-base tracking-tight leading-none truncate">排名结果</span>
-            <span className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest truncate font-mono">
+            <span className="font-black text-slate-800 text-lg tracking-tight leading-none truncate">排名结果</span>
+            <span className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-widest truncate font-mono">
               {runId} · {result?.target_date ? `目标交易日 ${result.target_date}` : '加载中…'}
             </span>
           </div>
           {onNavigateDate && (
             <div className="flex items-center gap-1.5 flex-shrink-0">
               <Tooltip title="前一天">
-                <Button size="small" icon={<ArrowLeft size={13} />} className="rounded-lg h-8 w-8 p-0 text-[10px] font-bold border-slate-200" onClick={() => handleShiftDate(-1)} />
+                <Button size="small" icon={<ArrowLeft size={13} />} className="rounded-xl h-8 w-8 p-0 text-xs font-bold border-slate-200" onClick={() => handleShiftDate(-1)} />
               </Tooltip>
               <DatePicker
                 size="small"
@@ -249,16 +249,16 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                 onChange={handlePickDate}
                 allowClear={false}
                 placeholder="选日期"
-                className="rounded-lg !text-[10px] !w-28"
+                className="rounded-xl !text-xs !w-28"
               />
               <Tooltip title="后一天">
-                <Button size="small" icon={<ArrowLeft size={13} className="rotate-180" />} className="rounded-lg h-8 w-8 p-0 text-[10px] font-bold border-slate-200" onClick={() => handleShiftDate(1)} />
+                <Button size="small" icon={<ArrowRight size={13} />} className="rounded-xl h-8 w-8 p-0 text-xs font-bold border-slate-200" onClick={() => handleShiftDate(1)} />
               </Tooltip>
             </div>
           )}
           {result?.summary?.status === 'failed' && onRetry && (
             <Tooltip title="重新加载">
-              <Button size="small" icon={<Search size={13} />} onClick={onRetry} className="rounded-lg text-[10px] font-bold h-8 px-3">
+              <Button size="small" icon={<Search size={13} />} onClick={onRetry} className="rounded-xl text-xs font-bold h-8 px-3">
                 重试
               </Button>
             </Tooltip>
@@ -267,7 +267,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
             <Button
               type="default"
               icon={<Download size={14} className={exporting ? 'animate-pulse' : ''} />}
-              className="rounded-xl h-9 px-4 font-black border-slate-200 text-[11px] shadow-sm hover:translate-y-[-1px] transition-all flex-shrink-0"
+              className="rounded-xl h-9 px-4 font-black border-slate-200 text-xs shadow-sm hover:translate-y-[-1px] transition-all flex-shrink-0"
               disabled={exporting || !result || !result.rankings?.length}
               loading={exporting}
               onClick={handleExport}
@@ -287,35 +287,27 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
         </div>
       ) : result ? (
         <div className="space-y-3">
-          {/* 策略驾驶舱：行业信号 / 分数区间 / 3天趋势 / 大盘均线 / 避坑 */}
-          {result.summary && (
-            <div className="glass-panel rounded-3xl p-5 border border-slate-100/50">
-              <StrategyDashboard
-                summary={result.summary}
-                activeBucket={bucketFilter === 'all' ? null : bucketFilter}
-                onSelectBucket={(key) => setBucketFilter(key ?? 'all')}
-              />
-            </div>
-          )}
+          {/* 策略驾驶舱：BoardCard 自带卡片外壳，不再套 glass-panel 避免双层嵌套显乱 */}
+          {result.summary && <StrategyDashboard summary={result.summary} />}
           {result.summary?.board_top1 && result.summary.board_top1.length > 0 && (
             <div className="glass-panel rounded-3xl p-5 border border-slate-100/50">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Text className="text-sm font-black text-slate-800 uppercase tracking-tight leading-none">板块 Top1 统计</Text>
-                  <Text className="text-[9px] text-slate-400 font-medium">5大板块各自最高分取平均，反映市场广度</Text>
+                  <Text className="text-[11px] text-slate-400 font-medium">5大板块各自最高分取平均，反映市场广度</Text>
                 </div>
                 {result.summary.board_top1_avg !== undefined && result.summary.board_top1_avg !== null && (
                   <div className="flex items-center gap-2">
-                    <Text className="text-[10px] text-slate-400 font-black uppercase tracking-wide">avg Top1</Text>
-                    <span className={clsx('font-black text-sm font-mono rounded-lg px-2.5 py-1',
+                    <Text className="text-xs text-slate-400 font-black uppercase tracking-wide">avg Top1</Text>
+                    <span className={clsx('font-black text-base font-mono rounded-lg px-2.5 py-1',
                       result.summary.board_top1_avg >= 0.11 ? 'bg-rose-50 text-rose-600' : result.summary.board_top1_avg >= 0.09 ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500')}>
                       {result.summary.board_top1_avg.toFixed(4)}
                     </span>
                     {result.summary.board_top1_avg >= 0.11
-                      ? <Tag color="red" className="m-0 rounded-full text-[9px] font-black">市场信号偏强</Tag>
+                      ? <Tag color="red" className="m-0 rounded-full text-[11px] font-black">市场信号偏强</Tag>
                       : result.summary.board_top1_avg >= 0.09
-                        ? <Tag color="orange" className="m-0 rounded-full text-[9px] font-black">震荡偏强</Tag>
-                        : <Tag className="m-0 rounded-full border-0 bg-slate-100 text-slate-500 font-bold text-[9px]">市场偏弱</Tag>}
+                        ? <Tag color="orange" className="m-0 rounded-full text-[11px] font-black">震荡偏强</Tag>
+                        : <Tag className="m-0 rounded-full border-0 bg-slate-100 text-slate-500 font-bold text-[11px]">市场偏弱</Tag>}
                   </div>
                 )}
               </div>
@@ -323,13 +315,13 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                 {result.summary.board_top1.map(b => (
                   <div key={b.board} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
                     <div className="flex items-center justify-between mb-2">
-                      <Text className="text-[10px] font-black text-slate-400 uppercase tracking-wide">{b.board}</Text>
-                      <Text className="text-[9px] font-mono text-slate-400 truncate max-w-[70px]">{b.top1_symbol}</Text>
+                      <Text className="text-xs font-black text-slate-400 uppercase tracking-wide">{b.board}</Text>
+                      <Text className="text-[11px] font-mono text-slate-400 truncate max-w-[70px]">{b.top1_symbol}</Text>
                     </div>
-                    <Text className={clsx('block font-black font-mono text-sm', Number(b.top1_score) >= 0.11 ? 'text-rose-600' : 'text-slate-800')}>
+                    <Text className={clsx('block font-black font-mono text-base', Number(b.top1_score) >= 0.11 ? 'text-rose-600' : 'text-slate-800')}>
                       {Number(b.top1_score).toFixed(4)}
                     </Text>
-                    <Text className="text-[10px] text-slate-500 truncate block mt-0.5">{b.top1_name || '—'}</Text>
+                    <Text className="text-xs text-slate-500 truncate block mt-0.5">{b.top1_name || '—'}</Text>
                   </div>
                 ))}
               </div>
@@ -347,44 +339,44 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                   label: (
                     <div className="flex items-center gap-3 py-1">
                       <Text className="text-sm font-black text-slate-800 uppercase tracking-tight leading-none">运行详情</Text>
-                      <Tag color={result.summary.status === 'failed' ? 'red' : 'green'} className="m-0 rounded-full text-[9px] font-black">
+                      <Tag color={result.summary.status === 'failed' ? 'red' : 'green'} className="m-0 rounded-full text-[11px] font-black">
                         {result.summary.status === 'failed' ? '失败' : result.summary.status === 'completed' ? '成功' : '进行中'}
                       </Tag>
-                      {result.summary.signals_count ? <Tag className="m-0 border-0 bg-slate-100 text-slate-500 text-[9px] font-bold rounded-md px-2">信号 {result.summary.signals_count}</Tag> : null}
-                      <Text className="text-[9px] text-slate-300 font-mono">{result.summary.run_id}</Text>
+                      {result.summary.signals_count ? <Tag className="m-0 border-0 bg-slate-100 text-slate-500 text-[11px] font-bold rounded-md px-2">信号 {result.summary.signals_count}</Tag> : null}
+                      <Text className="text-[11px] text-slate-300 font-mono">{result.summary.run_id}</Text>
                     </div>
                   ),
                   children: (
                     <div className="space-y-3 pt-2">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <div>
-                  <Text className="text-[10px] text-slate-400 font-black uppercase block">运行批次</Text>
+                  <Text className="text-xs text-slate-400 font-black uppercase block">运行批次</Text>
                   <Text className="text-xs font-black text-slate-800 font-mono break-all">{result.summary.run_id}</Text>
                 </div>
                 <div>
-                  <Text className="text-[10px] text-slate-400 font-black uppercase block">模型</Text>
+                  <Text className="text-xs text-slate-400 font-black uppercase block">模型</Text>
                   <Text className="text-xs font-black text-slate-800 font-mono break-all">{result.summary.effective_model_id || result.summary.model_id}</Text>
                 </div>
                 <div>
-                  <Text className="text-[10px] text-slate-400 font-black uppercase block">状态</Text>
-                  <Tag color={result.summary.status === 'failed' ? 'red' : 'green'} className="m-0 rounded-full text-[9px] font-black">
+                  <Text className="text-xs text-slate-400 font-black uppercase block">状态</Text>
+                  <Tag color={result.summary.status === 'failed' ? 'red' : 'green'} className="m-0 rounded-full text-[11px] font-black">
                     {result.summary.status === 'failed' ? '失败' : result.summary.status === 'completed' ? '成功' : '进行中'}
                   </Tag>
                 </div>
                 <div>
-                  <Text className="text-[10px] text-slate-400 font-black uppercase block">信号数</Text>
+                  <Text className="text-xs text-slate-400 font-black uppercase block">信号数</Text>
                   <Text className="text-xs font-black text-slate-800">{result.summary.signals_count}</Text>
                 </div>
                 <div>
-                  <Text className="text-[10px] text-slate-400 font-black uppercase block">模型切换</Text>
+                  <Text className="text-xs text-slate-400 font-black uppercase block">模型切换</Text>
                   <Text className="text-xs font-black text-slate-800">{(result.summary.model_switch_used ?? result.summary.fallback_used) ? '是' : '否'}</Text>
                 </div>
                 <div>
-                  <Text className="text-[10px] text-slate-400 font-black uppercase block">执行模式</Text>
+                  <Text className="text-xs text-slate-400 font-black uppercase block">执行模式</Text>
                   <Text className="text-xs font-black text-slate-800">{result.summary.execution_mode === 'independent_model' ? '独立模型' : result.summary.execution_mode === 'system_chain' ? '系统链路' : '—'}</Text>
                 </div>
                 <div>
-                  <Text className="text-[10px] text-slate-400 font-black uppercase block">耗时</Text>
+                  <Text className="text-xs text-slate-400 font-black uppercase block">耗时</Text>
                   <Text className="text-xs font-black text-slate-800">{(Number(result.summary.duration_ms || 0) / 1000).toFixed(1)}s</Text>
                 </div>
               </div>
@@ -396,37 +388,37 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                 items={[
                   {
                     key: 'diagnostics',
-                    label: <span className="text-[11px] font-black text-slate-700">诊断信息</span>,
+                    label: <span className="text-xs font-black text-slate-700">诊断信息</span>,
                     children: (
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <div className="rounded-xl border border-slate-100 bg-white p-3">
-                          <Text className="text-[10px] text-slate-400 font-black uppercase block">失败阶段</Text>
+                        <div className="rounded-2xl border border-slate-100 bg-white p-3">
+                          <Text className="text-xs text-slate-400 font-black uppercase block">失败阶段</Text>
                           <Text className="text-xs font-black text-slate-800">{result.summary.failure_stage || '—'}</Text>
                         </div>
-                        <div className="rounded-xl border border-slate-100 bg-white p-3">
-                          <Text className="text-[10px] text-slate-400 font-black uppercase block">模型切换原因</Text>
+                        <div className="rounded-2xl border border-slate-100 bg-white p-3">
+                          <Text className="text-xs text-slate-400 font-black uppercase block">模型切换原因</Text>
                           <Text className="text-xs font-black text-slate-800 break-all">{result.summary.model_switch_reason || result.summary.fallback_reason || '—'}</Text>
                         </div>
-                        <div className="rounded-xl border border-slate-100 bg-white p-3">
-                          <Text className="text-[10px] text-slate-400 font-black uppercase block">实际模型</Text>
+                        <div className="rounded-2xl border border-slate-100 bg-white p-3">
+                          <Text className="text-xs text-slate-400 font-black uppercase block">实际模型</Text>
                           <Text className="text-xs font-black text-slate-800 font-mono break-all">
                             {result.summary.active_model_id || '—'}
                           </Text>
                         </div>
-                        <div className="rounded-xl border border-slate-100 bg-white p-3">
-                          <Text className="text-[10px] text-slate-400 font-black uppercase block">生效模型</Text>
+                        <div className="rounded-2xl border border-slate-100 bg-white p-3">
+                          <Text className="text-xs text-slate-400 font-black uppercase block">生效模型</Text>
                           <Text className="text-xs font-black text-slate-800 font-mono break-all">
                             {result.summary.effective_model_id || '—'}
                           </Text>
                         </div>
-                        <div className="rounded-xl border border-slate-100 bg-white p-3 sm:col-span-2">
-                          <Text className="text-[10px] text-slate-400 font-black uppercase block">数据源</Text>
+                        <div className="rounded-2xl border border-slate-100 bg-white p-3 sm:col-span-2">
+                          <Text className="text-xs text-slate-400 font-black uppercase block">数据源</Text>
                           <Text className="text-xs font-black text-slate-800 font-mono break-all">
                             {result.summary.active_data_source || '—'}
                           </Text>
                         </div>
-                        <div className="rounded-xl border border-slate-100 bg-white p-3 sm:col-span-2">
-                          <Text className="text-[10px] text-slate-400 font-black uppercase block">错误信息</Text>
+                        <div className="rounded-2xl border border-slate-100 bg-white p-3 sm:col-span-2">
+                          <Text className="text-xs text-slate-400 font-black uppercase block">错误信息</Text>
                           <Text className="text-xs font-black text-rose-600 break-all">
                             {result.summary.error_message || result.summary.error_msg || '—'}
                           </Text>
@@ -436,17 +428,17 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                   },
                   {
                     key: 'precheck',
-                    label: <span className="text-[11px] font-black text-slate-700">前置检查</span>,
+                    label: <span className="text-xs font-black text-slate-700">前置检查</span>,
                     children: (() => {
                       const precheck = (result.summary?.result_json as any)?.precheck || (result.summary?.request_json as any)?.precheck || null;
                       if (!precheck) {
-                        return <Empty description={<span className="text-xs text-slate-400">暂无前置检查记录</span>} />;
+                        return <div className="flex justify-center py-2"><Empty description={<span className="text-xs text-slate-400">暂无前置检查记录</span>} /></div>;
                       }
                       const items = Array.isArray(precheck.items) ? precheck.items : [];
                       return (
                         <div className="space-y-2">
                           <div className="flex flex-wrap gap-2">
-                            <Tag color={precheck.passed ? 'green' : 'red'} className="m-0 rounded-full text-[9px] font-black">
+                            <Tag color={precheck.passed ? 'green' : 'red'} className="m-0 rounded-full text-[11px] font-black">
                               {precheck.passed ? '通过' : '阻断'}
                             </Tag>
                             <Tag className="m-0 rounded-full border-0 bg-slate-100 text-slate-600 font-bold">
@@ -461,26 +453,26 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                               <div
                                 key={item.key}
                                 className={clsx(
-                                  'flex items-start justify-between gap-3 rounded-xl border px-3 py-2',
+                                  'flex items-start justify-between gap-3 rounded-2xl border px-3 py-2',
                                   item.passed ? 'border-slate-100 bg-white' : 'border-rose-100 bg-rose-50/60',
                                 )}
                               >
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-2">
                                     {item.passed ? <CheckCircle2 size={11} className="text-emerald-500 flex-shrink-0" /> : <XCircle size={11} className="text-rose-500 flex-shrink-0" />}
-                                    <Text className="text-[11px] font-black text-slate-800">{item.label}</Text>
-                                    <Tag className={clsx('m-0 rounded-full border-0 text-[9px] font-bold', item.severity === 'hard' ? 'bg-rose-50 text-rose-500' : 'bg-slate-100 text-slate-500')}>
+                                    <Text className="text-xs font-black text-slate-800">{item.label}</Text>
+                                    <Tag className={clsx('m-0 rounded-full border-0 text-[11px] font-bold', item.severity === 'hard' ? 'bg-rose-50 text-rose-500' : 'bg-slate-100 text-slate-500')}>
                                       {item.severity === 'hard' ? '硬门禁' : '提示'}
                                     </Tag>
                                   </div>
-                                  <Text className="mt-1 block text-[10px] text-slate-500 break-all">{item.detail}</Text>
+                                  <Text className="mt-1 block text-xs text-slate-500 break-all">{item.detail}</Text>
                                 </div>
-                                <Tag color={item.passed ? 'green' : 'red'} className="m-0 rounded-full text-[9px] font-black">
+                                <Tag color={item.passed ? 'green' : 'red'} className="m-0 rounded-full text-[11px] font-black">
                                   {item.passed ? '通过' : '未通过'}
                                 </Tag>
                               </div>
                             )) : (
-                              <Empty description={<span className="text-xs text-slate-400">暂无检查明细</span>} />
+                              <div className="flex justify-center py-2"><Empty description={<span className="text-xs text-slate-400">暂无检查明细</span>} /></div>
                             )}
                           </div>
                         </div>
@@ -489,33 +481,33 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                   },
                   {
                     key: 'stdout',
-                    label: <span className="text-[11px] font-black text-slate-700">标准输出</span>,
+                    label: <span className="text-xs font-black text-slate-700">标准输出</span>,
                     children: (() => {
                       const logs = splitInferenceLogs(result.summary?.stdout, result.summary?.stderr);
                       return logs.stdout ? (
-                        <div className="rounded-xl border border-slate-200 bg-slate-950 p-3">
-                          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all text-[10px] leading-relaxed text-emerald-400 custom-scrollbar scrollbar-dark">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-950 p-3">
+                          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all text-xs leading-relaxed text-emerald-400 custom-scrollbar scrollbar-dark">
                             {logs.stdout}
                           </pre>
                         </div>
                       ) : (
-                        <Empty description={<span className="text-xs text-slate-400">暂无标准输出</span>} />
+                        <div className="flex justify-center py-2"><Empty description={<span className="text-xs text-slate-400">暂无标准输出</span>} /></div>
                       );
                     })(),
                   },
                   {
                     key: 'stderr',
-                    label: <span className="text-[11px] font-black text-slate-700">错误输出</span>,
+                    label: <span className="text-xs font-black text-slate-700">错误输出</span>,
                     children: (() => {
                       const logs = splitInferenceLogs(result.summary?.stdout, result.summary?.stderr);
                       return logs.stderr ? (
-                        <div className="rounded-xl border border-rose-100 bg-rose-50/70 p-3">
-                          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all text-[10px] leading-relaxed text-rose-700 custom-scrollbar">
+                        <div className="rounded-2xl border border-rose-100 bg-rose-50/70 p-3">
+                          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all text-xs leading-relaxed text-rose-700 custom-scrollbar">
                             {logs.stderr}
                           </pre>
                         </div>
                       ) : (
-                        <Empty description={<span className="text-xs text-slate-400">暂无错误输出</span>} />
+                        <div className="flex justify-center py-2"><Empty description={<span className="text-xs text-slate-400">暂无错误输出</span>} /></div>
                       );
                     })(),
                   },
@@ -590,7 +582,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                 size="small"
                 placeholder="筛选趋势"
               />
-              <Text className="text-[10px] text-slate-400 font-medium">筛选后 {filteredRankings.length} / {result.rankings.length} 支</Text>
+              <Text className="text-xs text-slate-400 font-medium">筛选后 {filteredRankings.length} / {result.rankings.length} 支</Text>
             </div>
             <Table
               size="small"
@@ -625,7 +617,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                         <div className={clsx('text-xs font-black', hasName ? 'text-slate-800' : 'text-slate-400 italic')}>
                           {hasName ? r.name : '名称未匹配'}
                         </div>
-                        <div className="text-[10px] font-mono text-slate-400">{r.code}</div>
+                        <div className="text-xs font-mono text-slate-400">{r.code}</div>
                       </div>
                     );
                   },
@@ -642,16 +634,16 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                       北交所: { color: 'cyan', label: '北交所' },
                     };
                     const c = map[b];
-                    if (!c) return <Text className="text-[9px] text-slate-300">—</Text>;
-                    return <Tag color={c.color} className="text-[9px] font-black m-0">{c.label}</Tag>;
+                    if (!c) return <Text className="text-[11px] text-slate-300">—</Text>;
+                    return <Tag color={c.color} className="text-[11px] font-black m-0">{c.label}</Tag>;
                   },
                 },
                 {
                   title: '行业', dataIndex: 'industry', width: 96,
                   render: (ind: string) => (
                     ind
-                      ? <Tooltip title={ind}><Text className="text-[10px] text-slate-600 block truncate">{ind}</Text></Tooltip>
-                      : <Text className="text-[9px] text-slate-300">—</Text>
+                      ? <Tooltip title={ind}><Text className="text-xs text-slate-600 block truncate">{ind}</Text></Tooltip>
+                      : <Text className="text-[11px] text-slate-300">—</Text>
                   ),
                 },
                 {
@@ -668,9 +660,9 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                     return (
                       <Tooltip title={r.market_cap_yi ? `${r.market_cap_yi.toFixed(1)} 亿` : '市值未知'}>
                         {c ? (
-                          <span className={clsx('inline-block rounded-lg border px-2 py-0.5 text-[9px] font-black', c.cls)}>{tier}</span>
+                          <span className={clsx('inline-block rounded-lg border px-2 py-0.5 text-[11px] font-black', c.cls)}>{tier}</span>
                         ) : (
-                          <Text className="text-[9px] text-slate-300">—</Text>
+                          <Text className="text-[11px] text-slate-300">—</Text>
                         )}
                       </Tooltip>
                     );
@@ -688,10 +680,10 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                       '持平': { cls: 'text-slate-400 bg-slate-50 border-slate-100', label: '→ 平' },
                     };
                     const c = map[t];
-                    if (!c) return <Text className="text-[9px] text-slate-300">—</Text>;
+                    if (!c) return <Text className="text-[11px] text-slate-300">—</Text>;
                     return (
                       <Tooltip title={`T-2: ${r.prev2_score?.toFixed?.(4) ?? '—'} → T-1: ${r.prev_score?.toFixed?.(4) ?? '—'} → T: ${Number(r.score).toFixed(4)}`}>
-                        <span className={clsx('inline-block rounded-lg border px-2 py-0.5 text-[9px] font-black', c.cls)}>{c.label}</span>
+                        <span className={clsx('inline-block rounded-lg border px-2 py-0.5 text-[11px] font-black', c.cls)}>{c.label}</span>
                       </Tooltip>
                     );
                   },
@@ -775,13 +767,13 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                     };
                     return (
                       <div className="flex flex-col items-start gap-1">
-                        <Tag color={c.color} className="text-[9px] font-black m-0">{c.label}</Tag>
+                        <Tag color={c.color} className="text-[11px] font-black m-0">{c.label}</Tag>
                         {rating && (
-                          <span className={clsx('rounded-md border px-1.5 py-0.5 text-[8px] font-black', rating.cls)}>{rating.label}</span>
+                          <span className={clsx('rounded-md border px-1.5 py-0.5 text-[11px] font-black', rating.cls)}>{rating.label}</span>
                         )}
                         {negCls && (
                           <Tooltip title={negTooltip[negTag] || negTag}>
-                            <span className={clsx('rounded-md border px-1.5 py-0.5 text-[8px] font-black cursor-help', negCls)}>{negTag}</span>
+                            <span className={clsx('rounded-md border px-1.5 py-0.5 text-[11px] font-black cursor-help', negCls)}>{negTag}</span>
                           </Tooltip>
                         )}
                       </div>
@@ -823,7 +815,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                   size="small"
                   disabled={!hasPrev}
                   onClick={navPrevStock}
-                  className="rounded-lg text-[10px] font-bold h-8 px-3 flex-shrink-0"
+                  className="rounded-xl text-xs font-bold h-8 px-3 flex-shrink-0"
                 >
                   ‹ 上一只
                 </Button>
@@ -831,7 +823,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                   size="small"
                   disabled={!hasNext}
                   onClick={navNextStock}
-                  className="rounded-lg text-[10px] font-bold h-8 px-3 flex-shrink-0"
+                  className="rounded-xl text-xs font-bold h-8 px-3 flex-shrink-0"
                 >
                   下一只 ›
                 </Button>
@@ -856,7 +848,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                     }))}
                   />
                 </div>
-                <div className="text-[10px] text-slate-400 font-mono flex-shrink-0">
+                <div className="text-xs text-slate-400 font-mono flex-shrink-0">
                   {curIdx >= 0
                     ? `第 ${stockModal.rank ?? curIdx + 1} 名 · ${curIdx + 1}/${filteredRankings.length}`
                     : '不在当前筛选'}

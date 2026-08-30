@@ -68,6 +68,22 @@ from backend.services.trade.simulation.replay.signal_generator import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_n_drop(strategy_params: dict[str, Any]) -> int:
+    """解析每期轮换数量。
+
+    优先按调仓比例 ``n_drop_ratio`` 折算（= round(topk × 比例)，至少 1 只），
+    其次取显式 ``n_drop``；两者都缺省时默认 5 只。
+    """
+    try:
+        ratio = float(strategy_params.get("n_drop_ratio", 0) or 0)
+    except (TypeError, ValueError):
+        ratio = 0.0
+    if ratio > 0:
+        topk = max(1, int(strategy_params.get("topk", 10)))
+        return max(1, round(topk * ratio))
+    return int(strategy_params.get("n_drop", 5))
+
+
 @dataclass
 class DayResult:
     trade_date: date
@@ -588,9 +604,9 @@ class ReplayDayRunner:
             min_score=float(strategy_params.get("min_score", 0.0)),
             max_position_pct=float(strategy_params.get("max_position_pct", 0.15)),
             lot_size=int(strategy_params.get("lot_size", 100)),
-            # TopkDropout 增量调仓（对齐回测引擎）：默认每期只轮换 5 只，
+            # TopkDropout 增量调仓（对齐回测引擎）：默认按调仓比例 20% 折算，
             # 避免分数排名波动导致每期全量轮换（换手/费用失控）
-            n_drop=int(strategy_params.get("n_drop", 5)),
+            n_drop=_resolve_n_drop(strategy_params),
             rebalance_days=max(1, int(strategy_params.get("rebalance_days", 1))),
             # 回放全量启用 R2 修正（实盘沿用默认 False，行为不变）
             enable_min_score="min_score" in strategy_params,

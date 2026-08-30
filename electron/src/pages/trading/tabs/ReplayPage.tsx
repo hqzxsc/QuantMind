@@ -408,6 +408,8 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
                                         <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[10px] font-mono text-slate-400">
                                             {t.replay_params.topk != null && <span>TopK={String(t.replay_params.topk)}</span>}
                                             {t.replay_params.weight_mode != null && <span>权重={String(t.replay_params.weight_mode)}</span>}
+                                            {t.replay_params.rebalance_days != null && <span>每{String(t.replay_params.rebalance_days)}日调仓</span>}
+                                            {t.replay_params.n_drop_ratio != null && <span>调仓比例{(Number(t.replay_params.n_drop_ratio) * 100).toFixed(0)}%</span>}
                                             {t.replay_params.max_position_pct != null && <span>最大持仓={String(t.replay_params.max_position_pct)}</span>}
                                             {t.replay_params.stop_loss_pct != null && <span>止损={(Number(t.replay_params.stop_loss_pct) * 100).toFixed(1)}%</span>}
                                         </div>

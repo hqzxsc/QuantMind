@@ -11,6 +11,20 @@
       "default": 50,
       "min": 5,
       "max": 100
+    },
+    {
+      "name": "rebalance_days",
+      "description": "调仓周期（交易日），每 N 个交易日调仓一次",
+      "default": 3,
+      "min": 1,
+      "max": 60
+    },
+    {
+      "name": "n_drop_ratio",
+      "description": "调仓比例：每期轮换持仓的比例（如 0.2 = 20%，对应 topk×20% 只），0 = 每期全量调仓",
+      "default": 0.2,
+      "min": 0,
+      "max": 1
     }
   ],
   "execution_defaults": {

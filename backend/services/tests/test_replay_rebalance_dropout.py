@@ -142,6 +142,17 @@ class TestTopkDropout:
 
 
 class TestRebalanceCycle:
+    def test_resolve_n_drop_from_ratio(self):
+        """n_drop_ratio 优先：topk=50 × 20% = 10 只，至少 1 只。"""
+        from backend.services.trade.simulation.replay.day_runner import _resolve_n_drop
+
+        assert _resolve_n_drop({"topk": 50, "n_drop_ratio": 0.2}) == 10
+        assert _resolve_n_drop({"topk": 30, "n_drop_ratio": 0.2}) == 6
+        assert _resolve_n_drop({"topk": 5, "n_drop_ratio": 0.1}) == 1  # 下限 1 只
+        assert _resolve_n_drop({"topk": 30, "n_drop": 3}) == 3  # 无比例取显式值
+        assert _resolve_n_drop({"topk": 30, "n_drop_ratio": 0, "n_drop": 4}) == 4
+        assert _resolve_n_drop({}) == 5  # 都缺省默认 5 只
+
     def test_non_rebalance_day_no_orders(self):
         """rebalance_days=3：day_index=1/2 非调仓日，不产生任何调仓单。"""
         calc = RebalanceCalculator()

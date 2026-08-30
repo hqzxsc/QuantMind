@@ -969,6 +969,7 @@ _PARAM_ALIAS = {
     "stop_loss": "stop_loss_pct",
     # TopkDropout 增量调仓参数（与回测引擎同语义，不再丢弃）
     "n_drop": "n_drop",
+    "n_drop_ratio": "n_drop_ratio",
     "rebalance_days": "rebalance_days",
 }
 
@@ -977,8 +978,8 @@ def _to_replay_params(tpl: Any) -> dict[str, Any]:
     """把模板默认参数翻译成 replay 的 strategy_params。
 
     replay 的 RebalanceCalculator 只认 topk / weight_mode / custom_weights /
-    min_score / max_position_pct / lot_size / n_drop / rebalance_days，
-    Qlib 模板里的 signal 等在回放里没有对应语义，直接丢弃。
+    min_score / max_position_pct / lot_size / n_drop / n_drop_ratio /
+    rebalance_days，Qlib 模板里的 signal 等在回放里没有对应语义，直接丢弃。
     """
     out: dict[str, Any] = {}
     for p in tpl.params or []:

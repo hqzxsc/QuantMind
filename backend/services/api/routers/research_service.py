@@ -139,8 +139,12 @@ async def _load_sdl_day_map(session, trade_date: date, market: str | None = None
         merged.update(features_map.get(symbol) or {})
         meta = meta_map.get(symbol)
         if meta:
-            merged.setdefault("stock_name", meta.get("stock_name") or "")
-            merged.setdefault("industry", meta.get("industry") or "")
+            # PG 的 industry/stock_name 近期未回填（序列化成空串），setdefault 对空串不生效，
+            # 故这里显式判空后以 QuantDB instrument_list 兜底。
+            if not merged.get("stock_name"):
+                merged["stock_name"] = meta.get("stock_name") or ""
+            if not merged.get("industry"):
+                merged["industry"] = meta.get("industry") or ""
         lbl = labels_map.get(symbol)
         if lbl:
             # 概念/指数标签：PG 空时用 QuantDB 兜底
@@ -1708,6 +1712,14 @@ async def get_research_universe_by_date(
         quantdb_names = _get_quantdb_stock_names()
     except Exception:  # noqa: BLE001
         quantdb_names = {}
+    # 行业/概念/指数静态标签（进程内缓存，读 instrument_list + sector_members + index_weights 各一次）
+    try:
+        quantdb_labels = _load_quantdb_labels()
+        quantdb_meta = _load_quantdb_name_industry()
+    except Exception:  # noqa: BLE001
+        logger.warning("读取 QuantDB 行业/概念/指数标签失败", exc_info=True)
+        quantdb_labels = {}
+        quantdb_meta = {}
     items = [
         {
             "key": f"{pseudo_run_id}:{r['symbol']}",
@@ -1717,6 +1729,12 @@ async def get_research_universe_by_date(
             "code": r["symbol"],
             "name": quantdb_names.get(StockCodeUtil.to_suffix(r["symbol"])) or "",
             "score": float(r["score"]),
+            "sector": (quantdb_meta.get(r["symbol"]) or {}).get("industry") or "",
+            "conceptTags": (quantdb_labels.get(r["symbol"]) or {}).get("concepts") or [],
+            "indexTags": (quantdb_labels.get(r["symbol"]) or {}).get("indices") or [],
+            "isHs300": bool((quantdb_labels.get(r["symbol"]) or {}).get("is_hs300")),
+            "isCsi500": bool((quantdb_labels.get(r["symbol"]) or {}).get("is_csi500")),
+            "isCsi1000": bool((quantdb_labels.get(r["symbol"]) or {}).get("is_csi1000")),
         }
         for r in pred_rows[offset : offset + limit]
     ]

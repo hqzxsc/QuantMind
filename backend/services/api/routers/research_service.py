@@ -87,7 +87,8 @@ def _redis_set_json(key: str, value: dict[str, Any], ttl_seconds: int) -> None:
 def _sdl_redis_key(trade_date: date) -> str:
     # v6：主源改为 features_daily 50 维宽表 parquet（PG stock_daily_latest 仅兜底补充字段），
     # 并叠加 QuantDB instrument_list 的股票名称/行业兜底。
-    return f"qm:research:sdl:{trade_date.isoformat()}:v7"
+    # v8：叠加 QuantDB 静态概念/指数标签（concept_tags/index_tags/is_hs300/is_csi500/is_csi1000）。
+    return f"qm:research:sdl:{trade_date.isoformat()}:v8"
 
 
 async def _load_sdl_day_map(session, trade_date: date, market: str | None = None) -> dict[str, dict[str, Any]]:
@@ -121,16 +122,36 @@ async def _load_sdl_day_map(session, trade_date: date, market: str | None = None
             logger.warning("加载 QuantDB 股票名称/行业失败", exc_info=True)
             meta_map = {}
 
+    # 概念/指数标签兜底：PG 的 concept_*/idx_* 列近期未回填（恒空），以 QuantDB 静态标签为准
+    labels_map: dict[str, dict[str, Any]] = {}
+    if is_cn:
+        try:
+            labels_map = await _offload_sdl_read(_load_quantdb_labels)
+        except Exception:
+            logger.warning("加载 QuantDB 概念/指数标签失败", exc_info=True)
+            labels_map = {}
+
     # 合并：PG 提供兜底字段（roe/指数归属/is_st 等 features_daily 缺失项），
     # features_daily 覆盖同名指标（50 维宽表为准）。
     symbol_map: dict[str, dict[str, Any]] = {}
-    for symbol in set(features_map) | set(pg_map) | set(meta_map):
+    for symbol in set(features_map) | set(pg_map) | set(meta_map) | set(labels_map):
         merged = dict(pg_map.get(symbol) or {})
         merged.update(features_map.get(symbol) or {})
         meta = meta_map.get(symbol)
         if meta:
             merged.setdefault("stock_name", meta.get("stock_name") or "")
             merged.setdefault("industry", meta.get("industry") or "")
+        lbl = labels_map.get(symbol)
+        if lbl:
+            # 概念/指数标签：PG 空时用 QuantDB 兜底
+            if _is_empty_label(merged.get("concept_tags")):
+                merged["concept_tags"] = lbl.get("concepts") or []
+            if _is_empty_label(merged.get("index_tags")):
+                merged["index_tags"] = lbl.get("indices") or []
+            # 指数成分布尔：PG idx 列未回填（恒 False），直接以 QuantDB 为准
+            merged["is_hs300"] = bool(lbl.get("is_hs300"))
+            merged["is_csi500"] = bool(lbl.get("is_csi500"))
+            merged["is_csi1000"] = bool(lbl.get("is_csi1000"))
         symbol_map[symbol] = merged
 
     _redis_set_json(
@@ -280,6 +301,153 @@ def _load_quantdb_name_industry() -> dict[str, dict[str, Any]]:
             if sym and val:
                 result.setdefault(sym, {})["industry"] = val
     return result
+
+
+# QuantDB 静态标签（概念/指数）进程内缓存：这些数据按日落盘且基本稳定，
+# 读一次即可跨请求/跨日期复用，避免每次候选池请求都扫描 sector_members/index_weights。
+_QUANTDB_LABELS_CACHE: dict[str, dict[str, Any]] | None = None
+_QUANTDB_LABELS_CACHE_LOCK = threading.Lock()
+
+# 指数代码 -> 前端 index 标签（与 _load_sdl_pg_map 的 index_tags 及前端 marketType 筛选对齐）
+_INDEX_LABEL_MAP: dict[str, str] = {
+    "000300.SH": "沪深300",
+    "000905.SH": "中证500",
+    "000852.SH": "中证1000",
+    "399006.SZ": "创业板指数",
+}
+# 指数代码 -> 候选池 boolean 字段（isHs300/isCsi500/isCsi1000）
+_INDEX_BOOL_MAP: dict[str, str] = {
+    "000300.SH": "is_hs300",
+    "000905.SH": "is_csi500",
+    "000852.SH": "is_csi1000",
+}
+
+
+def _to_bool(v: Any) -> bool:
+    """整数/字符串布尔值统一转换（instrument_list 的 Belong* 字段是 0/1）。"""
+    if v is None:
+        return False
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "y")
+    if isinstance(v, (int, float)):
+        return v != 0
+    return bool(v)
+
+
+def _load_quantdb_labels() -> dict[str, dict[str, Any]]:
+    """从 QuantDB 静态数据加载概念/指数标签。
+
+    返回 {prefix_symbol: {concepts: list[str], indices: list[str],
+                          is_hs300: bool, is_csi500: bool, is_csi1000: bool}}。
+    数据来源：instrument_list 指数归属 + sector_members 概念板块 + index_weights 成分。
+    """
+    global _QUANTDB_LABELS_CACHE
+    with _QUANTDB_LABELS_CACHE_LOCK:
+        if _QUANTDB_LABELS_CACHE is not None:
+            return _QUANTDB_LABELS_CACHE
+
+        result: dict[str, dict[str, Any]] = {}
+
+        def _ensure(sym: str) -> dict[str, Any]:
+            return result.setdefault(
+                sym,
+                {
+                    "concepts": [],
+                    "indices": [],
+                    "is_hs300": False,
+                    "is_csi500": False,
+                    "is_csi1000": False,
+                },
+            )
+
+        try:
+            from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
+
+            hub = QuantDBDataHub.get_instance()
+            if not hub.available:
+                _QUANTDB_LABELS_CACHE = result
+                return result
+
+            # 1. instrument_list：指数归属（HS300/两融/科创/沪深港通）
+            try:
+                inst = hub.fetch_stock_list()
+                if inst is not None and not inst.empty:
+                    sym_col = "symbol" if "symbol" in inst.columns else "Symbol"
+                    for _, row in inst.iterrows():
+                        sym = StockCodeUtil.to_prefix(str(row.get(sym_col, "")).strip())
+                        if not sym:
+                            continue
+                        r = _ensure(sym)
+                        if _to_bool(row.get("BelongHS300")):
+                            r["is_hs300"] = True
+                            if "沪深300" not in r["indices"]:
+                                r["indices"].append("沪深300")
+                        if _to_bool(row.get("BelongRZRQ")) and "两融标的" not in r["indices"]:
+                            r["indices"].append("两融标的")
+                        if _to_bool(row.get("BelongHasKQZ")) and "科创板" not in r["indices"]:
+                            r["indices"].append("科创板")
+                        if _to_bool(row.get("BelongHSGT")) and "沪深港通" not in r["indices"]:
+                            r["indices"].append("沪深港通")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("读取 instrument_list 指数归属失败: %s", exc)
+
+            # 2. sector_members：概念板块 + 地区板块
+            try:
+                members = hub.fetch_sector_members()
+                if members is not None and not members.empty:
+                    for _, row in members.iterrows():
+                        sym = StockCodeUtil.to_prefix(str(row.get("symbol", "")).strip())
+                        stype = str(row.get("sector_type", "")).strip()
+                        sname = str(row.get("sector_name", "")).strip()
+                        if not sym or not sname or stype not in ("概念板块", "地区板块"):
+                            continue
+                        r = _ensure(sym)
+                        if sname not in r["concepts"]:
+                            r["concepts"].append(sname)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("读取 sector_members 概念板块失败: %s", exc)
+
+            # 3. index_weights：主要指数成分
+            for index_code, label in _INDEX_LABEL_MAP.items():
+                try:
+                    wdf = hub.fetch_index_weights(index_code)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("读取指数权重 %s 失败: %s", index_code, exc)
+                    continue
+                if wdf is None or wdf.empty:
+                    continue
+                sym_col = next(
+                    (c for c in ("symbol", "Symbol", "wind_code", "ConstituentCode") if c in wdf.columns),
+                    None,
+                )
+                if not sym_col:
+                    continue
+                for _, row in wdf.iterrows():
+                    sym = StockCodeUtil.to_prefix(str(row.get(sym_col, "")).strip())
+                    if not sym:
+                        continue
+                    r = _ensure(sym)
+                    if label not in r["indices"]:
+                        r["indices"].append(label)
+                    bool_field = _INDEX_BOOL_MAP.get(index_code)
+                    if bool_field:
+                        r[bool_field] = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("加载 QuantDB 概念/指数标签失败: %s", exc)
+
+        _QUANTDB_LABELS_CACHE = result
+        return result
+
+
+def _is_empty_label(value: Any) -> bool:
+    """判断标签值是否为空（PG 未回填时 concept_tags/index_tags 序列化成 []/空串）。"""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() in ("", "[]", "null", "{}")
+    if isinstance(value, (list, tuple, dict)):
+        return len(value) == 0
+    return False
 
 
 async def _load_sdl_pg_map(session, trade_date: date, market: str | None) -> dict[str, dict[str, Any]]:

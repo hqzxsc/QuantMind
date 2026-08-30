@@ -710,8 +710,28 @@ def _build_execution_plan_from_signals(
             }
         )
 
+    # 预估卖出回款扣除交易费用（佣金+印花税），避免买入预算高估；
+    # 虚拟/真实成交均会扣费（见 internal_strategy_dispatcher / broker_client），
+    # 预案不预留费用会导致后续买入因现金不足失败。
+    _fee_rate = float(settings.SIMULATION_COMMISSION_RATE)
+    _fee_min = float(settings.SIMULATION_COMMISSION_MIN)
+    _stamp_rate = float(settings.SIMULATION_STAMP_DUTY_RATE)
+
+    def _est_fee(notional: float, is_sell: bool) -> float:
+        if notional <= 0:
+            return 0.0
+        fee = max(notional * _fee_rate, _fee_min)
+        if is_sell:
+            fee += notional * _stamp_rate
+        return round(fee, 2)
+
     estimated_sell_proceeds = sum(
-        _to_float(item.get("estimated_notional"), 0.0) for item in sell_orders
+        max(
+            _to_float(item.get("estimated_notional"), 0.0)
+            - _est_fee(_to_float(item.get("estimated_notional"), 0.0), True),
+            0.0,
+        )
+        for item in sell_orders
     )
     buy_budget = cash + estimated_sell_proceeds
     sequential_budget = buy_budget
@@ -756,6 +776,13 @@ def _build_execution_plan_from_signals(
             continue
         lot_size = _resolve_board_lot_size(str(row["symbol"]))
         quantity = _floor_board_lot(per_slot_budget / ref_price, lot_size)
+        # 预留佣金：本金+费用不超过当前槽位预算，否则逐手递减，
+        # 避免等额分仓打满现金后成交扣费导致现金不足。
+        while quantity > 0:
+            _notional = quantity * ref_price
+            if _notional + _est_fee(_notional, False) <= per_slot_budget + 0.01:
+                break
+            quantity -= lot_size
         if quantity <= 0:
             skipped_items.append(
                 {

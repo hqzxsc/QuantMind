@@ -100,7 +100,36 @@ async def dispatch_internal_strategy_order(
         try:
             side = 1 if side_raw == "BUY" else -1
             gross = price * quantity
-            delta_cash = -gross if side > 0 else gross
+            # A 股虚拟成交费用：佣金（双向、最低 5 元）+ 印花税（卖出单边），
+            # 与 PaperTradingBroker / SimulationExecutionEngine 口径一致，
+            # 否则手动/托管任务的虚拟成交不扣费，账户现金与真实券商口径背离。
+            total_fee = 0.0
+            if gross > 0:
+                try:
+                    from backend.services.trade.trade_config import settings
+
+                    commission = max(
+                        round(gross * float(settings.SIMULATION_COMMISSION_RATE), 2),
+                        float(settings.SIMULATION_COMMISSION_MIN),
+                    )
+                    try:
+                        from backend.services.trade.simulation.services.market_rules import (
+                            infer_market,
+                        )
+
+                        cn_market = str(infer_market(symbol).value).upper() == "CN"
+                    except Exception:  # noqa: BLE001
+                        cn_market = True
+                    stamp_duty = (
+                        round(gross * float(settings.SIMULATION_STAMP_DUTY_RATE), 2)
+                        if cn_market and side < 0
+                        else 0.0
+                    )
+                except Exception:  # noqa: BLE001
+                    commission = max(round(gross * 0.0003, 2), 5.0)
+                    stamp_duty = round(gross * 0.0005, 2) if side < 0 else 0.0
+                total_fee = round(commission + stamp_duty, 2)
+            delta_cash = -(gross + total_fee) if side > 0 else gross - total_fee
             result = await sim_manager.update_balance(
                 user_id=uid,
                 symbol=symbol,
@@ -112,7 +141,13 @@ async def dispatch_internal_strategy_order(
                 position_side=position_side_raw,
                 is_margin_trade=is_margin_trade,
             )
-            logger.info("[Shadow/Sim] 虚拟成交完成: %s", symbol)
+            logger.info(
+                "[Shadow/Sim] 虚拟成交完成: %s %s qty=%s fee=%.2f",
+                symbol,
+                side_raw,
+                quantity,
+                total_fee,
+            )
             return {"status": "success", "execution": "virtual", "detail": result}
         except Exception as exc:
             logger.error("[Shadow/Sim] 虚拟成交失败: %s", exc, exc_info=True)

@@ -157,7 +157,7 @@ export const BrokerConfigCard: React.FC<{ market: string }> = ({ market }) => {
         type="info"
         showIcon
         message="当前市场暂无支持的实盘券商通道"
-        description="加密货币市场暂未接入实盘交易；A 股使用通达信/QMT 通道（切换到「通达信交易桥」页签）。"
+        description="加密货币市场暂未接入实盘交易；A 股使用通达信/QMT 通道。"
       />
     );
   }

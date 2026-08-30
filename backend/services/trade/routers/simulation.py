@@ -361,6 +361,8 @@ async def get_simulation_account(
     account["daily_pnl"] = today_pnl
     account["monthly_pnl"] = monthly_pnl
     account["total_return_ratio"] = (total_pnl / initial_equity) if initial_equity > 0 else 0.0
+    # 日收益率（今日实时锚点，智能图表每日收益率用）
+    account["daily_return_ratio"] = (today_pnl / day_open_equity) if day_open_equity > 0 else 0.0
     account["baseline"] = {
         "initial_equity": initial_equity,
         "day_open_equity": day_open_equity,

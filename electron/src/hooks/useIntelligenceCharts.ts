@@ -482,10 +482,27 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
             );
             
             const anchorTradingDate = resolvedAnchor.date || fallbackAnchorDate;
-            const [recentDailyTradingDates, recentTradeTradingDates] = await Promise.all([
-                getTradingDayWindow(anchorTradingDate, 30, calendar),
+
+            // 交易次数窗口：以今日为锚的近 7 交易日；若最近成交落在窗口外（如周末成交），
+            // 以最近成交日为额外锚点扩展窗口，避免这部分成交被静默丢弃。
+            const rawTradePoints = Array.isArray(tradeCount) ? tradeCount : [];
+            const latestTradeDate = rawTradePoints.reduce<string | null>((latest, point) => {
+                const isoDate = parseIsoDateFromTimestamp(point.timestamp);
+                if (!isoDate) return latest;
+                return !latest || isoDate > latest ? isoDate : latest;
+            }, null);
+            const tradeWindowTasks: Promise<string[]>[] = [
                 getTradingDayWindow(anchorTradingDate, 7, calendar),
-            ]);
+            ];
+            if (latestTradeDate && latestTradeDate !== anchorTradingDate) {
+                const daysBehind = (Date.parse(anchorTradingDate) - Date.parse(latestTradeDate)) / 86400000;
+                if (Number.isFinite(daysBehind) && daysBehind <= 30) {
+                    tradeWindowTasks.push(getTradingDayWindow(latestTradeDate, 7, calendar));
+                }
+            }
+            const tradeWindows = await Promise.all(tradeWindowTasks);
+            const recentTradeTradingDates = Array.from(new Set(tradeWindows.flat())).sort();
+            const recentDailyTradingDates = await getTradingDayWindow(anchorTradingDate, 30, calendar);
 
             const todayReturnPct = resolveAccountDailyReturnPct(account);
             const returnSourcePoints = normalizedReturnPoints.slice();
@@ -504,7 +521,7 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
             );
             const tradeCountPoints = buildTradingCalendarSeries(
                 recentTradeTradingDates,
-                Array.isArray(tradeCount) ? tradeCount : [],
+                rawTradePoints,
             );
 
             const nextData = {

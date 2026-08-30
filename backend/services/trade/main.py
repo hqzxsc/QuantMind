@@ -159,6 +159,14 @@ async def lifespan(app: FastAPI):
             run_simulation_corporate_action_task(),
             name="simulation-corporate-action",
         )
+        from backend.services.trade.services.simulation_fund_snapshot_task import (
+            run_simulation_fund_snapshot_task,
+        )
+
+        fund_snapshot_task = asyncio.create_task(
+            run_simulation_fund_snapshot_task(),
+            name="simulation-fund-snapshot",
+        )
         from backend.services.trade.services.tdx_l2_capture_task import run_tdx_l2_capture_task
         from backend.services.trade.services.tdx_l2_realtime import run_tdx_l2_realtime_task
 

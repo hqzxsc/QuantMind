@@ -18,7 +18,14 @@ from backend.shared.database_pool import get_db
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_MODEL_STATUSES = {"candidate", "syncing", "ready", "active", "archived", "failed"}
+_ALLOWED_MODEL_STATUSES = {
+    "candidate",
+    "syncing",
+    "ready",
+    "active",
+    "archived",
+    "failed",
+}
 _READY_STATUSES = {"ready", "active"}
 _SYSTEM_MODEL_METADATA = {"system_default": True, "readonly": True}
 
@@ -55,10 +62,10 @@ class ModelRegistryService:
         )
         self.primary_model_id = os.getenv("PRIMARY_MODEL_ID", "")
         self.fallback_model_id = os.getenv("FALLBACK_MODEL_ID", "")
-        self.primary_model_dir = str(os.getenv("MODELS_PRODUCTION", "/app/models/production"))
-        self.fallback_model_dir = str(
-            os.getenv("MODELS_FALLBACK_PRODUCTION", "")
+        self.primary_model_dir = str(
+            os.getenv("MODELS_PRODUCTION", "/app/models/production")
         )
+        self.fallback_model_dir = str(os.getenv("MODELS_FALLBACK_PRODUCTION", ""))
         self.production_models_root = Path(self.primary_model_dir)
 
     async def ensure_tables(self) -> None:
@@ -148,17 +155,29 @@ class ModelRegistryService:
             "metadata_json": metadata_json,
             "metrics_json": metrics_json,
             "is_default": bool(row.get("is_default")),
-            "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
-            "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
-            "activated_at": row.get("activated_at").isoformat() if row.get("activated_at") else None,
+            "created_at": row.get("created_at").isoformat()
+            if row.get("created_at")
+            else None,
+            "updated_at": row.get("updated_at").isoformat()
+            if row.get("updated_at")
+            else None,
+            "activated_at": row.get("activated_at").isoformat()
+            if row.get("activated_at")
+            else None,
         }
 
-    def _find_system_model_file(self, dir_path: Path, metadata: dict[str, Any] | None = None) -> str:
+    def _find_system_model_file(
+        self, dir_path: Path, metadata: dict[str, Any] | None = None
+    ) -> str:
         candidates: list[str] = []
         meta = metadata if isinstance(metadata, dict) else {}
         files = meta.get("files") if isinstance(meta.get("files"), dict) else {}
         if isinstance(files, dict):
-            checkpoint = files.get("model_checkpoint") or files.get("model_file") or files.get("checkpoint")
+            checkpoint = (
+                files.get("model_checkpoint")
+                or files.get("model_file")
+                or files.get("checkpoint")
+            )
             if isinstance(checkpoint, str) and checkpoint.strip():
                 candidates.append(checkpoint.strip())
         for key in ("model_file", "model_checkpoint", "checkpoint"):
@@ -172,7 +191,9 @@ class ModelRegistryService:
                 return name
         return candidates[0] if candidates else "model.bin"
 
-    async def _resolve_system_model_record(self, explicit_id: str) -> dict[str, Any] | None:
+    async def _resolve_system_model_record(
+        self, explicit_id: str
+    ) -> dict[str, Any] | None:
         raw = str(explicit_id or "").strip()
         if not raw:
             return None
@@ -191,9 +212,15 @@ class ModelRegistryService:
                 metadata = {}
         files = metadata.get("files") if isinstance(metadata.get("files"), dict) else {}
         display_name = ""
-        model_info = metadata.get("model_info") if isinstance(metadata.get("model_info"), dict) else {}
+        model_info = (
+            metadata.get("model_info")
+            if isinstance(metadata.get("model_info"), dict)
+            else {}
+        )
         if isinstance(model_info, dict):
-            display_name = str(model_info.get("name") or model_info.get("display_name") or "").strip()
+            display_name = str(
+                model_info.get("name") or model_info.get("display_name") or ""
+            ).strip()
         if not display_name:
             display_name = str(metadata.get("display_name") or raw)
 
@@ -204,7 +231,9 @@ class ModelRegistryService:
         else:
             canonical_model_id = f"sys-{raw}"
 
-        context = metadata.get("context") if isinstance(metadata.get("context"), dict) else {}
+        context = (
+            metadata.get("context") if isinstance(metadata.get("context"), dict) else {}
+        )
         return {
             "model_id": canonical_model_id,
             "dir_name": raw,
@@ -216,7 +245,9 @@ class ModelRegistryService:
             "display_name": display_name,
             "metadata_json": {
                 "display_name": display_name,
-                "model_type": metadata.get("model_type") or metadata.get("framework") or "",
+                "model_type": metadata.get("model_type")
+                or metadata.get("framework")
+                or "",
                 "feature_count": metadata.get("feature_count"),
                 "features": metadata.get("feature_columns", []),
                 "performance_metrics": metadata.get("performance_metrics", {}),
@@ -299,7 +330,9 @@ class ModelRegistryService:
             raise ValueError("system model materialization failed")
         return model
 
-    async def _ensure_system_default_record(self, *, tenant_id: str, user_id: str) -> None:
+    async def _ensure_system_default_record(
+        self, *, tenant_id: str, user_id: str
+    ) -> None:
         # OSS 部署未配置内置生产模型时 PRIMARY_MODEL_ID 为空；不能将空
         # 字符串注册为模型，否则用户每次登录都会看到一条无名称的“模型”。
         if not self.primary_model_id.strip():
@@ -317,7 +350,11 @@ class ModelRegistryService:
                         LIMIT 1
                         """
                     ),
-                    {"tenant_id": tenant, "user_id": user, "model_id": self.primary_model_id},
+                    {
+                        "tenant_id": tenant,
+                        "user_id": user,
+                        "model_id": self.primary_model_id,
+                    },
                 )
             ).first()
             if exists:
@@ -355,7 +392,7 @@ class ModelRegistryService:
             if system_row and system_row[0]:
                 rich_metadata = dict(system_row[0])
                 rich_metadata.update({"system_default": True, "readonly": True})
-                rich_metrics   = dict(system_row[1]) if system_row[1] else {}
+                rich_metrics = dict(system_row[1]) if system_row[1] else {}
                 system_storage = system_row[2] or self.primary_model_dir
                 system_model_file = system_row[3] or "model.lgb"
             else:
@@ -364,7 +401,11 @@ class ModelRegistryService:
                 if meta_file.exists():
                     try:
                         file_meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                        rich_metadata = {**file_meta, "system_default": True, "readonly": True}
+                        rich_metadata = {
+                            **file_meta,
+                            "system_default": True,
+                            "readonly": True,
+                        }
                         rich_metrics = file_meta.get("metrics", {})
                     except Exception:
                         rich_metadata = _SYSTEM_MODEL_METADATA.copy()
@@ -403,7 +444,9 @@ class ModelRegistryService:
                 },
             )
 
-    async def _ensure_fallback_model_record(self, *, tenant_id: str, user_id: str) -> None:
+    async def _ensure_fallback_model_record(
+        self, *, tenant_id: str, user_id: str
+    ) -> None:
         """确保 fallback 模型（如 alpha158）也被注册到用户模型列表。"""
         if not self.fallback_model_id.strip():
             return
@@ -420,7 +463,11 @@ class ModelRegistryService:
                         LIMIT 1
                         """
                     ),
-                    {"tenant_id": tenant, "user_id": user, "model_id": self.fallback_model_id},
+                    {
+                        "tenant_id": tenant,
+                        "user_id": user,
+                        "model_id": self.fallback_model_id,
+                    },
                 )
             ).first()
             if exists:
@@ -471,19 +518,27 @@ class ModelRegistryService:
                 },
             )
 
-    async def list_models(self, *, tenant_id: str, user_id: str, include_archived: bool = False, market: str | None = None) -> list[dict[str, Any]]:
+    async def list_models(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        include_archived: bool = False,
+        market: str | None = None,
+    ) -> list[dict[str, Any]]:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
         where_extra = "" if include_archived else "AND status <> 'archived'"
         params: dict[str, Any] = {"tenant_id": tenant, "user_id": user}
         if market:
             market_upper = str(market).upper().strip()
-            where_extra += " AND COALESCE(metadata_json->>'market', '') = :market"
+            where_extra += " AND COALESCE(metadata_json->>'market', 'CN') = :market"
             params["market"] = market_upper
         async with get_session(read_only=True) as session:
             rows = (
-                await session.execute(
-                    text(
-                        f"""
+                (
+                    await session.execute(
+                        text(
+                            f"""
                         SELECT tenant_id, user_id, model_id, source_run_id, status, storage_path, model_file,
                                metadata_json, metrics_json, is_default, created_at, updated_at, activated_at
                         FROM qm_user_models
@@ -491,29 +546,42 @@ class ModelRegistryService:
                           AND BTRIM(COALESCE(model_id, '')) <> '' {where_extra}
                         ORDER BY is_default DESC, updated_at DESC, created_at DESC
                         """
-                    ),
-                    params,
+                        ),
+                        params,
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [self._row_to_model(dict(row)) for row in rows]
 
-    async def get_model(self, *, tenant_id: str, user_id: str, model_id: str) -> dict[str, Any] | None:
+    async def get_model(
+        self, *, tenant_id: str, user_id: str, model_id: str
+    ) -> dict[str, Any] | None:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
         async with get_session(read_only=True) as session:
             row = (
-                await session.execute(
-                    text(
-                        """
+                (
+                    await session.execute(
+                        text(
+                            """
                         SELECT tenant_id, user_id, model_id, source_run_id, status, storage_path, model_file,
                                metadata_json, metrics_json, is_default, created_at, updated_at, activated_at
                         FROM qm_user_models
                         WHERE tenant_id = :tenant_id AND user_id = :user_id AND model_id = :model_id
                         LIMIT 1
                         """
-                    ),
-                    {"tenant_id": tenant, "user_id": user, "model_id": str(model_id)},
+                        ),
+                        {
+                            "tenant_id": tenant,
+                            "user_id": user,
+                            "model_id": str(model_id),
+                        },
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return self._row_to_model(dict(row)) if row else None
 
     async def get_default_model(
@@ -527,9 +595,10 @@ class ModelRegistryService:
             params["market"] = str(market).upper().strip()
         async with get_session(read_only=True) as session:
             row = (
-                await session.execute(
-                    text(
-                        f"""
+                (
+                    await session.execute(
+                        text(
+                            f"""
                         SELECT tenant_id, user_id, model_id, source_run_id, status, storage_path, model_file,
                                metadata_json, metrics_json, is_default, created_at, updated_at, activated_at
                         FROM qm_user_models
@@ -538,13 +607,18 @@ class ModelRegistryService:
                         ORDER BY activated_at DESC NULLS LAST, updated_at DESC
                         LIMIT 1
                         """
-                    ),
-                    params,
+                        ),
+                        params,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return self._row_to_model(dict(row)) if row else None
 
-    async def set_default_model(self, *, tenant_id: str, user_id: str, model_id: str) -> dict[str, Any]:
+    async def set_default_model(
+        self, *, tenant_id: str, user_id: str, model_id: str
+    ) -> dict[str, Any]:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
         mid = str(model_id).strip()
         if not mid:
@@ -553,18 +627,22 @@ class ModelRegistryService:
         now = datetime.now(timezone.utc)
         async with get_session() as session:
             target = (
-                await session.execute(
-                    text(
-                        """
+                (
+                    await session.execute(
+                        text(
+                            """
                         SELECT model_id, status, metadata_json
                         FROM qm_user_models
                         WHERE tenant_id = :tenant_id AND user_id = :user_id AND model_id = :model_id
                         LIMIT 1
                         """
-                    ),
-                    {"tenant_id": tenant, "user_id": user, "model_id": mid},
+                        ),
+                        {"tenant_id": tenant, "user_id": user, "model_id": mid},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if not target:
                 system_record = await self._resolve_system_model_record(mid)
                 if system_record is not None:
@@ -579,18 +657,22 @@ class ModelRegistryService:
                     canonical_mid = str(system_record.get("model_id") or mid)
                     mid = canonical_mid
                     target = (
-                        await session.execute(
-                            text(
-                                """
+                        (
+                            await session.execute(
+                                text(
+                                    """
                                 SELECT model_id, status, metadata_json
                                 FROM qm_user_models
                                 WHERE tenant_id = :tenant_id AND user_id = :user_id AND model_id = :model_id
                                 LIMIT 1
                                 """
-                            ),
-                            {"tenant_id": tenant, "user_id": user, "model_id": mid},
+                                ),
+                                {"tenant_id": tenant, "user_id": user, "model_id": mid},
+                            )
                         )
-                    ).mappings().first()
+                        .mappings()
+                        .first()
+                    )
             if not target:
                 raise ValueError("model not found")
             status = str(target.get("status") or "")
@@ -618,7 +700,8 @@ class ModelRegistryService:
             elif not isinstance(target_metadata, dict):
                 target_metadata = {}
             cleaned_metadata = {
-                k: v for k, v in target_metadata.items()
+                k: v
+                for k, v in target_metadata.items()
                 if k not in ("system_default", "readonly")
             }
 
@@ -646,7 +729,9 @@ class ModelRegistryService:
             raise ValueError("model not found after update")
         return model
 
-    async def archive_model(self, *, tenant_id: str, user_id: str, model_id: str) -> dict[str, Any]:
+    async def archive_model(
+        self, *, tenant_id: str, user_id: str, model_id: str
+    ) -> dict[str, Any]:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
         mid = str(model_id).strip()
         if not mid:
@@ -655,7 +740,11 @@ class ModelRegistryService:
         model = await self.get_model(tenant_id=tenant, user_id=user, model_id=mid)
         if model is None:
             raise ValueError("model not found")
-        metadata = model.get("metadata_json") if isinstance(model.get("metadata_json"), dict) else {}
+        metadata = (
+            model.get("metadata_json")
+            if isinstance(model.get("metadata_json"), dict)
+            else {}
+        )
         if bool(metadata.get("readonly")):
             raise ValueError("system model cannot be archived")
 
@@ -669,28 +758,38 @@ class ModelRegistryService:
                     WHERE tenant_id = :tenant_id AND user_id = :user_id AND model_id = :model_id
                     """
                 ),
-                {"tenant_id": tenant, "user_id": user, "model_id": mid, "updated_at": now},
+                {
+                    "tenant_id": tenant,
+                    "user_id": user,
+                    "model_id": mid,
+                    "updated_at": now,
+                },
             )
 
             default_exists = (
-                await session.execute(
-                    text(
-                        """
+                (
+                    await session.execute(
+                        text(
+                            """
                         SELECT model_id
                         FROM qm_user_models
                         WHERE tenant_id = :tenant_id AND user_id = :user_id
                           AND is_default = TRUE AND status IN ('ready', 'active')
                         LIMIT 1
                         """
-                    ),
-                    {"tenant_id": tenant, "user_id": user},
+                        ),
+                        {"tenant_id": tenant, "user_id": user},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if not default_exists:
                 candidate = (
-                    await session.execute(
-                        text(
-                            """
+                    (
+                        await session.execute(
+                            text(
+                                """
                             SELECT model_id
                             FROM qm_user_models
                             WHERE tenant_id = :tenant_id AND user_id = :user_id
@@ -698,10 +797,13 @@ class ModelRegistryService:
                             ORDER BY updated_at DESC
                             LIMIT 1
                             """
-                        ),
-                        {"tenant_id": tenant, "user_id": user, "archived_id": mid},
+                            ),
+                            {"tenant_id": tenant, "user_id": user, "archived_id": mid},
+                        )
                     )
-                ).mappings().first()
+                    .mappings()
+                    .first()
+                )
                 if candidate:
                     await session.execute(
                         text(
@@ -725,7 +827,9 @@ class ModelRegistryService:
             raise ValueError("archive result unavailable")
         return archived
 
-    async def activate_model(self, *, tenant_id: str, user_id: str, model_id: str) -> dict[str, Any]:
+    async def activate_model(
+        self, *, tenant_id: str, user_id: str, model_id: str
+    ) -> dict[str, Any]:
         """手动激活 candidate 模型 → ready（软门禁触发的模型走此入口）。
 
         仅 candidate 可激活；激活后保留 quality_warnings（供展示），用户可设默认。
@@ -739,7 +843,9 @@ class ModelRegistryService:
         if model is None:
             raise ValueError("model not found")
         if model.get("status") != "candidate":
-            raise ValueError(f"only candidate models can be activated, current status: {model.get('status')}")
+            raise ValueError(
+                f"only candidate models can be activated, current status: {model.get('status')}"
+            )
 
         now = datetime.now(timezone.utc)
         async with get_session() as session:
@@ -777,9 +883,10 @@ class ModelRegistryService:
         sid = str(strategy_id).strip()
         async with get_session(read_only=True) as session:
             row = (
-                await session.execute(
-                    text(
-                        """
+                (
+                    await session.execute(
+                        text(
+                            """
                         SELECT b.tenant_id, b.user_id, b.strategy_id, b.model_id, b.updated_at,
                                m.status AS model_status, m.storage_path, m.model_file
                         FROM qm_strategy_model_bindings b
@@ -788,10 +895,13 @@ class ModelRegistryService:
                         WHERE b.tenant_id = :tenant_id AND b.user_id = :user_id AND b.strategy_id = :strategy_id
                         LIMIT 1
                         """
-                    ),
-                    {"tenant_id": tenant, "user_id": user, "strategy_id": sid},
+                        ),
+                        {"tenant_id": tenant, "user_id": user, "strategy_id": sid},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         if not row:
             return None
         return {
@@ -802,7 +912,9 @@ class ModelRegistryService:
             "model_status": str(row.get("model_status") or ""),
             "storage_path": str(row.get("storage_path") or ""),
             "model_file": str(row.get("model_file") or ""),
-            "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
+            "updated_at": row.get("updated_at").isoformat()
+            if row.get("updated_at")
+            else None,
         }
 
     async def set_strategy_binding(
@@ -848,12 +960,16 @@ class ModelRegistryService:
                 },
             )
 
-        binding = await self.get_strategy_binding(tenant_id=tenant, user_id=user, strategy_id=sid)
+        binding = await self.get_strategy_binding(
+            tenant_id=tenant, user_id=user, strategy_id=sid
+        )
         if binding is None:
             raise ValueError("binding not found after update")
         return binding
 
-    async def delete_strategy_binding(self, *, tenant_id: str, user_id: str, strategy_id: str) -> bool:
+    async def delete_strategy_binding(
+        self, *, tenant_id: str, user_id: str, strategy_id: str
+    ) -> bool:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
         sid = str(strategy_id).strip()
         async with get_session() as session:
@@ -895,7 +1011,9 @@ class ModelRegistryService:
             system_record = await self._resolve_system_model_record(explicit_id)
             if system_record:
                 return ResolvedModel(
-                    effective_model_id=str(system_record.get("model_id") or explicit_id),
+                    effective_model_id=str(
+                        system_record.get("model_id") or explicit_id
+                    ),
                     model_source="explicit_system_model",
                     fallback_used=False,
                     fallback_reason="",
@@ -919,7 +1037,9 @@ class ModelRegistryService:
 
         sid = str(strategy_id or "").strip()
         if sid:
-            binding = await self.get_strategy_binding(tenant_id=tenant, user_id=user, strategy_id=sid)
+            binding = await self.get_strategy_binding(
+                tenant_id=tenant, user_id=user, strategy_id=sid
+            )
             if binding:
                 binding_model_id = str(binding.get("model_id") or "")
                 bound = await _load_ready(binding_model_id)
@@ -933,7 +1053,9 @@ class ModelRegistryService:
                         model_file=str(bound.get("model_file") or ""),
                         status=str(bound.get("status") or "ready"),
                     )
-                reason_parts.append(f"strategy binding model_id={binding_model_id} not ready")
+                reason_parts.append(
+                    f"strategy binding model_id={binding_model_id} not ready"
+                )
 
         default = await self.get_default_model(tenant_id=tenant, user_id=user)
         if default:
@@ -975,7 +1097,9 @@ class ModelRegistryService:
             status="not_found",
         )
 
-    def _resolve_system_model_record_sync(self, explicit_id: str) -> dict[str, Any] | None:
+    def _resolve_system_model_record_sync(
+        self, explicit_id: str
+    ) -> dict[str, Any] | None:
         raw = str(explicit_id or "").strip()
         if not raw:
             return None
@@ -993,9 +1117,15 @@ class ModelRegistryService:
             except Exception:
                 metadata = {}
         display_name = ""
-        model_info = metadata.get("model_info") if isinstance(metadata.get("model_info"), dict) else {}
+        model_info = (
+            metadata.get("model_info")
+            if isinstance(metadata.get("model_info"), dict)
+            else {}
+        )
         if isinstance(model_info, dict):
-            display_name = str(model_info.get("name") or model_info.get("display_name") or "").strip()
+            display_name = str(
+                model_info.get("name") or model_info.get("display_name") or ""
+            ).strip()
         if not display_name:
             display_name = str(metadata.get("display_name") or raw)
 
@@ -1006,7 +1136,9 @@ class ModelRegistryService:
         else:
             canonical_model_id = f"sys-{raw}"
 
-        context = metadata.get("context") if isinstance(metadata.get("context"), dict) else {}
+        context = (
+            metadata.get("context") if isinstance(metadata.get("context"), dict) else {}
+        )
         return {
             "model_id": canonical_model_id,
             "dir_name": raw,
@@ -1018,7 +1150,9 @@ class ModelRegistryService:
             "display_name": display_name,
             "metadata_json": {
                 "display_name": display_name,
-                "model_type": metadata.get("model_type") or metadata.get("framework") or "",
+                "model_type": metadata.get("model_type")
+                or metadata.get("framework")
+                or "",
                 "feature_count": metadata.get("feature_count"),
                 "features": metadata.get("feature_columns", []),
                 "performance_metrics": metadata.get("performance_metrics", {}),
@@ -1033,7 +1167,9 @@ class ModelRegistryService:
             "metrics_json": metadata.get("performance_metrics", {}),
         }
 
-    def _get_model_sync(self, *, tenant_id: str, user_id: str, model_id: str) -> dict[str, Any] | None:
+    def _get_model_sync(
+        self, *, tenant_id: str, user_id: str, model_id: str
+    ) -> dict[str, Any] | None:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
         with get_db() as session:
             row = (
@@ -1048,11 +1184,15 @@ class ModelRegistryService:
                         """
                     ),
                     {"tenant_id": tenant, "user_id": user, "model_id": str(model_id)},
-                ).mappings().first()
+                )
+                .mappings()
+                .first()
             )
         return self._row_to_model(dict(row)) if row else None
 
-    def _get_default_model_sync(self, *, tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    def _get_default_model_sync(
+        self, *, tenant_id: str, user_id: str
+    ) -> dict[str, Any] | None:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
         with get_db() as session:
             row = (
@@ -1069,7 +1209,9 @@ class ModelRegistryService:
                         """
                     ),
                     {"tenant_id": tenant, "user_id": user},
-                ).mappings().first()
+                )
+                .mappings()
+                .first()
             )
         return self._row_to_model(dict(row)) if row else None
 
@@ -1092,7 +1234,9 @@ class ModelRegistryService:
                         """
                     ),
                     {"tenant_id": tenant, "user_id": user, "strategy_id": sid},
-                ).mappings().first()
+                )
+                .mappings()
+                .first()
             )
         return dict(row) if row else None
 
@@ -1121,7 +1265,9 @@ class ModelRegistryService:
             system_record = self._resolve_system_model_record_sync(explicit_id)
             if system_record:
                 return ResolvedModel(
-                    effective_model_id=str(system_record.get("model_id") or explicit_id),
+                    effective_model_id=str(
+                        system_record.get("model_id") or explicit_id
+                    ),
                     model_source="explicit_system_model",
                     fallback_used=False,
                     fallback_reason="",
@@ -1145,7 +1291,9 @@ class ModelRegistryService:
 
         sid = str(strategy_id or "").strip()
         if sid:
-            binding = self._get_strategy_binding_sync(tenant_id=tenant, user_id=user, strategy_id=sid)
+            binding = self._get_strategy_binding_sync(
+                tenant_id=tenant, user_id=user, strategy_id=sid
+            )
             if binding:
                 binding_model_id = str(binding.get("model_id") or "")
                 bound = _load_ready(binding_model_id)
@@ -1159,7 +1307,9 @@ class ModelRegistryService:
                         model_file=str(bound.get("model_file") or ""),
                         status=str(bound.get("status") or "ready"),
                     ).to_dict()
-                reason_parts.append(f"strategy binding model_id={binding_model_id} not ready")
+                reason_parts.append(
+                    f"strategy binding model_id={binding_model_id} not ready"
+                )
 
         default = self._get_default_model_sync(tenant_id=tenant, user_id=user)
         if default:
@@ -1217,10 +1367,19 @@ class ModelRegistryService:
         """从 benchmark 推断市场，与 admin_training_utils._resolve_market 保持一致。"""
         raw = str(benchmark or "").upper().strip()
         _BENCHMARK_MARKET = {
-            "HSI": "HK", "HSCEI": "HK", "HSTECH": "HK",
-            "SPX": "US", "NDX": "US", "DJI": "US", "IXIC": "US",
-            "BTC": "CRYPTO", "ETH": "CRYPTO",
-            "CL": "FUTURES", "RB": "FUTURES", "AU": "FUTURES", "CU": "FUTURES",
+            "HSI": "HK",
+            "HSCEI": "HK",
+            "HSTECH": "HK",
+            "SPX": "US",
+            "NDX": "US",
+            "DJI": "US",
+            "IXIC": "US",
+            "BTC": "CRYPTO",
+            "ETH": "CRYPTO",
+            "CL": "FUTURES",
+            "RB": "FUTURES",
+            "AU": "FUTURES",
+            "CU": "FUTURES",
         }
         return _BENCHMARK_MARKET.get(raw, "CN")
 
@@ -1238,7 +1397,11 @@ class ModelRegistryService:
 
         # 先解析目标市场（显式 context.market 或 benchmark 推断），
         # 用于 model_id 前缀与存储路径市场分段
-        req_context = request_payload.get("context") if isinstance(request_payload.get("context"), dict) else {}
+        req_context = (
+            request_payload.get("context")
+            if isinstance(request_payload.get("context"), dict)
+            else {}
+        )
         market_str = str(req_context.get("market") or "").upper().strip()
         if not market_str:
             market_str = self._infer_market_from_benchmark(req_context.get("benchmark"))
@@ -1249,16 +1412,31 @@ class ModelRegistryService:
         # 非 CN 市场模型按市场子目录分段，避免与 A 股模型混放
         model_dir = self.user_models_root / tenant / user / model_id
         if market_str and market_str != "CN":
-            model_dir = self.user_models_root / tenant / user / market_str.lower() / model_id
+            model_dir = (
+                self.user_models_root / tenant / user / market_str.lower() / model_id
+            )
         model_dir.mkdir(parents=True, exist_ok=True)
 
-        metrics = result_payload.get("metrics") if isinstance(result_payload.get("metrics"), dict) else {}
-        metadata = result_payload.get("metadata") if isinstance(result_payload.get("metadata"), dict) else {}
+        metrics = (
+            result_payload.get("metrics")
+            if isinstance(result_payload.get("metrics"), dict)
+            else {}
+        )
+        metadata = (
+            result_payload.get("metadata")
+            if isinstance(result_payload.get("metadata"), dict)
+            else {}
+        )
 
         # Propagate context (market, benchmark, etc.) from request to metadata
-        existing_context = metadata.get("context") if isinstance(metadata.get("context"), dict) else {}
+        existing_context = (
+            metadata.get("context") if isinstance(metadata.get("context"), dict) else {}
+        )
         merged_context = {**existing_context, **req_context}
-        if "market" not in merged_context or not str(merged_context.get("market") or "").strip():
+        if (
+            "market" not in merged_context
+            or not str(merged_context.get("market") or "").strip()
+        ):
             merged_context["market"] = market_str
 
         # Resolve display_name, appending market suffix if missing
@@ -1331,7 +1509,12 @@ class ModelRegistryService:
                     WHERE tenant_id = :tenant_id AND user_id = :user_id AND model_id = :model_id
                     """
                 ),
-                {"tenant_id": tenant, "user_id": user, "model_id": model_id, "updated_at": now},
+                {
+                    "tenant_id": tenant,
+                    "user_id": user,
+                    "model_id": model_id,
+                    "updated_at": now,
+                },
             )
 
         sync_status, sync_error, model_file = self._sync_candidate_artifacts(
@@ -1372,7 +1555,8 @@ class ModelRegistryService:
         if sync_status == "ready" and gate_reasons:
             logger.warning(
                 "Model %s held at candidate by out-of-sample quality gate: %s",
-                model_id, "; ".join(gate_reasons),
+                model_id,
+                "; ".join(gate_reasons),
             )
             sync_status = "candidate"
             gate_triggered = True
@@ -1509,7 +1693,9 @@ class ModelRegistryService:
         tenant, user = self._normalize_owner(tenant_id=tenant_id, user_id=user_id)
         await self.ensure_tables()
 
-        source_model_ids = [str(m).strip() for m in (source_model_ids or []) if str(m).strip()]
+        source_model_ids = [
+            str(m).strip() for m in (source_model_ids or []) if str(m).strip()
+        ]
         if len(source_model_ids) < 2:
             raise ValueError("融合至少需要 2 个源模型")
 
@@ -1520,7 +1706,9 @@ class ModelRegistryService:
             if not model:
                 raise ValueError(f"源模型不存在: {mid}")
             if str(model.get("status")) not in _READY_STATUSES:
-                raise ValueError(f"源模型 {mid} 状态为 {model.get('status')}，需为 ready/active")
+                raise ValueError(
+                    f"源模型 {mid} 状态为 {model.get('status')}，需为 ready/active"
+                )
             sources.append(model)
 
         # 权重计算
@@ -1548,7 +1736,9 @@ class ModelRegistryService:
         elif weight_strategy == "manual":
             manual_weights = manual_weights or {}
             raw = {str(k): float(v) for k, v in manual_weights.items() if float(v) > 0}
-            missing = [str(s["model_id"]) for s in sources if str(s["model_id"]) not in raw]
+            missing = [
+                str(s["model_id"]) for s in sources if str(s["model_id"]) not in raw
+            ]
             if missing:
                 raise ValueError(f"manual 权重缺少源模型: {missing}")
             total = sum(raw.values()) or 1.0
@@ -1572,7 +1762,9 @@ class ModelRegistryService:
         # 生成 model_id
         now = datetime.now(timezone.utc)
         ts = now.strftime("%Y%m%d%H%M%S")
-        digest = hashlib.sha1("|".join(sorted(source_model_ids)).encode("utf-8")).hexdigest()[:8]
+        digest = hashlib.sha1(
+            "|".join(sorted(source_model_ids)).encode("utf-8")
+        ).hexdigest()[:8]
         model_id = f"mdl_{market.lower()}_ensemble_{ts}_{digest}"
 
         # 构建元数据
@@ -1580,16 +1772,20 @@ class ModelRegistryService:
         for src in sources:
             meta = self._parse_json_field(src.get("metadata_json"))
             metrics = self._parse_json_field(src.get("metrics_json"))
-            source_meta_list.append({
-                "model_id": str(src["model_id"]),
-                "model_name": meta.get("display_name") or meta.get("model_name") or str(src["model_id"]),
-                "model_type": meta.get("model_type"),
-                "framework": meta.get("framework"),
-                "target_horizon_days": meta.get("target_horizon_days"),
-                "feature_count": meta.get("feature_count"),
-                "weight": round(weights.get(str(src["model_id"]), 0), 6),
-                "metrics": metrics,
-            })
+            source_meta_list.append(
+                {
+                    "model_id": str(src["model_id"]),
+                    "model_name": meta.get("display_name")
+                    or meta.get("model_name")
+                    or str(src["model_id"]),
+                    "model_type": meta.get("model_type"),
+                    "framework": meta.get("framework"),
+                    "target_horizon_days": meta.get("target_horizon_days"),
+                    "feature_count": meta.get("feature_count"),
+                    "weight": round(weights.get(str(src["model_id"]), 0), 6),
+                    "metrics": metrics,
+                }
+            )
 
         # 特征并集
         unified_features: list[str] = []
@@ -1619,7 +1815,10 @@ class ModelRegistryService:
             "source_models": source_meta_list,
             "source_model_ids": [str(s["model_id"]) for s in sources],
             "weight_strategy": weight_strategy,
-            "weights": {str(s["model_id"]): round(weights.get(str(s["model_id"]), 0), 6) for s in sources},
+            "weights": {
+                str(s["model_id"]): round(weights.get(str(s["model_id"]), 0), 6)
+                for s in sources
+            },
             "feature_count": feature_count,
             "features": unified_features,
             "feature_columns": unified_features,
@@ -1640,7 +1839,9 @@ class ModelRegistryService:
         # 创建模型目录（非 CN 市场按市场子目录分段）
         model_dir = self.user_models_root / tenant / user / model_id
         if market and market != "CN":
-            model_dir = self.user_models_root / tenant / user / market.lower() / model_id
+            model_dir = (
+                self.user_models_root / tenant / user / market.lower() / model_id
+            )
         model_dir.mkdir(parents=True, exist_ok=True)
 
         # 写入 ensemble_config.json（源模型用绝对路径）
@@ -1653,10 +1854,24 @@ class ModelRegistryService:
             "models": [
                 {
                     "model_id": str(s["model_id"]),
-                    "model_dir": str(Path(s.get("storage_path") or (self.user_models_root / tenant / user / str(s["model_id"]))).resolve()),
+                    "model_dir": str(
+                        Path(
+                            s.get("storage_path")
+                            or (
+                                self.user_models_root
+                                / tenant
+                                / user
+                                / str(s["model_id"])
+                            )
+                        ).resolve()
+                    ),
                     "weight": round(weights.get(str(s["model_id"]), 0), 6),
-                    "target_horizon_days": self._parse_json_field(s.get("metadata_json")).get("target_horizon_days"),
-                    "feature_count": self._parse_json_field(s.get("metadata_json")).get("feature_count"),
+                    "target_horizon_days": self._parse_json_field(
+                        s.get("metadata_json")
+                    ).get("target_horizon_days"),
+                    "feature_count": self._parse_json_field(s.get("metadata_json")).get(
+                        "feature_count"
+                    ),
                 }
                 for s in sources
             ],
@@ -1669,7 +1884,14 @@ class ModelRegistryService:
         )
 
         # 部署融合推理脚本（从模板复制，避免被 parquet 模板覆盖）
-        template_path = Path(__file__).parent.parent / "services" / "engine" / "inference" / "templates" / "inference_ensemble_src.py"
+        template_path = (
+            Path(__file__).parent.parent
+            / "services"
+            / "engine"
+            / "inference"
+            / "templates"
+            / "inference_ensemble_src.py"
+        )
         if template_path.is_file():
             shutil.copy2(template_path, model_dir / "inference.py")
         else:
@@ -1706,7 +1928,9 @@ class ModelRegistryService:
                     "storage_path": str(model_dir.resolve()),
                     "model_file": "ensemble_config.json",
                     "metadata_json": json.dumps(metadata, ensure_ascii=False),
-                    "metrics_json": json.dumps({"val_ic": 0.0, "test_ic": 0.0}, ensure_ascii=False),
+                    "metrics_json": json.dumps(
+                        {"val_ic": 0.0, "test_ic": 0.0}, ensure_ascii=False
+                    ),
                     "created_at": now_db,
                     "updated_at": now_db,
                     "activated_at": now_db,
@@ -1757,8 +1981,13 @@ class ModelRegistryService:
                     },
                 )
 
-        logger.info("[%s] 融合模型已创建: %s (%d 个源模型, 权重策略=%s)",
-                    model_id, raw_display_name, len(sources), weight_strategy)
+        logger.info(
+            "[%s] 融合模型已创建: %s (%d 个源模型, 权重策略=%s)",
+            model_id,
+            raw_display_name,
+            len(sources),
+            weight_strategy,
+        )
         return {
             "model_id": model_id,
             "status": "ready",
@@ -1818,10 +2047,21 @@ class ModelRegistryService:
                 copied.append(filename)
 
         model_file = ""
-        for candidate in ("model.lgb", "model.xgb", "model.cbm", "model.pkl",
-                          "model.pth", "model.txt", "model.bin",
-                          "model_xgb.xgb", "model_lgb.lgb", "model_cbm.cbm",
-                          "model_lin.pkl", "meta_model.pkl", "ensemble_config.json"):
+        for candidate in (
+            "model.lgb",
+            "model.xgb",
+            "model.cbm",
+            "model.pkl",
+            "model.pth",
+            "model.txt",
+            "model.bin",
+            "model_xgb.xgb",
+            "model_lgb.lgb",
+            "model_cbm.cbm",
+            "model_lin.pkl",
+            "meta_model.pkl",
+            "ensemble_config.json",
+        ):
             if (target_dir / candidate).exists():
                 model_file = candidate
                 break
@@ -1844,15 +2084,28 @@ class ModelRegistryService:
             except Exception:
                 continue
 
-        for candidate in ("model.lgb", "model.xgb", "model.cbm", "model.pkl",
-                          "model_xgb.xgb", "model_lgb.lgb", "model_cbm.cbm",
-                          "meta_model.pkl", "model.txt", "model.bin"):
+        for candidate in (
+            "model.lgb",
+            "model.xgb",
+            "model.cbm",
+            "model.pkl",
+            "model_xgb.xgb",
+            "model_lgb.lgb",
+            "model_cbm.cbm",
+            "meta_model.pkl",
+            "model.txt",
+            "model.bin",
+        ):
             if (target_dir / candidate).exists():
                 model_file = candidate
                 break
 
         if not copied:
-            return "failed", "no artifacts found in local training workspace or COS path", model_file
+            return (
+                "failed",
+                "no artifacts found in local training workspace or COS path",
+                model_file,
+            )
 
         return "ready", "", model_file
 

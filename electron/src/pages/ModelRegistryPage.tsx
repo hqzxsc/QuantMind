@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Layers, Star, RefreshCw, Search, Code, Calendar, Layers2,
-  History, Archive, Brain, Clock, XCircle, X,
+  Archive, Brain, Clock, XCircle, X,
   ChevronRight, Play, Download, ChevronDown,
-  ChevronUp, Shield, Zap, Activity, ListFilter, BarChart3, TrendingUp, TrendingDown,
+  ChevronUp, Shield, Zap, ListFilter,
   Compass, Sparkles,
 } from 'lucide-react';
 import {
@@ -44,18 +44,9 @@ import {
   ModelDetailPanel,
   TrainingSourcePanel,
   AttributionAnalysisPanel,
-  ProductionMonitorPanel,
-  MetricCard,
-  TimeItem,
-  InfoCell,
 } from './modelRegistryPanels';
 import { CreateEnsembleModal } from './CreateEnsembleModal';
 import { PublishModelModal } from './hub/PublishModelModal';
-import { InferenceBacktestModule } from '../components/backtestCenter/InferenceBacktestModule';
-import { InferenceHistoryPanel } from '../components/inference/InferenceHistoryPanel';
-import { ModelScoreResearch } from '../components/inference/ModelScoreResearch';
-import { StockPickingPanel } from '../components/inference/StockPickingPanel';
-import { NegativeScorePanel } from '../components/inference/NegativeScorePanel';
 import {
   buildFeatureLabelMap,
   DEFAULT_FEATURE_CATEGORIES,
@@ -74,6 +65,8 @@ export const ModelRegistryPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [userModels, setUserModels] = useState<UserModelRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = React.useRef<string | null>(null);
+  React.useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   const [ensembleMode, setEnsembleMode] = useState(false);
   const [ensembleChecked, setEnsembleChecked] = useState<string[]>([]);
   const [showEnsembleModal, setShowEnsembleModal] = useState(false);
@@ -130,20 +123,22 @@ export const ModelRegistryPage: React.FC = () => {
     if (!silent) setLoading(true);
     try {
       const [resp, sysModels] = await Promise.all([
-        modelTrainingService.listUserModels(true),
-        modelTrainingService.listSystemModels(),
+        modelTrainingService.listUserModels(true, currentMarket),
+        modelTrainingService.listSystemModels(currentMarket),
       ]);
       const allItems = resp.items ?? [];
-      // 按当前市场过滤用户模型：老模型（无 market 字段）仅在 CN 市场显示
+      // 后端已按 market 过滤，老模型（无 market）后端兼容为 CN，前端仅做兜底
       const items = allItems.filter((m) => {
         const meta = m.metadata_json || {};
         const modelMarket = ((meta.market as string) || '').toUpperCase();
         if (!modelMarket) return currentMarket === 'CN';
         return modelMarket === currentMarket;
       });
-      // 系统模型转为 UserModelRecord 格式并合并到列表顶部
+      // 系统模型转为 UserModelRecord 格式并合并到列表顶部，已物化的系统模型以用户表为准去重
+      const existingIds = new Set(items.map((m) => m.model_id));
       const sysItems: UserModelRecord[] = (sysModels ?? [])
         .filter((sm) => {
+          if (existingIds.has(sm.model_id)) return false;
           const meta = sm as unknown as Record<string, unknown>;
           const mkt = ((meta.market as string) || '').toUpperCase();
           if (!mkt) return currentMarket === 'CN';
@@ -174,8 +169,11 @@ export const ModelRegistryPage: React.FC = () => {
       const merged = [...sysItems, ...items];
       setUserModels(merged);
 
-      if (!selectedId && merged.length > 0) {
-        const def = merged.find(m => m.is_default) ?? merged[0];
+      const prev = selectedIdRef.current;
+      if (prev && merged.some((m) => m.model_id === prev)) {
+        // 保持当前选中
+      } else {
+        const def = merged.find((m) => m.is_default) ?? merged[0];
         if (def) setSelectedId(def.model_id);
       }
     } catch (err: any) {
@@ -183,10 +181,9 @@ export const ModelRegistryPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedId, currentMarket]);
+  }, [currentMarket]);
 
-  useEffect(() => { loadModels(); }, []);
-  useEffect(() => { loadModels(); }, [currentMarket]);
+  useEffect(() => { loadModels(); }, [loadModels]);
 
   useEffect(() => {
     setMainTab('detail');
@@ -767,65 +764,6 @@ export const ModelRegistryPage: React.FC = () => {
                             }}
                           />
                         ),
-                      },
-                      {
-                        key: 'production',
-                        label: (
-                          <span className="text-xs font-black uppercase tracking-widest px-1 flex items-center gap-1.5">
-                            <Activity size={11} />生产监控
-                          </span>
-                        ),
-                        children: <ProductionMonitorPanel model={selectedModel} />,
-                      },
-                      {
-                        key: 'backtest',
-                        label: (
-                          <span className="text-xs font-black uppercase tracking-widest px-1 flex items-center gap-1.5">
-                            <BarChart3 size={11} />推理回测
-                          </span>
-                        ),
-                        children: <InferenceBacktestModule modelId={selectedModel.model_id} />,
-                      },
-                      {
-                        key: 'stock-picking',
-                        label: (
-                          <span className="text-xs font-black uppercase tracking-widest px-1 flex items-center gap-1.5">
-                            <TrendingUp size={11} />选股
-                          </span>
-                        ),
-                        children: <StockPickingPanel />,
-                      },
-                      {
-                        key: 'negative-score',
-                        label: (
-                          <span className="text-xs font-black uppercase tracking-widest px-1 flex items-center gap-1.5">
-                            <TrendingDown size={11} />负分参考
-                          </span>
-                        ),
-                        children: <NegativeScorePanel />,
-                      },
-                      {
-                        key: 'inference-research',
-                        label: (
-                          <span className="text-xs font-black uppercase tracking-widest px-1 flex items-center gap-1.5">
-                            <History size={11} />推理研究
-                          </span>
-                        ),
-                        children: (
-                          <InferenceHistoryPanel
-                            modelId={selectedModel.model_id}
-                            onDelete={handleDeleteHistory}
-                          />
-                        ),
-                      },
-                      {
-                        key: 'score-research',
-                        label: (
-                          <span className="text-xs font-black uppercase tracking-widest px-1 flex items-center gap-1.5">
-                            <BarChart3 size={11} />模型分数研究
-                          </span>
-                        ),
-                        children: <ModelScoreResearch modelId={selectedModel.model_id} />,
                       },
                     ]}
                   />

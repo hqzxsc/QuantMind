@@ -90,13 +90,13 @@ export function TagStrip({ symbol, onSelectStock, vertical = false, onSelectTag,
         <Sparkles className="w-3 h-3 text-violet-400" />
         <span className="text-[11px] font-black text-slate-700">智能标签</span>
       </div>
-      <div className="flex flex-col gap-1.5 overflow-y-auto">
+      <div className="grid grid-cols-4 gap-1.5 overflow-y-auto">
         {tags.map(t => (
-          <div key={t.id} className="flex items-center gap-1">
+          <div key={t.id} className="flex items-center gap-1 min-w-0">
             <button
               onClick={() => openSimilar(t.id, t.name)}
               title={t.desc + (t.value != null ? `（值=${t.value?.toFixed(2)}）` : '')}
-              className={`flex-1 flex items-center justify-between gap-1 px-2 py-1.5 rounded-lg border text-[10px] font-bold text-left transition-colors hover:scale-[1.02] ${CATEGORY_COLORS[t.category] ?? FALLBACK}`}
+              className={`flex-1 flex items-center justify-between gap-1 px-2 py-1.5 rounded-lg border text-[10px] font-bold text-left transition-colors hover:scale-[1.02] min-w-0 ${CATEGORY_COLORS[t.category] ?? FALLBACK}`}
             >
               <span className="flex items-center gap-1 min-w-0">
                 <TagIcon className="w-2.5 h-2.5 shrink-0" />
@@ -108,7 +108,7 @@ export function TagStrip({ symbol, onSelectStock, vertical = false, onSelectTag,
               <button
                 onClick={() => onSelectTag({ id: t.id, name: t.name })}
                 title="按此标签筛选左侧列表"
-                className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors ${
+                className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors shrink-0 ${
                   activeTagId === t.id
                     ? 'bg-violet-500 text-white border-violet-500'
                     : 'bg-white text-violet-400 border-slate-200 hover:bg-violet-50'
@@ -119,16 +119,18 @@ export function TagStrip({ symbol, onSelectStock, vertical = false, onSelectTag,
             )}
           </div>
         ))}
-        {!tags.length && <span className="text-[10px] text-slate-400">选择股票后自动匹配智能标签</span>}
+        {!tags.length && <span className="col-span-4 text-[10px] text-slate-400">选择股票后自动匹配智能标签</span>}
       </div>
       {presets.length > 0 && (
-        <div className="flex flex-col gap-1 pt-2 border-t border-slate-100 shrink-0">
-          <span className="text-[10px] text-slate-400 font-bold">命中组合</span>
-          {presets.map(p => (
-            <span key={p.id} className="px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-100 text-[10px] font-bold">
-              {p.name}
-            </span>
-          ))}
+        <div className="pt-2 border-t border-slate-100 shrink-0">
+          <div className="text-[10px] text-slate-400 font-bold mb-1">命中组合</div>
+          <div className="grid grid-cols-4 gap-1.5">
+            {presets.map(p => (
+              <span key={p.id} className="truncate px-1.5 py-1 rounded-md bg-blue-50 text-blue-600 border border-blue-100 text-[10px] font-bold text-center">
+                {p.name}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 

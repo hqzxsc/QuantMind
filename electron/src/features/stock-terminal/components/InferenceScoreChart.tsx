@@ -10,17 +10,19 @@ interface Props {
   modelId?: string; // 未传则取默认模型
   selectedDate?: string | null; // 当前联动日期（高亮）
   onPointClick?: (date: string) => void;
+  onScoresLoaded?: (points: Point[]) => void; // 分数点回传，供 K 线对齐及副图
+  alignedDates?: string[]; // K 线对齐时的 X 轴日期（与 K 线一致）
   refreshKey?: number;
   height?: number;
 }
 
-interface Point {
+export interface Point {
   date: string;
   value: number;
   side: string | null;
 }
 
-export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClick, refreshKey = 0, height = 220 }: Props) {
+export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClick, onScoresLoaded, alignedDates, refreshKey = 0, height = 220 }: Props) {
   const [points, setPoints] = useState<Point[]>([]);
   const [loading, setLoading] = useState(false);
   const [modelName, setModelName] = useState<string>('');
@@ -70,12 +72,16 @@ export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClic
           }))
           .sort((a, b) => a.date.localeCompare(b.date));
         setPoints(pts);
+        onScoresLoaded?.(pts);
         if (!modelId && resp.models?.[0]) {
           setModelName(resp.models[0].display_name || resp.models[0].model_id || '');
         }
       })
       .catch(() => {
-        if (!cancelled) setPoints([]);
+        if (!cancelled) {
+          setPoints([]);
+          onScoresLoaded?.([]);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -87,13 +93,21 @@ export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClic
 
   const option = useMemo(() => {
     if (!points.length) return null;
-    const dates = points.map((p) => p.date);
-    const values = points.map((p) => p.value);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+    // 对齐模式：X 轴与 K 线一致（displayBars 的日期），否则用分数自身日期
+    const useAligned = !!(alignedDates && alignedDates.length);
+    const dates = useAligned ? alignedDates! : points.map((p) => p.date);
+    const values = useAligned
+      ? (() => {
+          const m = new Map(points.map((p) => [p.date, p.value]));
+          return dates.map((d) => (m.has(d) ? (m.get(d) as number) : null as any));
+        })()
+      : points.map((p) => p.value);
+    const numericVals = (values as any[]).filter((v) => typeof v === 'number' && Number.isFinite(v)) as number[];
+    const min = numericVals.length ? Math.min(...numericVals) : 0;
+    const max = numericVals.length ? Math.max(...numericVals) : 1;
     const span = max - min;
     const pad = span > 1e-9 ? span * 0.15 : Math.max(0.002, Math.abs(max) * 0.3);
-    const digits = span < 0.01 ? 4 : span < 0.1 ? 3 : 2;
+    const digits = 3;
     return {
       animation: false,
       backgroundColor: 'transparent',
@@ -105,10 +119,10 @@ export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClic
         formatter: (params: any) => {
           const p = Array.isArray(params) ? params[0] : params;
           const idx = p.dataIndex;
-          const pt = points[idx];
-          if (!pt) return '';
-          const sideLabel = pt.side === 'BUY' ? '买入' : pt.side === 'SELL' ? '卖出' : '持有';
-          return `${pt.date}<br/>分数 <b style="color:${pt.value >= 0 ? '#e11d48' : '#059669'}">${pt.value.toFixed(digits)}</b> · ${sideLabel}`;
+          const d = dates[idx];
+          const v = (values as any[])[idx];
+          if (d == null || v == null || !Number.isFinite(v)) return `${d ?? ''}<br/>分数 --`;
+          return `${d}<br/>分数 <b style="color:${Number(v) >= 0 ? '#e11d48' : '#059669'}">${Number(v).toFixed(digits)}</b>`;
         },
       },
       grid: { left: 48, right: 16, top: 12, bottom: 28 },
@@ -154,9 +168,11 @@ export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClic
                 symbol: 'circle',
                 symbolSize: 10,
                 data: (() => {
-                  const idx = points.findIndex((p) => p.date === selectedDate);
+                  const idx = dates.findIndex((d) => d === selectedDate);
                   if (idx < 0) return [];
-                  return [{ coord: [idx, points[idx].value], itemStyle: { color: '#f59e0b' } }];
+                  const v = (values as any[])[idx];
+                  if (v == null || !Number.isFinite(v)) return [];
+                  return [{ coord: [idx, v], itemStyle: { color: '#f59e0b' } }];
                 })(),
               }
             : undefined,

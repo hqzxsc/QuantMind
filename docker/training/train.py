@@ -388,7 +388,7 @@ def compute_psi_drift(
     features: list[str],
     train_start: str,
     train_end: str,
-    n_recent_days: int = 60,
+    n_recent_days: int = 30,
     top_n: int = 20,
 ) -> dict:
     """数据漂移检测：对比训练区间 vs 最近 n 个交易日的特征分布（PSI）。
@@ -456,11 +456,11 @@ def compute_psi_drift(
         else:
             rank_disp = float(rank_disp)
         # 判级以 rank_disp 为主；水平高但 rank 稳定 = 良性量能膨胀
-        # 阈值：rank_disp 是位移均值（0~1），0.2 即平均每票位移 1/5 截面宽度
-        benign_scale = rank_reliable and level_psi >= 0.1 and rank_disp < 0.1
-        if rank_disp >= 0.2:
+        # 阈值：rank_disp 是位移均值（0~1），0.3 即平均位移近 1/3 截面宽度（收紧以抑误报）
+        benign_scale = rank_reliable and level_psi >= 0.1 and rank_disp < 0.15
+        if rank_disp >= 0.3:
             level = "severe"
-        elif rank_disp >= 0.1:
+        elif rank_disp >= 0.15:
             level = "medium"
         elif benign_scale:
             level = "stable"  # 仅水平平移，截面结构未变
@@ -490,11 +490,11 @@ def compute_psi_drift(
     # overall 判定基于 rank_disp（真实结构漂移），而非水平量纲
     severe_count = drift_counts["severe"]
     medium_count = drift_counts["medium"]
-    # 单特征重度结构漂移即报警（防止特征少时被总体比例稀释）
+    # 收紧以抑误报：48维中量能簇高相关，重复计数易夸大
     severe_ratio = severe_count / max(1, len(results))
-    if severe_count >= 3 or severe_ratio >= 0.3 or (severe_count + medium_count) >= max(5, len(results) * 0.3):
+    if severe_count >= 5 or severe_ratio >= 0.4 or (severe_count + medium_count) >= max(7, len(results) * 0.4):
         overall = "severe"
-    elif severe_count >= 1 or medium_count >= 3:
+    elif severe_count >= 2 or medium_count >= 5:
         overall = "warning"
     else:
         overall = "stable"
@@ -4028,13 +4028,17 @@ def main() -> int:
         wfa_result = train_wfa(df, valid_features, cfg)
 
         # ── 数据漂移检测（PSI）：训练区间 vs 最近交易日分布对比 ──
-        psi_result = compute_psi_drift(
-            df,
-            valid_features,
-            cfg["data"]["train_start"],
-            cfg["data"]["train_end"],
-            n_recent_days=int((cfg.get("drift", {}) or {}).get("n_recent_days", 60)),
-        )
+        drift_cfg = cfg.get("drift") or {}
+        if drift_cfg.get("enabled") is False:
+            psi_result = {"enabled": False, "reason": "disabled by config"}
+        else:
+            psi_result = compute_psi_drift(
+                df,
+                valid_features,
+                cfg["data"]["train_start"],
+                cfg["data"]["train_end"],
+                n_recent_days=int(drift_cfg.get("n_recent_days", 30)),
+            )
         if psi_result.get("enabled"):
             logger.info(
                 "Data drift (PSI): overall=%s max_rank_disp=%.4f stable=%d medium=%d severe=%d",

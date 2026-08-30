@@ -6,7 +6,7 @@ import re
 import uuid
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
@@ -29,7 +29,9 @@ from backend.services.api.routers.admin.quantdb_factor_catalog import (
     load_quantdb_training_catalog,
     load_quantdb_training_sources,
 )
-from backend.services.engine.data_platform.quantdb_factor_reader import DEFAULT_FACTOR_SOURCE
+from backend.services.engine.data_platform.quantdb_factor_reader import (
+    DEFAULT_FACTOR_SOURCE,
+)
 from backend.services.api.training_shap_summary import read_shap_summary_rows, to_int_or
 from backend.services.api.user_app.middleware.auth import get_current_user
 from backend.services.engine.inference.batch_aggregator import aggregate_batch
@@ -505,7 +507,10 @@ def _get_model_data_dir(model_dir: Path, metadata: dict | None = None) -> str:
             # 仅读 QUANTDB_DATA_DIR 会在容器内落到不存在的默认 /app/data/quantdb，
             # 导致推理数据目录预检阻断。
             try:
-                from backend.services.engine.inference.script_runner import _resolve_quantdb_data_dir
+                from backend.services.engine.inference.script_runner import (
+                    _resolve_quantdb_data_dir,
+                )
+
                 return _resolve_quantdb_data_dir()
             except Exception:  # pragma: no cover - 兜底
                 return os.getenv("QUANTDB_DATA_DIR", "/app/data/quantdb")
@@ -532,7 +537,10 @@ def _get_model_data_dir(model_dir: Path, metadata: dict | None = None) -> str:
             meta = json.loads(meta_file.read_text(encoding="utf-8"))
             if str(meta.get("data_source") or "").lower() == "quantdb_factors":
                 try:
-                    from backend.services.engine.inference.script_runner import _resolve_quantdb_data_dir
+                    from backend.services.engine.inference.script_runner import (
+                        _resolve_quantdb_data_dir,
+                    )
+
                     return _resolve_quantdb_data_dir()
                 except Exception:  # pragma: no cover - 兜底
                     return os.getenv("QUANTDB_DATA_DIR", "/app/data/quantdb")
@@ -575,7 +583,9 @@ def _render_next_run(next_run_at: Any) -> str | None:
     "/system-models", summary="获取系统内置模型列表（读取 models/production 目录）"
 )
 async def list_system_models(
-    market: str | None = Query(None, description="按市场过滤（CN/HK/US/FUTURES/CRYPTO），缺省返回全部"),
+    market: str | None = Query(
+        None, description="按市场过滤（CN/HK/US/FUTURES/CRYPTO），缺省返回全部"
+    ),
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     """返回 models/production/ 下所有含 metadata.json 的子目录，无需分页。"""
@@ -583,16 +593,20 @@ async def list_system_models(
         models = _load_production_models()
         market_upper = str(market or "").upper().strip()
         if market_upper:
-            models = [m for m in models if str(m.get("market") or "").upper() == market_upper]
+            models = [
+                m for m in models if str(m.get("market") or "").upper() == market_upper
+            ]
         return {"status": "success", "count": len(models), "models": models}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/feature-catalog", summary="获取模型训练特征字典（用户态）")
 async def get_model_feature_catalog(
     market: str | None = None,
-    factor_source: str | None = Query(None, description="QuantDB 因子源（市场直读训练）"),
+    factor_source: str | None = Query(
+        None, description="QuantDB 因子源（市场直读训练）"
+    ),
     include_coverage: bool = Query(
         False, description="是否附带 parquet 数据覆盖统计（默认 false，加速首屏）"
     ),
@@ -605,7 +619,9 @@ async def get_model_feature_catalog(
         # 绝不能回退到旧 DB/文件目录，否则页面看到的字段会和实际数据源不一致。
         # 覆盖信息来自同步时的缓存 manifest，不在请求期间扫描 parquet。
         _ = include_coverage  # Retained for older clients; coverage is always cached.
-        return await load_quantdb_training_catalog(factor_source or DEFAULT_FACTOR_SOURCE, market="CN")
+        return await load_quantdb_training_catalog(
+            factor_source or DEFAULT_FACTOR_SOURCE, market="CN"
+        )
     # 非 A 股市场：显式携带 factor_source 时走该市场的 QuantDB 直读目录
     # （港股 l1_factors/ccass_factors/south_factors 等）；未携带时兼容
     # 旧前端，回退到传统 DB/文件特征字典（快照训练路径）。
@@ -716,7 +732,9 @@ async def list_user_models(
 
 @router.get("/default", summary="获取当前用户默认模型（用户态）")
 async def get_default_model(
-    market: str | None = Query(None, description="按市场过滤默认模型（CN/HK/US/FUTURES/CRYPTO）"),
+    market: str | None = Query(
+        None, description="按市场过滤默认模型（CN/HK/US/FUTURES/CRYPTO）"
+    ),
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     tenant_id = str(current_user.get("tenant_id") or "default")
@@ -933,8 +951,7 @@ async def get_model_quality(
     from backend.shared.database_manager_v2 import get_session
     from sqlalchemy import text as _text
 
-    tenant_id = str(current_user.get("tenant_id") or "default")
-    user_id = str(current_user.get("user_id") or current_user.get("sub") or "")
+    _ = current_user
     async with get_session(read_only=True) as session:
         rows = (
             (
@@ -1062,7 +1079,7 @@ async def compare_models(
     def _features_of(m: dict) -> set[str]:
         md = m.get("metadata") or {}
         feats = md.get("features") or md.get("feature_columns") or []
-        return set(str(f) for f in feats)
+        return {str(f) for f in feats}
 
     feats_a, feats_b = _features_of(meta_a), _features_of(meta_b)
     common = feats_a & feats_b
@@ -1227,6 +1244,7 @@ def _build_precheck_items(
         readiness = runner._query_qlib_readiness(trade_date=data_trade_date)
         readiness_label = "Qlib 二进制数据就绪"
     else:
+        expected_feature_dim = runner._resolve_expected_feature_dim()
         readiness = runner._query_dimension_readiness(
             trade_date=data_trade_date, expected_dim=expected_feature_dim
         )

@@ -5,6 +5,8 @@ import { modelTrainingService } from '../services/modelTrainingService';
 
 const { Text } = Typography;
 
+const STORAGE_KEY = (modelId: string) => `qm:backfill:${modelId}`;
+
 export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId }) => {
   const [loading, setLoading] = useState(true);
   const [coverage, setCoverage] = useState<any>(null);
@@ -27,6 +29,60 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
   }, [modelId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // 切页恢复：若存在进行中的后台任务，自动恢复轮询
+  useEffect(() => {
+    if (!modelId) return;
+    const stored = localStorage.getItem(STORAGE_KEY(modelId));
+    if (!stored) return;
+    const taskId = stored.trim();
+    if (!taskId) return;
+    let cancelled = false;
+    const resume = async () => {
+      try {
+        const st = await modelTrainingService.getBackfillStatus(modelId, taskId);
+        if (cancelled) return;
+        if (st?.status === 'running') {
+          setTask(st);
+          setBackfilling(true);
+          // 继续轮询直至完成
+          for (let i = 0; i < 120; i++) {
+            await new Promise((r) => setTimeout(r, 2000));
+            if (cancelled) return;
+            try {
+              const cur = await modelTrainingService.getBackfillStatus(modelId, taskId);
+              if (cancelled) return;
+              setTask(cur);
+              if (cur?.status === 'completed' || cur?.status === 'failed') {
+                if (cur?.status === 'completed') message.success(`补全完成，追加 ${cur?.appended ?? 0} 日`);
+                else message.error(cur?.error || '补全失败');
+                localStorage.removeItem(STORAGE_KEY(modelId));
+                setBackfilling(false);
+                void load();
+                return;
+              }
+            } catch {
+              // 忽略轮询错误
+            }
+          }
+          setBackfilling(false);
+        } else {
+          // 已结束的任务清理存储，失败/完成时展示一下进度
+          if (st?.status === 'completed' || st?.status === 'failed') {
+            setTask(st);
+            // 若已完成可短期展示后清理，避免切回仍显示旧进度时误以为进行中
+            if (st?.status === 'completed') localStorage.removeItem(STORAGE_KEY(modelId));
+          } else {
+            localStorage.removeItem(STORAGE_KEY(modelId));
+          }
+        }
+      } catch {
+        localStorage.removeItem(STORAGE_KEY(modelId));
+      }
+    };
+    void resume();
+    return () => { cancelled = true; };
+  }, [modelId, load]);
 
   // 量化交易日历：批量判断 3 个月所有日期是否为交易日，替代周末判断
   useEffect(() => {
@@ -72,6 +128,7 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
             void load();
             return;
           }
+          localStorage.setItem(STORAGE_KEY(modelId), taskId);
           // 轮询
           const poll = async () => {
             for (let i = 0; i < 120; i++) {
@@ -82,6 +139,7 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
                 if (st?.status === 'completed' || st?.status === 'failed') {
                   if (st?.status === 'completed') message.success(`补全完成，追加 ${st?.appended ?? gapCount} 日`);
                   else message.error(st?.error || '补全失败');
+                  localStorage.removeItem(STORAGE_KEY(modelId));
                   setBackfilling(false);
                   void load();
                   return;
@@ -90,6 +148,7 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
                 // 忽略轮询错误
               }
             }
+            // 超时仍保留 taskId 供下次切回继续轮询
             setBackfilling(false);
           };
           void poll();

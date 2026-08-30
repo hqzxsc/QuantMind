@@ -712,28 +712,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
-
-  # ── 富途官方 OpenD 网关（港股/美股实盘通道）───────────────────────────────
-  # 官方原包（https://www.futunn.com/download/OpenD），未做任何修改。
-  # 首次启动需登录：docker attach futu-opend 按提示输入账号/验证码，
-  # 或用富途 APP 扫码；登录态持久化在 ./data/futu-opend。
-  # 安全提示：11111 仅限局域网/内网使用，切勿暴露公网。
-  futu-opend:
-    build: ./docker/futu-opend
-    image: quantmind-futu-opend:latest
-    container_name: futu-opend
-    stdin_open: true
-    tty: true
-    ports:
-      - "11111:11111"
-      - "11112:11112"
-    volumes:
-      - ./data/futu-opend:/opt/futu/data
-      - ./data/futu-opend-home:/root/.FutuOpenD
-    restart: unless-stopped
-    networks:
-      - quantmind-net
-
   # ── IB Gateway（盈透证券官方安装包 + IBC 自动登录，社区标准镜像）─────────
   # 在 .env 配置 IB_ACCOUNT / IB_PASSWORD / IB_TRADING_MODE(paper|live)。
   # 4001=实盘 API，4002=模拟 API，5901=VNC（首次登录/2FA 用）。

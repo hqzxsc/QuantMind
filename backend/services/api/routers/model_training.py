@@ -1184,6 +1184,66 @@ def _quantdb_latest_factor_date(market: str = "CN") -> date | None:
         return None
 
 
+def _merge_runner_signals_into_pred(
+    parquet_file: Path, signals_by_date: list[tuple[str, list[dict]]]
+) -> int:
+    """把 runner 真实推理分数合并进 pred.parquet（coverage/分数曲线的数据源）。
+
+    runner.execute 只写 engine_signal_scores（symbol 为纯数字），而推理覆盖
+    与个股分数曲线读 pred.parquet（symbol 为 SH/SZ 前缀式）；若不回写，
+    补全"成功"后 coverage 缺口永远不会消除。循环中累积、此处一次性合并，
+    避免 160MB+ 的 pred.parquet 被逐日全量重写。
+    """
+    import duckdb
+    import pandas as pd
+
+    from backend.shared.stock_utils import StockCodeUtil
+
+    import re
+
+    rows = []
+    for d, signals in signals_by_date:
+        for s in signals or []:
+            sym = StockCodeUtil.to_prefix(str(s.get("symbol", "")))
+            if not re.match(r"^(SH|SZ|BJ)\d{6}$", sym):
+                continue
+            try:
+                score = float(s.get("score"))
+            except (TypeError, ValueError):
+                continue
+            rows.append(
+                {
+                    "symbol": sym,
+                    "trade_date": pd.Timestamp(d),
+                    # 推理日无真实标签；用 NaN 保持 label 列 float64 类型不变
+                    "label": float("nan"),
+                    "pred": score,
+                    "split": "test",
+                }
+            )
+    if not rows:
+        return 0
+    new_df = pd.DataFrame(rows)
+    con = duckdb.connect()
+    try:
+        if parquet_file.is_file():
+            existing = con.execute(
+                f"SELECT * FROM read_parquet('{str(parquet_file)}')"
+            ).df()
+            combined = pd.concat([existing, new_df], ignore_index=True)
+        else:
+            combined = new_df
+        combined = combined.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
+        combined = combined.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
+        combined.to_parquet(str(parquet_file), index=False)
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    return len(new_df)
+
+
 def _latest_trading_date() -> date:
     try:
         import exchange_calendars as xcals
@@ -1432,6 +1492,8 @@ async def trigger_backfill(
         appended = 0
         failed = 0
         logs: list[str] = []
+        # runner 成功日的真实分数，循环结束后一次性合并进 pred.parquet
+        pred_signals: list[tuple[str, list[dict]]] = []
         try:
             storage_path = str(model.get("storage_path") or "")
             parquet_file = next(
@@ -1476,6 +1538,9 @@ async def trigger_backfill(
                                 f"{d} 推理完成（runner {result.signals_count} 行）"
                             )
                             executed = True
+                            pred_signals.append(
+                                (d, list(getattr(result, "signals", None) or []))
+                            )
                         else:
                             logs.append(
                                 f"{d} runner 失败: {getattr(result, 'error', '')}"
@@ -1573,6 +1638,20 @@ async def trigger_backfill(
                         "failed": failed,
                     }
                 )
+            # 循环结束后一次性把 runner 真实分数合并进 pred.parquet：
+            # coverage 缺口判定与个股分数曲线均读 pred.parquet，不回写则
+            # 补全"成功"后前端缺口永远不消除
+            if pred_signals and parquet_file is not None:
+                try:
+                    merged = _merge_runner_signals_into_pred(parquet_file, pred_signals)
+                    logs.append(
+                        f"pred.parquet 已合并 {merged} 行（{len(pred_signals)} 日）"
+                    )
+                except Exception as exc:
+                    logs.append(f"pred.parquet 合并失败: {exc}")
+                    logger.warning(
+                        "backfill %s merge pred.parquet failed: %s", model_id, exc
+                    )
             if failed:
                 # 部分成功标 partial（非笼统 failed）：成功日已可用，
                 # 失败明细（多为数据未产出）附在 error 供前端展示

@@ -45,6 +45,7 @@ import { useAppSelector } from '../store';
 import { selectCurrentMarket } from '../store/slices/uiSlice';
 import { getMarketConfig } from '../config/marketConfig';
 import { normalizeStockCode } from '../utils/portfolioUtils';
+import { stockListService, Stock } from '../services/stockListService';
 
 const { Text } = Typography;
 
@@ -106,6 +107,48 @@ export const InferenceCenterPage: React.FC = () => {
   const [availableModels, setAvailableModels] = useState<ModelCardOption[]>([]);
   const [kline, setKline] = useState<KlineItem[]>([]);
   const [prediction, setPrediction] = useState<SingleStockPredictionResponse | null>(null);
+  // 目标代码联想搜索
+  const [codeSuggestions, setCodeSuggestions] = useState<Stock[]>([]);
+  const [showCodeSuggestions, setShowCodeSuggestions] = useState(false);
+
+  // 挂载时预加载本地股票列表（内存搜索，零延迟）
+  useEffect(() => {
+    stockListService.load().catch((err) => {
+      console.warn('[InferenceCenter] 股票列表加载失败，联想搜索降级为直接输入:', err);
+    });
+  }, []);
+
+  // 输入防抖联想：代码或名称模糊匹配
+  useEffect(() => {
+    const kw = inputCode.trim();
+    if (!showCodeSuggestions || kw.length < 2) {
+      setCodeSuggestions([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        // 输入已是前缀式(如 SH600036)时取纯数字部分匹配，兼容本地 code 字段
+        const digits = kw.replace(/^(SH|SZ|BJ)/i, '').replace(/[^\dA-Za-z]/g, '');
+        const results = stockListService.isLoaded()
+          ? stockListService.search(kw, 8).length
+            ? stockListService.search(kw, 8)
+            : (digits && digits !== kw ? stockListService.search(digits, 8) : [])
+          : [];
+        setCodeSuggestions(results);
+      } catch {
+        setCodeSuggestions([]);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [inputCode, showCodeSuggestions]);
+
+  const handleSelectSuggestion = (stock: Stock) => {
+    // 本地索引 symbol 为后缀式(600000.SH)，统一转前缀式(SH600000)
+    const normalized = normalizeStockCode(`${stock.market}${stock.code}`);
+    setShowCodeSuggestions(false);
+    setCodeSuggestions([]);
+    handleCommitSingleCode(normalized);
+  };
 
   // ─────────────────────────────────────────────────────────────
   // 截面推理：按当前市场加载注册模型（用户模型 + 系统模型）
@@ -682,22 +725,59 @@ export const InferenceCenterPage: React.FC = () => {
                 <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
                   <Search className="w-3.5 h-3.5 text-blue-500" /> 目标代码
                 </span>
-                <div className="flex items-center bg-slate-50/70 border border-slate-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 rounded-xl px-3 py-1.5 transition-all shadow-2xs">
-                  <Input
-                    variant="borderless"
-                    placeholder="输入代码 (如 600036)"
-                    value={inputCode}
-                    onChange={(e) => setInputCode(e.target.value.toUpperCase())}
-                    onBlur={() => handleCommitSingleCode(inputCode)}
-                    onPressEnter={() => handleCommitSingleCode(inputCode)}
-                    className="p-0 font-mono font-bold text-sm text-blue-600 focus:outline-none"
-                    style={{ flex: 1, minWidth: 100, padding: 0 }}
-                  />
-                  <div className="flex items-center gap-1 pl-2 border-l border-slate-200 shrink-0">
-                    <span className="text-xs font-bold text-slate-700 select-none">
-                      {prediction?.stock_name || '标的资产'}
-                    </span>
+                <div className="relative">
+                  <div className="flex items-center bg-slate-50/70 border border-slate-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 rounded-xl px-3 py-1.5 transition-all shadow-2xs">
+                    <Input
+                      variant="borderless"
+                      placeholder="输入代码/名称搜索 (如 600036 或 茅台)"
+                      value={inputCode}
+                      onChange={(e) => {
+                        setInputCode(e.target.value.toUpperCase());
+                        setShowCodeSuggestions(true);
+                      }}
+                      onFocus={() => setShowCodeSuggestions(true)}
+                      onBlur={() => {
+                        // 延迟提交，给下拉项的 click 留出触发窗口
+                        window.setTimeout(() => {
+                          setShowCodeSuggestions(false);
+                          handleCommitSingleCode(inputCode);
+                        }, 160);
+                      }}
+                      onPressEnter={() => handleCommitSingleCode(inputCode)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') setShowCodeSuggestions(false);
+                      }}
+                      className="p-0 font-mono font-bold text-sm text-blue-600 focus:outline-none"
+                      style={{ flex: 1, minWidth: 100, padding: 0 }}
+                    />
+                    <div className="flex items-center gap-1 pl-2 border-l border-slate-200 shrink-0">
+                      <span className="text-xs font-bold text-slate-700 select-none">
+                        {prediction?.stock_name || '标的资产'}
+                      </span>
+                    </div>
                   </div>
+
+                  {/* 联想下拉：本地股票列表内存搜索 */}
+                  {showCodeSuggestions && codeSuggestions.length > 0 && (
+                    <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
+                      {codeSuggestions.map((s) => (
+                        <div
+                          key={s.symbol}
+                          // 阻止 mousedown 抢先触发输入框 onBlur 提交
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => handleSelectSuggestion(s)}
+                          className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-slate-50 last:border-b-0 flex items-center justify-between gap-2"
+                        >
+                          <span className="text-xs font-bold text-slate-700 truncate">
+                            {s.name || s.code}
+                          </span>
+                          <span className="text-[11px] font-mono text-blue-600 shrink-0">
+                            {s.market}{s.code}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 

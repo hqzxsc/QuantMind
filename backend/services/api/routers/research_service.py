@@ -1085,6 +1085,52 @@ def _extract_ic(metadata_metrics: Any, metrics_json: Any) -> float | None:
     return None
 
 
+def _read_model_pred_dates(storage_path: str) -> list[str]:
+    """读模型 pred.parquet 的去重交易日列表（投研批次日历的数据源）。
+
+    与推理覆盖统计同源（B 套数据）：pred.parquet 的 trade_date 即数据日 T，
+    含训练期测试集预测 + 逐日推理/补全追加的真实分数。
+    """
+    import duckdb
+
+    base = Path(storage_path)
+    candidates = [
+        base / "pred.parquet",
+        base / "pred" / "pred.parquet",
+    ]
+    for parquet_file in candidates:
+        if not parquet_file.is_file():
+            continue
+        con = duckdb.connect()
+        try:
+            cols = [
+                r[0]
+                for r in con.execute(
+                    f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0"
+                ).description
+            ]
+            date_col = (
+                "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
+            )
+            if not date_col:
+                continue
+            rows = con.execute(
+                f"SELECT DISTINCT CAST({date_col} AS DATE) AS d "
+                f"FROM read_parquet('{str(parquet_file)}') ORDER BY d"
+            ).fetchall()
+            dates = [str(r[0])[:10] for r in rows if r[0] is not None]
+            if dates:
+                return dates
+        except Exception:
+            continue
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+    return []
+
+
 async def get_inference_runs(tid: str, uid: str, model_id: str) -> dict[str, Any]:
     async with get_session(read_only=True) as session:
         res = await session.execute(
@@ -1098,23 +1144,80 @@ async def get_inference_runs(tid: str, uid: str, model_id: str) -> dict[str, Any
             ),
             {"tid": tid, "uid": uid, "mid": model_id},
         )
-        return {
-            "code": 200,
-            "data": {
-                "runs": [
-                    {
-                        "runId": r[0],
-                        "modelId": model_id,
-                        "inferenceDate": _serialize_date(r[1]),
-                        "targetDate": _serialize_date(r[2]),
-                        "status": str(r[3] or "completed"),
-                        "lastUpdatedAt": _serialize_date(r[4]),
-                        "universeLabel": "",
-                    }
-                    for r in res
-                ]
-            },
-        }
+        run_rows = res.fetchall()
+
+        # 批次日期改走 pred.parquet（B 套）：日历绿点 = parquet 中存在分数的
+        # 交易日；run 记录按 data_trade_date 挂接，决定该日是否可加载候选池快照
+        storage_path = ""
+        try:
+            sp = (
+                await session.execute(
+                    text(
+                        "SELECT storage_path FROM qm_user_models "
+                        "WHERE tenant_id = :tid AND user_id = :uid AND model_id = :mid LIMIT 1"
+                    ),
+                    {"tid": tid, "uid": uid, "mid": model_id},
+                )
+            ).scalar()
+            storage_path = str(sp or "")
+        except Exception:
+            storage_path = ""
+        parquet_dates: list[str] = []
+        if storage_path:
+            try:
+                parquet_dates = _read_model_pred_dates(storage_path)
+            except Exception:
+                parquet_dates = []
+
+        def _run_entry(r: Any, has_snapshot: bool) -> dict[str, Any]:
+            return {
+                "runId": r[0],
+                "modelId": model_id,
+                "inferenceDate": _serialize_date(r[1]),
+                "targetDate": _serialize_date(r[2]),
+                "status": str(r[3] or "completed"),
+                "lastUpdatedAt": _serialize_date(r[4]),
+                "universeLabel": "",
+                "hasSnapshot": has_snapshot,
+            }
+
+        runs: list[dict[str, Any]] = []
+        seen_dates: set[str] = set()
+        if parquet_dates:
+            runs_by_date: dict[str, Any] = {}
+            for r in run_rows:
+                d = _serialize_date(r[1])
+                if d and d not in runs_by_date:
+                    runs_by_date[d] = r
+            for d in reversed(parquet_dates):
+                r = runs_by_date.get(d)
+                if r is not None:
+                    runs.append(_run_entry(r, True))
+                else:
+                    # 训练期测试集日期：仅有历史分数，无批次快照
+                    runs.append(
+                        {
+                            "runId": "",
+                            "modelId": model_id,
+                            "inferenceDate": d,
+                            "targetDate": None,
+                            "status": "completed",
+                            "lastUpdatedAt": None,
+                            "universeLabel": "",
+                            "hasSnapshot": False,
+                        }
+                    )
+                seen_dates.add(d)
+        # 无 pred.parquet（或 parquet 为空）时退回 run 记录，保证批次可用
+        for r in run_rows:
+            d = _serialize_date(r[1])
+            if d and d in seen_dates:
+                continue
+            runs.append(_run_entry(r, True))
+            if d:
+                seen_dates.add(d)
+
+        return {"code": 200, "data": {"runs": runs}}
 
 
 async def get_research_overview(

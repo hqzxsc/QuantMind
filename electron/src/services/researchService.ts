@@ -17,6 +17,8 @@ export interface ResearchRunOption {
   stockCount?: number;
   avgScore?: number;
   lastUpdatedAt?: string | null;
+  /** false = 仅 pred.parquet 历史分数（训练测试集日期），无批次快照可加载 */
+  hasSnapshot?: boolean;
 }
 
 export interface ResearchOverviewData {

@@ -3,7 +3,10 @@ import { motion } from 'framer-motion';
 import {
   Activity,
   BarChart3,
+  CalendarDays,
   CandlestickChart,
+  ChevronLeft,
+  ChevronRight,
   Columns3,
   Download,
   Filter,
@@ -1098,6 +1101,12 @@ export const ResearchPlatformPage: React.FC = () => {
   const [syncing, setSyncing] = React.useState<boolean>(false);
   const [refreshNonce, setRefreshNonce] = React.useState<number>(0);
   const [loadRange, setLoadRange] = React.useState<number>(500);
+  // ---- 推理批次日历（数据源 pred.parquet）----
+  const [calendarOpen, setCalendarOpen] = React.useState<boolean>(false);
+  const [calendarMonth, setCalendarMonth] = React.useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   // ---- QuantDB 全字段因子缓存（ref 承担去重判断，state 触发重渲染） ----
   const [quantDbFeatures, setQuantDbFeatures] = React.useState<Record<string, Partial<ResearchStockRow>>>({});
@@ -1334,7 +1343,10 @@ export const ResearchPlatformPage: React.FC = () => {
         const runs = await researchService.getInferenceRuns(selectedModelId);
         if (cancelled) return;
         setAvailableRuns(runs);
-        setSelectedRunId(runs.length > 0 ? runs[0].runId : '');
+        // 列表按日期倒序；优先选中最新"有批次快照"的日期（训练测试集
+        // 日期仅有历史分数，无候选池可加载）
+        const firstWithRun = runs.find((item) => item.runId);
+        setSelectedRunId(firstWithRun ? firstWithRun.runId : runs.length > 0 ? runs[0].runId : '');
       } catch (error) {
         console.error('[ResearchPlatformPage] load runs failed:', error);
         if (!cancelled) setRunsError('加载推理批次失败');
@@ -1988,6 +2000,43 @@ export const ResearchPlatformPage: React.FC = () => {
     return matched ? `${matched[1]}-${matched[2]}-${matched[3]}` : null;
   }, [selectedRunId]);
 
+  // ---- 推理批次日历派生数据（数据源 pred.parquet，见 /research/runs）----
+  const runsByDate = React.useMemo(() => {
+    const map = new Map<string, ResearchRunOption>();
+    for (const item of availableRuns) {
+      if (item.inferenceDate && !map.has(item.inferenceDate)) map.set(item.inferenceDate, item);
+    }
+    return map;
+  }, [availableRuns]);
+
+  const selectedRunEntry = React.useMemo(
+    () => (selectedRunId ? availableRuns.find((item) => item.runId === selectedRunId) || null : null),
+    [availableRuns, selectedRunId]
+  );
+
+  const shiftCalendarMonth = (delta: number) => {
+    const [y, mo] = calendarMonth.split('-').map(Number);
+    const d = new Date(y, mo - 1 + delta, 1);
+    setCalendarMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  const calendarCells = React.useMemo(() => {
+    const [y, m] = calendarMonth.split('-').map(Number);
+    const first = new Date(y, m - 1, 1);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const startWeek = (first.getDay() + 6) % 7; // 周一为 0
+    const cells: (string | null)[] = Array(startWeek).fill(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(`${calendarMonth}-${String(d).padStart(2, '0')}`);
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [calendarMonth]);
+
+  // 选中批次变化时，日历跳到该批次所在月份
+  React.useEffect(() => {
+    const d = selectedRunEntry?.inferenceDate;
+    if (d && /^\d{4}-\d{2}/.test(d)) setCalendarMonth(d.slice(0, 7));
+  }, [selectedRunEntry?.inferenceDate]);
+
   // 加载风险评分卡
   React.useEffect(() => {
     if (!detailModalOpen || !selectedStock) {
@@ -2635,22 +2684,123 @@ export const ResearchPlatformPage: React.FC = () => {
                       </div>
 
                       <div>
-                        <div className="mb-1 text-[10px] font-semibold text-slate-500">推理批次</div>
-                        <Select
-                          className={`w-full ${FIELD_STYLES.select} mb-0.5`}
-                          size="small"
-                          value={selectedRunId}
-                          onChange={setSelectedRunId}
-                          loading={runsLoading}
-                          placeholder="选择推理批次"
-                          options={availableRuns.map((item) => ({
-                            value: item.runId,
-                            label: `${item.inferenceDate} · ${item.runId.slice(-8)}`,
-                          }))}
-                        />
+                        <div className="mb-1 flex items-center justify-between">
+                          <div className="text-[10px] font-semibold text-slate-500">推理批次</div>
+                          <div className="font-mono text-[9px] text-slate-400">
+                            pred.parquet
+                            {availableRuns.length > 0 && (
+                              <> · {availableRuns[availableRuns.length - 1]?.inferenceDate}~{availableRuns[0]?.inferenceDate}</>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCalendarOpen(!calendarOpen)}
+                          disabled={runsLoading || availableRuns.length === 0}
+                          className="mb-0.5 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 transition-all duration-200 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <span className="flex items-center gap-1.5 truncate">
+                            <CalendarDays className="h-3.5 w-3.5 flex-shrink-0 text-blue-500" />
+                            {runsLoading
+                              ? '加载批次中…'
+                              : selectedRunEntry
+                                ? `${selectedRunEntry.inferenceDate} 批次`
+                                : '选择推理日期'}
+                          </span>
+                          <ChevronRight
+                            className={`h-3 w-3 flex-shrink-0 text-slate-400 transition-transform duration-200 ${calendarOpen ? 'rotate-90' : ''}`}
+                          />
+                        </button>
+                        {calendarOpen && availableRuns.length > 0 && (
+                          <div className="mb-1 rounded-xl border border-slate-100 bg-slate-50/60 p-2">
+                            <div className="mb-1.5 flex items-center justify-between">
+                              <button
+                                type="button"
+                                onClick={() => shiftCalendarMonth(-1)}
+                                className="rounded-md p-0.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+                              >
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                              </button>
+                              <span className="text-[10px] font-black text-slate-600">
+                                {calendarMonth.replace('-', ' 年 ')} 月
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => shiftCalendarMonth(1)}
+                                className="rounded-md p-0.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+                              >
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                            <div className="mb-1 grid grid-cols-7 gap-0.5 text-center text-[9px] font-semibold text-slate-400">
+                              {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
+                                <div key={w}>{w}</div>
+                              ))}
+                            </div>
+                            <div className="grid grid-cols-7 gap-0.5">
+                              {calendarCells.map((d, i) => {
+                                if (!d) return <div key={`empty-${i}`} className="h-6" />;
+                                const run = runsByDate.get(d);
+                                const hasData = Boolean(run);
+                                const selectable = Boolean(run?.runId);
+                                const isSelected = selectedRunEntry?.inferenceDate === d;
+                                return (
+                                  <button
+                                    key={d}
+                                    type="button"
+                                    disabled={!selectable}
+                                    onClick={() => {
+                                      if (run?.runId) {
+                                        setSelectedRunId(run.runId);
+                                        setCalendarOpen(false);
+                                      }
+                                    }}
+                                    title={
+                                      run?.runId
+                                        ? `${d} 推理批次`
+                                        : hasData
+                                          ? `${d} 仅有历史分数（无批次快照）`
+                                          : d
+                                    }
+                                    className={`flex h-6 flex-col items-center justify-center rounded-md text-[10px] leading-none transition-all duration-150 ${
+                                      isSelected
+                                        ? 'bg-blue-600 font-black text-white'
+                                        : selectable
+                                          ? 'font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600'
+                                          : hasData
+                                            ? 'cursor-default text-slate-400'
+                                            : 'cursor-default text-slate-300'
+                                    }`}
+                                  >
+                                    {Number(d.slice(8, 10))}
+                                    <span
+                                      className={`mt-0.5 h-1 w-1 rounded-full ${
+                                        isSelected
+                                          ? 'bg-white'
+                                          : selectable
+                                            ? 'bg-emerald-500'
+                                            : hasData
+                                              ? 'bg-emerald-300'
+                                              : 'bg-transparent'
+                                      }`}
+                                    />
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="mt-1.5 flex items-center justify-center gap-3 text-[9px] text-slate-400">
+                              <span className="flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> 可查看批次
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> 仅历史分数
+                              </span>
+                            </div>
+                          </div>
+                        )}
                         {!runsLoading && !runsError && availableRuns.length === 0 && (
                           <div className="mb-1 text-[9px] text-amber-600">
-                            暂无历史推理数据，请先在模型训练/模型管理中生成推理批次。
+                            暂无推理数据（pred.parquet），请先在模型管理中生成推理或补全。
                           </div>
                         )}
                         {runsError && <div className="mb-1 text-[9px] text-red-500">{runsError}</div>}

@@ -484,7 +484,8 @@ const RealTradingPage: React.FC = () => {
 
     const tabs: Array<{ id: ActiveTab; label: string; icon: LucideIcon }> = [
         { id: 'manage', label: '策略管理', icon: LayoutDashboard },
-        { id: 'replay', label: '时光回放', icon: Clock },
+        // 时光回放功能尚存多处问题，暂时隐藏入口，完善后取消注释即可恢复（ReplayPage 渲染分支保留）
+        // { id: 'replay', label: '时光回放', icon: Clock },
         { id: 'manual-task', label: '手动任务', icon: ClipboardList },
         { id: 'position', label: '持仓监控', icon: PieChart },
         { id: 'history', label: '交易记录', icon: FileText },

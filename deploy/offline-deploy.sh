@@ -27,7 +27,7 @@ DEPLOY_OVERLAY_DIR="${QUANTMIND_DEPLOY_OVERLAY_DIR:-}"
 OFFLINE_BASE_URL="${QUANTMIND_OFFLINE_BASE_URL:-https://www.quantmindai.cn/downloads}"
 OFFLINE_BASE_URL="${OFFLINE_BASE_URL%/}"
 MANIFEST_SHA256="${QUANTMIND_MANIFEST_SHA256:-}"
-DOCKER_MIRROR="${QUANTMIND_DOCKER_MIRROR:-https://gpu34ekhgwm14ghgur.xuanyuan.run}"
+DOCKER_MIRROR="${QUANTMIND_DOCKER_MIRROR:-https://fx07btib0z92d2dhxl.xuanyuan.run}"
 PACKAGE_DIR="$DOWNLOAD_DIR/quantmind-offline"
 
 log() { printf '[offline-deploy] %s\n' "$*"; }

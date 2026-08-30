@@ -7,7 +7,7 @@ set -Eeuo pipefail
 PROJECT_DIR="${QUANTMIND_PROJECT_DIR:-/opt/quantmind}"
 REPO_URL="${QUANTMIND_REPO_URL:-https://gitee.com/qusong0627/QuantMind.git}"
 REF="${QUANTMIND_REF:-master}"
-DOCKER_MIRROR="${QUANTMIND_DOCKER_MIRROR:-https://gpu34ekhgwm14ghgur.xuanyuan.run}"
+DOCKER_MIRROR="${QUANTMIND_DOCKER_MIRROR:-https://fx07btib0z92d2dhxl.xuanyuan.run}"
 FORCE=false
 
 log() { printf '[quantmind-deploy] %s\n' "$*"; }

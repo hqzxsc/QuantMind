@@ -53,8 +53,9 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
               const cur = await modelTrainingService.getBackfillStatus(modelId, taskId);
               if (cancelled) return;
               setTask(cur);
-              if (cur?.status === 'completed' || cur?.status === 'failed') {
+              if (cur?.status === 'completed' || cur?.status === 'failed' || cur?.status === 'partial') {
                 if (cur?.status === 'completed') message.success(`补全完成，追加 ${cur?.appended ?? 0} 日`);
+                else if (cur?.status === 'partial') message.warning(cur?.error || `部分成功：追加 ${cur?.appended ?? 0} 日，${cur?.failed ?? 0} 日失败`);
                 else message.error(cur?.error || '补全失败');
                 localStorage.removeItem(STORAGE_KEY(modelId));
                 setBackfilling(false);
@@ -136,8 +137,9 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
               try {
                 const st = await modelTrainingService.getBackfillStatus(modelId, taskId);
                 setTask(st);
-                if (st?.status === 'completed' || st?.status === 'failed') {
+                if (st?.status === 'completed' || st?.status === 'failed' || st?.status === 'partial') {
                   if (st?.status === 'completed') message.success(`补全完成，追加 ${st?.appended ?? gapCount} 日`);
+                  else if (st?.status === 'partial') message.warning(st?.error || `部分成功：追加 ${st?.appended ?? gapCount} 日，${st?.failed ?? 0} 日失败`);
                   else message.error(st?.error || '补全失败');
                   localStorage.removeItem(STORAGE_KEY(modelId));
                   setBackfilling(false);

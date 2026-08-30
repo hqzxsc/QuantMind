@@ -1160,6 +1160,30 @@ def _read_pred_dates(parquet_file: Path) -> list[str]:
             pass
 
 
+def _quantdb_latest_factor_date(market: str = "CN") -> date | None:
+    """QuantDB 因子数据最新可用交易日；失败返回 None。
+
+    用于把 coverage 缺口的上限从「最新交易日」收敛到「数据已产出日」，
+    避免把因子尚未产出（T+1 更新）的当日误判为缺口并触发注定失败的补全。
+    """
+    try:
+        from backend.services.engine.data_platform.quantdb_factor_reader import (
+            QuantDBFactorReader,
+            market_data_dir,
+        )
+
+        qdir = market_data_dir(market)
+        if not qdir.is_dir():
+            return None
+        reader = QuantDBFactorReader(qdir, market=market)
+        dates = reader.available_dates("l1_factors")
+        if not dates:
+            return None
+        return date.fromisoformat(str(dates[-1])[:10])
+    except Exception:
+        return None
+
+
 def _latest_trading_date() -> date:
     try:
         import exchange_calendars as xcals
@@ -1274,13 +1298,16 @@ async def get_inference_coverage(
         if quantdb_fallback_dates:
             min_date, max_date = quantdb_fallback_dates[0], quantdb_fallback_dates[-1]
             latest = _latest_trading_date()
+            # 缺口上限截至 QuantDB 数据已产出日，而非最新交易日：
+            # 因子 T+1 更新，数据未产出的日子不算缺口，避免补全注定失败
+            gap_end = min(latest, _quantdb_latest_factor_date(market) or latest)
             try:
                 import exchange_calendars as xcals
                 import pandas as pd
 
                 cal = xcals.get_calendar("XSHG")
                 start = pd.Timestamp(max_date) + pd.Timedelta(days=1)
-                end = pd.Timestamp(latest)
+                end = pd.Timestamp(gap_end)
                 gap = (
                     [d.strftime("%Y-%m-%d") for d in cal.sessions_in_range(start, end)]
                     if start <= end
@@ -1295,6 +1322,7 @@ async def get_inference_coverage(
                 "count": len(quantdb_fallback_dates),
                 "gap_dates": gap,
                 "latest_trade_date": str(latest),
+                "data_cutoff_date": str(gap_end),
                 "is_up_to_date": len(gap) == 0,
                 "source": "quantdb_fallback",
             }
@@ -1322,14 +1350,16 @@ async def get_inference_coverage(
             }
         min_date, max_date = dates[0], dates[-1]
         latest = _latest_trading_date()
-        # 生成交易日缺口
+        # 生成交易日缺口；上限截至 QuantDB 因子数据已产出日（因子 T+1 更新，
+        # 当日数据未产出不算缺口），避免一键补全对无数据日做注定失败的推理
+        gap_end = min(latest, _quantdb_latest_factor_date() or latest)
         try:
             import exchange_calendars as xcals
             import pandas as pd
 
             cal = xcals.get_calendar("XSHG")
             start = pd.Timestamp(max_date) + pd.Timedelta(days=1)
-            end = pd.Timestamp(latest)
+            end = pd.Timestamp(gap_end)
             if start <= end:
                 sessions = cal.sessions_in_range(start, end)
                 gap = [d.strftime("%Y-%m-%d") for d in sessions]
@@ -1344,6 +1374,7 @@ async def get_inference_coverage(
             "count": len(dates),
             "gap_dates": gap,
             "latest_trade_date": str(latest),
+            "data_cutoff_date": str(gap_end),
             "is_up_to_date": len(gap) == 0,
         }
     except Exception as exc:
@@ -1451,6 +1482,42 @@ async def trigger_backfill(
                             )
                     except Exception as exc:
                         logs.append(f"{d} runner 异常: {exc}")
+                        result = None
+                    # runner 失败时落 run 终态，避免 run 记录悬空（此前失败日
+                    # 在 qm_model_inference_runs 无任何痕迹，排查无从下手）
+                    if result is not None and not getattr(result, "success", False):
+                        try:
+                            _rid = str(getattr(result, "run_id") or "")
+                            if _rid:
+                                _now = datetime.now(ZoneInfo("Asia/Shanghai"))
+                                await model_inference_persistence.create_run(
+                                    run_id=_rid,
+                                    tenant_id=tenant_id,
+                                    user_id=user_id,
+                                    model_id=model_id,
+                                    data_trade_date=date.fromisoformat(d),
+                                    prediction_trade_date=date.fromisoformat(d),
+                                    status="failed",
+                                    request_payload={
+                                        "source": "backfill",
+                                        "task_id": task_id,
+                                        "date": d,
+                                    },
+                                    created_at=_now,
+                                )
+                                await model_inference_persistence.update_run(
+                                    run_id=_rid,
+                                    status="failed",
+                                    updated_at=_now,
+                                    failure_stage=str(
+                                        getattr(result, "failure_stage", "") or ""
+                                    ),
+                                    error_message=str(
+                                        getattr(result, "error", "") or "backfill 推理失败"
+                                    )[:2000],
+                                )
+                        except Exception:
+                            pass
                     if not executed:
                         import duckdb
                         import pandas as pd
@@ -1507,14 +1574,21 @@ async def trigger_backfill(
                     }
                 )
             if failed:
+                # 部分成功标 partial（非笼统 failed）：成功日已可用，
+                # 失败明细（多为数据未产出）附在 error 供前端展示
                 _backfill_tasks[task_id].update(
                     {
-                        "status": "failed",
+                        "status": "partial" if appended > 0 else "failed",
                         "progress": 100,
                         "logs": "\n".join(logs[-200:]),
                         "appended": appended,
                         "failed": failed,
-                        "error": f"{failed}/{len(gaps)} 日失败",
+                        "error": (
+                            f"{appended}/{len(gaps)} 日补全成功，{failed} 日失败："
+                            + "; ".join(
+                                ln for ln in logs[-failed:] if "失败" in ln
+                            )[:500]
+                        ),
                     }
                 )
             else:

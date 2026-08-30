@@ -3,7 +3,6 @@
  *
  * 功能：
  * - 创建回放会话（选择日期区间、初始资金、自动/手动模式）
- * - 轮询信号生成进度
  * - 自动模式：单步推演 / 自动推进
  * - 手动模式：生成提案 → 勾选/改数量 → 确认执行 / 跳过今日
  * - 自动推进完成后跳转报告页
@@ -12,7 +11,7 @@
 
 import { useAppSelector } from '../../../store';
 import { selectCurrentMarket } from '../../../store/slices/uiSlice';
-import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
+import React, { useState, useEffect, useCallback, useReducer } from 'react';
 import {
     Clock, Play, Trash2, Plus, Loader2, AlertTriangle,
     SkipForward, CheckSquare, Square, Shield, ChevronDown, ChevronUp,
@@ -26,7 +25,7 @@ import type {
     StrategyTemplate, StrategyTemplateParam,
 } from '../../../services/replayService';
 import {
-    listSessions, createSession, getSession,
+    listSessions, createSession,
     stepSession, deleteSession, proposeSession,
     listStrategyTemplates,
 } from '../../../services/replayService';
@@ -921,7 +920,6 @@ function SessionCard({
     const [lastResult, setLastResult] = useState<StepResult | null>(null);
     const [stepError, setStepError] = useState<string | null>(null);
     const [showTrades, setShowTrades] = useState(false);
-    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Auto-advance hook (R5)
     const autoAdvance = useAutoAdvance({
@@ -935,36 +933,6 @@ function SessionCard({
     useEffect(() => {
         setSession(initialSession);
     }, [initialSession]);
-
-    // Poll for signal generation progress
-    useEffect(() => {
-        if (session.status !== 'generating') {
-            if (pollRef.current) {
-                clearInterval(pollRef.current);
-                pollRef.current = null;
-            }
-            return;
-        }
-
-        pollRef.current = setInterval(async () => {
-            try {
-                const updated = await getSession(session.session_id);
-                setSession(updated);
-                if (updated.status !== 'generating') {
-                    if (pollRef.current) {
-                        clearInterval(pollRef.current);
-                        pollRef.current = null;
-                    }
-                }
-            } catch {
-                // ignore polling errors
-            }
-        }, 2000);
-
-        return () => {
-            if (pollRef.current) clearInterval(pollRef.current);
-        };
-    }, [session.status, session.session_id]);
 
     // Auto mode step
     const handleAutoStep = async () => {
@@ -1041,8 +1009,17 @@ function SessionCard({
     const isManual = !session.auto_trade;
     const canStep = session.status === 'ready' && session.next_date !== null;
     const canPropose = isManual && (session.status === 'ready' || session.status === 'awaiting_confirm') && session.next_date !== null;
-    const progress = session.signal_progress;
-    const pnl = lastResult?.snapshot?.cum_pnl ?? 0;
+    // 资产数据：优先取本步结果，其次取后端最新快照（随推演日期同步）
+    const snap = (lastResult?.snapshot ?? session.latest_snapshot ?? null) as {
+        trade_date?: string;
+        total_asset?: number;
+        cum_pnl?: number;
+        day_pnl?: number;
+        cash?: number;
+        market_value?: number;
+    } | null;
+    const pnl = snap?.cum_pnl ?? 0;
+    const dayPnl = snap?.day_pnl ?? 0;
     const lotSize = Number((session.strategy_params as Record<string, unknown>)?.lot_size) || 100;
 
     return (
@@ -1153,25 +1130,6 @@ function SessionCard({
 
             {/* Body */}
             <div className="px-4 py-3 space-y-3">
-                {/* Progress bar (generating) */}
-                {session.status === 'generating' && progress && (
-                    <div className="space-y-1">
-                        <div className="flex justify-between text-xs text-gray-500">
-                            <span>信号生成中…</span>
-                            <span>{progress.done ?? 0} / {progress.total ?? '?'}</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                                className="h-full bg-blue-400 rounded-full transition-all duration-300"
-                                style={{ width: `${progress.total ? ((progress.done ?? 0) / progress.total) * 100 : 0}%` }}
-                            />
-                        </div>
-                        {progress.total_signals !== undefined && (
-                            <p className="text-xs text-gray-400">{progress.total_signals} 条信号</p>
-                        )}
-                    </div>
-                )}
-
                 {/* Auto-advance progress bar */}
                 {autoAdvance.state !== 'idle' && (
                     <div className="space-y-1">
@@ -1255,10 +1213,12 @@ function SessionCard({
                     <div className="bg-slate-50/80 rounded-xl p-3.5 border border-slate-200/70 flex flex-col justify-between">
                         <div className="text-xs font-semibold text-slate-500 mb-0.5">当前总资产</div>
                         <div className="text-xl font-black text-slate-900 font-mono tracking-tight my-0.5 text-center">
-                            ¥ {(lastResult?.snapshot?.total_asset ?? session.initial_cash ?? 1000000).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+                            ¥ {(snap?.total_asset ?? session.initial_cash ?? 1000000).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
                         </div>
                         <div className="text-[11px] text-slate-400">
-                            初始本金: ¥ {(session.initial_cash ?? 1000000).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+                            {snap?.trade_date
+                                ? <>估值日: <b className="font-mono text-slate-600">{snap.trade_date}</b></>
+                                : <>初始本金: ¥ {(session.initial_cash ?? 1000000).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</>}
                         </div>
                     </div>
 
@@ -1278,8 +1238,8 @@ function SessionCard({
                             {pnl >= 0 ? '+' : ''}{pnl.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="text-[11px] text-slate-400">
-                            日盈亏: <span className={`font-mono font-semibold ${(lastResult?.snapshot?.day_pnl ?? 0) >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                                {(lastResult?.snapshot?.day_pnl ?? 0) >= 0 ? '+' : ''}{(lastResult?.snapshot?.day_pnl ?? 0).toFixed(2)}
+                            日盈亏: <span className={`font-mono font-semibold ${dayPnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                                {dayPnl >= 0 ? '+' : ''}{dayPnl.toFixed(2)}
                             </span>
                         </div>
                     </div>
@@ -1291,13 +1251,13 @@ function SessionCard({
                             <div className="flex items-center justify-between text-xs">
                                 <span className="text-slate-400">可用现金:</span>
                                 <span className="font-mono font-bold text-slate-700">
-                                    ¥ {(lastResult?.snapshot?.cash ?? session.initial_cash ?? 1000000).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+                                    ¥ {(snap?.cash ?? session.initial_cash ?? 1000000).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
                                 </span>
                             </div>
                             <div className="flex items-center justify-between text-xs">
                                 <span className="text-slate-400">持仓市值:</span>
                                 <span className="font-mono font-bold text-slate-700">
-                                    ¥ {(lastResult?.snapshot?.market_value ?? 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+                                    ¥ {(snap?.market_value ?? 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
                                 </span>
                             </div>
                         </div>

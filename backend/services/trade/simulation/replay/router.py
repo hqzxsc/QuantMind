@@ -1,6 +1,6 @@
 """时光回放 API 端点。
 
-POST   /sessions                   创建回放会话（后台生成信号，轮询进度）
+POST   /sessions                   创建回放会话（信号直读模型 pred.parquet，创建即就绪）
 GET    /sessions                   列出当前用户的会话
 GET    /sessions/{id}              查看会话详情 + 进度
 POST   /sessions/{id}/step         单步推演（执行下一个交易日）
@@ -11,7 +11,6 @@ GET    /strategy-templates         可选策略模板（含参数定义，供前
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import date
@@ -38,7 +37,7 @@ from backend.services.trade.simulation.replay.analytics import (
 from backend.services.trade.simulation.replay.day_runner import ReplayDayRunner
 from backend.services.trade.simulation.replay.proposal import validate_confirmed
 from backend.services.trade.simulation.replay.signal_generator import (
-    ReplaySignalGenerator,
+    _find_pred_parquet,
 )
 from backend.services.trade.simulation.services.ashare_matcher import MatchConfig
 from backend.services.trade.simulation.services.local_market_data import (
@@ -160,6 +159,9 @@ class SessionResponse(BaseModel):
     signal_progress: dict[str, Any]
     error_message: str | None
     strategy_params: dict[str, Any] = {}
+    # 最近一个交易日的收盘估值快照（无推演记录时为 null），
+    # 前端资产卡用它展示随推演日期变化的总资产/盈亏。
+    latest_snapshot: dict[str, Any] | None = None
 
 
 class StepResponse(BaseModel):
@@ -178,7 +180,9 @@ class StepResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _session_to_response(s: ReplaySession) -> SessionResponse:
+def _session_to_response(
+    s: ReplaySession, latest_snapshot: dict[str, Any] | None = None
+) -> SessionResponse:
     return SessionResponse(
         session_id=str(s.session_id),
         name=s.name,
@@ -196,6 +200,7 @@ def _session_to_response(s: ReplaySession) -> SessionResponse:
         signal_progress=s.signal_progress or {},
         error_message=s.error_message,
         strategy_params=s.strategy_params or {},
+        latest_snapshot=latest_snapshot,
     )
 
 
@@ -226,6 +231,46 @@ def _count_sessions(start: date, end: date, sessions: list[int]) -> int:
     s = int(start.strftime("%Y%m%d"))
     e = int(end.strftime("%Y%m%d"))
     return sum(1 for d in sessions if s <= d <= e)
+
+
+def _snapshot_to_dict(r: Any) -> dict[str, Any]:
+    return {
+        "trade_date": r.trade_date.isoformat() if r.trade_date else None,
+        "cash": float(r.cash),
+        "market_value": float(r.market_value),
+        "total_asset": float(r.total_asset),
+        "day_pnl": float(r.day_pnl),
+        "cum_pnl": float(r.cum_pnl),
+        "position_count": int(r.position_count),
+    }
+
+
+async def _latest_snapshots(
+    db: AsyncSession, session_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """批量取每个会话最近一个交易日的估值快照（DISTINCT ON，一次查询）。"""
+    from backend.services.trade.simulation.models.replay import (
+        ReplayEquitySnapshot,
+    )
+
+    if not session_ids:
+        return {}
+    rows = (
+        (
+            await db.execute(
+                select(ReplayEquitySnapshot)
+                .where(ReplayEquitySnapshot.session_id.in_(session_ids))
+                .order_by(
+                    ReplayEquitySnapshot.session_id,
+                    ReplayEquitySnapshot.trade_date.desc(),
+                )
+                .distinct(ReplayEquitySnapshot.session_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {r.session_id: _snapshot_to_dict(r) for r in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -308,111 +353,25 @@ async def _resolve_model_dir_for_user(
 
 
 def _validate_model_dir(model_dir: Path, model_id: str, _json: Any) -> Path:
-    """校验模型目录里 metadata.json 和模型文件都真实可读。
+    """校验模型目录里 metadata.json 和 pred.parquet 都真实可读。
 
-    断链 symlink / 缺失权重会让后台任务在推理阶段才炸，那时会话已是
-    generating，用户只能删了重建。所以在创建时就查。
+    回放信号直读模型的 pred.parquet（训练产出 + 每日推理回写的全量历史
+    分数），没有它就无信号可用；断链 symlink 会让推演阶段才炸，所以在创建时就查。
     """
     meta_path = model_dir / "metadata.json"
     if not meta_path.is_file():
         raise HTTPException(400, f"模型缺少 metadata.json: {model_id}")
     try:
-        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-        model_file = model_dir / str(meta.get("model_file") or "model.lgb")
-        if not model_file.exists():
-            raise HTTPException(
-                400, f"模型文件不可读（可能是断链符号链接）: {model_file.name}"
-            )
-    except HTTPException:
-        raise
+        _json.loads(meta_path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise HTTPException(400, f"模型元数据无法解析: {exc}") from None
+    if _find_pred_parquet(model_dir) is None:
+        raise HTTPException(
+            400,
+            f"模型缺少 pred.parquet（回放信号直接读取模型历史分数，"
+            f"请先完成训练/推理产出）: {model_id}",
+        )
     return model_dir
-
-
-# ---------------------------------------------------------------------------
-# Background signal generation
-# ---------------------------------------------------------------------------
-
-
-async def _run_signal_generation(
-    session_id: uuid.UUID,
-    model_id: str | None,
-    start_date: date,
-    end_date: date,
-    model_dir: Path | None = None,
-) -> None:
-    """后台任务：预生成信号并更新会话状态。
-
-    CPU 密集部分（parquet 读取 + 模型推理）在线程池中执行，
-    DB 写入在主事件循环中异步执行。
-    """
-    gen = ReplaySignalGenerator(model_id=model_id, model_dir=model_dir)
-
-    try:
-        # Phase 1: CPU 密集 — 在线程池中执行
-        loop = asyncio.get_event_loop()
-        predict_result = await loop.run_in_executor(
-            None,
-            gen.predict_all,
-            session_id,
-            start_date,
-            end_date,
-        )
-
-        # Phase 2: DB 写入 — 异步
-        async with get_session(read_only=False) as db:
-            persist_result = await gen.persist_all(db, session_id, predict_result)
-    except Exception as exc:
-        # 兜底：任何阶段抛异常都必须把会话置为 FAILED，否则永久卡在 generating
-        # （无超时、无重试端点，用户只能删会话重建）。
-        logger.exception("回放信号生成失败 session=%s model=%s", session_id, model_id)
-        try:
-            async with get_session(read_only=False) as db:
-                row = (
-                    (
-                        await db.execute(
-                            select(ReplaySession).where(
-                                ReplaySession.session_id == session_id
-                            )
-                        )
-                    )
-                    .scalars()
-                    .first()
-                )
-                if row is not None:
-                    row.status = ReplayStatus.FAILED
-                    row.error_message = f"信号生成失败: {exc}"[:500]
-                    await db.commit()
-        except Exception:
-            logger.exception("写入 FAILED 状态也失败 session=%s", session_id)
-        return
-
-    # Phase 3: 更新会话状态
-    async with get_session(read_only=False) as db:
-        row = (
-            (
-                await db.execute(
-                    select(ReplaySession).where(ReplaySession.session_id == session_id)
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if row is None:
-            return
-
-        if persist_result.get("errors"):
-            row.status = ReplayStatus.FAILED
-            row.error_message = "; ".join(persist_result["errors"][:5])
-        else:
-            row.status = ReplayStatus.READY
-            row.signal_progress = {
-                "done": persist_result["total_days"],
-                "total": persist_result["total_days"],
-                "total_signals": persist_result["total_signals"],
-            }
-        await db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +387,11 @@ async def create_session(
     auth: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
-    """创建回放会话。信号在后台生成，前端轮询 GET /sessions/{id} 看进度。"""
+    """创建回放会话。
+
+    信号直接读模型 pred.parquet（训练产出 + 每日推理回写的全量历史分数），
+    无后台信号生成步骤，创建即就绪可直接推演。
+    """
     if req.start_date >= req.end_date:
         raise HTTPException(400, "start_date 必须 < end_date")
 
@@ -454,20 +417,26 @@ async def create_session(
 
     next_date = _compute_next_date(None, req.start_date, req.end_date, sessions)
 
+    # 固化模型目录到 strategy_params（下划线前缀，与策略参数区分）：
+    # 推演时信号直读器按它定位模型目录的 pred.parquet，无需再解析注册表。
+    strategy_params = dict(req.strategy_params)
+    if resolved_model_dir is not None:
+        strategy_params["_model_dir"] = str(resolved_model_dir)
+
     row = ReplaySession(
         tenant_id=auth.tenant_id,
         user_id=int(auth.user_id) if auth.user_id.isdigit() else 0,
         name=req.name,
         model_id=req.model_id,
-        strategy_params=req.strategy_params,
+        strategy_params=strategy_params,
         initial_cash=req.initial_cash,
         start_date=req.start_date,
         end_date=req.end_date,
         next_date=next_date,
         sessions_total=total_sessions,
         sessions_done=0,
-        status=ReplayStatus.GENERATING,
-        signal_progress={"done": 0, "total": total_sessions},
+        status=ReplayStatus.READY,
+        signal_progress={"done": total_sessions, "total": total_sessions},
         auto_trade=req.auto_trade,
         stop_loss_pct=req.stop_loss_pct,
     )
@@ -479,17 +448,6 @@ async def create_session(
     await accounts.init(initial_cash=req.initial_cash)
 
     await db.commit()
-
-    # 后台生成信号
-    asyncio.create_task(
-        _run_signal_generation(
-            session_id=row.session_id,
-            model_id=req.model_id,
-            start_date=req.start_date,
-            end_date=req.end_date,
-            model_dir=resolved_model_dir,
-        )
-    )
 
     return _session_to_response(row)
 
@@ -515,7 +473,8 @@ async def list_sessions(
         .scalars()
         .all()
     )
-    return [_session_to_response(r) for r in rows]
+    snaps = await _latest_snapshots(db, [r.session_id for r in rows])
+    return [_session_to_response(r, snaps.get(r.session_id)) for r in rows]
 
 
 async def _load_owned_session(
@@ -553,9 +512,10 @@ async def get_session_detail(
     auth: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
-    """查看会话详情 + 信号生成进度。"""
+    """查看会话详情（含最新估值快照）。"""
     row = await _load_owned_session(db, session_id, auth)
-    return _session_to_response(row)
+    snaps = await _latest_snapshots(db, [session_id])
+    return _session_to_response(row, snaps.get(session_id))
 
 
 @router.post("/sessions/{session_id}/propose", response_model=ProposalResponse)
@@ -573,8 +533,6 @@ async def propose_day(
 
     if row.auto_trade:
         raise HTTPException(400, "自动模式无需提案，请直接调用 /step")
-    if row.status == ReplayStatus.GENERATING:
-        raise HTTPException(409, "信号生成中，请等待")
     if row.status == ReplayStatus.STEPPING:
         raise HTTPException(409, "正在执行中，请稍候")
     if row.status in (
@@ -607,6 +565,7 @@ async def propose_day(
             accounts=accounts,
             strategy_params=row.strategy_params,
             stop_loss_pct=row.stop_loss_pct,
+            day_index=row.sessions_done,
         )
     except Exception as exc:
         logger.exception("生成提案失败 session=%s", session_id)
@@ -648,8 +607,6 @@ async def step_session(
 
     if row.status == ReplayStatus.STEPPING:
         raise HTTPException(409, "正在执行中，请勿重复点击")
-    if row.status == ReplayStatus.GENERATING:
-        raise HTTPException(409, "信号生成中，请等待")
     if row.status in (
         ReplayStatus.FINISHED,
         ReplayStatus.FAILED,
@@ -721,6 +678,7 @@ async def step_session(
                 approved_orders=None,
                 initial_cash=float(row.initial_cash),
                 match_config=cfg,
+                day_index=row.sessions_done,
             )
     except Exception as exc:
         row.status = ReplayStatus.FAILED
@@ -1009,6 +967,9 @@ _PARAM_ALIAS = {
     "topk": "topk",
     "max_weight": "max_position_pct",
     "stop_loss": "stop_loss_pct",
+    # TopkDropout 增量调仓参数（与回测引擎同语义，不再丢弃）
+    "n_drop": "n_drop",
+    "rebalance_days": "rebalance_days",
 }
 
 
@@ -1016,8 +977,8 @@ def _to_replay_params(tpl: Any) -> dict[str, Any]:
     """把模板默认参数翻译成 replay 的 strategy_params。
 
     replay 的 RebalanceCalculator 只认 topk / weight_mode / custom_weights /
-    min_score / max_position_pct / lot_size，Qlib 模板里的 n_drop、
-    rebalance_days、signal 等在回放里没有对应语义，直接丢弃。
+    min_score / max_position_pct / lot_size / n_drop / rebalance_days，
+    Qlib 模板里的 signal 等在回放里没有对应语义，直接丢弃。
     """
     out: dict[str, Any] = {}
     for p in tpl.params or []:

@@ -44,6 +44,16 @@ export interface ReplaySession {
         current?: string;
     };
     error_message: string | null;
+    /** 最近一个交易日的收盘估值快照（无推演记录时为 null） */
+    latest_snapshot?: {
+        trade_date: string | null;
+        cash: number;
+        market_value: number;
+        total_asset: number;
+        day_pnl: number;
+        cum_pnl: number;
+        position_count: number;
+    } | null;
 }
 
 export interface StepResult {

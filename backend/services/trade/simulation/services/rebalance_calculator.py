@@ -1,11 +1,13 @@
 """
 Rebalance Calculator - 调仓计算器
-支持 TopK 筛选、多种权重模式、涨跌停过滤、先卖后买逻辑
+支持 TopK 筛选、TopkDropout 增量调仓、调仓周期、多种权重模式、
+涨跌停过滤、先卖后买逻辑。增量调仓与回测引擎 TopkDropoutStrategy 同口径。
 """
 
 import logging
 import math
 from dataclasses import dataclass, field
+from datetime import date
 from enum import Enum
 from typing import Any
 
@@ -44,6 +46,15 @@ class StrategyConfig:
     # 关闭时跌停持仓在计算阶段就被静默丢弃，"该割的割不掉"且无痕迹。
     force_exit_on_limit_down: bool = False
 
+    # ── TopkDropout 增量调仓（与回测引擎 TopkDropoutStrategy 对齐） ──
+    # 每期轮换数量：只剔除跌出 topk 且分数最低的 n_drop 只，只新增
+    # 进入 topk 且分数最高的 n_drop 只，避免分数排名波动导致的每期全量轮换。
+    # 0 或 >= topk 时退化为每期全量调仓（既有行为）。
+    n_drop: int = 0
+    # 调仓周期（交易日）：仅当 day_index % rebalance_days == 0 时调仓，
+    # 首日（day_index=0）必调仓建仓；1 = 每个交易日都调仓。
+    rebalance_days: int = 1
+
 
 @dataclass
 class Quote:
@@ -77,10 +88,11 @@ class SimulationAccount:
 class RebalanceCalculator:
     """
     调仓计算器：
+    0. 调仓周期闸门（rebalance_days，非调仓日不出调仓单）
     1. 根据 signal score 排序，取 TopK
-    2. 计算目标权重（支持多种模式）
-    3. 计算目标持仓金额 → 目标股数
-    4. 剔除涨跌停标的
+    2. TopkDropout 增量轮换（有持仓时每期最多换 n_drop 只）
+    3. 计算目标权重（支持多种模式）
+    4. 计算目标持仓金额 → 目标股数，剔除涨跌停标的
     5. 计算买卖指令（先卖后买）
     """
 
@@ -90,6 +102,7 @@ class RebalanceCalculator:
         strategy: StrategyConfig,
         quotes: dict[str, Quote],
         account: SimulationAccount,
+        day_index: int = 0,
     ) -> list[Order]:
         """
         计算调仓指令。
@@ -99,12 +112,22 @@ class RebalanceCalculator:
             strategy: 策略配置
             quotes: 行情数据 {symbol: Quote}
             account: 当前账户状态
+            day_index: 会话内第几个交易日（0 起），用于调仓周期闸门
 
         Returns:
             交易指令列表（先卖后买）
         """
         if not signals:
             logger.info("RebalanceCalculator: 无信号，跳过调仓")
+            return []
+
+        # 0. 调仓周期闸门：非调仓日不产生任何调仓单（止损走 day_runner 独立路径，不受影响）。
+        # day_index=0（首日）必建仓，与回测引擎首日全量买入一致。
+        if strategy.rebalance_days > 1 and day_index % strategy.rebalance_days != 0:
+            logger.debug(
+                "RebalanceCalculator: day_index=%d 非调仓日（周期 %d），跳过",
+                day_index, strategy.rebalance_days,
+            )
             return []
 
         # 0. min_score 过滤（opt-in，见 StrategyConfig.enable_min_score）
@@ -133,13 +156,27 @@ class RebalanceCalculator:
             reverse=True,
         )[: strategy.topk]
 
-        # 3. 计算目标权重
-        weights = self._calc_weights(topk_signals, strategy)
-
-        # 4. 计算目标持仓
-        target_positions = self._calc_target_positions(
-            topk_signals, weights, quotes, account, strategy
+        # 2.5 TopkDropout 增量轮换：有持仓时不追「当日完整 topk」，只换 n_drop 只，
+        #     避免分数排名小幅波动导致每期全量轮换（换手/费用失控）。
+        target_signals, dropout_active = self._select_topk_dropout(
+            topk_signals, signals, account, strategy
         )
+
+        if dropout_active:
+            # 增量模式：保留股不动（不重新配权），剔除股全卖，
+            # 新增股用剔除腾出的资金均分 —— 与回测引擎 TopkDropout 一致，
+            # 轮换笔数被钉死在每期 ≤ 2×n_drop。
+            target_positions = self._calc_dropout_positions(
+                target_signals, quotes, account, strategy
+            )
+        else:
+            # 3. 计算目标权重（首日建仓 / 全量调仓路径）
+            weights = self._calc_weights(target_signals, strategy)
+
+            # 4. 计算目标持仓
+            target_positions = self._calc_target_positions(
+                target_signals, weights, quotes, account, strategy
+            )
 
         # 5. 生成调仓指令（先卖后买）
         # score_order 用于买单确定性排序；force_exit 让跌停持仓也能生成卖单
@@ -147,7 +184,7 @@ class RebalanceCalculator:
             account.positions,
             target_positions,
             quotes,
-            score_order=[s.symbol for s in topk_signals]
+            score_order=[s.symbol for s in target_signals]
             if strategy.deterministic_buy_order
             else None,
             force_exit_on_limit_down=strategy.force_exit_on_limit_down,
@@ -160,6 +197,118 @@ class RebalanceCalculator:
             sum(1 for o in orders if o.side == "BUY"),
         )
         return orders
+
+    def _select_topk_dropout(
+        self,
+        topk_signals: list[SignalScore],
+        signals: list[SignalScore],
+        account: SimulationAccount,
+        strategy: StrategyConfig,
+    ) -> tuple[list[SignalScore], bool]:
+        """TopkDropout 目标集选择（对齐回测引擎 TopkDropoutStrategy）。
+
+        返回 (目标信号列表, 是否启用增量模式)。
+        规则：
+        - 无持仓（首日建仓）或关闭增量调仓（n_drop<=0 或 >=topk）→ (完整 topk, False)；
+        - 有持仓：
+          * 剔除：持仓中跌出 topk 的，按分数升序取最低的 n_drop 只卖出；
+          * 新增：topk 中未持仓的，按分数降序取前「剔除数」只买入（持仓数稳定）；
+          * 其余持仓保留，无分数也不动。
+        与 qlib 差异：qlib 用「上一期 topk 选择列表」判剔除，回放用真实持仓，
+        因为成交拒绝/止损后真实持仓与选择列表可能不一致。
+        与回测一致的另一面：止损/跌停卖不掉造成的持仓缺口不会主动补满，
+        只在后续轮换中渐进修复。
+        """
+        held_symbols = [
+            sym
+            for sym, pos in account.positions.items()
+            if int(float(pos.get("volume", 0) or 0)) > 0
+        ]
+        if not held_symbols or not (0 < strategy.n_drop < strategy.topk):
+            return topk_signals, False
+
+        score_map = {s.symbol: s.score for s in signals}
+        topk_set = {s.symbol for s in topk_signals}
+        held_set = set(held_symbols)
+
+        # 剔除：跌出 topk 的持仓，分数最低的 n_drop 只（无分数的排最前）
+        out_of_topk = sorted(
+            (sym for sym in held_symbols if sym not in topk_set),
+            key=lambda sym: score_map.get(sym, float("-inf")),
+        )
+        drop_set = set(out_of_topk[: strategy.n_drop])
+
+        # 新增：topk 中未持仓的，按分数降序取与剔除等量（没有剔除就不买入）
+        add_signals = [
+            s for s in topk_signals if s.symbol not in held_set
+        ][: len(drop_set)]
+
+        # 保留持仓：有分数用分数，无分数记 0（仅影响 score_weighted 权重）
+        sig_date = signals[0].trade_date if signals else date.today()
+        kept_signals = [
+            SignalScore(
+                symbol=sym,
+                score=score_map.get(sym, 0.0),
+                trade_date=sig_date,
+                run_id="rebalance",
+                tenant_id="rebalance",
+                user_id="rebalance",
+            )
+            for sym in held_symbols
+            if sym not in drop_set
+        ]
+
+        logger.info(
+            "RebalanceCalculator: TopkDropout 持仓=%d 剔除=%d 新增=%d 目标=%d",
+            len(held_symbols), len(drop_set), len(add_signals),
+            len(kept_signals) + len(add_signals),
+        )
+        return kept_signals + add_signals, True
+
+    def _calc_dropout_positions(
+        self,
+        target_signals: list[SignalScore],
+        quotes: dict[str, Quote],
+        account: SimulationAccount,
+        strategy: StrategyConfig,
+    ) -> dict[str, int]:
+        """增量调仓的目标持仓：保留股维持现股数，剔除股目标 0（不在目标里即全卖），
+        新增股用剔除持仓腾出的资金（按当前价估算）均分、取整手。"""
+        kept_set = {s.symbol for s in target_signals}
+        positions = account.positions
+        target: dict[str, int] = {}
+
+        # 保留股：目标 = 当前股数（不产生调量单）
+        freed_value = 0.0
+        for sym, pos in positions.items():
+            vol = int(float(pos.get("volume", 0) or 0))
+            if vol <= 0:
+                continue
+            if sym in kept_set:
+                target[sym] = vol
+            else:
+                quote = quotes.get(sym)
+                freed_value += vol * (quote.current_price if quote else 0.0)
+
+        # 新增股：目标集里未持仓的（顺序已按分数降序）
+        held_with_vol = {
+            sym for sym, pos in positions.items()
+            if int(float(pos.get("volume", 0) or 0)) > 0
+        }
+        add_list = [s for s in target_signals if s.symbol not in held_with_vol]
+        if add_list and freed_value > 0:
+            per_value = freed_value / len(add_list)
+            for s in add_list:
+                quote = quotes.get(s.symbol)
+                if not quote or quote.current_price <= 0:
+                    continue
+                qty = (
+                    int(per_value / quote.current_price // strategy.lot_size)
+                    * strategy.lot_size
+                )
+                if qty > 0:
+                    target[s.symbol] = qty
+        return target
 
     def _filter_tradable(
         self,

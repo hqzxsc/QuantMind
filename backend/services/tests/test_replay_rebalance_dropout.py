@@ -1,0 +1,168 @@
+"""回放调仓引擎 TopkDropout 增量调仓测试（对齐回测引擎语义）。
+
+背景：旧实现每期按当日完整 topk 重建目标持仓，分数排名小幅波动就导致
+每期全量轮换（一天卖几十只）。重构后与回测引擎 TopkDropoutStrategy 对齐：
+每期最多轮换 n_drop 只，且支持调仓周期（rebalance_days）。
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+from backend.services.trade.simulation.services.rebalance_calculator import (
+    Quote,
+    RebalanceCalculator,
+    SimulationAccount,
+    StrategyConfig,
+)
+from backend.services.trade.simulation.services.signal_loader import SignalScore
+
+TD = date(2026, 3, 4)
+
+
+def _sig(symbol: str, score: float) -> SignalScore:
+    return SignalScore(
+        symbol=symbol,
+        score=score,
+        trade_date=TD,
+        run_id="t",
+        tenant_id="t",
+        user_id="t",
+    )
+
+
+def _quote(symbol: str, price: float = 10.0) -> Quote:
+    return Quote(symbol=symbol, current_price=price)
+
+
+def _account(held: dict[str, int], cash: float = 0.0) -> SimulationAccount:
+    positions = {sym: {"volume": vol} for sym, vol in held.items() if vol > 0}
+    market_value = sum(v * 10.0 for v in held.values())
+    return SimulationAccount(
+        cash=cash, total_asset=cash + market_value, positions=positions
+    )
+
+
+def _orders_by_side(orders):
+    sells = sorted(o.symbol for o in orders if o.side == "SELL")
+    buys = sorted(o.symbol for o in orders if o.side == "BUY")
+    return sells, buys
+
+
+class TestTopkDropout:
+    def test_first_day_buys_full_topk(self):
+        """无持仓（首日）→ 全量买入 topk，与回测首日建仓一致。"""
+        calc = RebalanceCalculator()
+        signals = [_sig("A", 0.9), _sig("B", 0.8), _sig("C", 0.7), _sig("D", 0.6)]
+        strategy = StrategyConfig(topk=3, n_drop=1, max_position_pct=1.0)
+        account = _account({}, cash=1_000_000)
+        quotes = {s.symbol: _quote(s.symbol) for s in signals}
+
+        orders = calc.calculate(signals, strategy, quotes, account)
+
+        sells, buys = _orders_by_side(orders)
+        assert sells == []
+        assert buys == ["A", "B", "C"]
+
+    def test_dropout_swaps_only_n_drop(self):
+        """持仓部分跌出 topk → 只卖分数最低的 n_drop 只，只买等量新股。"""
+        calc = RebalanceCalculator()
+        # 持仓 A/B/C；今日 top3 = A/B/D（C 跌出，D 新进）
+        signals = [_sig("A", 0.9), _sig("B", 0.8), _sig("D", 0.7), _sig("C", 0.2)]
+        strategy = StrategyConfig(topk=3, n_drop=1, max_position_pct=1.0)
+        account = _account({"A": 100, "B": 100, "C": 100}, cash=100_000)
+        quotes = {s.symbol: _quote(s.symbol) for s in signals}
+
+        orders = calc.calculate(signals, strategy, quotes, account, day_index=5)
+
+        sells, buys = _orders_by_side(orders)
+        assert sells == ["C"]
+        assert buys == ["D"]
+
+    def test_all_held_still_in_topk_no_orders(self):
+        """持仓全部仍在 topk 内 → 无轮换，不产生任何指令。"""
+        calc = RebalanceCalculator()
+        signals = [_sig("A", 0.9), _sig("B", 0.8), _sig("C", 0.7), _sig("D", 0.6)]
+        strategy = StrategyConfig(topk=3, n_drop=1, max_position_pct=1.0)
+        account = _account({"A": 100, "B": 100, "C": 100}, cash=100_000)
+        quotes = {s.symbol: _quote(s.symbol) for s in signals}
+
+        orders = calc.calculate(signals, strategy, quotes, account, day_index=3)
+
+        assert orders == []
+
+    def test_drop_capped_at_n_drop(self):
+        """持仓全部跌出 topk 也只卖分数最低的 n_drop 只（渐进轮换）。"""
+        calc = RebalanceCalculator()
+        # 持仓 X/Y/Z 全部跌出 top3（A/B/C）
+        signals = [
+            _sig("A", 0.9), _sig("B", 0.8), _sig("C", 0.7),
+            _sig("X", 0.3), _sig("Z", 0.2), _sig("Y", 0.1),
+        ]
+        strategy = StrategyConfig(topk=3, n_drop=2, max_position_pct=1.0)
+        account = _account({"X": 100, "Y": 100, "Z": 100}, cash=100_000)
+        quotes = {s.symbol: _quote(s.symbol) for s in signals}
+
+        orders = calc.calculate(signals, strategy, quotes, account, day_index=1)
+
+        sells, buys = _orders_by_side(orders)
+        assert sells == ["Y", "Z"]  # 分数最低的两只
+        assert buys == ["A", "B"]   # 分数最高的两只新股
+
+    def test_n_drop_zero_full_rebalance(self):
+        """n_drop=0 → 既有全量调仓行为：跌出 topk 的清仓，保留股也重新配权。"""
+        calc = RebalanceCalculator()
+        signals = [_sig("A", 0.9), _sig("B", 0.8), _sig("D", 0.7), _sig("C", 0.2)]
+        strategy = StrategyConfig(topk=3, n_drop=0, max_position_pct=1.0)
+        account = _account({"A": 100, "B": 100, "C": 100}, cash=100_000)
+        quotes = {s.symbol: _quote(s.symbol) for s in signals}
+
+        orders = calc.calculate(signals, strategy, quotes, account, day_index=5)
+
+        sells, buys = _orders_by_side(orders)
+        assert sells == ["C"]
+        assert buys == ["A", "B", "D"]  # 全量模式下保留股也补到目标权重
+
+    def test_n_drop_ge_topk_degenerates_to_full(self):
+        """n_drop >= topk → 退化全量调仓。"""
+        calc = RebalanceCalculator()
+        signals = [
+            _sig("A", 0.9), _sig("B", 0.8), _sig("C", 0.7),
+            _sig("X", 0.3), _sig("Y", 0.1),
+        ]
+        strategy = StrategyConfig(topk=3, n_drop=3, max_position_pct=1.0)
+        account = _account({"X": 100, "Y": 100}, cash=100_000)
+        quotes = {s.symbol: _quote(s.symbol) for s in signals}
+
+        orders = calc.calculate(signals, strategy, quotes, account, day_index=2)
+
+        sells, buys = _orders_by_side(orders)
+        assert sells == ["X", "Y"]
+        assert buys == ["A", "B", "C"]
+
+
+class TestRebalanceCycle:
+    def test_non_rebalance_day_no_orders(self):
+        """rebalance_days=3：day_index=1/2 非调仓日，不产生任何调仓单。"""
+        calc = RebalanceCalculator()
+        signals = [_sig("A", 0.9), _sig("B", 0.8)]
+        strategy = StrategyConfig(topk=2, n_drop=0, rebalance_days=3)
+        account = _account({}, cash=1_000_000)
+        quotes = {s.symbol: _quote(s.symbol) for s in signals}
+
+        for day_index in (1, 2, 4, 5):
+            assert calc.calculate(signals, strategy, quotes, account, day_index) == []
+
+    def test_rebalance_day_generates_orders(self):
+        """rebalance_days=3：day_index=0/3/6 是调仓日。"""
+        calc = RebalanceCalculator()
+        signals = [_sig("A", 0.9), _sig("B", 0.8)]
+        strategy = StrategyConfig(
+            topk=2, n_drop=0, rebalance_days=3, max_position_pct=1.0
+        )
+        account = _account({}, cash=1_000_000)
+        quotes = {s.symbol: _quote(s.symbol) for s in signals}
+
+        for day_index in (0, 3, 6):
+            orders = calc.calculate(signals, strategy, quotes, account, day_index)
+            assert len([o for o in orders if o.side == "BUY"]) == 2

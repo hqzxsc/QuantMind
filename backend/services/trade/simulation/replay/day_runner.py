@@ -125,6 +125,7 @@ class ReplayDayRunner:
         approved_orders: list[dict[str, Any]] | None = None,
         initial_cash: float = 0.0,
         match_config: MatchConfig | None = None,
+        day_index: int = 0,
     ) -> DayResult:
         result = DayResult(trade_date=trade_date)
 
@@ -147,13 +148,14 @@ class ReplayDayRunner:
             )
             account_data = await accounts.get() or {}
 
-        # 4. 信号 → 交易指令
+        # 4. 信号 → 交易指令（day_index 用于调仓周期闸门，首日必建仓）
         orders = self._build_orders(
             signals=signals,
             bars=bars,
             account_data=account_data,
             strategy_params=strategy_params or {},
             approved_orders=approved_orders,
+            day_index=day_index,
         )
 
         # 5. 撮合：先卖后买
@@ -378,6 +380,7 @@ class ReplayDayRunner:
         accounts: ReplayAccountManager,
         strategy_params: dict[str, Any] | None = None,
         stop_loss_pct: float | None = None,
+        day_index: int = 0,
     ) -> dict[str, Any]:
         """生成当日提案，不撮合不落库。
 
@@ -411,6 +414,7 @@ class ReplayDayRunner:
             account_data=sim_account,
             strategy_params=strategy_params or {},
             approved_orders=None,
+            day_index=day_index,
         )
         held_now = sim_account.get("positions") or {}
         for o in sorted(orders, key=lambda x: 0 if x.side == "SELL" else 1):
@@ -538,6 +542,7 @@ class ReplayDayRunner:
         account_data: dict[str, Any],
         strategy_params: dict[str, Any],
         approved_orders: list[dict[str, Any]] | None,
+        day_index: int = 0,
     ) -> list[Order]:
         # 手动模式：只执行用户勾选的委托
         if approved_orders is not None:
@@ -583,6 +588,10 @@ class ReplayDayRunner:
             min_score=float(strategy_params.get("min_score", 0.0)),
             max_position_pct=float(strategy_params.get("max_position_pct", 0.15)),
             lot_size=int(strategy_params.get("lot_size", 100)),
+            # TopkDropout 增量调仓（对齐回测引擎）：默认每期只轮换 5 只，
+            # 避免分数排名波动导致每期全量轮换（换手/费用失控）
+            n_drop=int(strategy_params.get("n_drop", 5)),
+            rebalance_days=max(1, int(strategy_params.get("rebalance_days", 1))),
             # 回放全量启用 R2 修正（实盘沿用默认 False，行为不变）
             enable_min_score="min_score" in strategy_params,
             renormalize_weights=bool(
@@ -601,7 +610,8 @@ class ReplayDayRunner:
             positions=account_data.get("positions", {}) or {},
         )
         return self._calculator.calculate(
-            signals=signals, strategy=config, quotes=quotes, account=account
+            signals=signals, strategy=config, quotes=quotes, account=account,
+            day_index=day_index,
         )
 
     async def _execute(

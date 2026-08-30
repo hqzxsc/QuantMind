@@ -572,6 +572,38 @@ class InferenceRouterService:
         result.model_switch_used = bool(execution_meta["model_switch_used"])
         result.model_switch_reason = str(execution_meta["model_switch_reason"])
 
+        # 两套推理数据一致性：用户模型全市场推理成功后，把真实分数回写
+        # 该模型目录的 pred.parquet（coverage 缺口判定与个股分数曲线的
+        # 数据源）。单股推理（symbols 非空，仅个别标的）与 alpha158 兜底
+        # 不回写，避免残缺日期污染历史分数序列。
+        if (
+            result.success
+            and not result.fallback_used
+            and explicit_storage_dir
+            and symbols is None
+            and getattr(result, "signals", None)
+        ):
+            try:
+                from backend.services.engine.inference.pred_merge import (
+                    merge_signals_into_pred,
+                )
+
+                pred_file = Path(primary_dir) / "pred.parquet"
+                merged = merge_signals_into_pred(
+                    pred_file, [(str(date), list(result.signals))]
+                )
+                if merged:
+                    logger.info(
+                        "[InferenceRouter] 已回写 %s 行分数到 %s",
+                        merged,
+                        pred_file,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[InferenceRouter] pred.parquet 回写失败（信号已落库，忽略）: %s",
+                    exc,
+                )
+
         # 仅共享系统链路保留最终 alpha158 补位；独立模型不参与模型间 fallback。
         if (
             not independent_execution

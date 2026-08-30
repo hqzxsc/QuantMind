@@ -104,6 +104,9 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
 
   const gapCount = coverage?.gap_dates?.length ?? 0;
   const isUpToDate = coverage?.is_up_to_date ?? (gapCount === 0 && coverage?.max_date);
+  // estimated: pred.parquet 缺失时后端用 QuantDB 因子可支持范围兜底，
+  // 区间是"可补全范围"而非真实推理覆盖
+  const estimated = Boolean((coverage as any)?.estimated);
 
   const handleBackfill = () => {
     Modal.confirm({
@@ -176,6 +179,7 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
             children: <div className="text-xs text-slate-600 leading-relaxed space-y-1">
               <div>覆盖基于 `pred.parquet`（`storage_path/pred.parquet`）的 `trade_date` 去重，与个股终端历史推理同源；`engine_signal_scores` 为 `completed` 落库。</div>
               <div>补全按交易日逐日跑 `inference.py` 并追加到 `pred.parquet`，目标至 `latest_trade_date`（`SSE` 日历）。</div>
+              <div>`pred.parquet` 缺失时区间显示为 QuantDB 因子可支持范围（预估口径，蓝色标记），补全后才生成真实覆盖。</div>
             </div>,
           }]}
         />
@@ -183,9 +187,11 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
 
       <div className="grid grid-cols-3 gap-3">
         <Card size="small" className="rounded-2xl text-center">
-          <div className="text-[11px] text-slate-400 font-bold">覆盖区间</div>
+          <div className="text-[11px] text-slate-400 font-bold">{estimated ? '可支持区间（预估）' : '覆盖区间'}</div>
           <div className="text-xs font-mono font-black text-slate-800 mt-1">{coverage?.min_date ?? '—'} ~ {coverage?.max_date ?? '—'}</div>
-          <div className="text-[11px] text-slate-400">共 {coverage?.count ?? 0} 个交易日</div>
+          <div className={`text-[11px] ${estimated ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>
+            {estimated ? '尚无真实推理记录，补全后生成' : `共 ${coverage?.count ?? 0} 个交易日`}
+          </div>
         </Card>
         <Card size="small" className="rounded-2xl text-center">
           <div className="text-[11px] text-slate-400 font-bold">最新交易日</div>
@@ -233,7 +239,7 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
           return (
             <div className="space-y-4">
               <div className="flex gap-2 text-[10px] flex-wrap">
-                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-500/30 border border-emerald-200" /> 已覆盖</span>
+                <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded ${estimated ? 'bg-sky-500/30 border border-sky-200' : 'bg-emerald-500/30 border border-emerald-200'}`} /> {estimated ? '可补全范围' : '已覆盖'}</span>
                 <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-400/30 border border-amber-200" /> 待补缺口</span>
                 <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 border border-slate-200" /> 未来</span>
               </div>
@@ -264,7 +270,9 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
                             : isGap
                               ? 'bg-amber-400/30 text-amber-700 border-amber-200 font-bold'
                               : isCovered
-                                ? 'bg-emerald-500/30 text-emerald-700 border-emerald-200'
+                                ? (estimated
+                                    ? 'bg-sky-500/30 text-sky-700 border-sky-200'
+                                    : 'bg-emerald-500/30 text-emerald-700 border-emerald-200')
                                 : !isTrading
                                   ? 'bg-slate-50 text-slate-300 border-slate-100'
                                   : 'bg-white text-slate-500 border-slate-100';

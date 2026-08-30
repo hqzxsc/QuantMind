@@ -1189,59 +1189,17 @@ def _merge_runner_signals_into_pred(
 ) -> int:
     """把 runner 真实推理分数合并进 pred.parquet（coverage/分数曲线的数据源）。
 
-    runner.execute 只写 engine_signal_scores（symbol 为纯数字），而推理覆盖
-    与个股分数曲线读 pred.parquet（symbol 为 SH/SZ 前缀式）；若不回写，
-    补全"成功"后 coverage 缺口永远不会消除。循环中累积、此处一次性合并，
-    避免 160MB+ 的 pred.parquet 被逐日全量重写。
+    实现移至共享模块 backend.services.engine.inference.pred_merge，
+    供一键补全（API 层）与每日自动推理（engine 层）两条链路共用，
+    保持两套推理数据一致。
     """
-    import duckdb
-    import pandas as pd
+    from backend.services.engine.inference.pred_merge import merge_signals_into_pred
 
-    from backend.shared.stock_utils import StockCodeUtil
-
-    import re
-
-    rows = []
-    for d, signals in signals_by_date:
-        for s in signals or []:
-            sym = StockCodeUtil.to_prefix(str(s.get("symbol", "")))
-            if not re.match(r"^(SH|SZ|BJ)\d{6}$", sym):
-                continue
-            try:
-                score = float(s.get("score"))
-            except (TypeError, ValueError):
-                continue
-            rows.append(
-                {
-                    "symbol": sym,
-                    "trade_date": pd.Timestamp(d),
-                    # 推理日无真实标签；用 NaN 保持 label 列 float64 类型不变
-                    "label": float("nan"),
-                    "pred": score,
-                    "split": "test",
-                }
-            )
-    if not rows:
-        return 0
-    new_df = pd.DataFrame(rows)
-    con = duckdb.connect()
-    try:
-        if parquet_file.is_file():
-            existing = con.execute(
-                f"SELECT * FROM read_parquet('{str(parquet_file)}')"
-            ).df()
-            combined = pd.concat([existing, new_df], ignore_index=True)
-        else:
-            combined = new_df
-        combined = combined.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
-        combined = combined.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
-        combined.to_parquet(str(parquet_file), index=False)
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
-    return len(new_df)
+    # 补全场景允许在 pred.parquet 缺失时以真实分数创建（多日连续补全
+    # 可形成完整序列）
+    return merge_signals_into_pred(
+        Path(parquet_file), signals_by_date, create_if_missing=True
+    )
 
 
 def _latest_trading_date() -> date:
@@ -1383,7 +1341,10 @@ async def get_inference_coverage(
                 "gap_dates": gap,
                 "latest_trade_date": str(latest),
                 "data_cutoff_date": str(gap_end),
-                "is_up_to_date": len(gap) == 0,
+                # 非真实推理记录：min/max/count 是 QuantDB 因子可支持范围，
+                # 不是该模型已推理的覆盖；estimated=True 供前端区分展示
+                "estimated": True,
+                "is_up_to_date": False,
                 "source": "quantdb_fallback",
             }
         return {
@@ -3855,6 +3816,9 @@ def _read_stock_pred_history(
                     # 先全市场截面算 RANK 再过滤该股（过滤在窗口前做会使排名恒为 1）；
                     # regexp_extract 抽连续数字段，兼容 SH600000/600000.SH/sh600000
                     # （注：duckdb 的 regexp_replace 默认只替换首个匹配，不能用于去前缀）
+                    # 排名口径与 A 套（engine_signal_scores）对齐：剔除 B 股
+                    # （SH900/SZ200）、北交所（BJ）、指数（SH000/SZ399），两套
+                    # 数据源切换时排名不再跳变
                     rows = con.execute(
                         f"""
                         WITH d AS (
@@ -3868,6 +3832,13 @@ def _read_stock_pred_history(
                             FROM read_parquet('{str(parquet_file)}')
                             WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
                               AND CAST({date_col} AS DATE) >= CAST(? AS DATE)
+                              AND NOT (
+                                  UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SH000%'
+                                  OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SZ399%'
+                                  OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SH900%'
+                                  OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SZ200%'
+                                  OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'BJ%'
+                              )
                         )
                         SELECT td, sc, rk, tot FROM d
                         WHERE code6 = ? ORDER BY td DESC
@@ -4023,7 +3994,10 @@ async def get_stock_inference_history(
     # 按交易日去重（同一天多批次只取最新 created_at 的一条）
     by_date: dict[str, dict[str, Any]] = {}
     for row in rows:
-        d = str(row["trade_date"])
+        # 日期口径统一为数据日 T（与 pred.parquet 一致）：engine_signal_scores
+        # .trade_date 是信号生效日 T+1，run 记录里的 data_trade_date 才是 T。
+        # 两套数据源切换（pred.parquet 主源 ↔ 批次回退）时曲线不再错位一天。
+        d = str(row.get("data_trade_date") or row["trade_date"])[:10]
         if d not in by_date:
             by_date[d] = dict(row)
             by_date[d]["trade_date"] = d

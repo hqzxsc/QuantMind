@@ -6,7 +6,7 @@ import {
   Copy, Sparkles, RefreshCcw, Target, Upload
 } from 'lucide-react';
 import {
-  Button, Space, Tag, Typography, message, Card, Select, Modal, Alert
+  Button, Space, Tag, Typography, message, Card, Select, Modal, Alert, Tooltip
 } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { clsx } from 'clsx';
@@ -191,18 +191,22 @@ export const ModelTrainingPage: React.FC = () => {
   const [trainingNodes, setTrainingNodes] = useState<any[]>([]);
   const [selectedNode, setSelectedNode] = useState<string>('local');
   const [nodesLoading, setNodesLoading] = useState(false);
-  // 训练时长预算（分钟）。后端编排器默认 120 分钟；DL 模型（GRU/LSTM 等）
-  // 在 CPU 上每 epoch ~10 分钟，200 epochs 需要十几个小时，必须允许用户调高。
-  const [maxTimeMinutes, setMaxTimeMinutes] = useState<number>(720);
+  // 训练时长预算（分钟）。前端已移除配置入口，固定透传 720（宽于编排器默认 120，
+  // 为 GRU/LSTM 等 DL 模型在 CPU 上的长训练留出余量），如需调整改这里。
+  const maxTimeMinutes = 720;
   // 因子筛选开关与阈值（默认开启，后端默认 ic_icir: top-80 / |IC|≥0.01 / |ICIR|≥0.15 / 相关性<0.9）
   const [factorFilter, setFactorFilter] = useState<TrainingFactorFilterConfig>({ ...DEFAULT_FACTOR_FILTER });
 
   const timersRef = useRef<number[]>([]);
   const pollTimerRef = useRef<number | null>(null);
+  const pollFailuresRef = useRef(0);
   const logsRef = useRef<string[]>([]);
   const catalogSuggestionAppliedRef = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const importedFeaturesRef = useRef<string[] | null>(null);
+  // 草稿恢复的特征勾选：目录异步加载完成前 HYDRATE 已写入表单，
+  // 用该 ref 把草稿勾选「跨过」目录加载的默认值重置，避免恢复被覆盖。
+  const restoredDraftFeaturesRef = useRef<string[] | null>(null);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importingConfig, setImportingConfig] = useState(false);
 
@@ -315,10 +319,17 @@ export const ModelTrainingPage: React.FC = () => {
             : null,
         );
         const importedFeatures = importedFeaturesRef.current;
+        const restoredFeatures = restoredDraftFeaturesRef.current;
         if (importedFeatures) {
           const availableKeys = new Set(dynamicCats.flatMap((category) => category.features.map((feature) => feature.key)));
           dispatch({ type: 'SET_FEATURES', payload: importedFeatures.filter((key) => availableKeys.has(key)) });
           importedFeaturesRef.current = null;
+          restoredDraftFeaturesRef.current = null;
+        } else if (restoredFeatures) {
+          // 目录加载晚于草稿恢复：保留草稿里勾选且在当前目录可用的特征，而非重置为默认勾选
+          const availableKeys = new Set(dynamicCats.flatMap((category) => category.features.map((feature) => feature.key)));
+          dispatch({ type: 'SET_FEATURES', payload: restoredFeatures.filter((key) => availableKeys.has(key)) });
+          restoredDraftFeaturesRef.current = null;
         } else {
           dispatch({ type: 'SET_FEATURES', payload: resolveDefaultSelectedFeatures(dynamicCats, currentMarket) });
         }
@@ -355,6 +366,9 @@ export const ModelTrainingPage: React.FC = () => {
     try {
       const parsed = JSON.parse(saved) as TrainingDraft;
       dispatch({ type: 'HYDRATE', payload: parsed });
+      if (Array.isArray(parsed.selectedFeatures)) {
+        restoredDraftFeaturesRef.current = parsed.selectedFeatures;
+      }
       if (!draftRestoreNoticeShown) {
         draftRestoreNoticeShown = true;
         message.success('已恢复上次训练草稿');
@@ -433,44 +447,91 @@ export const ModelTrainingPage: React.FC = () => {
       }
       const { runId } = await modelTrainingService.runTraining(payload);
       pushLog(`提交成功，Run ID: ${runId}`);
-
-      pollTimerRef.current = window.setInterval(async () => {
-        const run = await modelTrainingService.getTrainingRun(runId);
-        setBackendRunStatus(run.status || '');
-        if (run.logs) {
-           run.logs.split('\n').filter(Boolean).forEach(line => {
-             if (!logsRef.current.some(l => l.includes(line))) pushLog(line);
-           });
-        }
-        if (run.status === 'running') setProgress(Math.max(run.progress || 20, 20));
-
-        if (run.isCompleted) {
-          clearTimers();
-          if (run.status === 'failed') {
-            const errorMsg = (run.result as any)?.error || '训练失败';
-            setResultError(errorMsg);
-            setTrainingStatus('draft');
-          } else {
-            const parsed = parseTrainingResult(requestPreview, runId, run.result);
-            if (parsed) {
-              setResult(parsed);
-              setResultError('');
-              setTrainingStatus('completed');
-              setProgress(100);
-              setCurrentStep(4);
-              message.success('训练完成');
-            } else {
-              setResultError('结果解析失败');
-              setTrainingStatus('draft');
-            }
-          }
-        }
-      }, 3000);
+      startPolling(runId);
     } catch (err: any) {
       message.error(`提交失败: ${err.message}`);
       setTrainingStatus('draft');
     }
   };
+
+  // 统一轮询训练进度：新任务 / 切页恢复共用同一套逻辑。
+  // 网络抖动或后端重启时静默重试；连续失败过久才停止并提示，避免进度条无声卡死。
+  const startPolling = async (runId: string) => {
+    clearTimers();
+    pollFailuresRef.current = 0;
+    pollTimerRef.current = window.setInterval(async () => {
+      let run;
+      try {
+        run = await modelTrainingService.getTrainingRun(runId);
+        pollFailuresRef.current = 0;
+      } catch {
+        pollFailuresRef.current += 1;
+        if (pollFailuresRef.current === 5) {
+          pushLog('连续多次获取训练状态失败，仍在重试…（后端可能正在重启）');
+        }
+        if (pollFailuresRef.current >= 20) {
+          clearTimers();
+          message.error('已连续 1 分钟无法获取训练状态，停止轮询。请检查后端服务后重新进入本页恢复。');
+        }
+        return;
+      }
+      setBackendRunStatus(run.status || '');
+      if (run.logs) {
+         run.logs.split('\n').filter(Boolean).forEach(line => {
+           if (!logsRef.current.some(l => l.includes(line))) pushLog(line);
+         });
+      }
+      if (run.status === 'running') setProgress(Math.max(run.progress || 20, 20));
+
+      if (run.isCompleted) {
+        clearTimers();
+        if (run.status === 'failed') {
+          const errorMsg = (run.result as any)?.error || '训练失败';
+          setResultError(errorMsg);
+          setTrainingStatus('draft');
+        } else {
+          const parsed = parseTrainingResult(requestPreview, runId, run.result);
+          if (parsed) {
+            setResult(parsed);
+            setResultError('');
+            setTrainingStatus('completed');
+            setProgress(100);
+            setCurrentStep(4);
+            message.success('训练完成');
+          } else {
+            setResultError('结果解析失败');
+            setTrainingStatus('draft');
+          }
+        }
+      }
+    }, 3000);
+  };
+
+  // 页面挂载时恢复「切页前的活跃训练」：有进行中/最近任务则继续轮询，进度不丢
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const run = await modelTrainingService.getActiveTrainingRun();
+      if (!active || !run) return;
+      // 仅恢复尚未完成的任务；已完成/失败的任务保留默认数据卡片
+      if (run.isCompleted) return;
+      setBackendRunStatus(run.status || '');
+      if (run.logs) {
+        run.logs.split('\n').filter(Boolean).forEach(line => {
+          if (!logsRef.current.some(l => l.includes(line))) pushLog(line);
+        });
+      }
+      if (run.status === 'running') setProgress(Math.max(run.progress || 20, 20));
+      setTrainingStatus('running');
+      setExecutionStage('训练进行中（已从上次会话恢复）');
+      startPolling(run.runId);
+    })();
+    return () => {
+      active = false;
+    };
+    // 仅在挂载时执行一次，避免因依赖项变化反复触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const stepAction = () => {
     if (currentStep < 3) {
@@ -658,6 +719,48 @@ export const ModelTrainingPage: React.FC = () => {
             </div>
             <div className="p-4 border-t border-gray-100 space-y-3">
                <div className="rounded-xl bg-slate-50 p-3 border border-slate-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[10px] uppercase font-bold text-slate-400">训练执行配置</div>
+                    <button
+                      type="button"
+                      onClick={() => loadNodes()}
+                      disabled={nodesLoading}
+                      className="text-[10px] text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors disabled:opacity-50"
+                      title="刷新节点就绪状态"
+                    >
+                      <RefreshCcw className={clsx('w-2.5 h-2.5', nodesLoading && 'animate-spin')} />
+                      <span>{nodesLoading ? '检测中' : '刷新'}</span>
+                    </button>
+                  </div>
+                  <Select
+                    size="small"
+                    className="w-full"
+                    value={selectedNode}
+                    loading={nodesLoading && trainingNodes.length === 0}
+                    onChange={setSelectedNode}
+                    placeholder="选择训练节点"
+                    options={trainingNodes.map((node) => ({
+                      value: node.id,
+                      label: `${node.type === 'remote' ? '☁️' : '💻'} ${node.name} · ${node.readiness_label || (node.online ? '就绪' : '离线')}`,
+                    }))}
+                  />
+                  {selectedNodeObj && (
+                    <div className="mt-2 text-[10px] text-slate-500 truncate">
+                      {selectedNodeObj.status_desc || selectedNodeObj.gpu_summary || (selectedNodeObj.type === 'remote' ? '远程 GPU 节点' : '本地 Docker 节点')}
+                    </div>
+                  )}
+                  {selectedNodeObj && ['offline', 'warning'].includes(selectedNodeObj.readiness) && (
+                    <details className="mt-2 text-[10px] text-amber-700">
+                      <summary className="cursor-pointer select-none hover:text-amber-900">查看节点提示</summary>
+                      <div className="mt-1.5 rounded bg-amber-50 p-2 leading-relaxed">
+                        {selectedNodeObj.readiness === 'offline'
+                          ? selectedNodeObj.error || '请先在云服务商控制台开机或检查连接配置。'
+                          : <>本机训练镜像尚未就绪。<code className="mt-1 block select-all rounded bg-amber-100 px-1 py-0.5 font-mono text-[9px]">docker build -f docker/Dockerfile.trainer -t quantmind-trainer:latest .</code></>}
+                      </div>
+                    </details>
+                  )}
+               </div>
+               <div className="rounded-xl bg-slate-50 p-3 border border-slate-100">
                   <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">当前配置摘要</div>
                   <div className="text-xs font-semibold text-slate-700">T+{target.horizonDays} · {target.mode === 'classification' ? '分类' : '回归'}</div>
                   <div className="text-[10px] text-slate-400 mt-1 truncate">{labelFormula}</div>
@@ -702,9 +805,15 @@ export const ModelTrainingPage: React.FC = () => {
                       />
                       {factorCatalogVersion
                         ? <Tag color="blue">目录版本 {factorCatalogVersion}</Tag>
-                        : <Tag color={dataCoverage?.ready ? 'default' : 'warning'}>
-                            {factorSources.find((item) => item.id === factorSource)?.reason || '尚未发布因子目录'}
-                          </Tag>}
+                        : <Tooltip title="前往后台「训练服务 → 模型训练数据集」执行『刷新字段』数据扫描">
+                            <Tag
+                              color={dataCoverage?.ready ? 'default' : 'warning'}
+                              className="cursor-pointer hover:opacity-80"
+                              onClick={() => navigate('/admin/training-datasets')}
+                            >
+                              {factorSources.find((item) => item.id === factorSource)?.reason || '尚未发布因子目录'} →
+                            </Tag>
+                          </Tooltip>}
                       </div>
                     )}
                     <Space className="ml-auto shrink-0">
@@ -747,10 +856,10 @@ export const ModelTrainingPage: React.FC = () => {
 
                 <AnimatePresence mode="wait">
                   <motion.div key={currentStep} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
-                    {currentStep === 0 && <FeatureSelector categories={featureCategories} selectedFeatures={selectedFeatures} onChange={(f) => dispatch({ type: 'SET_FEATURES', payload: f })} loading={featureCatalogLoading} />}
-                    {currentStep === 1 && <TrainingTargetConfig target={target} timePeriods={timePeriods} onTargetChange={(t) => dispatch({ type: 'SET_TARGET', payload: t })} onTimeChange={(k, v) => dispatch({ type: 'SET_TIME', key: k, value: v })} dataCoverage={dataCoverage} wfa={wfaConfig} onWfaChange={(w) => dispatch({ type: 'SET_WFA', payload: w })} trainingNodes={trainingNodes} selectedNode={selectedNode} onNodeChange={setSelectedNode} nodesLoading={nodesLoading} onRefreshNodes={() => loadNodes()} maxTimeMinutes={maxTimeMinutes} onMaxTimeChange={setMaxTimeMinutes} factorFilter={factorFilter} onFactorFilterChange={setFactorFilter} />}
-                    {currentStep === 2 && <ParameterConfig params={params} context={context} onParamsChange={(p) => dispatch({ type: 'SET_PARAMS', payload: p })} onContextChange={(c) => dispatch({ type: 'SET_CONTEXT', payload: c })} displayName={displayName} onDisplayNameChange={(n, m) => dispatch({ type: 'SET_DISPLAY_NAME', payload: { name: n, mode: m } })} autoDisplayName={autoDisplayName} market={currentMarket} />}
-                    {currentStep === 3 && <TrainingConsole trainingStatus={trainingStatus} executionStage={executionStage} progress={progress} logs={logs} backendRunStatus={backendRunStatus} result={result} requestPreview={requestPreview} totalDays={totalDays} trainDays={trainDays} valDays={valDays} testDays={testDays} target={target} onGoToResult={() => setCurrentStep(4)} />}
+                    {currentStep === 0 && <FeatureSelector categories={featureCategories} selectedFeatures={selectedFeatures} onChange={(f) => dispatch({ type: 'SET_FEATURES', payload: f })} loading={featureCatalogLoading} onGuide={() => navigate('/admin/training-datasets')} />}
+                    {currentStep === 1 && <TrainingTargetConfig target={target} timePeriods={timePeriods} onTargetChange={(t) => dispatch({ type: 'SET_TARGET', payload: t })} onTimeChange={(k, v) => dispatch({ type: 'SET_TIME', key: k, value: v })} dataCoverage={dataCoverage} factorFilter={factorFilter} onFactorFilterChange={setFactorFilter} />}
+                    {currentStep === 2 && <ParameterConfig params={params} context={context} onParamsChange={(p) => dispatch({ type: 'SET_PARAMS', payload: p })} onContextChange={(c) => dispatch({ type: 'SET_CONTEXT', payload: c })} displayName={displayName} onDisplayNameChange={(n, m) => dispatch({ type: 'SET_DISPLAY_NAME', payload: { name: n, mode: m } })} autoDisplayName={autoDisplayName} market={currentMarket} target={target} onTargetChange={(t) => dispatch({ type: 'SET_TARGET', payload: t })} wfa={wfaConfig} onWfaChange={(w) => dispatch({ type: 'SET_WFA', payload: w })} />}
+                    {currentStep === 3 && <TrainingConsole trainingStatus={trainingStatus} executionStage={executionStage} progress={progress} logs={logs} backendRunStatus={backendRunStatus} result={result} requestPreview={requestPreview} totalDays={totalDays} trainDays={trainDays} valDays={valDays} testDays={testDays} target={target} factorFilter={factorFilter} onGoToResult={() => setCurrentStep(4)} />}
                     {currentStep === 4 && <TrainingResultView result={result} resultError={resultError} settingDefaultModel={settingDefaultModel} onSetDefaultModel={handleSetDefaultModel} onExportConfig={handleExportConfig} trainingStatus={trainingStatus} />}
                   </motion.div>
                 </AnimatePresence>

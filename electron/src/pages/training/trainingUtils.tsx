@@ -1273,8 +1273,6 @@ export const parseTrainingResult = (
       .filter(Boolean)
     : [];
 
-  if (artifacts.length === 0) return null;
-
   const metadata = rawResult.metadata || {};
   const summary = rawResult.summary || {};
   const rawRegistration = rawResult.model_registration || {};

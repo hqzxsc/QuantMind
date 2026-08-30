@@ -1,9 +1,12 @@
 import React from 'react';
 import { Card, Divider, Input, Button, Row, Col, InputNumber, Select, Alert, Typography, Tag, Checkbox, Switch, Tooltip } from 'antd';
 import { Settings2, MonitorPlay, TreePine, Cpu, Ruler, AlertTriangle } from 'lucide-react';
+import { clsx } from 'clsx';
 import {
   TrainingParams,
   TrainingContext,
+  TrainingTarget,
+  WfaConfig,
   DealPrice,
   ModelType,
   ModelCategory,
@@ -51,6 +54,10 @@ interface ParameterConfigProps {
   onDisplayNameChange: (name: string, mode: 'auto' | 'manual') => void;
   autoDisplayName: string;
   market?: AppMarket;
+  target: TrainingTarget;
+  onTargetChange: (target: TrainingTarget) => void;
+  wfa?: WfaConfig;
+  onWfaChange?: (wfa: WfaConfig) => void;
 }
 
 const SectionHeader: React.FC<{ title: string; desc: string; icon?: React.ReactNode }> = ({ title, desc, icon }) => (
@@ -78,8 +85,15 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
   onDisplayNameChange,
   autoDisplayName,
   market = 'CN',
+  target,
+  onTargetChange,
+  wfa,
+  onWfaChange,
 }) => {
   const benchmarkOptions = MARKET_BENCHMARKS[market] || MARKET_BENCHMARKS.CN;
+  const isMultiHorizon = (target.horizonDaysList?.length ?? 0) >= 2;
+  const isSingleLgb = params.model_types.length === 1 && params.model_type === 'lightgbm';
+  const quantileDisabled = market !== 'CN' || !isSingleLgb || isMultiHorizon;
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
       <Card className="rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
@@ -191,25 +205,7 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                   })}
                 </div>
               )}
-              <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-700">收益率分位推理（P10 / P50 / P90）</div>
-                    <div className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                      训练三个 LightGBM 分位模型并做验证集校准。P50 保持作为交易信号；区间仅用于个股推理展示。
-                    </div>
-                  </div>
-                  <Switch
-                    checked={params.prediction_mode === 'quantile'}
-                    disabled={market !== 'CN' || params.model_types.length !== 1 || params.model_type !== 'lightgbm'}
-                    onChange={(checked) => onParamsChange({ ...params, prediction_mode: checked ? 'quantile' : 'point' })}
-                  />
-                </div>
-                {(market !== 'CN' || params.model_types.length !== 1 || params.model_type !== 'lightgbm') && (
-                  <div className="mt-2 text-[11px] text-amber-600">首版仅支持 A 股单 LightGBM；目标类型还需选择“回归目标（未来收益率）”。</div>
-                )}
-              </div>
-              {params.model_types.length > 1 && (() => {
+              {(() => {
                 const hasTree = params.model_types.some(mt => {
                   const opt = MODEL_TYPE_OPTIONS.find(m => m.value === mt);
                   return opt?.category === 'tree' || opt?.category === 'linear';
@@ -327,36 +323,6 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
 
           <Card className="rounded-2xl border-slate-200" size="small" title="训练超参">
             <div className="space-y-4">
-              {/* Optuna 自动超参搜索 */}
-              <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="space-y-0.5">
-                    <div className="text-xs font-semibold text-slate-700">Optuna 自动超参搜索</div>
-                    <div className="text-[11px] text-slate-400">
-                      自动搜索树模型最优超参（LGB/XGB/CatBoost），以验证集 Rank ICIR 为目标。开启后训练耗时约 ×trial 数
-                    </div>
-                  </div>
-                  <Switch
-                    checked={!!params.optunaEnabled}
-                    onChange={(checked) => onParamsChange({ ...params, optunaEnabled: checked })}
-                  />
-                </div>
-                {params.optunaEnabled && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="text-xs text-slate-500">搜索次数</span>
-                    <InputNumber
-                      value={params.optunaTrials ?? 20}
-                      min={10}
-                      max={100}
-                      step={5}
-                      className="w-28"
-                      onChange={(v) => onParamsChange({ ...params, optunaTrials: Number(v ?? 20) })}
-                    />
-                    <span className="text-[10px] text-slate-400">默认 20 次，耗时约为普通训练的 20 倍</span>
-                  </div>
-                )}
-              </div>
-
               {/* Objective & Metric - 共享 */}
               <Row gutter={[12, 12]}>
                 <Col span={12}>
@@ -740,35 +706,262 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                   ]}
                 />
               </div>
-              <div className="md:col-span-2 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
-                <div className="space-y-0.5">
-                  <div className="text-xs text-slate-500">行业编码作为特征</div>
-                  <div className="text-[11px] text-slate-400">
-                    将行业编码作为特征加入模型，CatBoost 原生支持类别特征
-                  </div>
-                </div>
-                <Tooltip title="将行业编码作为特征加入模型，CatBoost原生支持类别特征">
-                  <Switch
-                    checked={!!context.industry_as_feature}
-                    onChange={(checked) => onContextChange({ ...context, industry_as_feature: checked })}
-                  />
-                </Tooltip>
-              </div>
-              <div className="md:col-span-2 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
-                <div className="space-y-0.5">
-                  <div className="text-xs text-slate-500">特征截面预处理</div>
-                  <div className="text-[11px] text-slate-400">
-                    按交易日截面：中位数填充缺失 + 分位缩尾(1%/99%) + Z-score 标准化。消除量纲差异与极端值
-                  </div>
-                </div>
-                <Tooltip title="对特征做截面预处理：每交易日按特征中位数填充缺失（停牌）、1%/99% 分位缩尾、截面 Z-score。开启后模型输入分布更规范，但会改变特征量纲（与旧模型不可直接对比）">
-                  <Switch
-                    checked={!!params.preprocessingEnabled}
-                    onChange={(checked) => onParamsChange({ ...params, preprocessingEnabled: checked })}
-                  />
-                </Tooltip>
-              </div>
             </div>
+          </div>
+
+          {/* ── 行业编码作为特征 ── */}
+          <div className="rounded-2xl border border-indigo-100 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-700">行业编码作为特征</div>
+                <div className="text-[11px] text-slate-400 leading-relaxed">
+                  将行业编码作为特征加入模型，CatBoost 原生支持类别特征
+                </div>
+              </div>
+              <Tooltip title="将行业编码作为特征加入模型，CatBoost原生支持类别特征">
+                <Switch
+                  checked={!!context.industry_as_feature}
+                  onChange={(checked) => onContextChange({ ...context, industry_as_feature: checked })}
+                />
+              </Tooltip>
+            </div>
+          </div>
+
+          {/* ── 特征截面预处理 ── */}
+          <div className="rounded-2xl border border-indigo-100 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-700">特征截面预处理</div>
+                <div className="text-[11px] text-slate-400 leading-relaxed">
+                  按交易日截面：中位数填充缺失 + 分位缩尾(1%/99%) + Z-score 标准化。消除量纲差异与极端值
+                </div>
+              </div>
+              <Tooltip title="对特征做截面预处理：每交易日按特征中位数填充缺失（停牌）、1%/99% 分位缩尾、截面 Z-score。开启后模型输入分布更规范，但会改变特征量纲（与旧模型不可直接对比）">
+                <Switch
+                  checked={!!params.preprocessingEnabled}
+                  onChange={(checked) => onParamsChange({ ...params, preprocessingEnabled: checked })}
+                />
+              </Tooltip>
+            </div>
+          </div>
+
+          {/* ── 收益率分位推理 ── */}
+          <div className="rounded-2xl border border-indigo-100 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-700">收益率分位推理（P10 / P50 / P90）</div>
+                <div className="text-[11px] text-slate-400 leading-relaxed">
+                  训练三个 LightGBM 分位模型并做验证集校准。P50 保持作为交易信号；区间仅用于个股推理展示。
+                </div>
+              </div>
+              <Tooltip title="训练三个 LightGBM 分位模型并做验证集校准，用于输出收益率的 P10/P50/P90 区间（仅支持 A 股单模型，且不可与多周期训练同时开启）">
+                <Switch
+                  checked={params.prediction_mode === 'quantile'}
+                  disabled={quantileDisabled}
+                  onChange={(checked) => onParamsChange({ ...params, prediction_mode: checked ? 'quantile' : 'point' })}
+                />
+              </Tooltip>
+            </div>
+            {isMultiHorizon ? (
+              <div className="mt-2 text-[11px] text-amber-600">多周期训练模式下，后端按周期分别产出模型且融合子任务不生成分位模型，故禁用收益率分位推理。</div>
+            ) : (market !== 'CN' || !isSingleLgb) ? (
+              <div className="mt-2 text-[11px] text-amber-600">首版仅支持 A 股单 LightGBM；目标类型还需选择“回归目标（未来收益率）”。</div>
+            ) : null}
+          </div>
+
+          {/* ── 多周期训练 ── */}
+          <div className="rounded-2xl border border-indigo-100 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-700">多周期训练</div>
+                <div className="text-[11px] text-slate-400 leading-relaxed">
+                  一次训练产出 T+1/T+3/T+5/T+10 四个周期模型，并自动创建 ICIR 加权融合模型，利用跨周期一致性提升选股稳定性。
+                </div>
+              </div>
+              <Switch
+                checked={(target.horizonDaysList?.length ?? 0) >= 2}
+                onChange={(checked) => {
+                  if (checked) {
+                    // 多周期与收益率分位推理互斥：开启多周期时强制把分位关掉，
+                    // 避免提交 q分位+multi-horizon 的矛盾配置。
+                    onTargetChange({ ...target, horizonDays: target.horizonDays, horizonDaysList: [1, 3, 5, 10] });
+                    if (params.prediction_mode === 'quantile') {
+                      onParamsChange({ ...params, prediction_mode: 'point' });
+                    }
+                  } else {
+                    const { horizonDaysList, ...rest } = target;
+                    onTargetChange({ ...rest });
+                  }
+                }}
+              />
+            </div>
+            <div className="mt-1.5 text-xs text-slate-500 leading-relaxed">
+              一次训练产出 T+1/T+3/T+5/T+10 四个周期模型，并自动创建 ICIR 加权融合模型，利用跨周期一致性提升选股稳定性。周期选择在此处与第二步「T+N 参数」联动。
+            </div>
+            {(target.horizonDaysList?.length ?? 0) >= 2 && (
+              <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {[1, 3, 5, 10].map((h) => (
+                    <Button
+                      key={h}
+                      size="small"
+                      type={target.horizonDaysList?.includes(h) ? 'primary' : 'default'}
+                      className={clsx('h-8 rounded-xl font-bold px-3', target.horizonDaysList?.includes(h) && 'bg-indigo-600')}
+                      onClick={() => {
+                        const cur = target.horizonDaysList ?? [];
+                        const next = cur.includes(h) ? cur.filter((x) => x !== h) : [...cur, h].sort((a, b) => a - b);
+                        onTargetChange({ ...target, horizonDays: next[0] ?? target.horizonDays, horizonDaysList: next });
+                      }}
+                    >
+                      T+{h}
+                    </Button>
+                  ))}
+                </div>
+                <div className="mt-2 text-[11px] text-slate-400 font-mono">
+                  将产出 {target.horizonDaysList?.length ?? 0} 个模型 + 1 个融合模型（训练耗时约 ×{target.horizonDaysList?.length ?? 4}）
+                </div>
+                {wfa?.enabled && (
+                  <Alert
+                    className="mt-2 rounded-lg border-amber-100 bg-amber-50/60"
+                    type="warning"
+                    showIcon
+                    message="多周期训练会禁用 WFA 诊断"
+                    description="避免 4 周期 × 4 窗口 = 16 次训练导致超时，训练结束后可单独在模型详情查看 WFA。"
+                  />
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── Walk-Forward 稳定性诊断 ── */}
+          {onWfaChange && (
+            <div className="rounded-2xl border border-indigo-100 bg-white px-3 py-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-semibold text-slate-700">Walk-Forward 稳定性诊断</div>
+                  <div className="text-[11px] text-slate-400 leading-relaxed">
+                    滚动窗口训练并输出每个窗口的 IC，评估模型在不同历史区间上的稳定性与参数漂移。诊断在正式训练前执行，不产生正式模型。
+                  </div>
+                </div>
+                <Switch
+                  checked={!!wfa?.enabled}
+                  onChange={(checked) => onWfaChange({ ...(wfa || { enabled: false, strategy: 'rolling', nWindows: 4, trainYears: 3, valMonths: 12, stepMonths: 12 }), enabled: checked })}
+                />
+              </div>
+
+              {wfa?.enabled && (
+                <>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div className="md:col-span-2">
+                      <div className="mb-1 text-xs text-slate-500">窗口策略</div>
+                      <Select
+                        value={wfa.strategy}
+                        onChange={(v) => onWfaChange({ ...wfa, strategy: v })}
+                        className="w-full"
+                        options={[
+                          { label: '滚动窗口（固定训练长度）', value: 'rolling' },
+                          { label: '扩张窗口（数据累积）', value: 'expanding' },
+                        ]}
+                      />
+                      <div className="mt-1 text-[10px] text-slate-400">
+                        {wfa.strategy === 'rolling' ? '每窗训练长度固定，避免老数据影响' : '训练集从起点累积，贴近实盘迭代'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">窗口数</div>
+                      <InputNumber
+                        min={1}
+                        max={12}
+                        value={wfa.nWindows}
+                        onChange={(v) => onWfaChange({ ...wfa, nWindows: Number(v ?? 4) })}
+                        className="w-full"
+                      />
+                      <div className="mt-1 text-[10px] text-slate-400">验证段数量（个）</div>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">训练长度（年）</div>
+                      <InputNumber
+                        min={1}
+                        max={8}
+                        value={wfa.trainYears}
+                        onChange={(v) => onWfaChange({ ...wfa, trainYears: Number(v ?? 3) })}
+                        className="w-full"
+                        disabled={wfa.strategy === 'expanding'}
+                      />
+                      <div className="mt-1 text-[10px] text-slate-400">每窗训练长度</div>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">验证长度（月）</div>
+                      <InputNumber
+                        min={1}
+                        max={36}
+                        value={wfa.valMonths}
+                        onChange={(v) => onWfaChange({ ...wfa, valMonths: Number(v ?? 12) })}
+                        className="w-full"
+                      />
+                      <div className="mt-1 text-[10px] text-slate-400">每窗验证长度</div>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">步长（月）</div>
+                      <InputNumber
+                        min={1}
+                        max={36}
+                        value={wfa.stepMonths}
+                        onChange={(v) => onWfaChange({ ...wfa, stepMonths: Number(v ?? 12) })}
+                        className="w-full"
+                      />
+                      <div className="mt-1 text-[10px] text-slate-400">窗口推进步长</div>
+                    </div>
+                  </div>
+                  <Alert
+                    className="mt-3 rounded-xl border-violet-100 bg-white/60"
+                    type="info"
+                    showIcon
+                    message="诊断说明"
+                    description="WFA 会额外运行多个窗口的训练，耗时约为基础训练的 2-3 倍。支持树模型（LightGBM/XGBoost/CatBoost）和线性模型，深度学习模型因耗时过长不参与诊断。"
+                  />
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Optuna 自动超参搜索 ── */}
+          <div className="rounded-2xl border border-indigo-100 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-700">Optuna 自动超参搜索</div>
+                <div className="text-[11px] text-slate-400 leading-relaxed">
+                  自动搜索树模型最优超参（LGB/XGB/CatBoost），以验证集 Rank ICIR 为目标。开启后训练耗时约 ×trial 数
+                </div>
+              </div>
+              <Switch
+                checked={!!params.optunaEnabled}
+                onChange={(checked) => onParamsChange({ ...params, optunaEnabled: checked })}
+              />
+            </div>
+            {params.optunaEnabled && (
+              <div className="mt-3 flex items-center gap-2">
+                <span className="text-xs text-slate-500">搜索次数</span>
+                <InputNumber
+                  value={params.optunaTrials ?? 20}
+                  min={10}
+                  max={100}
+                  step={5}
+                  className="w-28"
+                  onChange={(v) => onParamsChange({ ...params, optunaTrials: Number(v ?? 20) })}
+                />
+                <span className="text-[10px] text-slate-400">默认 20 次，耗时约为普通训练的 20 倍</span>
+              </div>
+            )}
+            {params.optunaEnabled && isMultiHorizon && (
+              <Alert
+                className="mt-2 rounded-lg border-amber-100 bg-amber-50/60"
+                type="warning"
+                showIcon
+                message="Optuna 与多周期训练叠加会显著放大耗时"
+                description={`每次超参搜索 ×{params.optunaTrials ?? 20} 次 × 多周期 {(target.horizonDaysList?.length ?? 0)} 个周期 + 1 个融合模型，总耗时约为普通训练的 {((params.optunaTrials ?? 20) * ((target.horizonDaysList?.length ?? 0) + 1)).toFixed(0)} 倍，可能触发训练超时。建议缩短搜索次数或关闭其一。`}
+              />
+            )}
           </div>
 
           <Alert

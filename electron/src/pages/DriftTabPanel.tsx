@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, Table, Tag, Typography, Spin, Input, Select, Tooltip, Collapse, message } from 'antd';
-import { Activity, Info, ShieldAlert, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Info, ShieldAlert, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { modelTrainingService } from '../services/modelTrainingService';
 
 const { Text } = Typography;
@@ -48,7 +48,9 @@ export const DriftTabPanel: React.FC<{ modelId: string }> = ({ modelId }) => {
   }, [features, search, levelFilter, benignOnly]);
 
   const overall = drift?.overall ?? '—';
-  const overallColor = overall === 'severe' ? 'red' : overall === 'warning' ? 'gold' : overall === 'stable' ? 'green' : 'default';
+  // 评级文字颜色：用于无容器纯文本居中展示「总体评级」
+  const overallTextColor =
+    overall === 'severe' ? 'text-red-600' : overall === 'warning' ? 'text-amber-500' : overall === 'stable' ? 'text-emerald-600' : 'text-slate-500';
 
   if (loading) {
     return (
@@ -86,16 +88,16 @@ export const DriftTabPanel: React.FC<{ modelId: string }> = ({ modelId }) => {
               children: (
                 <div className="text-xs text-slate-600 leading-relaxed space-y-2">
                   <div>
-                    <span className="font-bold text-slate-700">level PSI</span>：原始水平值 10 分箱 PSI，基准为训练段分位数边，`clip 1e-6`；`&lt;0.1 stable / 0.1-0.25 medium / &gt;0.25 severe`。
+                    <span className="font-bold text-slate-700">level PSI</span>：原始水平值 10 分箱 PSI，基准为训练段分位数边，`clip 1e-6`；`&lt;0.05 稳定 / 0.05-0.2 中等 / &gt;0.2 严重`。
                   </div>
                   <div>
-                    <span className="font-bold text-slate-700">rank_disp</span>：每只票训练段 vs 近期（30日）的截面 `rank(pct)` 均值位移 `|Δ|` 平均 `0~1`，`&lt;0.15 stable / 0.15-0.3 medium / ≥0.3 severe`，以此为主判级。
+                    <span className="font-bold text-slate-700">rank_disp</span>：每只票训练段 vs 近期（30日）的截面 `rank(pct)` 均值位移 `|Δ|` 平均 `0~1`，`&lt;0.10 稳定 / 0.10-0.25 中等 / ≥0.25 严重`，以此为主判级。
                   </div>
                   <div>
-                    <span className="font-bold text-slate-700">benign_scale</span>：`level_psi≥0.1 且 rank_disp&lt;0.15 且可靠 → 良性量纲膨胀`（牛市量能抬升但相对位置未变）。
+                    <span className="font-bold text-slate-700">benign_scale</span>：`level_psi≥0.05 且 rank_disp&lt;0.10 且可靠 → 良性量纲膨胀`（牛市量能抬升但相对位置未变）。
                   </div>
                   <div>
-                    <span className="font-bold text-slate-700">overall</span>：`severe≥5 或 ratio≥0.4 或 severe+medium≥max(7,0.4N) → severe`；`severe≥2 或 medium≥5 → warning`。
+                    <span className="font-bold text-slate-700">总体评级（overall）</span>：`severe≥3 或 ratio≥0.3 或 severe+medium≥max(5,0.3N) → 严重`；`severe≥1 或 medium≥3 → 预警`。
                   </div>
                 </div>
               ),
@@ -104,33 +106,39 @@ export const DriftTabPanel: React.FC<{ modelId: string }> = ({ modelId }) => {
         />
       </Card>
 
-      {/* 总览 */}
+      {/* 总览：四卡统一为「标题 / 主内容 / 注释」三行结构 */}
       <div className="grid grid-cols-4 gap-3">
         <Card size="small" className="rounded-2xl text-center">
-          <div className="text-[11px] text-slate-400 font-bold">overall</div>
-          <Tag color={overallColor} className="rounded-full mt-1 font-black">
+          <div className="text-[11px] text-slate-400 font-bold">总体评级</div>
+          <div className={`mt-2 text-2xl font-black leading-none ${overallTextColor}`}>
             {overall === 'severe' ? '严重' : overall === 'warning' ? '预警' : overall === 'stable' ? '稳定' : overall}
-          </Tag>
-          <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-center gap-1">
-            <Activity size={10} /> max rank_disp {Number(drift.max_psi ?? 0).toFixed(4)}
           </div>
+          <div className="mt-2 text-[10px] text-slate-400">max rank_disp {Number(drift.max_psi ?? 0).toFixed(4)}</div>
         </Card>
         <Card size="small" className="rounded-2xl text-center">
           <div className="text-[11px] text-slate-400 font-bold">稳定 / 中 / 重</div>
-          <div className="text-sm font-mono font-bold text-slate-700 mt-1">
-            {drift.drift?.stable ?? 0} / {drift.drift?.medium ?? 0} / {drift.drift?.severe ?? 0}
+          <div className="mt-2 flex min-h-[32px] items-center justify-center">
+            <span className="text-sm font-mono font-bold text-slate-800">
+              {drift.drift?.stable ?? 0} / {drift.drift?.medium ?? 0} / {drift.drift?.severe ?? 0}
+            </span>
           </div>
+          <div className="mt-1 text-[10px] text-slate-400">按结构漂移（rank_disp）判级统计</div>
         </Card>
         <Card size="small" className="rounded-2xl text-center">
           <div className="text-[11px] text-slate-400 font-bold">因子总数</div>
-          <div className="text-lg font-mono font-black text-slate-800">{features.length}</div>
+          <div className="mt-2 flex min-h-[32px] items-center justify-center">
+            <span className="text-sm font-mono font-bold text-slate-800">{features.length}</span>
+          </div>
+          <div className="mt-1 text-[10px] text-slate-400">参与漂移检测的特征数</div>
         </Card>
         <Card size="small" className="rounded-2xl text-center">
-          <div className="text-[11px] text-slate-400 font-bold">窗口</div>
-          <div className="text-[11px] font-mono text-slate-600">
-            训练 {drift.train_start}~{drift.train_end}
-            <br />
-            近期 {drift.recent_start}~{drift.recent_end}
+          <div className="text-[11px] text-slate-400 font-bold">检测窗口</div>
+          <div className="mt-2 flex min-h-[32px] items-center justify-center">
+            <span className="text-[11px] font-mono text-slate-600 leading-snug">
+              训练 {drift.train_start}~{drift.train_end}
+              <br />
+              近期 {drift.recent_start}~{drift.recent_end}
+            </span>
           </div>
         </Card>
       </div>

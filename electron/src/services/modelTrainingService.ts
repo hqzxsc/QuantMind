@@ -563,6 +563,15 @@ class ModelTrainingService {
     return resp.data;
   }
 
+  async getActiveTrainingRun(): Promise<ModelTrainingRunStatus | null> {
+    try {
+      const resp = await this.client.get<ModelTrainingRunStatus>(`/models/training-runs/active`);
+      return resp.data;
+    } catch {
+      return null; // 404 = 无记录，视为无活跃训练
+    }
+  }
+
   async listUserModels(includeArchived = false, market?: string): Promise<{ items: UserModelRecord[]; total: number }> {
     const resp = await this.client.get<{ items: UserModelRecord[]; total: number }>(`/models`, {
       params: { include_archived: includeArchived, ...(market ? { market } : {}) },

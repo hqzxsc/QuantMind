@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card, Divider, Checkbox, Tag, Empty, Typography } from 'antd';
+import { Button, Card, Divider, Checkbox, Tag, Empty, Typography } from 'antd';
 import { Database, ShieldCheck, ChevronRight, Lock } from 'lucide-react';
 import { clsx } from 'clsx';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -12,6 +12,8 @@ interface FeatureSelectorProps {
   selectedFeatures: string[];
   onChange: (features: string[]) => void;
   loading: boolean;
+  /** 未创建因子集时跳转后台训练服务的引导回调（刷新字段执行数据扫描） */
+  onGuide?: () => void;
 }
 
 const SectionHeader: React.FC<{ title: string; desc: string; icon?: React.ReactNode }> = ({ title, desc, icon }) => (
@@ -34,7 +36,8 @@ export const FeatureSelector: React.FC<FeatureSelectorProps> = ({
   categories, 
   selectedFeatures, 
   onChange, 
-  loading 
+  loading,
+  onGuide
 }) => {
   const [expandedId, setExpandedId] = useState<string>(categories[0]?.id || '');
 
@@ -76,8 +79,19 @@ export const FeatureSelector: React.FC<FeatureSelectorProps> = ({
         <Divider className="my-4" />
         <div className="space-y-2.5">
           {categories.length === 0 && !loading && (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-10 text-center text-sm text-gray-400">
-              暂无可选特征，请等待后端特征字典加载完成
+            <div className="rounded-2xl border border-dashed border-amber-200 bg-amber-50 py-10 text-center">
+              <div className="text-sm font-medium text-amber-700">尚未创建可用因子集</div>
+              <div className="mt-1.5 text-xs text-amber-600">字段集尚未刷新，请在后台完成『刷新字段』数据扫描后再返回选择特征。</div>
+              {onGuide && (
+                <Button
+                  size="small"
+                  type="primary"
+                  className="mt-4 rounded-xl font-bold h-8 px-4"
+                  onClick={onGuide}
+                >
+                  前往后台刷新字段
+                </Button>
+              )}
             </div>
           )}
           {categories.map((category) => {

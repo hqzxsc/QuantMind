@@ -7,6 +7,8 @@ import {
   TrainingStatus,
   TrainingResult,
   TrainingRequestPayload,
+  TrainingFactorFilterConfig,
+  DEFAULT_FACTOR_FILTER,
 } from './trainingUtils';
 
 interface TrainingConsoleProps {
@@ -22,6 +24,8 @@ interface TrainingConsoleProps {
   valDays: number;
   testDays: number;
   target: { horizonDays: number; mode: string };
+  /** 因子筛选配置（IC/ICIR）—— 用于「特征与基准」展示筛选是否开启 */
+  factorFilter?: TrainingFactorFilterConfig;
   /** 运行时选项（节点/时长/资源）—— 备用扩展槽 */
   runtimeOptions?: React.ReactNode;
   /** 查看第五步入库结果 */
@@ -70,6 +74,7 @@ export const TrainingConsole: React.FC<TrainingConsoleProps> = ({
   valDays,
   testDays,
   target,
+  factorFilter,
   runtimeOptions,
   onGoToResult,
 }) => {
@@ -259,6 +264,13 @@ export const TrainingConsole: React.FC<TrainingConsoleProps> = ({
                   <div className="text-slate-700 font-medium truncate">
                     {requestPreview.selectedFeatures?.length || 0} 个因子 · {requestPreview.context?.benchmark || '000300.SH'}
                   </div>
+                  {(factorFilter?.enabled ?? DEFAULT_FACTOR_FILTER.enabled) ? (
+                    <div className="mt-1 text-[10px] text-amber-600">
+                      将按 IC/ICIR 筛选（|IC|≥{factorFilter?.icThreshold ?? DEFAULT_FACTOR_FILTER.icThreshold} · top-{factorFilter?.nTop ?? DEFAULT_FACTOR_FILTER.nTop}）
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-[10px] text-emerald-600">未启用筛选，全部特征将直接入模</div>
+                  )}
                 </div>
                 <div className="rounded-xl bg-slate-50 p-2.5 border border-slate-100 col-span-2">
                   <div className="text-[10px] text-slate-400 font-semibold mb-1">样本切分区间</div>

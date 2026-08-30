@@ -319,7 +319,7 @@ export const ModelDetailPanel: React.FC<{ model: UserModelRecord }> = ({ model }
                       <span className="font-black">
                         {item.trendLabel === '基线'
                           ? '基线'
-                          : `${item.trendLabel.replace(/^较上段\s*/, '').replace(/[+-]/, '').replace('%', '')}%`}
+                          : `${item.trendLabel.replace(/^较上段\s*/, '').replace('%', '')}%`}
                       </span>
                     </div>
                   </div>

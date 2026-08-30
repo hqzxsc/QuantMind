@@ -680,7 +680,7 @@ export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
 
                   <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white px-3 py-2.5">
                     <Text className="block text-[10px] leading-relaxed text-slate-400">
-                      对比「训练区间」与「最近实盘」的个股截面 rank 位移（0~1）：&gt;0.1 结构漂移、&gt;0.2 严重。标记「量能」为水平膨胀但截面稳定的良性漂移。重训前请结合实盘 RankIC 判断。
+                      对比「训练区间」与「最近实盘」的个股截面 rank 位移（0~1）：≥0.1 中等漂移、≥0.25 严重。标记「量能」为水平膨胀但截面稳定的良性漂移。重训前请结合实盘 RankIC 判断。
                     </Text>
                   </div>
                 </div>

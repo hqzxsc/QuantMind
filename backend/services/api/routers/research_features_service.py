@@ -55,8 +55,9 @@ async def _offload(coro_func, *args):
 # 批量接口单次上限，避免超大请求拖垮 DuckDB 扫描
 MAX_BATCH_SYMBOLS = 200
 
-# 投影模式（只取表格/筛选所需字段）下的上限：响应体小得多，可覆盖整个候选池
-MAX_BATCH_SYMBOLS_PROJECTED = 1500
+# 投影模式（只取表格/筛选所需字段）下的上限：响应体小得多，可覆盖整个候选池。
+# 投研宇宙按数据日直读 pred.parquet 全市场截面（约 5400 只），上限需覆盖全市场
+MAX_BATCH_SYMBOLS_PROJECTED = 6000
 
 # 只接受规范 suffix 代码，杜绝 SQL 注入（hub.query 不支持参数绑定）
 _SYMBOL_RE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")

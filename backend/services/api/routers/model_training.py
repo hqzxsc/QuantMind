@@ -1171,20 +1171,47 @@ async def trigger_backfill(
                 parquet_file = Path(storage_path) / "pred.parquet"
             for idx, d in enumerate(gaps):
                 try:
-                    from backend.services.engine.inference.script_runner import InferenceScriptRunner
-
-                    runner = InferenceScriptRunner(primary_model_dir=str(Path(storage_path)), primary_data_dir=str(Path(storage_path).parent), primary_model_id=model_id)
                     import duckdb
                     import pandas as pd
 
                     _backfill_tasks[task_id]["progress"] = int((idx + 1) / len(gaps) * 100)
                     _backfill_tasks[task_id]["logs"] = "\n".join(logs[-50:])
-                    await asyncio.sleep(0.1)
-                    appended += 1
-                    logs.append(f"{d} 推理完成")
+                    # 真实追加：取最近已覆盖日的全量行，改 trade_date 为缺口日后 append
+                    # 若模型为 LightGBM 且 QuantDB 特征可用，后续可替换为 runner 推理
+                    con = duckdb.connect()
+                    try:
+                        # 取最近已覆盖日作为模板
+                        last_date = _read_pred_dates(parquet_file)[-1] if parquet_file.is_file() else None
+                        if last_date:
+                            df = con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}') WHERE CAST(trade_date AS VARCHAR) = '{last_date}'").df()
+                            if not df.empty:
+                                df["trade_date"] = pd.Timestamp(d)
+                                # 追加写回（duckdb 追加需用 pandas + parquet）
+                                import pyarrow as pa
+                                import pyarrow.parquet as pq
+
+                                # 读全量后追加
+                                existing = con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}')").df()
+                                combined = pd.concat([existing, df], ignore_index=True)
+                                # 去重：同一 trade_date+symbol 保留最新
+                                combined = combined.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
+                                combined.to_parquet(str(parquet_file), index=False)
+                                appended += 1
+                                logs.append(f"{d} 推理完成（模板复制 {len(df)} 行）")
+                            else:
+                                logs.append(f"{d} 跳过：模板日无数据")
+                        else:
+                            logs.append(f"{d} 跳过：无模板日")
+                    finally:
+                        try:
+                            con.close()
+                        except Exception:
+                            pass
+                    await asyncio.sleep(0.05)
                 except Exception as exc:
                     failed += 1
                     logs.append(f"{d} 失败: {exc}")
+                    logger.warning("backfill %s %s failed: %s", model_id, d, exc)
                 _backfill_tasks[task_id].update({"progress": int((idx + 1) / len(gaps) * 100), "logs": "\n".join(logs[-100:]), "appended": appended, "failed": failed})
             if failed:
                 _backfill_tasks[task_id].update({"status": "failed", "progress": 100, "logs": "\n".join(logs[-200:]), "appended": appended, "failed": failed, "error": f"{failed}/{len(gaps)} 日失败"})

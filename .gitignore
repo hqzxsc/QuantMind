@@ -183,6 +183,8 @@ db/db.zip
 !/data/
 /data/*
 !/data/stocks/
+# 数据库升级脚本：需入库，当前内容临时清空占位
+!/data/upgrade_v1.0.1.sql
 /db/*
 !/db/sql/
 /db/sql/*

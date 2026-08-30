@@ -85,8 +85,8 @@ export const MarketRegimePanel: React.FC<{ modelId: string }> = ({ modelId }) =>
             key: 'explain',
             label: <span className="text-xs font-black text-slate-700 flex items-center gap-1.5"><Info size={12} className="text-blue-500"/>口径说明</span>,
             children: <div className="text-xs text-slate-600 leading-relaxed space-y-1">
-              <div>均分 = 当日全市场 `fusion_score/pred` 均值（与个股终端一致读历史推理数据），`牛市 ≥0.08 红实线 / 震荡 0.02-0.08 灰 / 熊市 &lt;0.02 绿虚线`。</div>
-              <div>仅展示最近 90 交易日，`y` 域 `[-0.15,0.15]`，点色三态，横线阈值。</div>
+              <div>均分 = 当日 Top20 高分 `pred/fusion_score` 均值（与个股终端一致，回退读 `pred.parquet`），`牛市 ≥0.08 红实线 / 震荡 0.02-0.08 灰 / 熊市 &lt;0.02 绿虚线`。</div>
+              <div>仅最近 90 交易日，`y` 域 `[-0.15,0.15]`，Top20 更敏感，点色三态。</div>
             </div>,
           }]}
         />
@@ -113,7 +113,7 @@ export const MarketRegimePanel: React.FC<{ modelId: string }> = ({ modelId }) =>
       <Card className="rounded-2xl" size="small">
         <div className="flex items-center gap-2 mb-2">
           <TrendingUp size={14} className="text-blue-500" />
-          <Text className="text-xs font-black text-slate-700">均分时序（横线分区）</Text>
+          <Text className="text-xs font-black text-slate-700">Top20 均分时序（横线分区）</Text>
         </div>
         {option && <ReactECharts option={option} style={{ height: 320 }} />}
       </Card>

@@ -908,7 +908,7 @@ async def get_model_market_regime(
                 }
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    # 阈值按用户要求 0.08 / 0.02（牛市≥0.08，震荡 0.02-0.08，熊市<0.02），仅展示最近 90 交易日
+    # 阈值 0.08/0.02 对 Top20 均值更敏感（全市场均值恒≈0/全负），仅 90 日
     bull_thr, bear_thr = 0.08, 0.02
     series: list[dict[str, Any]] = []
     try:
@@ -919,12 +919,17 @@ async def get_model_market_regime(
                         text(
                             """
                             SELECT r.data_trade_date::text AS trade_date,
-                                   AVG(s.fusion_score)::float AS avg_score,
-                                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.fusion_score)::float AS median_score,
+                                   AVG(top.fusion_score)::float AS avg_score,
+                                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY top.fusion_score)::float AS median_score,
                                    COUNT(*)::int AS cnt
                             FROM qm_model_inference_runs r
-                            JOIN engine_signal_scores s
-                              ON s.run_id = r.run_id AND s.tenant_id = r.tenant_id AND s.user_id = r.user_id
+                            JOIN LATERAL (
+                                SELECT s.fusion_score
+                                FROM engine_signal_scores s
+                                WHERE s.run_id = r.run_id AND s.tenant_id = r.tenant_id AND s.user_id = r.user_id
+                                ORDER BY s.fusion_score DESC
+                                LIMIT 20
+                            ) top ON true
                             WHERE r.tenant_id = :tenant_id AND r.user_id = :user_id
                               AND r.model_id = :model_id AND r.status = 'completed'
                             GROUP BY r.data_trade_date
@@ -971,14 +976,19 @@ async def get_model_market_regime(
                         date_col = "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
                         if score_col and date_col:
                             q = f"""
-                                SELECT CAST({date_col} AS VARCHAR) AS trade_date,
-                                       AVG(CAST({score_col} AS DOUBLE))::DOUBLE AS avg_score,
-                                       MEDIAN(CAST({score_col} AS DOUBLE))::DOUBLE AS median_score,
+                                SELECT CAST(trade_date AS VARCHAR) AS trade_date,
+                                       AVG(CAST(score AS DOUBLE))::DOUBLE AS avg_score,
+                                       MEDIAN(CAST(score AS DOUBLE))::DOUBLE AS median_score,
                                        COUNT(*)::INTEGER AS cnt
-                                FROM read_parquet('{str(parquet_file)}')
-                                WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
-                                GROUP BY {date_col}
-                                ORDER BY {date_col} DESC
+                                FROM (
+                                    SELECT {date_col} AS trade_date, CAST({score_col} AS DOUBLE) AS score,
+                                           ROW_NUMBER() OVER (PARTITION BY {date_col} ORDER BY CAST({score_col} AS DOUBLE) DESC) AS rn
+                                    FROM read_parquet('{str(parquet_file)}')
+                                    WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
+                                )
+                                WHERE rn <= 20
+                                GROUP BY trade_date
+                                ORDER BY trade_date DESC
                                 LIMIT {int(window)}
                             """
                             rows2 = con.execute(q).fetchall()

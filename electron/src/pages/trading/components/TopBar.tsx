@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Wallet, Wifi, Activity } from 'lucide-react';
+import React from 'react';
+import { Wallet, Wifi, Activity } from 'lucide-react';
 
 interface AccountInfo {
     total_asset: number;
@@ -29,7 +29,6 @@ interface TopBarProps {
 }
 
 const TopBar: React.FC<TopBarProps> = ({ accountInfo, isConnected, strategyStatus, tradingMode, runMode, orchestrationMode }) => {
-    const [metricsCollapsed, setMetricsCollapsed] = useState(false);
     const formatMoney = (val: number | undefined) => {
         if (val === undefined || (!accountInfo && val === 0)) return '0.00';
         return val.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -157,19 +156,11 @@ const TopBar: React.FC<TopBarProps> = ({ accountInfo, isConnected, strategyStatu
                         <Activity size={13} className={strategyStatusColor} />
                         <span>{strategyStatusLabel}</span>
                     </div>
-                    <button
-                        onClick={() => setMetricsCollapsed(!metricsCollapsed)}
-                        className="flex items-center gap-1 px-2.5 py-1 bg-slate-50 border border-slate-200/80 rounded-full text-xs text-slate-500 font-medium hover:text-slate-700 hover:border-slate-300 transition-colors"
-                        title={metricsCollapsed ? '展开资产概览' : '折叠资产概览'}
-                    >
-                        {metricsCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-                        <span>{metricsCollapsed ? '展开' : '折叠'}</span>
-                    </button>
                 </div>
             </div>
 
             {/* 早期 8 卡片模式：桌面端固定 4×2，较窄屏幕自然折行。 */}
-            <div className={`grid grid-cols-2 sm:grid-cols-4 gap-2.5 ${metricsCollapsed ? 'hidden' : ''}`}>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {metrics.map((metric) => {
                     const pnl = metric.pnl || 0;
                     const valueClass = metric.highlight ? getPnLColor(pnl) : 'text-slate-900';

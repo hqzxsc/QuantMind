@@ -11,8 +11,6 @@ import 'prismjs/components/prism-bash';
 import 'prismjs/components/prism-json';
 import {
     FolderTree,
-    FlaskRound,
-    Terminal,
     Play,
     Save,
     FileCode,
@@ -40,18 +38,13 @@ import { message, Modal, Input } from 'antd';
 import { clsx } from 'clsx';
 import { authService } from '../features/auth/services/authService';
 import { strategyManagementService } from '../services/strategyManagementService';
-// backtestService loaded dynamically to avoid mixed static/dynamic import warnings
 import { modelTrainingService } from '../services/modelTrainingService';
 import HelpCenterLink from '../components/common/HelpCenterLink';
-import type { BacktestResult } from '../services/backtestService';
 import { SERVICE_ENDPOINTS } from '../config/services';
 import { PAGE_LAYOUT } from '../config/pageLayout';
 import { useAppSelector } from '../store';
 import { selectCurrentMarket } from '../store/slices/uiSlice';
 import { getMarketConfig } from '../config/marketConfig';
-import { strategyLabService } from '../features/strategy-lab/services/strategyLabService';
-import type { StrategyLabRunResult, StrategyLabProgressEvent } from '../features/strategy-lab/types';
-import { StrategyLabResultPanel } from '../features/strategy-lab/components/StrategyLabResultPanel';
 
 /**
  * AI-IDE Page Implementation
@@ -66,8 +59,6 @@ const normalizeApiBaseUrl = (url: string) => url.replace(/\/+$/, '');
 const AI_IDE_GATEWAY_BASE_URL = normalizeApiBaseUrl(
     String((import.meta as any).env?.VITE_AI_IDE_API_BASE_URL || SERVICE_ENDPOINTS.API_GATEWAY)
 );
-const IS_ELECTRON_RUNTIME =
-    typeof window !== 'undefined' && Boolean((window as any).electronAPI);
 
 interface FileItem {
     id: string;
@@ -113,8 +104,6 @@ const AI_IDE_UNAVAILABLE_HINTS = [
 ] as const;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const AI_IDE_RUNTIME_NOTICE_SESSION_KEY = 'ai_ide_runtime_notice_shown';
-const AI_IDE_BOOTSTRAP_DONE_SESSION_KEY = 'ai_ide_bootstrap_done';
 const AI_ASSISTANT_DEVELOPMENT_RULES = [
     '1. 使用简体中文回答，先给结论，再给步骤。',
     '2. 涉及代码修改时，优先输出最小改动，并明确文件路径。',
@@ -138,7 +127,7 @@ const AIIDEPage: React.FC = () => {
 
     // UI State
     const [activeTab, setActiveTab] = React.useState<'local' | 'remote'>('local');
-    const [logTab, setLogTab] = React.useState<'result' | 'error' | 'metrics' | 'backtest'>('result');
+    const [logTab, setLogTab] = React.useState<'result' | 'error'>('result');
     const [chatInput, setChatInput] = React.useState('');
 
     // Data State
@@ -172,54 +161,10 @@ const AIIDEPage: React.FC = () => {
     const [isLoadingConfig, setIsLoadingConfig] = React.useState(false);
     const [isLoadingFiles, setIsLoadingFiles] = React.useState(false);
 
-    // Strategy Lab / 策略回测 state
-    const [strategyLabRunId, setStrategyLabRunId] = React.useState<string | null>(null);
-    const [strategyLabResult, setStrategyLabResult] = React.useState<StrategyLabRunResult | null>(null);
-    const [strategyLabLoading, setStrategyLabLoading] = React.useState(false);
-    const [strategyLabProgress, setStrategyLabProgress] = React.useState<StrategyLabProgressEvent | null>(null);
-    const strategyLabPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
-
-    const clearStrategyLabPoll = React.useCallback(() => {
-        if (strategyLabPollRef.current) {
-            clearInterval(strategyLabPollRef.current);
-            strategyLabPollRef.current = null;
-        }
-    }, []);
-
-    const handleStrategyLabRun = React.useCallback(async () => {
-        if (isRunning || !editorContent.trim()) return;
-        setLogTab('backtest');
-        setStrategyLabLoading(true);
-        setStrategyLabResult(null);
-        setStrategyLabProgress(null);
-        clearStrategyLabPoll();
-        try {
-            const { run_id } = await strategyLabService.submit({ code: editorContent });
-            setStrategyLabRunId(run_id);
-            const cancel = strategyLabService.pollProgress(
-                run_id,
-                (evt) => setStrategyLabProgress(evt),
-                (result) => {
-                    setStrategyLabResult(result);
-                    setStrategyLabLoading(false);
-                    clearStrategyLabPoll();
-                },
-                1000,
-            );
-            strategyLabPollRef.current = cancel as unknown as ReturnType<typeof setInterval>;
-        } catch (e: any) {
-            message.error(`策略回测启动失败: ${e?.message || e}`);
-            setStrategyLabLoading(false);
-        }
-    }, [isRunning, editorContent, clearStrategyLabPoll]);
-
-
     const logEndRef = React.useRef<HTMLDivElement>(null);
     const chatTextareaRef = React.useRef<HTMLTextAreaElement>(null);
     const eventSourceRef = React.useRef<EventSource | null>(null);
     const runCancelRef = React.useRef<(() => void) | null>(null);
-    const runTaskIdRef = React.useRef<string | null>(null);
-    const runModeRef = React.useRef<'execute' | 'qlib' | null>(null);
     const executeResultRef = React.useRef<{
         annual_return?: number;
         sharpe_ratio?: number;
@@ -259,9 +204,6 @@ const AIIDEPage: React.FC = () => {
         }
         return headers;
     };
-
-    const isAiIdeCorePath = (path: string) =>
-        /^\/(files|execute|config\/llm|ai\/chat)(\/|$)/.test(path);
 
     const apiFetch = async (path: string, init?: RequestInit, withJsonContentType = false) => {
         // AI-IDE 路径重定向：由原有的根路径转为 engine 服务下的云端子路径
@@ -410,7 +352,7 @@ const AIIDEPage: React.FC = () => {
         const init = async () => {
              // 只需要加载文件列表（云端模式下）
              await fetchLocalFileList();
-             // 加载默认模型名，供回测上下文提示
+             // 加载默认模型名，供执行上下文提示
              try {
                  const defaultModel = await modelTrainingService.getDefaultModel();
                  const mid = String(defaultModel?.model_id || '').trim();
@@ -872,56 +814,6 @@ const AIIDEPage: React.FC = () => {
         }
     };
 
-    const isQlibModuleOnlyStrategyError = (messageText: string | null | undefined) => {
-        const text = String(messageText || '').toLowerCase();
-        return [
-            '没有可直接执行入口',
-            '模块型策略',
-            'qlib 回测入口',
-            'qlib backtest',
-            'strategy_config',
-        ].some((hint) => text.includes(hint.toLowerCase()));
-    };
-
-    const buildDefaultQlibBacktestConfig = (strategyCode: string) => {
-        const today = new Date();
-        const endDate = today.toISOString().slice(0, 10);
-        const startDate = new Date(today);
-        startDate.setFullYear(startDate.getFullYear() - 1);
-        const userInfo = authService.getStoredUser() as any;
-        const resolvedUserId = String(
-            userId ||
-            userInfo?.user_id ||
-            userInfo?.id ||
-            userInfo?.username ||
-            localStorage.getItem('ai_ide_user_id') ||
-            'default'
-        ).trim();
-
-        return {
-            strategy_code: strategyCode,
-            strategy_id: activeTab === 'remote' ? selectedRemote?.id : selectedFile?.path || undefined,
-            strategy_type: 'CustomStrategy',
-            symbol: 'all',
-            start_date: startDate.toISOString().slice(0, 10),
-            end_date: endDate,
-            initial_capital: 100000000,
-            commission: 0.00025,
-            user_id: resolvedUserId || 'default',
-            benchmark_symbol: marketConfig.benchmark,
-            deal_price: 'close' as const,
-            is_third_party: true,
-            qlib_provider_uri: marketConfig.qlibProviderUri,
-            qlib_region: marketConfig.qlibRegion,
-            // AI-IDE 模块型策略默认走向量化极速引擎：全市场近 1 年 step 逐日循环
-            // 需 500s+，向量化引擎在相同语义下秒级~分钟级完成
-            use_vectorized: true,
-            strategy_params: {
-                signal: '<PRED>',
-            },
-        };
-    };
-
     const resolveAiIdeExecutionContext = async () => {
         const strategyId =
             activeTab === 'remote' ? String(selectedRemote?.id || '').trim() || undefined : undefined;
@@ -979,12 +871,6 @@ const AIIDEPage: React.FC = () => {
             qlib_region: marketConfig.qlibRegion,
             benchmark: marketConfig.benchmark,
         };
-    };
-
-    const cleanupRunSession = () => {
-        runCancelRef.current = null;
-        runTaskIdRef.current = null;
-        runModeRef.current = null;
     };
 
     const resetExecuteResultSummary = () => {
@@ -1079,70 +965,6 @@ const AIIDEPage: React.FC = () => {
         }
     };
 
-    const appendLogLine = (line: string) => {
-        (setLogs as React.Dispatch<React.SetStateAction<string[]>>)((curr) => {
-            const updated = [...curr, line];
-            return updated.length > 1000 ? updated.slice(-1000) : updated;
-        });
-    };
-
-    const appendErrorLine = (line: string) => {
-        (setErrors as React.Dispatch<React.SetStateAction<string[]>>)((curr) => {
-            const updated = [...curr, line];
-            return updated.length > 1000 ? updated.slice(-1000) : updated;
-        });
-        setLogTab('error');
-    };
-
-    const appendResultSummary = (result: BacktestResult) => {
-        const extra = result as BacktestResult & { execution_time?: number };
-        const metrics: Array<{ label: string; value: string }> = [];
-        const tradeStats: Array<{ label: string; value: string }> = [];
-        const points: Array<{ label: string; value: string }> = [];
-        const pushMetric = (label: string, value: unknown, formatter?: (v: number) => string) => {
-            if (typeof value !== 'number' || !Number.isFinite(value)) return;
-            metrics.push({ label, value: formatter ? formatter(value) : value.toFixed(4) });
-        };
-
-        pushMetric('总收益率', result.total_return, (v) => `${(v * 100).toFixed(2)}%`);
-        pushMetric('年化收益率', result.annual_return, (v) => `${(v * 100).toFixed(2)}%`);
-        pushMetric('夏普比率', result.sharpe_ratio);
-        pushMetric('最大回撤', result.max_drawdown, (v) => `${(v * 100).toFixed(2)}%`);
-        pushMetric('基准收益率', result.benchmark_return, (v) => `${(v * 100).toFixed(2)}%`);
-        pushMetric('超额收益 (Alpha)', result.alpha, (v) => `${(v * 100).toFixed(2)}%`);
-        pushMetric('波动率', result.volatility, (v) => `${(v * 100).toFixed(2)}%`);
-        pushMetric('贝塔 (Beta)', result.beta);
-        pushMetric('信息比率 (IR)', result.information_ratio);
-
-        const summary = {
-            backtestId: result.backtest_id,
-            strategyName: result.strategy_name,
-            symbol: result.symbol,
-            benchmarkSymbol: result.benchmark_symbol,
-            status: result.status,
-            executionTime: extra.execution_time ? `${extra.execution_time.toFixed(2)}s` : undefined,
-            metrics,
-            tradeStats,
-            points,
-        };
-
-        if (typeof result.total_trades === 'number' || typeof result.win_rate === 'number' || typeof result.profit_factor === 'number') {
-            if (typeof result.total_trades === 'number') tradeStats.push({ label: '交易数', value: `${result.total_trades}` });
-            if (typeof result.win_rate === 'number') tradeStats.push({ label: '胜率', value: `${(result.win_rate * 100).toFixed(2)}%` });
-            if (typeof result.profit_factor === 'number') tradeStats.push({ label: '盈亏比', value: `${result.profit_factor.toFixed(4)}` });
-            if (typeof result.avg_win === 'number') tradeStats.push({ label: '平均盈利', value: `${result.avg_win.toFixed(2)}` });
-        }
-
-        if (typeof result.equity_curve?.length === 'number') {
-            points.push({ label: '权益曲线点数', value: `${result.equity_curve.length}` });
-        }
-        if (typeof result.trades?.length === 'number') {
-            points.push({ label: '交易点数', value: `${result.trades.length}` });
-        }
-
-        setFinalResultSummary(summary);
-    };
-
     const coreMetricLabels = new Set(['总收益率', '年化收益率', '夏普比率', '最大回撤', '波动率']);
     const referenceMetricLabels = new Set(['基准收益率', '超额收益 (Alpha)', '贝塔 (Beta)', '信息比率 (IR)']);
     const isReasonableMetricValue = (value: string, absLimit = 1000) => {
@@ -1170,10 +992,10 @@ const AIIDEPage: React.FC = () => {
                         <div className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${badgeClass}`}>
                             {finalResultSummary.status === 'completed' ? '已完成' : finalResultSummary.status || 'completed'}
                         </div>
-                        <div className="text-sm font-bold text-gray-800">Qlib 回测结果</div>
+                        <div className="text-sm font-bold text-gray-800">运行结果</div>
                     </div>
                     <div className="text-[10px] text-gray-400 font-mono">
-                        {finalResultSummary.backtestId ? `backtest_id=${finalResultSummary.backtestId}` : ''}
+                        {finalResultSummary.backtestId ? `job_id=${finalResultSummary.backtestId}` : ''}
                     </div>
                 </div>
                 <div className="px-4 py-3 space-y-3">
@@ -1257,210 +1079,19 @@ const AIIDEPage: React.FC = () => {
         );
     };
 
-    const renderKeyMetricsPanel = () => {
-        if (logTab !== 'metrics') return null;
-
-        const summary = finalResultSummary;
-        if (!summary) {
-            return (
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-6 text-center">
-                    <div className="text-sm font-semibold text-gray-700">暂无关键指标</div>
-                    <div className="mt-1 text-xs text-gray-400">请先完成一次回测或切换到“运行结果”查看原始日志。</div>
-                </div>
-            );
-        }
-
-        const metricMap = new Map(summary.metrics.map((item) => [item.label, item.value]));
-        const tradeMap = new Map(summary.tradeStats.map((item) => [item.label, item.value]));
-        const pointMap = new Map(summary.points.map((item) => [item.label, item.value]));
-
-        const tradeItems: Array<{ label: string; value: string; hint: string }> = [
-            { label: '交易数', value: tradeMap.get('交易数') || '--', hint: '实际执行的买卖次数' },
-            { label: '胜率', value: tradeMap.get('胜率') || '--', hint: '盈利交易占比' },
-            { label: '盈亏比', value: tradeMap.get('盈亏比') || '--', hint: '平均盈利与平均亏损之比' },
-            { label: '平均盈利', value: tradeMap.get('平均盈利') || '--', hint: '单笔盈利交易的平均收益' },
-        ];
-
-        const referenceItems: Array<{ label: string; value: string; hint: string }> = [
-            { label: '基准收益', value: metricMap.get('基准收益率') || '--', hint: '基准指数同期收益（仅在数值合理时展示）' },
-            { label: '超额收益', value: metricMap.get('超额收益 (Alpha)') || '--', hint: '相对基准的超额回报（仅在数值合理时展示）' },
-            { label: '贝塔', value: metricMap.get('贝塔 (Beta)') || '--', hint: '相对基准的系统性风险暴露' },
-            { label: '信息比率', value: metricMap.get('信息比率 (IR)') || '--', hint: '相对基准的超额收益稳定性' },
-        ].filter((item) => item.value !== '--' && isReasonableMetricValue(item.value, 1000));
-
-        const extraItems: Array<{ label: string; value: string; hint: string }> = [
-            { label: '交易点数', value: pointMap.get('交易点数') || '--', hint: '前端可展示的交易记录条数' },
-            { label: '耗时', value: summary.executionTime || '--', hint: '任务完成耗时' },
-        ];
-
-        const metricDetailItems: Array<{ label: string; value: string; hint: string }> = [
-            tradeItems[0],
-            tradeItems[1],
-            tradeItems[2],
-            tradeItems[3],
-            extraItems[0],
-            extraItems[1],
-        ];
-        const leftColumnItems = metricDetailItems.slice(0, 3);
-        const rightColumnItems = metricDetailItems.slice(3, 6);
-
-        return (
-            <div className="space-y-3">
-                <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                        <div>
-                            <div className="text-sm font-bold text-gray-800">关键指标</div>
-                            <div className="text-[10px] text-gray-400">面向快速判断回测质量的核心指标</div>
-                        </div>
-                        <div className="text-[10px] text-gray-400 font-mono">
-                            {summary.backtestId ? `backtest_id=${summary.backtestId}` : ''}
-                        </div>
-                    </div>
-                    <div className="p-4 grid grid-cols-2 gap-3">
-                        {getVisibleMetrics(summary.metrics, coreMetricLabels).map((item) => (
-                            <div key={item.label} className="rounded-xl border border-blue-100 bg-blue-50/40 px-3 py-3">
-                                <div className="text-[10px] text-blue-500 font-medium">{item.label}</div>
-                                <div className="mt-1 text-lg font-bold text-gray-800">{item.value}</div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {referenceItems.length > 0 && (
-                    <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-4 shadow-sm">
-                        <div className="text-sm font-bold text-gray-800 mb-3">参考指标</div>
-                        <div className="grid grid-cols-2 gap-2">
-                            {referenceItems.map((item) => (
-                                <div key={item.label} className="flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2">
-                                    <div>
-                                        <div className="text-[10px] text-gray-400">{item.label}</div>
-                                        <div className="text-[10px] text-gray-400">{item.hint}</div>
-                                    </div>
-                                    <div className="text-sm font-semibold text-gray-800">{item.value}</div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                        <div className="text-sm font-bold text-gray-800 mb-3">交易统计</div>
-                        <div className="space-y-2">
-                            {leftColumnItems.map((item) => (
-                                <div key={item.label} className="flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2">
-                                    <div>
-                                        <div className="text-[10px] text-gray-400">{item.label}</div>
-                                        <div className="text-[10px] text-gray-400">{item.hint}</div>
-                                    </div>
-                                    <div className="text-sm font-semibold text-gray-800">{item.value}</div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                        <div className="text-sm font-bold text-gray-800 mb-3">结果规模</div>
-                        <div className="space-y-2">
-                            {rightColumnItems.map((item) => (
-                                <div key={item.label} className="flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2">
-                                    <div>
-                                        <div className="text-[10px] text-gray-400">{item.label}</div>
-                                        <div className="text-[10px] text-gray-400">{item.hint}</div>
-                                    </div>
-                                    <div className="text-sm font-semibold text-gray-800">{item.value}</div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
+    const appendLogLine = (line: string) => {
+        (setLogs as React.Dispatch<React.SetStateAction<string[]>>)((curr) => {
+            const updated = [...curr, line];
+            return updated.length > 1000 ? updated.slice(-1000) : updated;
+        });
     };
 
-
-
-    const handleEnterDirectory = async (path: string) => {
-        if (activeTab !== 'local') return;
-        setCurrentDir(path);
-        setSelectedFile(null);
-        setEditorContent('# 请选择一个文件开始编辑');
-        await fetchLocalFileList();
-    };
-
-    const handleGoParent = async () => {
-        if (activeTab !== 'local') return;
-        if (!parentDir && parentDir !== '') return;
-        setCurrentDir(parentDir || '');
-        setSelectedFile(null);
-        setEditorContent('# 请选择一个文件开始编辑');
-        await fetchLocalFileList();
-    };
-
-    const runQlibBacktestFallback = async (strategyCode: string) => {
-        try {
-            runModeRef.current = 'qlib';
-            setLogs([]);
-            setErrors([]);
-            setFinalResultSummary(null);
-            setProgress({ percent: 5, message: '已切换到 Qlib 回测入口' });
-            setLogTab('result');
-            setIsRunning(true);
-
-            appendLogLine('检测到模块型策略，自动转入 Qlib 回测。');
-
-            const payload = buildDefaultQlibBacktestConfig(strategyCode);
-            const { backtestService } = await import('../services/backtestService');
-            const submitted = await backtestService.runBacktest(payload as any);
-            const backtestId = submitted.backtest_id;
-            const taskId = submitted.task_id || null;
-
-            runTaskIdRef.current = taskId;
-            setJobId(backtestId);
-
-            appendLogLine(`Qlib 回测任务已提交: ${backtestId}`);
-            if (taskId) {
-                appendLogLine(`Celery 任务 ID: ${taskId}`);
-            }
-
-            const cancelPolling = backtestService.pollStatus(
-                backtestId,
-                {
-                    onProgress: (percent, status, messageText) => {
-                        const pct = Number.isFinite(percent) ? Math.max(0, Math.min(99, Math.round(percent * 100))) : 0;
-                        const msg = messageText || status || '回测运行中';
-                        setProgress({ percent: pct || 5, message: msg });
-                    },
-                    onLog: (message) => {
-                        if (message) {
-                            appendLogLine(message);
-                        }
-                    },
-                    onComplete: (result) => {
-                        setProgress({ percent: 100, message: 'Qlib 回测完成' });
-                        appendLogLine(`[COMPLETE] Qlib 回测已完成${result.backtest_id ? ` (backtest_id=${result.backtest_id})` : ''}`);
-                        appendResultSummary(result);
-                        setIsRunning(false);
-                        setLogTab('result');
-                        cleanupRunSession();
-                    },
-                    onError: (error) => {
-                        appendErrorLine(error.message || 'Qlib 回测失败');
-                        setProgress({ percent: 0, message: 'Qlib 回测失败' });
-                        setIsRunning(false);
-                        cleanupRunSession();
-                    },
-                },
-                2000
-            );
-
-            runCancelRef.current = cancelPolling;
-        } catch (err: any) {
-            appendErrorLine(err?.message || 'Qlib 回测提交失败');
-            setProgress({ percent: 0, message: 'Qlib 回测提交失败' });
-            setIsRunning(false);
-            cleanupRunSession();
-        }
+    const appendErrorLine = (line: string) => {
+        (setErrors as React.Dispatch<React.SetStateAction<string[]>>)((curr) => {
+            const updated = [...curr, line];
+            return updated.length > 1000 ? updated.slice(-1000) : updated;
+        });
+        setLogTab('error');
     };
 
     const handleRun = async () => {
@@ -1473,13 +1104,13 @@ const AIIDEPage: React.FC = () => {
             await handleSave();
         }
 
-            setLogs([]);
-            setErrors([]);
-            setFinalResultSummary(null);
-            resetExecuteResultSummary();
-            setProgress(null);
-            setLogTab('result');
-            setIsRunning(true);
+        setLogs([]);
+        setErrors([]);
+        setProgress(null);
+        setFinalResultSummary(null);
+        resetExecuteResultSummary();
+        setLogTab('result');
+        setIsRunning(true);
         if (eventSourceRef.current) {
             eventSourceRef.current.close();
             eventSourceRef.current = null;
@@ -1487,12 +1118,10 @@ const AIIDEPage: React.FC = () => {
         if (runCancelRef.current) {
             runCancelRef.current();
         }
-        cleanupRunSession();
 
         try {
-            let res;
-            runModeRef.current = 'execute';
             const executionContext = await resolveAiIdeExecutionContext();
+            let res;
             if (activeTab === 'local' && selectedFile) {
                 const normalizedFilePath = String(selectedFile.path || selectedFile.name || '').trim();
                 const executeFilename = (() => {
@@ -1525,18 +1154,12 @@ const AIIDEPage: React.FC = () => {
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({}));
                 const errMsg = formatError(errData.detail || errData) || '启动执行失败';
-                if (res.status === 422 && isQlibModuleOnlyStrategyError(errMsg)) {
-                    await runQlibBacktestFallback(editorContent);
-                    return;
-                }
                 throw new Error(errMsg);
             }
 
             const data = await res.json();
             const job_id = data.job_id;
             setJobId(job_id);
-            runTaskIdRef.current = null;
-            runModeRef.current = 'execute';
 
             // Setup SSE for logs
             const es = new EventSource(buildStreamUrl(`/execute/logs/${job_id}`));
@@ -1554,7 +1177,7 @@ const AIIDEPage: React.FC = () => {
             es.addEventListener('report', (e: any) => {
                 try {
                     const data = JSON.parse(e.data);
-                    appendLogLine(`[REPORT] ${data.path || '回测报告已生成'}`);
+                    appendLogLine(`[REPORT] ${data.path || '报告已生成'}`);
                 } catch (err) { console.error('Parse report error', err); }
             });
             eventSourceRef.current = es;
@@ -1564,7 +1187,6 @@ const AIIDEPage: React.FC = () => {
                 if (text === '[PROCESS_FINISHED]') {
                     syncExecuteResultSummary();
                     setIsRunning(false);
-                    cleanupRunSession();
                     es.close();
                     return;
                 }
@@ -1577,73 +1199,56 @@ const AIIDEPage: React.FC = () => {
 
                 if (text.startsWith('[ERROR]')) {
                     const errorMsg = text.replace('[ERROR] ', '');
-                    (setErrors as React.Dispatch<React.SetStateAction<string[]>>)((curr) => {
-                        const updated = [...curr, errorMsg];
-                        return updated.length > 1000 ? updated.slice(-1000) : updated;
-                    });
-                    setLogTab('error');
+                    appendErrorLine(errorMsg);
                 } else {
                     ingestExecuteResultLine(text);
-                    (setLogs as React.Dispatch<React.SetStateAction<string[]>>)((curr) => {
-                        const updated = [...curr, text];
-                        return updated.length > 1000 ? updated.slice(-1000) : updated;
-                    });
+                    appendLogLine(text);
                 }
             };
 
             es.onerror = () => {
                 appendErrorLine('执行日志流已中断，请检查后端执行器日志或网络连接');
-                setLogTab('error');
                 setIsRunning(false);
-                cleanupRunSession();
                 es.close();
             };
 
         } catch (err: any) {
-            if (String(err?.message || '').includes('没有可直接执行入口') || String(err?.message || '').includes('模块型策略')) {
-                await runQlibBacktestFallback(editorContent);
-                return;
-            }
             console.error('Execution failed', err);
             setErrors([err.message || '执行请求失败']);
             setLogTab('error');
             setIsRunning(false);
-            cleanupRunSession();
         }
     };
 
     const handleStop = async () => {
         if (!jobId) return;
         try {
-            if (runModeRef.current === 'qlib') {
-                if (runTaskIdRef.current) {
-                    try {
-                        const { backtestService } = await import('../services/backtestService');
-                        await backtestService.stopTask(runTaskIdRef.current);
-                    } catch (taskErr) {
-                        console.warn('Stop Qlib task failed', taskErr);
-                    }
-                }
-                if (runCancelRef.current) {
-                    runCancelRef.current();
-                }
-                appendErrorLine('Qlib 回测已停止');
-                setProgress({ percent: 0, message: 'Qlib 回测已停止' });
-                setIsRunning(false);
-                cleanupRunSession();
-                return;
-            }
-
             await apiFetch(`/execute/stop/${jobId}`, { method: 'POST' });
             if (runCancelRef.current) {
                 runCancelRef.current();
             }
             setIsRunning(false);
             if (eventSourceRef.current) eventSourceRef.current.close();
-            cleanupRunSession();
         } catch (err) {
             console.error('Stop failed', err);
         }
+    };
+
+    const handleEnterDirectory = async (path: string) => {
+        if (activeTab !== 'local') return;
+        setCurrentDir(path);
+        setSelectedFile(null);
+        setEditorContent('# 请选择一个文件开始编辑');
+        await fetchLocalFileList();
+    };
+
+    const handleGoParent = async () => {
+        if (activeTab !== 'local') return;
+        if (!parentDir && parentDir !== '') return;
+        setCurrentDir(parentDir || '');
+        setSelectedFile(null);
+        setEditorContent('# 请选择一个文件开始编辑');
+        await fetchLocalFileList();
     };
 
     // Session State
@@ -2172,50 +1777,9 @@ const AIIDEPage: React.FC = () => {
     };
 
     const handleCopyLogs = async () => {
-        const buildMetricsText = () => {
-            if (!finalResultSummary) return '';
-            const lines: string[] = [];
-            lines.push(`回测状态: ${finalResultSummary.status || '--'}`);
-            if (finalResultSummary.backtestId) lines.push(`backtest_id: ${finalResultSummary.backtestId}`);
-            if (finalResultSummary.strategyName) lines.push(`策略: ${finalResultSummary.strategyName}`);
-            if (finalResultSummary.symbol) lines.push(`标的: ${finalResultSummary.symbol}`);
-            if (finalResultSummary.benchmarkSymbol) lines.push(`基准: ${finalResultSummary.benchmarkSymbol}`);
-            if (finalResultSummary.executionTime) lines.push(`耗时: ${finalResultSummary.executionTime}`);
-
-            if (finalResultSummary.metrics.length > 0) {
-                lines.push('');
-                lines.push('关键指标');
-                finalResultSummary.metrics.forEach((item) => {
-                    lines.push(`- ${item.label}: ${item.value}`);
-                });
-            }
-
-            if (finalResultSummary.tradeStats.length > 0) {
-                lines.push('');
-                lines.push('交易统计');
-                finalResultSummary.tradeStats.forEach((item) => {
-                    lines.push(`- ${item.label}: ${item.value}`);
-                });
-            }
-
-            if (finalResultSummary.points.length > 0) {
-                lines.push('');
-                lines.push('结果规模');
-                finalResultSummary.points.forEach((item) => {
-                    lines.push(`- ${item.label}: ${item.value}`);
-                });
-            }
-
-            return lines.join('\n');
-        };
-
-        const content = logTab === 'result'
-            ? logs.join('\n')
-            : logTab === 'error'
-                ? errors.join('\n')
-                : buildMetricsText();
+        const content = logTab === 'result' ? logs.join('\n') : errors.join('\n');
         if (!content.trim()) {
-            message.info(logTab === 'result' ? '暂无可复制的运行日志' : logTab === 'error' ? '暂无可复制的错误日志' : '暂无可复制的关键指标');
+            message.info(logTab === 'result' ? '暂无可复制的运行日志' : '暂无可复制的错误日志');
             return;
         }
         try {
@@ -2490,19 +2054,18 @@ const AIIDEPage: React.FC = () => {
                                 <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono text-emerald-600 bg-emerald-50 border border-emerald-100">
                                     Python
                                 </span>
+                                {defaultModelName && (
+                                    <span
+                                        className="shrink-0 px-1.5 py-0.5 rounded text-[10px] text-blue-600 bg-blue-50 border border-blue-100 truncate max-w-[180px]"
+                                        title={`执行默认使用的模型：${defaultModelName}`}
+                                    >
+                                        执行模型: {defaultModelName}
+                                    </span>
+                                )}
                             </div>
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                            {defaultModelName ? (
-                                <span
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100 text-[11px] font-medium whitespace-nowrap"
-                                    title={`回测默认使用的模型: ${defaultModelName}`}
-                                >
-                                    <span>模型: {defaultModelName.length > 20 ? defaultModelName.substring(0, 20) + '...' : defaultModelName}</span>
-                                </span>
-                            ) : null}
-
                             {isCheckingSyntax ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-gray-50 text-gray-400 border border-gray-100 text-[10px] whitespace-nowrap">
                                     <RefreshCw className="h-2.5 w-2.5 animate-spin text-gray-400" />
@@ -2548,6 +2111,32 @@ const AIIDEPage: React.FC = () => {
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
+                            {/* Run / Stop Button */}
+                            {isRunning ? (
+                                <button
+                                    onClick={handleStop}
+                                    className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-all hover:scale-[1.02] active:scale-95 whitespace-nowrap border shadow-2xs bg-red-600 text-white border-red-600 hover:bg-red-700"
+                                    title="停止当前执行任务"
+                                >
+                                    <Square className="h-3.5 w-3.5 shrink-0" />
+                                    <span>停止</span>
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={handleRun}
+                                    disabled={syntaxError !== null || (activeTab === 'local' && !selectedFile)}
+                                    className={clsx(
+                                        "flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-all hover:scale-[1.02] active:scale-95 whitespace-nowrap border shadow-2xs",
+                                        syntaxError !== null || (activeTab === 'local' && !selectedFile)
+                                            ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-60"
+                                            : "bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700"
+                                    )}
+                                    title="运行当前代码 (F5)"
+                                >
+                                    <Play className="h-3.5 w-3.5 shrink-0" />
+                                    <span>运行</span>
+                                </button>
+                            )}
                             {/* Save Button */}
                             <button
                                 onClick={handleSave}
@@ -2562,49 +2151,6 @@ const AIIDEPage: React.FC = () => {
                             >
                                 {isSaving ? <CheckCircle className="h-3.5 w-3.5 text-green-500 shrink-0" /> : <Save className="h-3.5 w-3.5 text-gray-500 shrink-0" />}
                                 <span>{isSaving ? '已保存' : '保存'}</span>
-                            </button>
-
-                            {/* Run Button */}
-                            {isRunning ? (
-                                <button
-                                    onClick={handleStop}
-                                    className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full bg-red-600 text-white hover:bg-red-700 active:scale-95 transition-all shadow-sm whitespace-nowrap"
-                                    title="停止当前运行脚本"
-                                >
-                                    <Square className="h-3.5 w-3.5 fill-current shrink-0" />
-                                    <span>停止运行</span>
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={handleRun}
-                                    disabled={activeTab === 'local' ? !selectedFile : !selectedRemote}
-                                    className={clsx(
-                                        "flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-all hover:scale-[1.02] shadow-sm whitespace-nowrap",
-                                        activeTab === 'local' ? !selectedFile : !selectedRemote
-                                            ? "bg-gray-100 text-gray-400 cursor-not-allowed opacity-60"
-                                            : "bg-blue-600 text-white hover:bg-blue-700 active:scale-95"
-                                    )}
-                                    title="直接运行当前 Python 脚本，查看控制台输出和实时日志 (F5)"
-                                >
-                                    <Play className="h-3.5 w-3.5 fill-current shrink-0" />
-                                    <span>运行</span>
-                                </button>
-                            )}
-
-                            {/* Strategy Lab Backtest Button */}
-                            <button
-                                onClick={handleStrategyLabRun}
-                                disabled={isRunning || strategyLabLoading || !editorContent.trim()}
-                                className={clsx(
-                                    "flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-all hover:scale-[1.02] active:scale-95 whitespace-nowrap border shadow-2xs",
-                                    isRunning || strategyLabLoading || !editorContent.trim()
-                                        ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-60"
-                                        : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:text-blue-600 hover:border-gray-300"
-                                )}
-                                title="使用策略实验室 SDK 运行回测，查看 KPI、收益曲线、热力图等完整结果"
-                            >
-                                {strategyLabLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin shrink-0" /> : <FlaskRound className="h-3.5 w-3.5 text-gray-500 shrink-0" />}
-                                <span>{strategyLabLoading ? '回测中...' : '策略回测'}</span>
                             </button>
                         </div>
                     </div>
@@ -2656,32 +2202,11 @@ const AIIDEPage: React.FC = () => {
                                 运行结果
                                 {logs.length > 0 && <span className="w-4 h-4 rounded-full bg-blue-100 text-[10px] flex items-center justify-center font-bold">{logs.length}</span>}
                             </button>
-                            <button
-                                onClick={() => setLogTab('backtest')}
-                                className={clsx(
-                                    "text-xs font-medium border-b-2 transition-all h-10 flex items-center gap-1.5",
-                                    logTab === 'backtest' ? "border-zinc-900 text-zinc-900 font-semibold" : "border-transparent text-gray-500 hover:text-gray-700"
-                                )}
-                            >
-                                <FlaskRound className="w-3.5 h-3.5" />
-                                策略回测
-                                {strategyLabResult && <span className="w-4 h-4 rounded-full bg-zinc-100 text-zinc-800 text-[10px] flex items-center justify-center font-bold">✓</span>}
-                            </button>
                             {isRunning && progress && (
                                 <span className="inline-flex items-center h-10 text-[10px] text-blue-600 font-mono animate-pulse leading-none self-center">
                                     {progress.message}
                                 </span>
                             )}
-                            <button
-                                onClick={() => setLogTab('metrics')}
-                                className={clsx(
-                                    "text-xs font-medium border-b-2 transition-all h-10 flex items-center gap-1.5",
-                                    logTab === 'metrics' ? "border-emerald-500 text-emerald-600" : "border-transparent text-gray-500 hover:text-gray-700"
-                                )}
-                            >
-                                关键指标
-                                {finalResultSummary && <span className="w-4 h-4 rounded-full bg-emerald-100 text-[10px] flex items-center justify-center font-bold">1</span>}
-                            </button>
                             <button
                                 onClick={() => setLogTab('error')}
                                 className={clsx(
@@ -2721,33 +2246,7 @@ const AIIDEPage: React.FC = () => {
                                 <Square className="h-3.5 w-3.5 fill-current" />
                             </button>
                             <button
-                                onClick={handleSave}
-                                className={clsx(
-                                    "p-1.5 rounded-lg transition-colors group relative",
-                                    isSaving ? "text-green-600 bg-green-50" : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-                                )}
-                                title={activeTab === 'local' ? "保存本地文件 (Cmd+S)" : "保存云端修改 (Cmd+S)"}
-                            >
-                                <Save className="h-4 w-4" />
-                                {isSaving && (
-                                    <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                                    </span>
-                                )}
-                            </button>
-
-                            {activeTab === 'local' && selectedFile && (
-                                <button
-                                    onClick={handleUploadToCloud}
-                                    className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 transition-colors group relative"
-                                    title="保存到云端策略库"
-                                >
-                                    <CloudUpload className="h-4 w-4" />
-                                </button>
-                            )}
-                            <button
-                                onClick={() => { setLogs([]); setErrors([]); setFinalResultSummary(null); setStrategyLabResult(null); setStrategyLabProgress(null); }}
+                                onClick={() => { setLogs([]); setErrors([]); setProgress(null); setFinalResultSummary(null); resetExecuteResultSummary(); }}
                                 className="p-1 hover:bg-gray-100 rounded text-gray-400 transition-all hover:scale-110"
                                 title="清除日志"
                             >
@@ -2781,28 +2280,6 @@ const AIIDEPage: React.FC = () => {
                                 )}
                                 <div ref={logEndRef} />
                             </div>
-                        ) : logTab === 'metrics' ? (
-                            <div className="space-y-3">
-                                {renderKeyMetricsPanel()}
-                                <div ref={logEndRef} />
-                            </div>
-                        ) : logTab === 'backtest' ? (
-                            <div className="flex-1 overflow-auto">
-                                {strategyLabLoading && !strategyLabResult ? (
-                                    <div className="flex items-center justify-center h-40 text-gray-400">
-                                        <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-                                        {strategyLabProgress?.message || '正在运行策略回测...'}
-                                    </div>
-                                ) : (
-                                    <StrategyLabResultPanel
-                                        result={strategyLabResult}
-                                        loading={strategyLabLoading}
-                                        code={editorContent}
-                                        strategyId={null}
-                                        strategyName={selectedRemote?.name || selectedFile?.name}
-                                    />
-                                )}
-                            </div>
                         ) : (
                             <div className="space-y-1 text-red-500">
                                 {errors.length === 0 && <p className="text-gray-400 italic">暂无错误记录</p>}
@@ -2817,6 +2294,7 @@ const AIIDEPage: React.FC = () => {
                         )}
                     </div>
                 </div>
+
             </main>
 
             {/* 4. LLM Chat Panel */}

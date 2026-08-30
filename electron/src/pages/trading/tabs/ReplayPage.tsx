@@ -17,7 +17,7 @@ import {
     Clock, Play, Trash2, Plus, Loader2, AlertTriangle,
     SkipForward, CheckSquare, Square, Shield, ChevronDown, ChevronUp,
     FastForward, Pause, RotateCcw, BarChart3,
-    ChevronRight, ChevronLeft, Cpu, BookOpen, Settings2, Zap,
+    Cpu, BookOpen, Settings2, Zap,
     ShieldCheck, Info,
 } from 'lucide-react';
 import type {
@@ -56,17 +56,8 @@ function StatusBadge({ status }: { status: ReplaySession['status'] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Create form — multi-step wizard
+// Create form — single-page sectioned layout
 // ---------------------------------------------------------------------------
-
-const WIZARD_STEPS = [
-    { key: 'model', label: '选择模型', icon: Cpu },
-    { key: 'strategy', label: '策略模板', icon: BookOpen },
-    { key: 'params', label: '参数配置', icon: Settings2 },
-    { key: 'confirm', label: '确认创建', icon: Zap },
-] as const;
-
-type WizardStep = typeof WIZARD_STEPS[number]['key'];
 
 /** 格式化 IC/ICIR 等指标 */
 function fmtMetric(val: number | undefined, digits = 4): string {
@@ -91,8 +82,6 @@ function ModelMetricsBadge({ metrics, label }: { metrics: Record<string, number 
 
 function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void }) {
     const currentMarket = useAppSelector(selectCurrentMarket);
-    // Wizard state
-    const [step, setStep] = useState<WizardStep>('model');
 
     // Step 1: Model selection
     const [systemModels, setSystemModels] = useState<SystemModelRecord[]>([]);
@@ -105,9 +94,15 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
     const [templatesLoading, setTemplatesLoading] = useState(true);
 
-    // Step 3: Params
-    const [startDate, setStartDate] = useState('2024-03-04');
-    const [endDate, setEndDate] = useState('2024-03-15');
+    // Step 3: Params（默认区间：近半年，结束日为今天）
+    const fmtDate = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const [startDate, setStartDate] = useState(() => {
+        const d = new Date();
+        d.setMonth(d.getMonth() - 6);
+        return fmtDate(d);
+    });
+    const [endDate, setEndDate] = useState(() => fmtDate(new Date()));
     const [initialCash, setInitialCash] = useState('1000000');
     const [stopLossPct, setStopLossPct] = useState('');
     const [paramOverrides, setParamOverrides] = useState<Record<string, unknown>>({});
@@ -192,29 +187,6 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
         return null;
     };
 
-    const stepIndex = WIZARD_STEPS.findIndex(s => s.key === step);
-
-    const canGoNext = (): boolean => {
-        if (step === 'model') return true; // model is optional
-        if (step === 'strategy') return true; // template is optional
-        if (step === 'params') {
-            if (!startDate || !endDate) return false;
-            if (isNaN(parseFloat(initialCash)) || parseFloat(initialCash) <= 0) return false;
-            return true;
-        }
-        return true;
-    };
-
-    const goNext = () => {
-        const idx = stepIndex;
-        if (idx < WIZARD_STEPS.length - 1) setStep(WIZARD_STEPS[idx + 1].key);
-    };
-
-    const goPrev = () => {
-        const idx = stepIndex;
-        if (idx > 0) setStep(WIZARD_STEPS[idx - 1].key);
-    };
-
     const handleSubmit = async () => {
         setLoading(true);
         setError(null);
@@ -239,38 +211,17 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
         }
     };
 
-    // --- Render step indicator ---
-    const renderStepIndicator = () => (
-        <div className="flex items-center gap-1.5 mb-5 flex-wrap">
-            {WIZARD_STEPS.map((s, i) => {
-                const Icon = s.icon;
-                const isActive = s.key === step;
-                const isDone = i < stepIndex;
-                return (
-                    <React.Fragment key={s.key}>
-                        {i > 0 && <ChevronRight size={14} className="text-slate-300 mx-0.5" />}
-                        <button
-                            onClick={() => setStep(s.key)}
-                            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 ${
-                                isActive
-                                    ? 'bg-blue-600 text-white shadow-xs shadow-blue-500/20'
-                                    : isDone
-                                        ? 'bg-blue-50 text-blue-600 hover:bg-blue-100/70 border border-blue-100'
-                                        : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600'
-                            }`}
-                        >
-                            <Icon size={14} />
-                            {s.label}
-                        </button>
-                    </React.Fragment>
-                );
-            })}
+    // --- Section heading helper (SessionCard 头部条风格) ---
+    const SectionTitle = ({ icon: Icon, title, desc }: { icon: React.ElementType; title: string; desc?: string }) => (
+        <div className="flex items-center gap-2.5 px-4 py-3 bg-slate-50/60 border-b border-slate-100">
+            <Icon size={15} className="text-slate-400" />
+            <span className="text-sm font-bold text-slate-800">{title}</span>
+            {desc && <span className="text-[11px] text-slate-400">{desc}</span>}
         </div>
     );
 
-    // --- Step 1: Model selection (dropdown) ---
-    const renderModelStep = () => {
-        // Build unified model list: user models first, then system models
+    // --- Model section: default option + selectable card grid ---
+    const renderModelSection = () => {
         const allModelOptions: Array<{
             id: string;
             label: string;
@@ -281,7 +232,6 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
             status: string;
         }> = [];
 
-        // User models (all non-archived)
         for (const m of userModels) {
             if (m.status === 'archived') continue;
             const meta = getMeta(m);
@@ -300,7 +250,6 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
             });
         }
 
-        // System models
         for (const m of systemModels) {
             allModelOptions.push({
                 id: m.model_id,
@@ -313,63 +262,80 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
             });
         }
 
-        // Selected model info
-        const selectedOpt = allModelOptions.find(o => o.id === selectedModelId);
+        const userOpts = allModelOptions.filter(o => o.group === '我的模型');
+        const sysOpts = allModelOptions.filter(o => o.group === '系统模型');
+        const defaultOpt = allModelOptions.find(o => o.isDefault) ?? allModelOptions[0] ?? null;
+
+        const optionCard = (opt: typeof allModelOptions[number]) => {
+            const selected = selectedModelId === opt.id;
+            return (
+                <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setSelectedModelId(opt.id)}
+                    className={`text-left px-3 py-2.5 rounded-xl border transition-all ${
+                        selected
+                            ? 'border-blue-400 bg-blue-50/70 shadow-2xs'
+                            : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/30'
+                    }`}
+                >
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-xs font-bold truncate ${selected ? 'text-blue-700' : 'text-slate-700'}`}>{opt.label}</span>
+                        {opt.isDefault && (
+                            <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-600 text-[10px] font-bold border border-emerald-200 shrink-0">默认</span>
+                        )}
+                        {opt.status !== 'active' && opt.status !== 'system' && (
+                            <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 text-[10px] font-bold border border-slate-200 shrink-0">{opt.status}</span>
+                        )}
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-slate-400">{opt.sublabel}</div>
+                    {opt.metrics && <ModelMetricsBadge metrics={opt.metrics} label="测试集" />}
+                </button>
+            );
+        };
 
         return (
-            <div className="space-y-3.5">
-                <p className="text-xs text-slate-500 font-medium">选择用于生成交易信号的模型。不选则使用系统默认模型。</p>
-
+            <section className="rounded-2xl border border-slate-200/80 bg-white shadow-xs overflow-hidden">
+                <SectionTitle icon={Cpu} title="信号模型" desc="不选则使用系统默认模型" />
+                <div className="px-4 py-3">
                 {modelsLoading ? (
                     <div className="flex items-center gap-2 py-4 text-slate-400">
                         <Loader2 size={16} className="animate-spin" />
                         <span className="text-xs">加载模型列表…</span>
                     </div>
                 ) : (
-                    <>
-                        <select
-                            value={selectedModelId ?? ''}
-                            onChange={e => setSelectedModelId(e.target.value || null)}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 bg-white transition-all shadow-2xs font-medium text-slate-800"
+                    <div className="space-y-3">
+                        <button
+                            type="button"
+                            onClick={() => setSelectedModelId(null)}
+                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all ${
+                                selectedModelId === null
+                                    ? 'border-blue-400 bg-blue-50/70 shadow-2xs'
+                                    : 'border-dashed border-slate-300 bg-slate-50/50 hover:border-blue-200 hover:bg-blue-50/30'
+                            }`}
                         >
-                            <option value="">— 使用默认模型 —</option>
-                            {/* Group: user models */}
-                            {userModels.filter(m => m.status !== 'archived').length > 0 && (
-                                <optgroup label="我的模型">
-                                    {userModels.filter(m => m.status !== 'archived').map(m => {
-                                        const name = modelDisplayName(m);
-                                        return (
-                                            <option key={m.model_id} value={m.model_id}>
-                                                {name}{m.is_default ? ' ★默认' : ''}{m.status !== 'active' ? ` [${m.status}]` : ''}
-                                            </option>
-                                        );
-                                    })}
-                                </optgroup>
-                            )}
-                            {/* Group: system models */}
-                            {systemModels.length > 0 && (
-                                <optgroup label="系统模型">
-                                    {systemModels.map(m => (
-                                        <option key={m.model_id} value={m.model_id}>
-                                            {m.display_name} ({m.algorithm} v{m.version})
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            )}
-                        </select>
+                            <div className="flex items-center gap-1.5">
+                                <span className={`text-xs font-bold ${selectedModelId === null ? 'text-blue-700' : 'text-slate-600'}`}>使用默认模型</span>
+                                {defaultOpt && (
+                                    <span className="text-[10px] text-slate-400 truncate">{defaultOpt.label}</span>
+                                )}
+                            </div>
+                        </button>
 
-                        {/* Selected model detail card */}
-                        {selectedOpt && (
-                            <div className="px-3.5 py-3 rounded-xl border border-blue-100 bg-blue-50/50 space-y-1.5">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm font-semibold text-slate-800">{selectedOpt.label}</span>
-                                    {selectedOpt.isDefault && (
-                                        <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-600 text-[10px] font-bold border border-emerald-200">默认</span>
-                                    )}
-                                    <span className="text-xs text-slate-400">{selectedOpt.sublabel}</span>
-                                </div>
-                                {selectedOpt.metrics && (
-                                    <ModelMetricsBadge metrics={selectedOpt.metrics} label="测试集" />
+                        {(userOpts.length > 0 || sysOpts.length > 0) && (
+                            <div className="max-h-[212px] overflow-y-auto custom-scrollbar pr-1 space-y-3">
+                                {userOpts.length > 0 && (
+                                    <div>
+                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">我的模型</div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{userOpts.map(optionCard)}</div>
+                                    </div>
+                                )}
+
+                                {sysOpts.length > 0 && (
+                                    <div>
+                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">系统模型</div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{sysOpts.map(optionCard)}</div>
+                                    </div>
                                 )}
                             </div>
                         )}
@@ -377,146 +343,135 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
                         {allModelOptions.length === 0 && (
                             <p className="text-xs text-slate-400 py-2">暂无可用模型，将使用系统默认模型。</p>
                         )}
-                    </>
+                    </div>
                 )}
-            </div>
+                </div>
+            </section>
         );
     };
 
-    // --- Step 2: Strategy template (dropdown) ---
-    const renderStrategyStep = () => {
-        // Group templates by category for optgroup rendering
-        const categories: string[] = [];
-        for (const t of templates) {
-            if (!categories.includes(t.category)) categories.push(t.category);
-        }
-
+    // --- Strategy template section: default option + selectable card list ---
+    const renderStrategySection = () => {
         const difficultyLabel = (d: string) =>
             d === 'beginner' ? '入门' : d === 'intermediate' ? '进阶' : '高级';
+        const difficultyTone = (d: string) =>
+            d === 'beginner' ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                : d === 'intermediate' ? 'bg-amber-50 text-amber-600 border-amber-200'
+                    : 'bg-red-50 text-red-600 border-red-200';
 
         return (
-            <div className="space-y-3.5">
-                <p className="text-xs text-slate-500 font-medium">选择策略模板，自动填充调仓参数和止损规则。不选则使用默认参数。</p>
-
+            <section className="rounded-2xl border border-slate-200/80 bg-white shadow-xs overflow-hidden">
+                <SectionTitle icon={BookOpen} title="策略模板" desc="自动填充调仓参数和止损规则" />
+                <div className="px-4 py-3">
                 {templatesLoading ? (
                     <div className="flex items-center gap-2 py-4 text-slate-400">
                         <Loader2 size={16} className="animate-spin" />
                         <span className="text-xs">加载策略模板…</span>
                     </div>
-                ) : templates.length === 0 ? (
-                    <p className="text-xs text-slate-400 py-2">暂无策略模板，将使用默认参数。</p>
                 ) : (
-                    <>
-                        <select
-                            value={selectedTemplateId ?? ''}
-                            onChange={e => setSelectedTemplateId(e.target.value || null)}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 bg-white transition-all shadow-2xs font-medium text-slate-800"
+                    <div className="space-y-2">
+                        <button
+                            type="button"
+                            onClick={() => setSelectedTemplateId(null)}
+                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all ${
+                                selectedTemplateId === null
+                                    ? 'border-blue-400 bg-blue-50/70 shadow-2xs'
+                                    : 'border-dashed border-slate-300 bg-slate-50/50 hover:border-blue-200 hover:bg-blue-50/30'
+                            }`}
                         >
-                            <option value="">— 使用默认参数 —</option>
-                            {categories.map(cat => (
-                                <optgroup key={cat} label={cat}>
-                                    {templates.filter(t => t.category === cat).map(t => (
-                                        <option key={t.id} value={t.id}>
-                                            {t.name} [{difficultyLabel(t.difficulty)}]
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            ))}
-                        </select>
-
-                        {/* Selected template detail card */}
-                        {selectedTemplate && (
-                            <div className="px-3.5 py-3 rounded-xl border border-blue-100 bg-blue-50/50 space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm font-semibold text-slate-800">{selectedTemplate.name}</span>
-                                    <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-medium border border-slate-200">{selectedTemplate.category}</span>
-                                    <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${
-                                        selectedTemplate.difficulty === 'beginner' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
-                                        selectedTemplate.difficulty === 'intermediate' ? 'bg-amber-50 text-amber-600 border-amber-200' :
-                                        'bg-red-50 text-red-600 border-red-200'
-                                    }`}>
-                                        {difficultyLabel(selectedTemplate.difficulty)}
-                                    </span>
-                                </div>
-                                <p className="text-xs text-slate-500 leading-relaxed">{selectedTemplate.description}</p>
-                                {/* Key replay params preview */}
-                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
-                                    {selectedTemplate.replay_params.topk != null && <span>TopK={String(selectedTemplate.replay_params.topk)}</span>}
-                                    {selectedTemplate.replay_params.weight_mode != null && <span>权重={String(selectedTemplate.replay_params.weight_mode)}</span>}
-                                    {selectedTemplate.replay_params.max_position_pct != null && <span>最大持仓={String(selectedTemplate.replay_params.max_position_pct)}</span>}
-                                    {selectedTemplate.replay_params.stop_loss_pct != null && <span>止损={(Number(selectedTemplate.replay_params.stop_loss_pct) * 100).toFixed(1)}%</span>}
-                                </div>
-                            </div>
+                            <span className={`text-xs font-bold ${selectedTemplateId === null ? 'text-blue-700' : 'text-slate-600'}`}>使用默认参数</span>
+                        </button>
+                        <div className="space-y-2 max-h-[292px] overflow-y-auto custom-scrollbar pr-1">
+                        {templates.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-2">暂无策略模板，将使用默认参数。</p>
+                        ) : (
+                            templates.map(t => {
+                                const selected = selectedTemplateId === t.id;
+                                return (
+                                    <button
+                                        key={t.id}
+                                        type="button"
+                                        onClick={() => setSelectedTemplateId(t.id)}
+                                        className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all ${
+                                            selected
+                                                ? 'border-blue-400 bg-blue-50/70 shadow-2xs'
+                                                : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/30'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className={`text-xs font-bold ${selected ? 'text-blue-700' : 'text-slate-700'}`}>{t.name}</span>
+                                            <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 text-[10px] font-bold border border-slate-200">{t.category}</span>
+                                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${difficultyTone(t.difficulty)}`}>
+                                                {difficultyLabel(t.difficulty)}
+                                            </span>
+                                        </div>
+                                        <p className="mt-1 text-[11px] text-slate-500 leading-relaxed line-clamp-2">{t.description}</p>
+                                        <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[10px] font-mono text-slate-400">
+                                            {t.replay_params.topk != null && <span>TopK={String(t.replay_params.topk)}</span>}
+                                            {t.replay_params.weight_mode != null && <span>权重={String(t.replay_params.weight_mode)}</span>}
+                                            {t.replay_params.max_position_pct != null && <span>最大持仓={String(t.replay_params.max_position_pct)}</span>}
+                                            {t.replay_params.stop_loss_pct != null && <span>止损={(Number(t.replay_params.stop_loss_pct) * 100).toFixed(1)}%</span>}
+                                        </div>
+                                    </button>
+                                );
+                            })
                         )}
-                    </>
+                        </div>
+                    </div>
                 )}
-            </div>
+                </div>
+            </section>
         );
     };
 
-    // --- Step 3: Params ---
-    const renderParamsStep = () => {
+    // --- Params section: date range / cash / stop loss / template params ---
+    const renderParamsSection = () => {
         const templateParams = selectedTemplate?.params ?? [];
+        const inputClass = "w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 bg-white transition-all shadow-2xs font-medium text-slate-800";
         return (
-            <div className="space-y-4">
-                {/* Date range + cash */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <section className="h-full rounded-2xl border border-slate-200/80 bg-white shadow-xs overflow-hidden">
+                <SectionTitle icon={Settings2} title="推演参数" />
+                <div className="px-4 py-3">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     <div>
                         <label className="block text-xs font-semibold text-slate-600 mb-1.5">起始日</label>
-                        <input
-                            type="date"
-                            value={startDate}
-                            onChange={e => setStartDate(e.target.value)}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 bg-white transition-all shadow-2xs font-medium text-slate-800"
-                        />
+                        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={inputClass} />
                     </div>
                     <div>
                         <label className="block text-xs font-semibold text-slate-600 mb-1.5">结束日</label>
-                        <input
-                            type="date"
-                            value={endDate}
-                            onChange={e => setEndDate(e.target.value)}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 bg-white transition-all shadow-2xs font-medium text-slate-800"
-                        />
+                        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className={inputClass} />
                     </div>
                     <div>
                         <label className="block text-xs font-semibold text-slate-600 mb-1.5">初始资金</label>
+                        <input type="number" value={initialCash} onChange={e => setInitialCash(e.target.value)} className={inputClass} />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                            止损比例 (%)
+                            {selectedTemplate?.replay_params.stop_loss_pct != null && (
+                                <span className="ml-1 font-normal text-slate-400">
+                                    模板默认 {(Number(selectedTemplate.replay_params.stop_loss_pct) * 100).toFixed(1)}%
+                                </span>
+                            )}
+                        </label>
                         <input
                             type="number"
-                            value={initialCash}
-                            onChange={e => setInitialCash(e.target.value)}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 bg-white transition-all shadow-2xs font-medium text-slate-800"
+                            value={stopLossPct}
+                            onChange={e => setStopLossPct(e.target.value)}
+                            placeholder={selectedTemplate?.replay_params.stop_loss_pct != null
+                                ? `${(Number(selectedTemplate.replay_params.stop_loss_pct) * 100).toFixed(1)}`
+                                : '如 8 表示 8%'}
+                            min={0}
+                            max={100}
+                            step={0.5}
+                            className={inputClass}
                         />
                     </div>
-                </div>
-
-                {/* Stop loss */}
-                <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                        止损比例 (%)
-                        {selectedTemplate?.replay_params.stop_loss_pct != null && (
-                            <span className="ml-1.5 font-normal text-slate-400">
-                                （模板默认 {(Number(selectedTemplate.replay_params.stop_loss_pct) * 100).toFixed(1)}%）
-                            </span>
-                        )}
-                    </label>
-                    <input
-                        type="number"
-                        value={stopLossPct}
-                        onChange={e => setStopLossPct(e.target.value)}
-                        placeholder={selectedTemplate?.replay_params.stop_loss_pct != null
-                            ? `${(Number(selectedTemplate.replay_params.stop_loss_pct) * 100).toFixed(1)}`
-                            : '如 8 表示 8%'}
-                        min={0}
-                        max={100}
-                        step={0.5}
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 bg-white transition-all shadow-2xs font-medium text-slate-800"
-                    />
                 </div>
 
                 {/* Template params overrides */}
                 {templateParams.length > 0 && (
-                    <div className="space-y-2.5 pt-1">
+                    <div className="space-y-2.5 pt-3 mt-3 border-t border-slate-100">
                         <h5 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">策略参数</h5>
                         {templateParams.map(p => (
                             <TemplateParamInput
@@ -531,44 +486,76 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
                         ))}
                     </div>
                 )}
-            </div>
+                </div>
+            </section>
         );
     };
 
-    // --- Step 4: Confirm ---
-    const renderConfirmStep = () => {
+    // --- Mode + summary + create section ---
+    const renderModeSection = () => {
         const finalParams = buildStrategyParams();
         const finalStopLoss = buildStopLossPct();
+        const valid = !!startDate && !!endDate && !isNaN(parseFloat(initialCash)) && parseFloat(initialCash) > 0;
         return (
-            <div className="space-y-3.5">
-                {/* Summary */}
-                <div className="rounded-xl bg-slate-50/80 border border-slate-200/80 p-4 space-y-2.5">
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                        <div className="text-slate-500 font-medium">模型</div>
-                        <div className="text-slate-800 font-semibold">
+            <section className="h-full flex flex-col rounded-2xl border border-slate-200/80 bg-white shadow-xs overflow-hidden">
+                <SectionTitle icon={Zap} title="执行模式与确认" />
+                <div className="px-4 py-3 flex-1 flex flex-col gap-3.5">
+
+                {/* Mode selection */}
+                <div className="grid grid-cols-2 gap-3">
+                    <button
+                        onClick={() => setAutoTrade(true)}
+                        className={`px-3.5 py-3 rounded-xl border text-left transition-all ${
+                            autoTrade
+                                ? 'border-blue-400 bg-blue-50/70 shadow-2xs'
+                                : 'border-slate-200 bg-white hover:border-slate-300'
+                        }`}
+                    >
+                        <div className="flex items-center gap-2 mb-1">
+                            <Zap size={14} className={autoTrade ? 'text-blue-600' : 'text-slate-400'} />
+                            <span className="text-xs font-bold text-slate-800">自动执行</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">按策略信号自动买卖，支持自动推进</p>
+                    </button>
+                    <button
+                        onClick={() => setAutoTrade(false)}
+                        className={`px-3.5 py-3 rounded-xl border text-left transition-all ${
+                            !autoTrade
+                                ? 'border-purple-400 bg-purple-50/70 shadow-2xs'
+                                : 'border-slate-200 bg-white hover:border-slate-300'
+                        }`}
+                    >
+                        <div className="flex items-center gap-2 mb-1">
+                            <ShieldCheck size={14} className={!autoTrade ? 'text-purple-600' : 'text-slate-400'} />
+                            <span className="text-xs font-bold text-slate-800">手动确认</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">逐日生成提案，勾选/改量后确认执行</p>
+                    </button>
+                </div>
+
+                {/* Config summary */}
+                <div className="rounded-xl bg-slate-50/80 border border-slate-200/80 p-3.5 space-y-2">
+                    <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+                        <span className="text-slate-400 font-medium">模型</span>
+                        <span className="text-slate-700 font-semibold truncate">
                             {selectedSystemModel?.display_name ?? (selectedUserModel ? modelDisplayName(selectedUserModel) : null) ?? '系统默认'}
-                        </div>
-                        <div className="text-slate-500 font-medium">策略模板</div>
-                        <div className="text-slate-800 font-semibold">{selectedTemplate?.name ?? '默认参数'}</div>
-                        <div className="text-slate-500 font-medium">日期区间</div>
-                        <div className="text-slate-800 font-semibold font-mono">{startDate} ~ {endDate}</div>
-                        <div className="text-slate-500 font-medium">初始资金</div>
-                        <div className="text-slate-800 font-semibold font-mono">{parseFloat(initialCash).toLocaleString('zh-CN')}</div>
-                        <div className="text-slate-500 font-medium">止损</div>
-                        <div className="text-slate-800 font-semibold">
-                            {finalStopLoss != null ? `${(finalStopLoss * 100).toFixed(1)}%` : '无'}
-                        </div>
-                        <div className="text-slate-500 font-medium">模式</div>
-                        <div className="text-slate-800 font-semibold">{autoTrade ? '自动执行' : '手动确认'}</div>
+                        </span>
+                        <span className="text-slate-400 font-medium">策略模板</span>
+                        <span className="text-slate-700 font-semibold truncate">{selectedTemplate?.name ?? '默认参数'}</span>
+                        <span className="text-slate-400 font-medium">日期区间</span>
+                        <span className="text-slate-700 font-semibold font-mono">{startDate} ~ {endDate}</span>
+                        <span className="text-slate-400 font-medium">初始资金</span>
+                        <span className="text-slate-700 font-semibold font-mono">{parseFloat(initialCash || '0').toLocaleString('zh-CN')}</span>
+                        <span className="text-slate-400 font-medium">止损</span>
+                        <span className="text-slate-700 font-semibold">{finalStopLoss != null ? `${(finalStopLoss * 100).toFixed(1)}%` : '无'}</span>
                     </div>
 
-                    {/* Strategy params summary */}
                     {Object.keys(finalParams).length > 0 && (
                         <div className="pt-2 border-t border-slate-200">
-                            <div className="text-[11px] font-semibold text-slate-400 mb-1.5">策略参数</div>
+                            <div className="text-[10px] font-semibold text-slate-400 mb-1.5">策略参数</div>
                             <div className="flex flex-wrap gap-1.5">
                                 {Object.entries(finalParams).map(([k, v]) => (
-                                    <span key={k} className="px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-xs font-mono text-slate-700">
+                                    <span key={k} className="px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-[11px] font-mono text-slate-600">
                                         {k}={String(v)}
                                     </span>
                                 ))}
@@ -577,86 +564,31 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
                     )}
                 </div>
 
-                {/* Mode selection */}
-                <div className="grid grid-cols-2 gap-3">
-                    <button
-                        onClick={() => setAutoTrade(true)}
-                        className={`px-4 py-3.5 rounded-xl border text-left transition-all ${
-                            autoTrade
-                                ? 'border-blue-400 bg-blue-50/70 shadow-2xs'
-                                : 'border-slate-200 bg-white hover:border-slate-300'
-                        }`}
-                    >
-                        <div className="flex items-center gap-2 mb-1">
-                            <Zap size={15} className={autoTrade ? 'text-blue-600' : 'text-slate-400'} />
-                            <span className="text-sm font-bold text-slate-800">自动执行</span>
-                        </div>
-                        <p className="text-xs text-slate-500">按策略信号自动买卖，支持自动推进</p>
-                    </button>
-                    <button
-                        onClick={() => setAutoTrade(false)}
-                        className={`px-4 py-3.5 rounded-xl border text-left transition-all ${
-                            !autoTrade
-                                ? 'border-purple-400 bg-purple-50/70 shadow-2xs'
-                                : 'border-slate-200 bg-white hover:border-slate-300'
-                        }`}
-                    >
-                        <div className="flex items-center gap-2 mb-1">
-                            <ShieldCheck size={15} className={!autoTrade ? 'text-purple-600' : 'text-slate-400'} />
-                            <span className="text-sm font-bold text-slate-800">手动确认</span>
-                        </div>
-                        <p className="text-xs text-slate-500">逐日生成提案，勾选/改量后确认执行</p>
-                    </button>
+                {error && <p className="text-xs text-red-500">{error}</p>}
+
+                <button
+                    onClick={handleSubmit}
+                    disabled={loading || !valid}
+                    className="mt-auto w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold shadow-xs disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                    {loading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                    创建回放任务
+                </button>
                 </div>
-            </div>
+            </section>
         );
     };
 
     return (
         <div className="space-y-4">
-            {renderStepIndicator()}
-
-            {/* Step content */}
-            <div className="min-h-[200px]">
-                {step === 'model' && renderModelStep()}
-                {step === 'strategy' && renderStrategyStep()}
-                {step === 'params' && renderParamsStep()}
-                {step === 'confirm' && renderConfirmStep()}
+            <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_0.85fr] gap-4 items-start">
+                {renderModelSection()}
+                {renderStrategySection()}
             </div>
-
-            {error && <p className="text-xs text-red-500">{error}</p>}
-
-            {/* Navigation */}
-            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                <button
-                    onClick={goPrev}
-                    disabled={stepIndex === 0}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                >
-                    <ChevronLeft size={14} />
-                    上一步
-                </button>
-                <div className="flex items-center gap-2">
-                    {stepIndex < WIZARD_STEPS.length - 1 ? (
-                        <button
-                            onClick={goNext}
-                            disabled={!canGoNext()}
-                            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                        >
-                            下一步
-                            <ChevronRight size={14} />
-                        </button>
-                    ) : (
-                        <button
-                            onClick={handleSubmit}
-                            disabled={loading}
-                            className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold shadow-xs disabled:opacity-50 transition-all"
-                        >
-                            {loading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                            创建回放
-                        </button>
-                    )}
-                </div>
+            {/* 第二排去掉 items-start，两卡等高对齐 */}
+            <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_0.85fr] gap-4">
+                {renderParamsSection()}
+                {renderModeSection()}
             </div>
         </div>
     );
@@ -1560,22 +1492,25 @@ const ReplayPage: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
                 {/* 1. Create Wizard Mode */}
                 {showCreate ? (
-                    <div className="max-w-4xl mx-auto bg-white/95 rounded-2xl border border-slate-200/80 p-5 shadow-xs">
-                        <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100">
-                            <div className="flex items-center gap-2">
-                                <Plus size={16} className="text-blue-600" />
-                                <h3 className="text-sm font-bold text-slate-800">新建回放推演任务</h3>
+                    <div className="max-w-6xl mx-auto bg-white/95 rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+                        {/* Header（与 SessionCard 头部条一致） */}
+                        <div className="flex items-center justify-between px-4 py-3 bg-slate-50/60 border-b border-slate-100">
+                            <div className="flex items-center gap-2.5">
+                                <Plus size={15} className="text-slate-400" />
+                                <span className="text-sm font-bold text-slate-800">新建回放推演任务</span>
                             </div>
                             {sessions.length > 0 && (
                                 <button
                                     onClick={() => setShowCreate(false)}
-                                    className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors"
                                 >
                                     取消
                                 </button>
                             )}
                         </div>
-                        <CreateSessionForm onCreate={handleCreate} />
+                        <div className="p-4 bg-slate-50/30">
+                            <CreateSessionForm onCreate={handleCreate} />
+                        </div>
                     </div>
                 ) : (
                     /* 2. Session Workspace Mode */

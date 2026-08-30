@@ -87,6 +87,10 @@ export const ShenwanHeatmapChart: React.FC<ShenwanHeatmapChartProps> = ({
           breadcrumb: { show: false },
           label: {
             show: true,
+            // 色块内水平+垂直居中：默认 'inside' 贴左上角，改为锚点定位到色块中心再居中对齐文本块（默认贴左上角显得排版失衡）
+            position: ['50%', '50%'],
+            align: 'center',
+            verticalAlign: 'middle',
             formatter: (params: any) => {
               const d = params.data || {};
               const pct = d.pct_change ?? 0;

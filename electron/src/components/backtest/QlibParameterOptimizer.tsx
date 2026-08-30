@@ -101,31 +101,8 @@ export const QlibParameterOptimizer: React.FC = () => {
         }
       };
 
-      // 启动日志轮询
-      const logIndex = 0;
-      const logInterval = setInterval(async () => {
-          if (!result && isRunning) { // 简单检查，实际应该用更健壮的停止标志
-             // 只有当获得了 optimization_id 后才开始轮询 (在 optimizeQlibParameters 内部很难拿到 task ID 对应的 optimization_id 除非它返回了)
-             // 实际上 optimizeQlibParameters 是异步等待直到完成，所以我们只能在它返回后或者通过 onProgress 回调拿到 ID 吗？
-             // 不，optimizeQlibParameters 现在是阻塞直到完成。
-             // 我们需要一种机制在任务开始时就获得 ID。
-             // optimizeQlibParameters 内部不仅轮询，而且它返回最终结果。
-             // 现有的架构下，optimizeQlibParameters 封装了提交和轮询。
-             // 我们无法在它返回前从外部轮询日志，除非我们修改 optimizeQlibParameters 返回 task info 而不是 promise result。
-             // 或者，我们在 onProgress 回调里做日志轮询？
-          }
-      }, 2000);
-
-      // 修正：由于 optimizeQlibParameters 内部封装了所有轮询逻辑，外部很难插入。
-      // 最好的办法是利用 optimizeQlibParameters 的 onProgress 回调，或者修改 optimizeQlibParameters 支持 log 轮询。
-      // 鉴于我们刚刚给 BacktestService 加了 getOptimizationLogs，我们应该在 BacktestService 内部的 pollOptimizationTask 中调用它。
-
-      // 这里我们恢复使用 onLog 接口，但在 Service 层实现改为调用 getOptimizationLogs。
-      // Wait, user asked to read from Redis directly from Frontend?
-      // "前端直接从redis数据库读取日志" - well, frontend connects to Backend API which reads Redis. Frontend cannot connect to Redis directly usually.
-      // My implementation: Backend API reads Redis, Frontend polls Backend API.
-
-      // Let's rely on the service to handle log polling.
+      // 日志轮询由 backtestService.optimizeQlibParameters 内部的 pollOptimizationTask
+      // 通过 onLog 回调下发，前端无需自行轮询。
       const { backtestService } = await import('../../services/backtestService');
       const res = await backtestService.optimizeQlibParameters(
         {

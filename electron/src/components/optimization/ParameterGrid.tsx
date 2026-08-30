@@ -141,6 +141,8 @@ export const ParameterGrid: React.FC<Props> = ({ onStartOptimization, isRunning,
   };
 
   const combinations = calculateCombinations();
+  // 实时计算校验错误并在按钮旁展示，避免按钮置灰但用户看不到原因
+  const validationError = validateInputs();
 
   return (
     <div className="bg-white rounded-2xl shadow p-6 mb-6">
@@ -318,12 +320,15 @@ export const ParameterGrid: React.FC<Props> = ({ onStartOptimization, isRunning,
       {/* 开始按钮 */}
       <button
         onClick={handleStart}
-        disabled={isRunning || !!validateInputs()}
+        disabled={isRunning || !!validationError}
         className="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-medium hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
       >
         <Play className="w-5 h-5" />
         {isRunning ? '优化进行中...' : '开始网格搜索'}
       </button>
+      {validationError && !isRunning && (
+        <div className="mt-3 text-sm text-red-600">{validationError}</div>
+      )}
       {!workerReady && (
         <div className="mt-3 text-sm text-red-600">
           {workerMessage || '当前队列不可用，请先启动 Celery worker 后重试'}

@@ -1,3 +1,30 @@
+/**
+ * 动态默认回测日期（月度随时间推进）
+ *
+ * 规则（以 2026-08-31 为例）：
+ *   - DEFAULT_END   = 今天 - 7 天（如 2026-08-24），确保日线数据已落盘稳定
+ *   - DEFAULT_START = DEFAULT_END 前推 6 个月（如 2026-02-24）
+ */
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function getDefaultBacktestEndDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 7);
+  return toISODate(d);
+}
+
+export function getDefaultBacktestStartDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 7);
+  d.setMonth(d.getMonth() - 6);
+  return toISODate(d);
+}
+
 export const BACKTEST_CONFIG = {
   ENGINE: 'qlib' as const,
   SUPPORTED_ENGINES: ['qlib'] as const,
@@ -5,12 +32,12 @@ export const BACKTEST_CONFIG = {
   QLIB: {
     PROVIDER_URI: 'db/qlib_data',
     REGION: 'cn',
-    // 数据锁定范围 (2016-2026)
+    // 数据覆盖范围（起始固定；结束动态=一周前，与 QuantDB 每日更新节奏对齐）
     DATA_START: '2016-01-01',
-    DATA_END: '2026-06-30',
-    // 默认回测范围 (2025年)
-    DEFAULT_START: '2025-01-01',
-    DEFAULT_END: '2025-12-31',
+    DATA_END: getDefaultBacktestEndDate(),
+    // 默认回测范围（动态：结束=一周前，开始=结束前推6个月）
+    DEFAULT_START: getDefaultBacktestStartDate(),
+    DEFAULT_END: getDefaultBacktestEndDate(),
 
     TRADING_DAYS: 2430,
     TOTAL_STOCKS: 6015,

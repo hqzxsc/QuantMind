@@ -319,6 +319,12 @@ def _resolve_market(raw_market: Any, benchmark: str) -> str:
     return _BENCHMARK_MARKET.get(str(benchmark or "").upper(), "CN")
 
 
+def _normalize_prediction_mode(raw: Any) -> str:
+    """归一化分位推理模式；非法值回落 point。"""
+    mode = str(raw or "point").strip().lower()
+    return mode if mode in ("point", "quantile") else "point"
+
+
 def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="Payload must be a JSON object")
@@ -504,6 +510,10 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
         "catboost_params": catboost_params,
         "dl_params": dl_params,
         "ensemble": ensemble_method,
+        # 分位推理模式透传：此前被白名单剥掉，orchestrator 收不到
+        # prediction_mode 永远回落 point，导致训练时选了「收益率分位推理」
+        # 但模型 metadata 始终是 point，推理中心提示未启用分位推理。
+        "prediction_mode": _normalize_prediction_mode(payload.get("prediction_mode")),
     }
     # Stacking 集成参数 + Optuna 超参搜索 + 截面预处理（显式透传）
     if "n_folds" in payload:

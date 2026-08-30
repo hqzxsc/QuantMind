@@ -242,7 +242,7 @@ docker/training/fonts/*.ttc
 docker/training/fonts/NotoSansCJK-*.ttf
 docker/training/fonts/NotoSansCJKSC-*.ttf
 data/images/
-!models_share/*.tar.gz
+# models_share/*.tar.gz 不入库：模型不随源码分发（全局 *.tar.gz 规则已忽略）
 
 # 内部数据源爬虫（CCASS/北向/南向）——退出版本库，仅本地保留
 backend/scripts/ccass_*

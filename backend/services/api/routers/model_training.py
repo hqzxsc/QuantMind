@@ -827,12 +827,40 @@ async def get_model_drift(
     model = await model_registry_service.get_model(
         tenant_id=tenant_id, user_id=user_id, model_id=model_id
     )
+    # 兼容：部分历史模型在 admin/00000001 下，当前用户如为 default 则放宽到租户内任意所有者
+    if not model:
+        async with get_session(read_only=True) as session:
+            row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT tenant_id, user_id, model_id, storage_path, model_file,
+                               metadata_json, metrics_json, is_default, created_at
+                        FROM qm_user_models
+                        WHERE tenant_id = :tenant_id AND model_id = :model_id
+                        LIMIT 1
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "model_id": model_id},
+                )
+            ).mappings().first()
+            if row:
+                model = {
+                    "tenant_id": row["tenant_id"],
+                    "user_id": row["user_id"],
+                    "model_id": row["model_id"],
+                    "storage_path": row["storage_path"],
+                    "model_file": row["model_file"],
+                    "metadata_json": row["metadata_json"] if isinstance(row["metadata_json"], dict) else {},
+                    "metrics_json": row["metrics_json"] if isinstance(row["metrics_json"], dict) else {},
+                    "is_default": row["is_default"],
+                    "created_at": row["created_at"],
+                }
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     metadata = model.get("metadata_json") if isinstance(model.get("metadata_json"), dict) else {}
     drift = metadata.get("drift") if isinstance(metadata.get("drift"), dict) else None
     if not drift or not drift.get("enabled"):
-        # 尝试从 fallback 位置（metadata.drift 已在训练时写入，二选一）
         drift = metadata.get("drift") if isinstance(metadata.get("drift"), dict) else None
     if not drift:
         return {"enabled": False, "reason": "drift not available", "model_id": model_id}
@@ -850,6 +878,34 @@ async def get_model_market_regime(
     model = await model_registry_service.get_model(
         tenant_id=tenant_id, user_id=user_id, model_id=model_id
     )
+    if not model:
+        async with get_session(read_only=True) as session:
+            row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT tenant_id, user_id, model_id, storage_path, model_file,
+                               metadata_json, metrics_json, is_default, created_at
+                        FROM qm_user_models
+                        WHERE tenant_id = :tenant_id AND model_id = :model_id
+                        LIMIT 1
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "model_id": model_id},
+                )
+            ).mappings().first()
+            if row:
+                model = {
+                    "tenant_id": row["tenant_id"],
+                    "user_id": row["user_id"],
+                    "model_id": row["model_id"],
+                    "storage_path": row["storage_path"],
+                    "model_file": row["model_file"],
+                    "metadata_json": row["metadata_json"] if isinstance(row["metadata_json"], dict) else {},
+                    "metrics_json": row["metrics_json"] if isinstance(row["metrics_json"], dict) else {},
+                    "is_default": row["is_default"],
+                    "created_at": row["created_at"],
+                }
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     # 阈值按用户要求 0.08 / 0.02（牛市≥0.08，震荡 0.02-0.08，熊市<0.02），仅展示最近 90 交易日

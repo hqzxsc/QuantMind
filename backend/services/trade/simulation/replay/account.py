@@ -36,7 +36,9 @@ class ReplayAccountManager(SimulationAccountManager):
     def session_id(self) -> str:
         return self._session_id
 
-    def _get_key(self, user_id: int, tenant_id: str) -> str:
+    def _get_key(self, user_id: int, tenant_id: str, market: str = "CN") -> str:
+        # 签名与父类 SimulationAccountManager._get_key 对齐（多市场支持后
+        # 父类会传入 market 占位）；回放账户按 session_id 寻址，忽略 market。
         return f"replay:account:{self._session_id}"
 
     def _get_settings_key(self, user_id: int, tenant_id: str) -> str:

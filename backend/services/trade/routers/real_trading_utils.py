@@ -855,7 +855,7 @@ def _default_live_trade_config() -> dict:
         "sell_time": "14:30",
         "buy_time": "14:45",
         "sell_first": True,
-        "order_type": "LIMIT",
+        "order_type": "MARKET",
         "max_price_deviation": 0.02,
         "max_orders_per_cycle": 20,
     }
@@ -881,7 +881,7 @@ def _normalize_live_trade_config(user_live_cfg: dict, base_live_cfg: dict) -> di
     normalized["enabled_sessions"] = [
         str(item).upper() for item in (normalized.get("enabled_sessions") or [])
     ]
-    normalized["order_type"] = str(normalized.get("order_type") or "LIMIT").upper()
+    normalized["order_type"] = str(normalized.get("order_type") or "MARKET").upper()
     normalized["sell_first"] = bool(normalized.get("sell_first", True))
     normalized["rebalance_days"] = int(normalized.get("rebalance_days") or 3)
     normalized["max_orders_per_cycle"] = int(

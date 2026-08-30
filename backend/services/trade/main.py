@@ -212,6 +212,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("trade simulation scheduler start failed: %s", e, exc_info=True)
 
+    # 启动模拟盘策略级托管调度器（按前端弹窗配置的调仓周期/时间点触发）
+    try:
+        hosted_enabled = os.getenv("ENABLE_SIMULATION_HOSTED_SCHEDULER", "true").lower() in {"1", "true", "yes", "on"}
+        if hosted_enabled:
+            from backend.services.trade.services.simulation_hosted_scheduler import (
+                SimulationHostedScheduler,
+            )
+
+            hosted_scheduler = SimulationHostedScheduler(redis_client)
+            await hosted_scheduler.start()
+            app.state.simulation_hosted_scheduler = hosted_scheduler
+            logger.info("Simulation hosted scheduler started")
+    except Exception as e:
+        logger.error("trade simulation hosted scheduler start failed: %s", e, exc_info=True)
+
     healthy = bool(app.state.startup_healthy and app.state.db_connected and app.state.redis_connected)
     set_service_health("quantmind-trade", healthy)
 
@@ -250,6 +265,14 @@ async def lifespan(app: FastAPI):
             await simulation_scheduler.stop()
         except Exception as e:
             logger.warning("trade simulation scheduler stop failed: %s", e)
+
+    # 停止模拟盘策略级托管调度器
+    hosted_scheduler = getattr(app.state, "simulation_hosted_scheduler", None)
+    if hosted_scheduler is not None:
+        try:
+            await hosted_scheduler.stop()
+        except Exception as e:
+            logger.warning("trade simulation hosted scheduler stop failed: %s", e)
 
     # 停止沙箱进程池
     try:

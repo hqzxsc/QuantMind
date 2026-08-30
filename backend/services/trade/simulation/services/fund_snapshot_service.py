@@ -109,6 +109,61 @@ class SimulationFundSnapshotService:
         }
 
     @classmethod
+    async def get_baselines(
+        cls,
+        tenant_id: str,
+        user_id: str,
+        initial_capital: Decimal,
+    ) -> dict[str, Decimal]:
+        """计算日初/月初权益基线。
+
+        取「今日之前」「本月初之前」最近一条日快照的总资产作为基线；
+        无历史快照（新账户/刚重置）时回退初始资金，保证开盘口径盈亏为 0。
+        """
+        today = _local_today()
+        month_start = today.replace(day=1)
+        day_open = initial_capital
+        month_open = initial_capital
+        try:
+            async with get_session(read_only=True) as session:
+                day_row = (
+                    await session.execute(
+                        select(SimulationFundSnapshot.total_asset)
+                        .where(
+                            SimulationFundSnapshot.tenant_id == tenant_id,
+                            SimulationFundSnapshot.user_id == user_id,
+                            SimulationFundSnapshot.snapshot_date < today,
+                        )
+                        .order_by(SimulationFundSnapshot.snapshot_date.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if day_row is not None:
+                    day_open = _to_decimal(day_row, initial_capital)
+                month_row = (
+                    await session.execute(
+                        select(SimulationFundSnapshot.total_asset)
+                        .where(
+                            SimulationFundSnapshot.tenant_id == tenant_id,
+                            SimulationFundSnapshot.user_id == user_id,
+                            SimulationFundSnapshot.snapshot_date < month_start,
+                        )
+                        .order_by(SimulationFundSnapshot.snapshot_date.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if month_row is not None:
+                    month_open = _to_decimal(month_row, initial_capital)
+                elif month_start == today:
+                    # 每月 1 号：无上月快照时用日初权益当月初基线，避免当月盈亏重复计入今日变动
+                    month_open = day_open
+        except Exception as exc:
+            logger.warning(
+                "get_baselines failed tenant=%s user=%s: %s", tenant_id, user_id, exc
+            )
+        return {"day_open_equity": day_open, "month_open_equity": month_open}
+
+    @classmethod
     async def capture_all(cls, redis: RedisClient) -> SnapshotUpsertResult:
         if not redis.client:
             return SnapshotUpsertResult(upserted_rows=0, scanned_accounts=0)
@@ -133,7 +188,11 @@ class SimulationFundSnapshotService:
                 row["initial_capital"] = cls._read_settings_initial_cash(redis, tenant_id, user_id)
                 if row["initial_capital"] == 0:
                     row["initial_capital"] = row["total_asset"]
-                    row["total_pnl"] = Decimal("0")
+            # 总盈亏 = 总资产 - 初始资金（手续费已从现金扣减，天然计入）
+            row["total_pnl"] = row["total_asset"] - row["initial_capital"]
+            # 当日盈亏 = 总资产 - 日初权益（上一交易日快照基线）
+            baselines = await cls.get_baselines(tenant_id, user_id, row["initial_capital"])
+            row["today_pnl"] = row["total_asset"] - baselines["day_open_equity"]
             rows.append(row)
 
         if not rows:

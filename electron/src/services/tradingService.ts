@@ -36,6 +36,19 @@ export type OrderStatus =
 /** 交易模式 */
 export type TradingMode = 'real' | 'simulation';
 
+/** 模拟成交统计摘要（含已实现盈亏/胜率/盈亏比，手续费计入口径） */
+export interface TradeStatsOverview {
+    totalTrades: number;
+    winTrades: number;
+    lossTrades: number;
+    /** 胜率，0~1 */
+    winRate: number;
+    /** 盈亏比 = 平均盈利/平均亏损；无亏损平仓时为 0（前端展示 ∞） */
+    profitLossRatio: number;
+    realizedPnL: number;
+    totalCommission: number;
+}
+
 /** 订单记录 */
 export interface Order {
     id: string | number;
@@ -324,6 +337,33 @@ class TradingService {
                 label: `Day ${i + 1}`
             };
         });
+    }
+
+    /**
+     * 获取模拟成交统计摘要（含已实现盈亏、胜率、盈亏比，手续费计入口径）
+     * 后端不可用时返回 null，调用方自行降级展示。
+     */
+    async getSimulationTradeStatsOverview(): Promise<TradeStatsOverview | null> {
+        try {
+            const response = await this.client.get<Record<string, unknown>>(API_ENDPOINTS.SIMULATION_TRADES_STATS, {});
+            const data: any = (response as any)?.data ?? response;
+            const totalTrades = Number(data?.total_trades);
+            if (!Number.isFinite(totalTrades)) {
+                return null;
+            }
+            return {
+                totalTrades,
+                winTrades: Number(data?.win_trades ?? 0) || 0,
+                lossTrades: Number(data?.loss_trades ?? 0) || 0,
+                winRate: Number(data?.win_rate ?? 0) || 0,
+                profitLossRatio: Number(data?.profit_loss_ratio ?? 0) || 0,
+                realizedPnL: Number(data?.realized_pnl ?? 0) || 0,
+                totalCommission: Number(data?.total_commission ?? 0) || 0,
+            };
+        } catch (error) {
+            console.warn('获取模拟成交统计摘要失败:', error);
+            return null;
+        }
     }
 
     // ==================== 聚合/转换方法 ====================

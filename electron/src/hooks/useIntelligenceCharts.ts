@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { portfolioService, ChartDataPoint, PositionDistribution } from '../services/portfolioService';
-import { tradingService } from '../services/tradingService';
+import { tradingService, TradeStatsOverview } from '../services/tradingService';
 // 按需加载 realTradingService，避免静态/动态导入冲突并减小首包
 import { modelTrainingService } from '../services/modelTrainingService';
 import { useWebSocket } from '../contexts/WebSocketContext';
@@ -15,6 +15,8 @@ export interface ChartData {
     dailyReturn: ChartDataPoint[];
     tradeCount: ChartDataPoint[];
     positionRatio: PositionDistribution[];
+    /** 模拟成交统计摘要：累计交易数/胜率/盈亏比（仅模拟模式，手续费计入口径） */
+    tradeStats: TradeStatsOverview | null;
 }
 const tradingDayWindowCache = new Map<string, Promise<string[]>>();
 
@@ -357,7 +359,8 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
     const [data, setData] = useState<ChartData>({
         dailyReturn: [],
         tradeCount: [],
-        positionRatio: []
+        positionRatio: [],
+        tradeStats: null,
     });
     const [loading, setLoading] = useState(autoFetchEnabled);
     const [error, setError] = useState<string | null>(null);
@@ -368,7 +371,8 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
     const dataRef = useRef<ChartData>({
         dailyReturn: [],
         tradeCount: [],
-        positionRatio: []
+        positionRatio: [],
+        tradeStats: null,
     });
 
     // WebSocket connection
@@ -382,7 +386,7 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
         }
 
         if (!resolvedUserId) {
-            const emptyData: ChartData = { dailyReturn: [], tradeCount: [], positionRatio: [] };
+            const emptyData: ChartData = { dailyReturn: [], tradeCount: [], positionRatio: [], tradeStats: null };
             const { changed, fingerprint } = shouldUpdateByFingerprint(fingerprintRef.current, emptyData);
             if (changed) {
                 setData(emptyData);
@@ -401,7 +405,7 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
         try {
             // 根据模式动态选择接口
             const { realTradingService } = await import('../services/realTradingService');
-            const [dailyReturn, tradeCount, positionRatio, account, ledgerDaily] = await Promise.all([
+            const [dailyReturn, tradeCount, positionRatio, account, ledgerDaily, tradeStats] = await Promise.all([
                 portfolioService.getDailyReturns(resolvedUserId, '1m', mode),
                 tradingService.getTradeStats(resolvedUserId, '1w', mode),
                 portfolioService.getPositionDistribution(resolvedUserId, mode),
@@ -409,6 +413,9 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
                 isLive 
                     ? realTradingService.getAccountLedgerDaily(30, resolvedUserId).catch(() => [])
                     : realTradingService.getSimulationDailySnapshots(30).catch(() => []),
+                isLive
+                    ? Promise.resolve(null)
+                    : tradingService.getSimulationTradeStatsOverview().catch(() => null),
             ]);
 
             let normalizedPositionRatio: PositionDistribution[] = [];
@@ -504,6 +511,7 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
                 dailyReturn: returnPoints,
                 tradeCount: tradeCountPoints,
                 positionRatio: normalizedPositionRatio,
+                tradeStats: tradeStats ?? null,
             };
             const { changed, fingerprint } = shouldUpdateByFingerprint(fingerprintRef.current, nextData);
             if (changed) {
@@ -553,7 +561,7 @@ export const useIntelligenceCharts = (userId: string = 'current', options?: { au
                             value: value,
                             label: '实时数据'
                         };
-                        // 保持最近30个数据点
+                        // 保持最近30个数据点，保留交易统计摘要不被覆盖丢失
                         const nextData = {
                             ...prev,
                             [chartType]: [...currentList.slice(Math.max(0, currentList.length - 29)), newPoint]

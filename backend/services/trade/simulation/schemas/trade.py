@@ -45,6 +45,12 @@ class SimTradeStatsResponse(BaseModel):
     total_commission: float
     buy_trades: int
     sell_trades: int
+    # 已实现盈亏与胜率/盈亏比（手续费计入口径）
+    realized_pnl: float = 0.0
+    win_trades: int = 0
+    loss_trades: int = 0
+    win_rate: float = 0.0
+    profit_loss_ratio: float = 0.0
 
 
 class SimTradeListQuery(BaseModel):

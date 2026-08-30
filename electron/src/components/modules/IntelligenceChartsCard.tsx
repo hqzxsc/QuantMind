@@ -29,6 +29,14 @@ const IntelligenceChartsCard: React.FC = () => {
   } = useIntelligenceCharts('current', { tradingMode });
   const { isConnected, status } = useWebSocket();
 
+  const tradeStats = chartData.tradeStats;
+  // 盈亏比展示：无亏损平仓且有盈利时展示 ∞；否则取平均盈利/平均亏损
+  const profitLossRatioText = tradeStats
+    ? (tradeStats.profitLossRatio > 0
+        ? tradeStats.profitLossRatio.toFixed(2)
+        : (tradeStats.winTrades > 0 ? '∞' : '--'))
+    : '--';
+
   const formatTimestamp = (timeStr: string | null) => {
     return formatBackendTime(timeStr, { withSeconds: true });
   };
@@ -60,11 +68,18 @@ const IntelligenceChartsCard: React.FC = () => {
 
         <div className="grid grid-cols-2 gap-3 min-h-0">
           <motion.div
-            className="rounded-xl bg-white/30 border border-white/40 p-2 min-h-0"
+            className="rounded-xl bg-white/30 border border-white/40 p-2 min-h-0 flex flex-col"
             whileHover={{ backgroundColor: 'rgba(255, 255, 255, 0.5)' }}
           >
             <div className="text-xs text-[var(--text-secondary)] px-1 pb-1">交易次数</div>
-            <div className="h-[calc(100%-18px)]">
+            {tradeStats && (
+              <div className="flex items-center justify-between gap-1 px-1 pb-1 text-[10px] font-mono text-slate-500">
+                <span title="累计成交笔数">累计 {tradeStats.totalTrades} 笔</span>
+                <span title="盈利平仓次数 / 总平仓次数">胜率 {(tradeStats.winRate * 100).toFixed(1)}%</span>
+                <span title="平均盈利 / 平均亏损（手续费计入）">盈亏比 {profitLossRatioText}</span>
+              </div>
+            )}
+            <div className="flex-1 min-h-0">
               {hasTradeCount ? (
                 <EChartsChart option={getChartOption('tradeCount', chartData.tradeCount)} />
               ) : (

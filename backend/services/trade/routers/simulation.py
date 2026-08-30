@@ -341,12 +341,30 @@ async def get_simulation_account(
     )
     initial_equity = float(settings.get("initial_cash", DEFAULT_INITIAL_CASH))
 
-    # 添加 initial_equity 和 baseline 字段
+    # 补算盈亏字段（手续费已从现金扣减，天然计入盈亏）：
+    # 总盈亏 = 总资产 - 初始资金；今日/本月盈亏基于日快照基线推导。
+    total_asset = float(account.get("total_asset") or 0.0)
+    total_pnl = total_asset - initial_equity
+    baselines = await SimulationFundSnapshotService.get_baselines(
+        tenant_id=auth.tenant_id,
+        user_id=str(uid),
+        initial_capital=Decimal(str(initial_equity)),
+    )
+    day_open_equity = float(baselines["day_open_equity"])
+    month_open_equity = float(baselines["month_open_equity"])
+    today_pnl = total_asset - day_open_equity
+    monthly_pnl = total_asset - month_open_equity
+
     account["initial_equity"] = initial_equity
+    account["total_pnl"] = total_pnl
+    account["today_pnl"] = today_pnl
+    account["daily_pnl"] = today_pnl
+    account["monthly_pnl"] = monthly_pnl
+    account["total_return_ratio"] = (total_pnl / initial_equity) if initial_equity > 0 else 0.0
     account["baseline"] = {
         "initial_equity": initial_equity,
-        "day_open_equity": initial_equity,  # 简化处理，日开盘权益也用初始权益
-        "month_open_equity": initial_equity,
+        "day_open_equity": day_open_equity,
+        "month_open_equity": month_open_equity,
     }
 
     return {"success": True, "data": account}

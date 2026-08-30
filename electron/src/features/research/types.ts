@@ -54,7 +54,7 @@ export interface ResearchStockRow {
   code: string;
   name: string;
   score: number;
-  latestChange: number;
+  latestChange: number | null;
   totalReturn?: number | null;
   consecutiveLimitUpDays: number;
   volumeTrend3d: number | null;

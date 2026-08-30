@@ -238,6 +238,11 @@ _CAMEL_ALIASES: dict[str, str] = {
     # 序列化后变成 0，前端显示 “PE 0.0 / ROE 0.0%”）。这些别名让 QuantDB 顶上同名 UI 字段。
     "pe_ttm": "pe",
     "fun_roe": "roe",
+    # features_daily 的原始列名与 UI 字段名不对齐：
+    # 涨跌幅 = pct_change（当日涨跌），收盘价 = close。
+    # 不加别名时 toCamel 产出 pctChange/close，前端列（latestChange/closePrice）取不到值。
+    "pct_change": "latestChange",
+    "close": "closePrice",
 }
 
 # market_sentiment 视图的列没有前缀，前端统一加 sentiment 前缀避免与基础字段冲突。
@@ -337,18 +342,25 @@ def _to_jsonable(value: Any) -> Any:
     return None
 
 
-def _latest_rows(view: str, symbols: list[str]) -> dict[str, dict[str, Any]]:
+def _latest_rows(view: str, symbols: list[str], dt: int | None = None) -> dict[str, dict[str, Any]]:
     """读取指定视图中每个 symbol 的最新一行。
 
+    dt（YYYYMMDD 整数）传入时读取「不晚于该日的最新一行」——投研平台按选中
+    数据日 T 查看历史截面：return_*（T 后 N 日真实收益）只在 T 所在行有值，
+    读最新行会永远取到 NaN。
     返回 {symbol: row_dict}；视图不存在或无数据时返回空字典（优雅降级）。
     """
     quoted = ", ".join(f"'{s}'" for s in symbols)
+    if dt is not None:
+        dt_cond = f"dt BETWEEN {dt - _DT_LOOKBACK} AND {dt}"
+    else:
+        dt_cond = f"dt >= (SELECT MAX(dt) - {_DT_LOOKBACK} FROM {view})"
     sql = f"""
         SELECT * FROM (
             SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY dt DESC) AS rn
             FROM {view}
             WHERE symbol IN ({quoted})
-              AND dt >= (SELECT MAX(dt) - {_DT_LOOKBACK} FROM {view})
+              AND {dt_cond}
         ) WHERE rn = 1
     """
     try:
@@ -388,9 +400,9 @@ def _latest_l1_from_files(symbols: list[str]) -> dict[str, dict[str, Any]]:
     return {str(row[symbol_col]): dict(row) for _, row in df.iterrows()}
 
 
-def _fetch_l1(symbols: list[str]) -> dict[str, dict[str, Any]]:
+def _fetch_l1(symbols: list[str], dt: int | None = None) -> dict[str, dict[str, Any]]:
     """L1 因子：优先分区视图，缺失时回落到平铺文件。"""
-    rows = _latest_rows("qdb_l1_factors", symbols)
+    rows = _latest_rows("qdb_l1_factors", symbols, dt)
     if rows:
         return rows
     return _latest_l1_from_files(symbols)
@@ -553,12 +565,15 @@ def _cache_set(symbol: str, payload: dict[str, Any]) -> None:
             _CACHE.pop(oldest, None)
 
 
-def _query_sources(symbols: list[str], *, include_daily: bool = False) -> dict[str, dict[str, Any]] | None:
+def _query_sources(
+    symbols: list[str], *, include_daily: bool = False, dt: int | None = None
+) -> dict[str, dict[str, Any]] | None:
     """查询全部 QuantDB 视图。数据目录不可用时返回 None。
 
     优先使用 52 维核心宽表 qdb_features_daily 替代旧的 qdb_valuation 与 qdb_technical_indicators，
     未落盘 features_daily 时自动回退至旧分散视图。
     include_daily 额外挂载日线视图（提供 volume，用于现算换手率）。仅投影路径需要。
+    dt（YYYYMMDD 整数）传入时各视图读「不晚于该日的最新一行」（投研历史截面）。
     """
     hub = _get_hub()
     if not hub.available:
@@ -568,24 +583,24 @@ def _query_sources(symbols: list[str], *, include_daily: bool = False) -> dict[s
     sources: dict[str, dict[str, Any]] = {}
 
     # 1. 50+ 维日频特征宽表（优先主源）
-    features_daily_rows = _latest_rows("qdb_features_daily", symbols)
+    features_daily_rows = _latest_rows("qdb_features_daily", symbols, dt)
     if features_daily_rows:
         sources["qdb_features_daily"] = features_daily_rows
     else:
         # 回退至旧分散视图
-        sources["qdb_valuation"] = _latest_rows("qdb_valuation", symbols)
-        sources["qdb_technical_indicators"] = _latest_rows("qdb_technical_indicators", symbols)
+        sources["qdb_valuation"] = _latest_rows("qdb_valuation", symbols, dt)
+        sources["qdb_technical_indicators"] = _latest_rows("qdb_technical_indicators", symbols, dt)
 
     # 2. 情绪面、L1 因子、L2 因子
-    sources["qdb_market_sentiment"] = _latest_rows("qdb_market_sentiment", symbols)
-    sources["qdb_l1_factors"] = _fetch_l1(symbols)
-    sources["qdb_l2_factors"] = _latest_rows("qdb_l2_factors", symbols)
+    sources["qdb_market_sentiment"] = _latest_rows("qdb_market_sentiment", symbols, dt)
+    sources["qdb_l1_factors"] = _fetch_l1(symbols, dt)
+    sources["qdb_l2_factors"] = _latest_rows("qdb_l2_factors", symbols, dt)
 
     if include_daily:
         # 日线视图只用于取 volume（现算换手率的原料）。其余列必须丢弃：
         # amount/open/high/low 与 UI 字段同名但量纲不同（amount 是元，UI 期望亿元），
         # 一旦混入就会污染成交额筛选。
-        daily = _latest_rows("qdb_daily_unadjusted", symbols)
+        daily = _latest_rows("qdb_daily_unadjusted", symbols, dt)
         sources["qdb_daily_unadjusted"] = {
             sym: {"volume": row.get("volume")} for sym, row in daily.items()
         }
@@ -618,10 +633,14 @@ def _load_features(symbols: list[str]) -> dict[str, dict[str, Any]]:
 
 
 def _load_projected_features(
-    symbols: list[str], wanted: frozenset[str]
+    symbols: list[str], wanted: frozenset[str], dt: int | None = None
 ) -> dict[str, dict[str, Any]]:
-    """投影模式：不走全量缓存（键随字段集变化），直接查询后按需裁剪。"""
-    sources = _query_sources(symbols, include_daily="turnoverRate" in wanted)
+    """投影模式：不走全量缓存（键随字段集变化），直接查询后按需裁剪。
+
+    dt（YYYYMMDD 整数）传入时读「不晚于该日的最新截面」——投研平台按选中
+    数据日查看历史状态，return_*（未来 N 日真实收益）也只有按日读取才有值。
+    """
+    sources = _query_sources(symbols, include_daily="turnoverRate" in wanted, dt=dt)
     if sources is None:
         return {}
     return {s: _build_projected_payload(s, sources, wanted) for s in symbols}
@@ -650,13 +669,22 @@ async def get_symbol_full_features(symbol: str) -> dict[str, Any]:
     return await _offload(get_symbol_full_features_sync, symbol)
 
 
+def _normalize_dt(trade_date: str | None) -> int | None:
+    """'2026-08-28' / '20260828' → 20260828；无效输入返回 None（读最新行）。"""
+    if not trade_date:
+        return None
+    digits = str(trade_date).replace("-", "").replace("/", "")[:8]
+    return int(digits) if digits.isdigit() and len(digits) == 8 else None
+
+
 def get_batch_full_features_sync(
-    symbols: list[str], fields: list[str] | None = None
+    symbols: list[str], fields: list[str] | None = None, trade_date: str | None = None
 ) -> dict[str, Any]:
     """批量股票全量/投影特征的同步实现（唯一实现）。
 
     传入 fields（camelCase）时走投影模式：响应只含这些字段且平铺在 values 下，
     上限提高到 MAX_BATCH_SYMBOLS_PROJECTED，可一次覆盖整个候选池以支持全池筛选。
+    trade_date 传入时投影按「不晚于该日的最新截面」读取（投研历史日期回看）。
     """
     normalized = normalize_symbols(symbols or [])
     if not normalized:
@@ -667,7 +695,7 @@ def get_batch_full_features_sync(
     truncated = normalized[:cap]
 
     if wanted:
-        features = _load_projected_features(truncated, wanted)
+        features = _load_projected_features(truncated, wanted, _normalize_dt(trade_date))
     else:
         features = _load_features(truncated)
 
@@ -686,7 +714,7 @@ def get_batch_full_features_sync(
 
 
 async def get_batch_full_features(
-    symbols: list[str], fields: list[str] | None = None
+    symbols: list[str], fields: list[str] | None = None, trade_date: str | None = None
 ) -> dict[str, Any]:
     """批量股票的全量 QuantDB 特征（线程池卸载版，用于表格增强）。"""
-    return await _offload(get_batch_full_features_sync, symbols, fields)
+    return await _offload(get_batch_full_features_sync, symbols, fields, trade_date)

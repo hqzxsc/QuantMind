@@ -1381,7 +1381,9 @@ export const ResearchPlatformPage: React.FC = () => {
             return {
               ...item,
               score: safeNum(item?.score, 0),
-              latestChange: safeNum(item?.latestChange, 0),
+              // null 保留：universe（SDL 缺失）无值时留给 QuantDB 投影填充，
+              // 若默认 0 会被 mergePoolFeatures 视为合法涨跌幅而不覆盖
+              latestChange: item?.latestChange != null ? safeNum(item?.latestChange, 0) : null,
               consecutiveLimitUpDays: safeNum(item?.consecutiveLimitUpDays, 0),
               turnoverRate: item?.turnoverRate != null ? safeNum(item?.turnoverRate, 0) : null,
               amount: item?.amount != null ? safeNum(item?.amount, 0) : null,
@@ -1618,11 +1620,13 @@ export const ResearchPlatformPage: React.FC = () => {
   );
 
   /**
-   * 全池 QuantDB 投影富化。
+   * 全池 QuantDB 投影富化（按选中数据日 T 读历史截面）。
    *
    * 筛选与排序发生在分页之前，若只富化当前页，任何依赖 QuantDB 字段的条件
    * （动量/波动/资金流/筹码/风格等 29 项）都会因为字段为 undefined 而静默失效。
    * 因此候选池加载完成后，一次性按投影字段拉取整池。
+   * 传 selectedDate：涨跌幅/收盘价/return_*（T 后 N 日真实收益）等字段
+   * 只有按 T 所在行读取才有值，读最新行 return_* 永远是 NaN。
    */
   React.useEffect(() => {
     const symbols = Array.from(
@@ -1636,7 +1640,7 @@ export const ResearchPlatformPage: React.FC = () => {
     let cancelled = false;
     setUniverseFeaturesLoading(true);
     void researchService
-      .getProjectedQuantDbFeatures(symbols, QUANTDB_PROJECTION_FIELDS)
+      .getProjectedQuantDbFeatures(symbols, QUANTDB_PROJECTION_FIELDS, selectedDate)
       .then((bySymbol) => {
         if (cancelled) return;
         const next: Record<string, Partial<ResearchStockRow>> = {};
@@ -1649,7 +1653,7 @@ export const ResearchPlatformPage: React.FC = () => {
         if (!cancelled) setUniverseFeaturesLoading(false);
       });
     return () => { cancelled = true; };
-  }, [candidatePool]);
+  }, [candidatePool, selectedDate]);
 
   /** 参与筛选/排序的池：universe 基础字段优先，QuantDB 投影仅补空缺 */
 

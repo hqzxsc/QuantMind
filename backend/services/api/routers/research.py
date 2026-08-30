@@ -194,7 +194,7 @@ async def get_batch_features(
 ):
     """批量 QuantDB 特征：fields 传入时走投影模式（仅返回指定字段），否则返回全量。"""
     _ = current_user
-    return await get_batch_full_features_service(req.symbols, req.fields)
+    return await get_batch_full_features_service(req.symbols, req.fields, req.trade_date)
 
 
 @router.post("/predict-stock")

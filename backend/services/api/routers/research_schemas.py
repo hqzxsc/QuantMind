@@ -18,6 +18,7 @@ class BatchFeaturesRequest(BaseModel):
 
     symbols: list[str]
     fields: list[str] | None = None
+    trade_date: str | None = None
 
 
 class WatchlistAddRequest(BaseModel):

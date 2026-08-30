@@ -284,14 +284,15 @@ class ResearchService {
    */
   async getProjectedQuantDbFeatures(
     symbols: string[],
-    fields: string[]
+    fields: string[],
+    tradeDate?: string | null
   ): Promise<Record<string, Record<string, number>>> {
     if (!symbols?.length || !fields?.length) return {};
     try {
       const resp = await this.client.post<{
         code: number;
         data: { items: Array<{ symbol: string; values: Record<string, number> }> };
-      }>('/research/batch-features', { symbols, fields });
+      }>('/research/batch-features', { symbols, fields, trade_date: tradeDate || undefined });
       const items = resp.data?.data?.items || [];
       return items.reduce<Record<string, Record<string, number>>>((acc, item) => {
         if (item?.symbol) acc[item.symbol] = item.values || {};

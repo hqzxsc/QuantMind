@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 import backend.services.api.routers.research_service as _research_service
 from backend.services.api.routers.research_schemas import (
@@ -23,6 +23,7 @@ from backend.services.api.routers.research_service import (
     get_inference_runs as get_inference_runs_service,
     get_research_overview as get_research_overview_service,
     get_research_universe as get_research_universe_service,
+    get_research_universe_by_date as get_research_universe_by_date_service,
     get_stock_kline as get_stock_kline_service,
     get_symbols_features as get_symbols_features_service,
     get_user_research_pool as get_user_research_pool_service,
@@ -81,12 +82,18 @@ async def get_research_overview(
 
 @router.get("/universe")
 async def get_research_universe(
-    run_id: str,
+    run_id: str | None = Query(None),
+    model_id: str | None = Query(None),
+    date: str | None = Query(None, description="数据日 T（pred.parquet 口径），与 model_id 搭配直读全市场分数"),
     limit: int = Query(2000),
     offset: int = Query(0),
     current_user: dict = Depends(get_current_user),
 ):
     tid, uid = str(current_user["tenant_id"]), str(current_user["user_id"])
+    if model_id and date:
+        return await get_research_universe_by_date_service(tid, uid, model_id, date, limit, offset)
+    if not run_id:
+        raise HTTPException(status_code=400, detail="run_id 或 model_id+date 必填")
     return await get_research_universe_service(tid, uid, run_id, limit, offset)
 
 

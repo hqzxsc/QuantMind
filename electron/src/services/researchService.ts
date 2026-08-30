@@ -363,6 +363,18 @@ class ResearchService {
       summary: data.summary || { total: 0, avgScore: 0, highConfidenceCount: 0, strongCount: 0, lastUpdatedAt: null }
     };
   }
+
+  /** 按数据日直读模型 pred.parquet 的全市场分数截面（B 套，与批次日历/分数曲线同源） */
+  async getResearchUniverseByDate(modelId: string, tradeDate: string, limit: number = 2000, offset: number = 0): Promise<{ candidates: any[], summary: any }> {
+    const resp = await this.client.get<ResearchUniverseResponse>(
+      `/research/universe?model_id=${encodeURIComponent(modelId)}&date=${encodeURIComponent(tradeDate)}&limit=${limit}&offset=${offset}`
+    );
+    const data = resp.data.data;
+    return {
+      candidates: data.items || [],
+      summary: data.summary || { total: 0, avgScore: 0, highConfidenceCount: 0, strongCount: 0, lastUpdatedAt: null }
+    };
+  }
 }
 
 export interface KlineDataItem {

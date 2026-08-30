@@ -1091,6 +1091,9 @@ export const ResearchPlatformPage: React.FC = () => {
   const [selectedModelId, setSelectedModelId] = React.useState<string>('');
   const [availableRuns, setAvailableRuns] = React.useState<ResearchRunOption[]>([]);
   const [selectedRunId, setSelectedRunId] = React.useState<string>('');
+  // 选中数据日 T（pred.parquet 口径）——批次选择的唯一事实源，
+  // 个股列表按日期直读 pred.parquet 全市场分数截面
+  const [selectedDate, setSelectedDate] = React.useState<string>('');
   const [candidatePool, setCandidatePool] = React.useState<ResearchStockRow[]>([]);
   const [overview, setOverview] = React.useState<any>(null);
   const [overviewLoading, setOverviewLoading] = React.useState<boolean>(false);
@@ -1333,6 +1336,7 @@ export const ResearchPlatformPage: React.FC = () => {
     if (!selectedModelId) {
       setAvailableRuns([]);
       setSelectedRunId('');
+      setSelectedDate('');
       return;
     }
     let cancelled = false;
@@ -1343,10 +1347,11 @@ export const ResearchPlatformPage: React.FC = () => {
         const runs = await researchService.getInferenceRuns(selectedModelId);
         if (cancelled) return;
         setAvailableRuns(runs);
-        // 列表按日期倒序；优先选中最新"有批次快照"的日期（训练测试集
-        // 日期仅有历史分数，无候选池可加载）
-        const firstWithRun = runs.find((item) => item.runId);
-        setSelectedRunId(firstWithRun ? firstWithRun.runId : runs.length > 0 ? runs[0].runId : '');
+        // 列表按日期倒序；默认选中最新日期。个股列表按日期直读
+        // pred.parquet（B 套），训练测试集日期同样可查看全市场分数
+        const first = runs[0];
+        setSelectedDate(first?.inferenceDate || '');
+        setSelectedRunId(first ? first.runId || `pred_${(first.inferenceDate || '').replaceAll('-', '')}` : '');
       } catch (error) {
         console.error('[ResearchPlatformPage] load runs failed:', error);
         if (!cancelled) setRunsError('加载推理批次失败');
@@ -1358,9 +1363,9 @@ export const ResearchPlatformPage: React.FC = () => {
     return () => { cancelled = true; };
   }, [selectedModelId, refreshNonce]);
 
-  // 批次切换或同步刷新时加载原始数据
+  // 批次切换或同步刷新时加载原始数据（按数据日直读 pred.parquet 全市场分数）
   React.useEffect(() => {
-    if (!selectedRunId) {
+    if (!selectedModelId || !selectedDate) {
       setCandidatePool([]);
       return;
     }
@@ -1368,7 +1373,7 @@ export const ResearchPlatformPage: React.FC = () => {
     const loadUniverse = async () => {
       setOverviewLoading(true);
       try {
-        const result = await researchService.getResearchUniverse(selectedRunId, 10000);
+        const result = await researchService.getResearchUniverseByDate(selectedModelId, selectedDate, 10000);
         if (cancelled) return;
         setCandidatePool(
           (result.candidates || []).map((raw: any) => {
@@ -1426,7 +1431,7 @@ export const ResearchPlatformPage: React.FC = () => {
     };
     void loadUniverse();
     return () => { cancelled = true; };
-  }, [selectedRunId, appliedFilters.minScore, appliedFilters.excludeSt, refreshNonce, loadRange]);
+  }, [selectedModelId, selectedDate, appliedFilters.minScore, appliedFilters.excludeSt, refreshNonce, loadRange]);
 
   const handleSyncCandidates = async () => {
     if (!selectedModelId) {
@@ -1992,13 +1997,14 @@ export const ResearchPlatformPage: React.FC = () => {
     return () => { cancelled = true; };
   }, [detailModalOpen, selectedStock?.code]);
 
-  // 推理批次日期：从 runId（形如 run_YYYYMMDD_xxx）解析，作为评分基准日
+  // 推理批次日期：优先取选中的数据日（pred.parquet 口径），
+  // 兜底从 runId（形如 run_YYYYMMDD_xxx / pred_YYYYMMDD）解析，作为评分基准日
   // 这样风险评分跟选股决策对齐到同一日，避免"用今天的状态评估当时的决策"
   const inferenceDate = React.useMemo(() => {
-    if (!selectedRunId) return null;
-    const matched = selectedRunId.match(/run_(\d{4})(\d{2})(\d{2})/);
+    if (selectedDate) return selectedDate;
+    const matched = selectedRunId.match(/(?:run|pred)_(\d{4})(\d{2})(\d{2})/);
     return matched ? `${matched[1]}-${matched[2]}-${matched[3]}` : null;
-  }, [selectedRunId]);
+  }, [selectedDate, selectedRunId]);
 
   // ---- 推理批次日历派生数据（数据源 pred.parquet，见 /research/runs）----
   const runsByDate = React.useMemo(() => {
@@ -2010,8 +2016,8 @@ export const ResearchPlatformPage: React.FC = () => {
   }, [availableRuns]);
 
   const selectedRunEntry = React.useMemo(
-    () => (selectedRunId ? availableRuns.find((item) => item.runId === selectedRunId) || null : null),
-    [availableRuns, selectedRunId]
+    () => (selectedDate ? availableRuns.find((item) => item.inferenceDate === selectedDate) || null : null),
+    [availableRuns, selectedDate]
   );
 
   const shiftCalendarMonth = (delta: number) => {
@@ -2033,9 +2039,8 @@ export const ResearchPlatformPage: React.FC = () => {
 
   // 选中批次变化时，日历跳到该批次所在月份
   React.useEffect(() => {
-    const d = selectedRunEntry?.inferenceDate;
-    if (d && /^\d{4}-\d{2}/.test(d)) setCalendarMonth(d.slice(0, 7));
-  }, [selectedRunEntry?.inferenceDate]);
+    if (selectedDate && /^\d{4}-\d{2}/.test(selectedDate)) setCalendarMonth(selectedDate.slice(0, 7));
+  }, [selectedDate]);
 
   // 加载风险评分卡
   React.useEffect(() => {
@@ -2081,9 +2086,8 @@ export const ResearchPlatformPage: React.FC = () => {
   const klineOption = React.useMemo(() => {
     if (!klineData.length) return null;
 
-    // 提取预测日期基准线
-    const predictionMatch = selectedRunId.match(/run_(\d{4})(\d{2})(\d{2})/);
-    const predictionDate = predictionMatch ? `${predictionMatch[1]}-${predictionMatch[2]}-${predictionMatch[3]}` : null;
+    // 提取预测日期基准线（选中数据日，pred.parquet 口径）
+    const predictionDate = inferenceDate;
 
     const dates = klineData.map((d) => d.date);
     const ohlc = klineData.map((d) => [d.open, d.close, d.low, d.high]);
@@ -2323,7 +2327,7 @@ export const ResearchPlatformPage: React.FC = () => {
         },
       ],
     };
-  }, [klineData, selectedRunId, refActive, refMatches, refLineValue, refLineValue2, refLineMode]);
+  }, [klineData, inferenceDate, refActive, refMatches, refLineValue, refLineValue2, refLineMode]);
 
   /* ------------------------------ 概览统计 ------------------------------ */
 
@@ -2703,8 +2707,8 @@ export const ResearchPlatformPage: React.FC = () => {
                             <CalendarDays className="h-3.5 w-3.5 flex-shrink-0 text-blue-500" />
                             {runsLoading
                               ? '加载批次中…'
-                              : selectedRunEntry
-                                ? `${selectedRunEntry.inferenceDate} 批次`
+                              : selectedDate
+                                ? `${selectedDate} 批次`
                                 : '选择推理日期'}
                           </span>
                           <ChevronRight
@@ -2742,34 +2746,25 @@ export const ResearchPlatformPage: React.FC = () => {
                                 if (!d) return <div key={`empty-${i}`} className="h-6" />;
                                 const run = runsByDate.get(d);
                                 const hasData = Boolean(run);
-                                const selectable = Boolean(run?.runId);
-                                const isSelected = selectedRunEntry?.inferenceDate === d;
+                                const isSelected = selectedDate === d;
                                 return (
                                   <button
                                     key={d}
                                     type="button"
-                                    disabled={!selectable}
+                                    disabled={!hasData}
                                     onClick={() => {
-                                      if (run?.runId) {
-                                        setSelectedRunId(run.runId);
-                                        setCalendarOpen(false);
-                                      }
+                                      if (!run) return;
+                                      setSelectedDate(d);
+                                      setSelectedRunId(run.runId || `pred_${d.replaceAll('-', '')}`);
+                                      setCalendarOpen(false);
                                     }}
-                                    title={
-                                      run?.runId
-                                        ? `${d} 推理批次`
-                                        : hasData
-                                          ? `${d} 仅有历史分数（无批次快照）`
-                                          : d
-                                    }
+                                    title={hasData ? `${d} 推理数据（pred.parquet）` : d}
                                     className={`flex h-6 flex-col items-center justify-center rounded-md text-[10px] leading-none transition-all duration-150 ${
                                       isSelected
                                         ? 'bg-blue-600 font-black text-white'
-                                        : selectable
+                                        : hasData
                                           ? 'font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600'
-                                          : hasData
-                                            ? 'cursor-default text-slate-400'
-                                            : 'cursor-default text-slate-300'
+                                          : 'cursor-default text-slate-300'
                                     }`}
                                   >
                                     {Number(d.slice(8, 10))}
@@ -2777,11 +2772,9 @@ export const ResearchPlatformPage: React.FC = () => {
                                       className={`mt-0.5 h-1 w-1 rounded-full ${
                                         isSelected
                                           ? 'bg-white'
-                                          : selectable
+                                          : hasData
                                             ? 'bg-emerald-500'
-                                            : hasData
-                                              ? 'bg-emerald-300'
-                                              : 'bg-transparent'
+                                            : 'bg-transparent'
                                       }`}
                                     />
                                   </button>
@@ -2790,10 +2783,7 @@ export const ResearchPlatformPage: React.FC = () => {
                             </div>
                             <div className="mt-1.5 flex items-center justify-center gap-3 text-[9px] text-slate-400">
                               <span className="flex items-center gap-1">
-                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> 可查看批次
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> 仅历史分数
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> 有推理数据
                               </span>
                             </div>
                           </div>
@@ -2968,10 +2958,10 @@ export const ResearchPlatformPage: React.FC = () => {
                             <h2 className="text-2xl font-black leading-none tracking-tight text-slate-900">
                               {availableModels.find((item) => item.modelId === selectedModelId)?.name || '未选择模型'}
                             </h2>
-                            {selectedRunId && (
+                            {selectedDate && (
                               <div className="mb-0.5 flex items-center gap-1 rounded-lg bg-slate-900 px-2 py-0.5 text-[10px] font-black text-white shadow-lg shadow-slate-900/20">
                                 <Activity className="h-2.5 w-2.5" />
-                                {selectedRunId}
+                                {selectedDate}
                               </div>
                             )}
                           </div>
@@ -2983,12 +2973,12 @@ export const ResearchPlatformPage: React.FC = () => {
                             <div className="flex items-center gap-2">
                               <div className="flex items-center gap-1 text-[11px] font-black text-slate-700">
                                 <Target className="h-3 w-3 text-blue-500" />
-                                {availableRuns.find((item) => item.runId === selectedRunId)?.inferenceDate || '-'}
+                                {selectedDate || '-'}
                               </div>
                               <div className="h-1 w-1 rounded-full bg-slate-300" />
                               <div className="flex items-center gap-1 text-[11px] font-black text-slate-700">
                                 <CandlestickChart className="h-3 w-3 text-emerald-500" />
-                                {availableRuns.find((item) => item.runId === selectedRunId)?.targetDate || '-'}
+                                {selectedRunEntry?.targetDate || '-'}
                               </div>
                             </div>
                           </div>

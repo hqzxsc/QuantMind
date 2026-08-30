@@ -1085,6 +1085,100 @@ def _extract_ic(metadata_metrics: Any, metrics_json: Any) -> float | None:
     return None
 
 
+_PRED_DAY_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_PRED_DAY_CACHE_TTL = 600.0
+
+
+def _pred_parquet_file(storage_path: str) -> Path | None:
+    """定位模型目录下的 pred.parquet（兼容 pred/pred.parquet 布局）。"""
+    base = Path(storage_path)
+    for p in (base / "pred.parquet", base / "pred" / "pred.parquet"):
+        if p.is_file():
+            return p
+    return None
+
+
+def _read_model_pred_day(storage_path: str, trade_date: str) -> list[dict[str, Any]]:
+    """读模型 pred.parquet 某交易日的全市场分数截面（含排名）。
+
+    投研批次日历选中日期后的个股列表数据源（B 套）。排名口径与
+    engine_signal_scores / 个股分数曲线对齐：剔除 B 股（SH900/SZ200）、
+    北交所（BJ）、指数（SH000/SZ399）。symbol 统一转前缀式。
+    带 mtime 键控的进程内缓存，避免反复扫描大 parquet。
+    """
+    import time as _time
+
+    parquet_file = _pred_parquet_file(storage_path)
+    if parquet_file is None:
+        return []
+    try:
+        mtime = parquet_file.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    cache_key = f"{parquet_file}|{int(mtime)}|{trade_date}"
+    hit = _PRED_DAY_CACHE.get(cache_key)
+    if hit and _time.time() - hit[0] < _PRED_DAY_CACHE_TTL:
+        return hit[1]
+
+    rows: list[dict[str, Any]] = []
+    import duckdb
+
+    con = duckdb.connect()
+    try:
+        cols = [
+            r[0]
+            for r in con.execute(
+                f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0"
+            ).description
+        ]
+        score_col = next((c for c in ("pred", "fusion_score", "score") if c in cols), None)
+        date_col = (
+            "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
+        )
+        sym_col = next((c for c in ("symbol", "instrument") if c in cols), None)
+        if score_col and date_col and sym_col:
+            # 先全市场截面算 RANK（regexp_extract 抽连续数字段兼容前/后缀式）
+            res = con.execute(
+                f"""
+                WITH d AS (
+                    SELECT CAST({sym_col} AS VARCHAR) AS sym,
+                           CAST({score_col} AS DOUBLE) AS sc,
+                           RANK() OVER (ORDER BY CAST({score_col} AS DOUBLE) DESC) AS rk
+                    FROM read_parquet('{str(parquet_file)}')
+                    WHERE CAST({date_col} AS DATE) = CAST('{trade_date}' AS DATE)
+                      AND CAST({score_col} AS DOUBLE) IS NOT NULL
+                      AND NOT (
+                          UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SH000%'
+                          OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SZ399%'
+                          OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SH900%'
+                          OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SZ200%'
+                          OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'BJ%'
+                      )
+                )
+                SELECT sym, sc, rk FROM d ORDER BY rk ASC
+                """
+            ).fetchall()
+            for r in res:
+                symbol = StockCodeUtil.to_prefix(str(r[0] or ""))
+                if not re.match(r"^(SH|SZ|BJ)\d{6}$", symbol):
+                    continue
+                rows.append(
+                    {"symbol": symbol, "score": float(r[1]), "rank": int(r[2])}
+                )
+    except Exception:
+        rows = []
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    if len(_PRED_DAY_CACHE) > 64:
+        _PRED_DAY_CACHE.clear()
+    _PRED_DAY_CACHE[cache_key] = (_time.time(), rows)
+    return rows
+
+
 def _read_model_pred_dates(storage_path: str) -> list[str]:
     """读模型 pred.parquet 的去重交易日列表（投研批次日历的数据源）。
 
@@ -1093,42 +1187,34 @@ def _read_model_pred_dates(storage_path: str) -> list[str]:
     """
     import duckdb
 
-    base = Path(storage_path)
-    candidates = [
-        base / "pred.parquet",
-        base / "pred" / "pred.parquet",
-    ]
-    for parquet_file in candidates:
-        if not parquet_file.is_file():
-            continue
-        con = duckdb.connect()
+    parquet_file = _pred_parquet_file(storage_path)
+    if parquet_file is None:
+        return []
+    con = duckdb.connect()
+    try:
+        cols = [
+            r[0]
+            for r in con.execute(
+                f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0"
+            ).description
+        ]
+        date_col = (
+            "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
+        )
+        if not date_col:
+            return []
+        rows = con.execute(
+            f"SELECT DISTINCT CAST({date_col} AS DATE) AS d "
+            f"FROM read_parquet('{str(parquet_file)}') ORDER BY d"
+        ).fetchall()
+        return [str(r[0])[:10] for r in rows if r[0] is not None]
+    except Exception:
+        return []
+    finally:
         try:
-            cols = [
-                r[0]
-                for r in con.execute(
-                    f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0"
-                ).description
-            ]
-            date_col = (
-                "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
-            )
-            if not date_col:
-                continue
-            rows = con.execute(
-                f"SELECT DISTINCT CAST({date_col} AS DATE) AS d "
-                f"FROM read_parquet('{str(parquet_file)}') ORDER BY d"
-            ).fetchall()
-            dates = [str(r[0])[:10] for r in rows if r[0] is not None]
-            if dates:
-                return dates
+            con.close()
         except Exception:
-            continue
-        finally:
-            try:
-                con.close()
-            except Exception:
-                pass
-    return []
+            pass
 
 
 async def get_inference_runs(tid: str, uid: str, model_id: str) -> dict[str, Any]:
@@ -1347,6 +1433,176 @@ async def get_research_universe(tid: str, uid: str, run_id: str, limit: int, off
     if data is None:
         data = await _do_get_overview(tid, uid, None, run_id, limit, offset, include_market_stats=False, market=market)
     payload = {"code": 200, "data": {"items": data["items"], "summary": data["summary"]}}
+    _set_local_cache(_UNIVERSE_CACHE, cache_key, payload, _UNIVERSE_CACHE_MAX_ENTRIES)
+    return payload
+
+
+async def _best_snapshot_run_for_date(tid: str, uid: str, model_id: str, trade_date: str) -> str | None:
+    """某数据日行数最多的候选池快照 run（同日多 run 时排除单股推理 1 行快照）。"""
+    async with get_session(read_only=True) as session:
+        res = await session.execute(
+            text(
+                """
+                SELECT run_id, COUNT(*) AS cnt
+                FROM qm_research_candidate_snapshot
+                WHERE tenant_id = :tid AND user_id = :uid AND model_id = :mid
+                  AND data_trade_date = CAST(:d AS DATE)
+                GROUP BY run_id
+                ORDER BY cnt DESC
+                LIMIT 1
+                """
+            ),
+            {"tid": tid, "uid": uid, "mid": model_id, "d": trade_date},
+        )
+        row = res.first()
+        return str(row[0]) if row and row[0] else None
+
+
+async def _model_market(tid: str, uid: str, model_id: str) -> tuple[str, str | None]:
+    """返回 (storage_path, market)。market 取模型 metadata.context.market。"""
+    async with get_session(read_only=True) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT storage_path, metadata_json FROM qm_user_models "
+                    "WHERE tenant_id = :tid AND user_id = :uid AND model_id = :mid LIMIT 1"
+                ),
+                {"tid": tid, "uid": uid, "mid": model_id},
+            )
+        ).first()
+    if not row:
+        return "", None
+    storage_path = str(row[0] or "")
+    market: str | None = None
+    if row[1]:
+        try:
+            meta = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+            m = str((meta.get("context") or {}).get("market", "")).upper()
+            if m in ("CN", "HK", "US", "CRYPTO"):
+                market = m
+        except Exception:
+            market = None
+    return storage_path, market
+
+
+_EMPTY_UNIVERSE_SUMMARY = {
+    "total": 0,
+    "totalMarket": 0,
+    "hs300": 0,
+    "zz1000": 0,
+    "margin": 0,
+    "chinext": 0,
+    "avgScore": 0.0,
+    "highConfidenceCount": 0,
+    "strongCount": 0,
+    "lastUpdatedAt": None,
+    "scoreDistribution": {},
+}
+
+
+async def get_research_universe_by_date(
+    tid: str, uid: str, model_id: str, trade_date: str, limit: int, offset: int = 0
+) -> dict[str, Any]:
+    """按数据日直读模型 pred.parquet 的全市场分数截面（投研宇宙主数据源）。
+
+    B 套口径：与批次日历、coverage、个股分数曲线同源。该日 parquet 无
+    分数时兜底回退候选池快照（无 pred.parquet 的旧模型仍可用）。
+    """
+    trade_date = str(trade_date)[:10]
+    cache_key = f"date:{tid}:{uid}:{model_id}:{trade_date}:{limit}:{offset}"
+    cached = _get_local_cache(_UNIVERSE_CACHE, cache_key, _UNIVERSE_CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    storage_path, market = await _model_market(tid, uid, model_id)
+    pred_rows = _read_model_pred_day(storage_path, trade_date) if storage_path else []
+    if not pred_rows:
+        # 兜底：该日无 parquet 分数 → 候选池快照（同日行数最多的 run）
+        snap_run = await _best_snapshot_run_for_date(tid, uid, model_id, trade_date)
+        if snap_run:
+            return await get_research_universe(tid, uid, snap_run, limit, offset)
+        payload = {"code": 200, "data": {"items": [], "summary": dict(_EMPTY_UNIVERSE_SUMMARY)}}
+        _set_local_cache(_UNIVERSE_CACHE, cache_key, payload, _UNIVERSE_CACHE_MAX_ENTRIES)
+        return payload
+
+    try:
+        day = date.fromisoformat(trade_date)
+    except ValueError:
+        payload = {"code": 200, "data": {"items": [], "summary": dict(_EMPTY_UNIVERSE_SUMMARY)}}
+        return payload
+
+    async with get_session(read_only=True) as session:
+        sdl_map = await _load_sdl_pg_map(session, day, market=market)
+
+    pseudo_run_id = f"pred_{trade_date.replace('-', '')}"
+    page = pred_rows[offset : offset + limit]
+    merged_rows: list[dict[str, Any]] = []
+    quantdb_names: dict[str, str] | None = None
+    for r in page:
+        row: dict[str, Any] = {
+            "run_id": pseudo_run_id,
+            "model_id": model_id,
+            "symbol": r["symbol"],
+            "fusion_score": r["score"],
+            "score_rank": r["rank"],
+            "data_trade_date": day,
+            "signal_side": None,
+            "confidence_level": None,
+        }
+        sdl = sdl_map.get(r["symbol"])
+        if sdl:
+            row.update(sdl)
+            row["symbol"] = r["symbol"]  # sdl 原始 symbol 可能是后缀式，覆盖回前缀式
+        if not row.get("stock_name"):
+            # 历史日期 SDL 可能无数据，用 QuantDB 股票简称兜底
+            try:
+                if quantdb_names is None:
+                    quantdb_names = _get_quantdb_stock_names()
+                row["stock_name"] = quantdb_names.get(StockCodeUtil.to_suffix(r["symbol"])) or ""
+            except Exception:
+                pass
+        merged_rows.append(row)
+    items = [_format_candidate_record(r) for r in merged_rows]
+
+    score_vals = [float(r["score"]) for r in pred_rows]
+    score_dist: dict[str, Any] = {}
+    try:
+        dist = compute_score_distribution(score_vals)
+        if dist:
+            score_dist = {k: dist.get(k) for k in ("min", "max", "mean", "median", "p10", "p25", "p75", "p90")}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("pred day score distribution failed: %s", exc)
+
+    total = len(pred_rows)
+    tradable = 0
+    hs300 = 0
+    zz1000 = 0
+    for r in pred_rows:
+        sdl = sdl_map.get(r["symbol"])
+        if not sdl:
+            continue
+        if sdl.get("close_price"):
+            tradable += 1
+        if sdl.get("is_hs300"):
+            hs300 += 1
+        if sdl.get("is_csi1000"):
+            zz1000 += 1
+    summary = {
+        "total": total,
+        "totalMarket": tradable,
+        "hs300": hs300,
+        "zz1000": zz1000,
+        "margin": 0,
+        "chinext": 0,
+        "avgScore": round(sum(score_vals) / total, 4) if total else 0.0,
+        # parquet 无 signal_side，高置信沿用分数强阈值口径
+        "highConfidenceCount": sum(1 for v in score_vals if v >= 0.05),
+        "strongCount": sum(1 for v in score_vals if v >= 0.05),
+        "lastUpdatedAt": None,
+        "scoreDistribution": score_dist,
+    }
+
+    payload = {"code": 200, "data": {"items": items, "summary": summary}}
     _set_local_cache(_UNIVERSE_CACHE, cache_key, payload, _UNIVERSE_CACHE_MAX_ENTRIES)
     return payload
 

@@ -839,6 +839,127 @@ async def get_model_drift(
     return {"model_id": model_id, **drift}
 
 
+@router.get("/{model_id}/market-regime", summary="获取模型大盘三态时序（用户态）")
+async def get_model_market_regime(
+    model_id: str,
+    window: int = Query(90, ge=1, le=200, description="近 N 个交易日"),
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
+    tenant_id = str(current_user.get("tenant_id") or "default")
+    user_id = str(current_user.get("user_id") or current_user.get("sub") or "")
+    model = await model_registry_service.get_model(
+        tenant_id=tenant_id, user_id=user_id, model_id=model_id
+    )
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    # 阈值按用户要求 0.08 / 0.02（牛市≥0.08，震荡 0.02-0.08，熊市<0.02），仅展示最近 90 交易日
+    bull_thr, bear_thr = 0.08, 0.02
+    series: list[dict[str, Any]] = []
+    try:
+        async with get_session(read_only=True) as session:
+            rows = (
+                (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT r.data_trade_date::text AS trade_date,
+                                   AVG(s.fusion_score)::float AS avg_score,
+                                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.fusion_score)::float AS median_score,
+                                   COUNT(*)::int AS cnt
+                            FROM qm_model_inference_runs r
+                            JOIN engine_signal_scores s
+                              ON s.run_id = r.run_id AND s.tenant_id = r.tenant_id AND s.user_id = r.user_id
+                            WHERE r.tenant_id = :tenant_id AND r.user_id = :user_id
+                              AND r.model_id = :model_id AND r.status = 'completed'
+                            GROUP BY r.data_trade_date
+                            ORDER BY r.data_trade_date DESC
+                            LIMIT :window
+                            """
+                        ),
+                        {"tenant_id": tenant_id, "user_id": user_id, "model_id": model_id, "window": int(window)},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        for row in rows:
+            d = dict(row)
+            avg = float(d.get("avg_score") or 0)
+            regime = "bull" if avg >= bull_thr else "bear" if avg < bear_thr else "sideways"
+            color = "#ef4444" if regime == "bull" else "#10b981" if regime == "bear" else "#94a3b8"
+            series.append({
+                "trade_date": str(d.get("trade_date") or "")[:10],
+                "avg_score": round(avg, 4),
+                "median_score": round(float(d.get("median_score") or 0), 4),
+                "count": int(d.get("cnt") or 0),
+                "regime": regime,
+                "color": color,
+            })
+        # 与个股终端一致：若 engine_signal_scores 为空，回退读历史推理 parquet 平均分（pred.parquet）
+        if not series:
+            storage_path = str(model.get("storage_path") or "").strip()
+            if storage_path:
+                import duckdb
+
+                pred_path = Path(storage_path) / "pred.parquet"
+                # 兼容部分模型 pred 存储在上级或 pred/ 目录
+                candidates = [pred_path, Path(storage_path) / "pred" / "pred.parquet", Path(storage_path) / "pred.parquet"]
+                parquet_file = next((p for p in candidates if p.is_file()), None)
+                if parquet_file:
+                    try:
+                        # 统一字段：pred / fusion_score 均可能
+                        con = duckdb.connect()
+                        # 先探列
+                        cols = [r[1] for r in con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0").description]
+                        score_col = "pred" if "pred" in cols else "fusion_score" if "fusion_score" in cols else None
+                        date_col = "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
+                        if score_col and date_col:
+                            q = f"""
+                                SELECT CAST({date_col} AS VARCHAR) AS trade_date,
+                                       AVG(CAST({score_col} AS DOUBLE))::DOUBLE AS avg_score,
+                                       MEDIAN(CAST({score_col} AS DOUBLE))::DOUBLE AS median_score,
+                                       COUNT(*)::INTEGER AS cnt
+                                FROM read_parquet('{str(parquet_file)}')
+                                WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
+                                GROUP BY {date_col}
+                                ORDER BY {date_col} DESC
+                                LIMIT {int(window)}
+                            """
+                            rows2 = con.execute(q).fetchall()
+                            for trade_date, avg_score, median_score, cnt in rows2:
+                                try:
+                                    avg = float(avg_score or 0)
+                                except Exception:
+                                    continue
+                                regime = "bull" if avg >= bull_thr else "bear" if avg < bear_thr else "sideways"
+                                color = "#ef4444" if regime == "bull" else "#10b981" if regime == "bear" else "#94a3b8"
+                                series.append({
+                                    "trade_date": str(trade_date)[:10],
+                                    "avg_score": round(avg, 4),
+                                    "median_score": round(float(median_score or 0), 4),
+                                    "count": int(cnt or 0),
+                                    "regime": regime,
+                                    "color": color,
+                                })
+                            con.close()
+                    except Exception as exc:
+                        logger.warning("market-regime parquet fallback failed %s: %s", model_id, exc)
+        series.sort(key=lambda x: x["trade_date"])
+        # 仅保留最近 90 交易日
+        if len(series) > int(window):
+            series = series[-int(window):]
+        current = series[-1] if series else None
+        return {
+            "model_id": model_id,
+            "window": int(window),
+            "thresholds": {"bull": bull_thr, "bear": bear_thr},
+            "series": series,
+            "current": current,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/{model_id}", summary="获取单个用户模型（用户态）")
 async def get_user_model(
     model_id: str,

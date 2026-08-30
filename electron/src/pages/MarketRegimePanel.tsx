@@ -31,7 +31,7 @@ export const MarketRegimePanel: React.FC<{ modelId: string }> = ({ modelId }) =>
       tooltip: { trigger: 'axis', formatter: (ps: any) => {
         const p = ps[0];
         const row = series[p.dataIndex];
-        return `${row.trade_date}<br/>avg ${row.avg_score} median ${row.median_score} cnt ${row.count}`;
+        return `${row.trade_date}<br/>均值 ${row.avg_score} 中位数 ${row.median_score} 样本 ${row.count}`;
       }},
       grid: { left: 48, right: 16, top: 24, bottom: 28 },
       xAxis: { type: 'category', data: dates, boundaryGap: false, axisLabel: { fontSize: 10, color: '#64748b' } },

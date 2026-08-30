@@ -49,6 +49,7 @@ import { CreateEnsembleModal } from './CreateEnsembleModal';
 import { PublishModelModal } from './hub/PublishModelModal';
 import { DriftTabPanel } from './DriftTabPanel';
 import { MarketRegimePanel } from './MarketRegimePanel';
+import { InferenceCoveragePanel } from './InferenceCoveragePanel';
 import {
   buildFeatureLabelMap,
   DEFAULT_FEATURE_CATEGORIES,
@@ -784,6 +785,15 @@ export const ModelRegistryPage: React.FC = () => {
                           </span>
                         ),
                         children: <MarketRegimePanel modelId={selectedModel.model_id} />,
+                      },
+                      {
+                        key: 'inference-mgmt',
+                        label: (
+                          <span className="text-xs font-black uppercase tracking-widest px-1 flex items-center gap-1.5">
+                            推理管理
+                          </span>
+                        ),
+                        children: <InferenceCoveragePanel modelId={selectedModel.model_id} />,
                       },
                     ]}
                   />

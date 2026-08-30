@@ -643,8 +643,23 @@ class ModelTrainingService {
     return resp.data;
   }
 
-  async getMarketRegime(modelId: string, window = 60): Promise<any> {
+  async getMarketRegime(modelId: string, window = 90): Promise<any> {
     const resp = await this.client.get<any>(`/models/${encodeURIComponent(modelId)}/market-regime`, { params: { window } });
+    return resp.data;
+  }
+
+  async getInferenceCoverage(modelId: string): Promise<any> {
+    const resp = await this.client.get<any>(`/models/${encodeURIComponent(modelId)}/inference/coverage`);
+    return resp.data;
+  }
+
+  async triggerInferenceBackfill(modelId: string): Promise<any> {
+    const resp = await this.client.post<any>(`/models/${encodeURIComponent(modelId)}/inference/backfill`);
+    return resp.data;
+  }
+
+  async getBackfillStatus(modelId: string, taskId: string): Promise<any> {
+    const resp = await this.client.get<any>(`/models/${encodeURIComponent(modelId)}/inference/backfill/${encodeURIComponent(taskId)}`);
     return resp.data;
   }
 

@@ -358,6 +358,7 @@ def _load_quantdb_labels() -> dict[str, dict[str, Any]]:
                 {
                     "concepts": [],
                     "indices": [],
+                    "is_st": False,
                     "is_hs300": False,
                     "is_csi500": False,
                     "is_csi1000": False,
@@ -382,14 +383,14 @@ def _load_quantdb_labels() -> dict[str, dict[str, Any]]:
                         if not sym:
                             continue
                         r = _ensure(sym)
+                        if _to_bool(row.get("IsSTGP")):
+                            r["is_st"] = True
                         if _to_bool(row.get("BelongHS300")):
                             r["is_hs300"] = True
                             if "沪深300" not in r["indices"]:
                                 r["indices"].append("沪深300")
                         if _to_bool(row.get("BelongRZRQ")) and "两融标的" not in r["indices"]:
                             r["indices"].append("两融标的")
-                        if _to_bool(row.get("BelongHasKQZ")) and "科创板" not in r["indices"]:
-                            r["indices"].append("科创板")
                         if _to_bool(row.get("BelongHSGT")) and "沪深港通" not in r["indices"]:
                             r["indices"].append("沪深港通")
             except Exception as exc:  # noqa: BLE001
@@ -1732,6 +1733,7 @@ async def get_research_universe_by_date(
             "sector": (quantdb_meta.get(r["symbol"]) or {}).get("industry") or "",
             "conceptTags": (quantdb_labels.get(r["symbol"]) or {}).get("concepts") or [],
             "indexTags": (quantdb_labels.get(r["symbol"]) or {}).get("indices") or [],
+            "isSt": bool((quantdb_labels.get(r["symbol"]) or {}).get("is_st")),
             "isHs300": bool((quantdb_labels.get(r["symbol"]) or {}).get("is_hs300")),
             "isCsi500": bool((quantdb_labels.get(r["symbol"]) or {}).get("is_csi500")),
             "isCsi1000": bool((quantdb_labels.get(r["symbol"]) or {}).get("is_csi1000")),

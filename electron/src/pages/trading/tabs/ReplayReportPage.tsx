@@ -241,11 +241,11 @@ function TradesTable({ sessionId }: { sessionId: string }) {
                         <thead>
                             <tr className="border-b border-gray-100 text-gray-400">
                                 {[
-                                    ['trade_date', '日期'], ['symbol', '标的'], ['side', '方向'],
-                                    ['quantity', '数量'], ['price', '价格'], ['trade_value', '金额'],
-                                    ['total_fee', '手续费'], ['realized_pnl', '盈亏'],
-                                ].map(([col, label]) => (
-                                    <th key={col} className="py-1.5 px-2 cursor-pointer hover:text-gray-600" onClick={() => toggleSort(col)}>
+                                    ['trade_date', '日期', 'text-left'], ['symbol', '标的', 'text-left'], ['side', '方向', 'text-left'],
+                                    ['quantity', '数量', 'text-right'], ['price', '价格', 'text-right'], ['trade_value', '金额', 'text-right'],
+                                    ['total_fee', '手续费', 'text-right'], ['realized_pnl', '盈亏', 'text-right'],
+                                ].map(([col, label, align]) => (
+                                    <th key={col} className={`py-1.5 px-2 cursor-pointer hover:text-gray-600 ${align}`} onClick={() => toggleSort(col)}>
                                         <span className="inline-flex items-center gap-0.5">{label} <SortIcon col={col} /></span>
                                     </th>
                                 ))}

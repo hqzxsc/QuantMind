@@ -43,10 +43,10 @@ RUN sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g; s/security.ubuntu.com/mir
 
 # 训练依赖：torch GPU 版（CUDA 12.8 wheel，向后兼容 12.1+ 驱动）+ 树模型全家桶
 RUN python3 -m pip install --upgrade pip setuptools wheel \
-    && python3 -m pip install --no-cache-dir "torch==2.9.1" \
+    && python3 -m pip install --no-cache-dir --root-user-action=ignore "torch==2.9.1" \
         --index-url ${TORCH_INDEX_URL} \
         --extra-index-url ${PIP_INDEX_URL} \
-    && python3 -m pip install --no-cache-dir \
+    && python3 -m pip install --no-cache-dir --root-user-action=ignore \
         lightgbm xgboost catboost scikit-learn \
         pandas numpy pyarrow requests pyyaml \
         pytest jupyter

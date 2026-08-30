@@ -6,7 +6,7 @@ LABEL maintainer="QuantMind" \
       description="QuantMind LightGBM training container — Local build v1"
 
 # 仅安装缺失的 pyyaml (其余依赖已在基础镜像中)
-RUN pip install --no-cache-dir pyyaml
+RUN pip install --no-cache-dir --root-user-action=ignore pyyaml
 
 # 覆盖训练脚本（preprocessing.py / parallel_utils.py 供 train.py 顶层 import）
 COPY docker/training/train.py /app/train.py

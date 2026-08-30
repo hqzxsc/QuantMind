@@ -41,16 +41,16 @@ RUN set -eux; \
 RUN python -m pip install --upgrade pip setuptools wheel && \
     if [ "$TORCH_DEVICE" = "cpu" ]; then \
       # torch 本体走 PyTorch 官方 CPU 源，依赖包仍走默认索引（阿里云）
-      pip install --no-cache-dir --no-deps torch torchvision torchaudio --index-url ${TORCH_CPU_INDEX_URL}; \
-      pip install --no-cache-dir torch torchvision torchaudio; \
+      pip install --no-cache-dir --root-user-action=ignore --no-deps torch torchvision torchaudio --index-url ${TORCH_CPU_INDEX_URL}; \
+      pip install --no-cache-dir --root-user-action=ignore torch torchvision torchaudio; \
     else \
       # 用 --extra-index-url 仅让 torch 本体走 cu128 源，传递依赖仍走默认索引（阿里云）
-      pip install --no-cache-dir \
+      pip install --no-cache-dir --root-user-action=ignore \
         "torch==2.11.0+cu128" "torchvision==0.26.0+cu128" "torchaudio==2.11.0+cu128" \
         --extra-index-url ${TORCH_CUDA_INDEX_URL}; \
     fi
 
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --root-user-action=ignore \
       numpy \
       pandas \
       pyarrow \

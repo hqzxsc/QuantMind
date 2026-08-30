@@ -42,14 +42,14 @@ RUN sed -i "s/deb.debian.org/mirrors.aliyun.com/g; s/security.debian.org/mirrors
 RUN python -m pip install --upgrade pip setuptools wheel \
     && if [ "$TORCH_DEVICE" = "gpu" ]; then \
          echo "安装 GPU 版 torch（完整 CUDA）"; \
-         python -m pip install --no-cache-dir "torch==2.9.1"; \
+         python -m pip install --no-cache-dir --root-user-action=ignore "torch==2.9.1"; \
        else \
          echo "安装 CPU 版 torch"; \
-         python -m pip install --no-cache-dir "torch==2.9.1+cpu" \
+         python -m pip install --no-cache-dir --root-user-action=ignore "torch==2.9.1+cpu" \
            --index-url https://mirrors.aliyun.com/pytorch-wheels/cpu \
            --extra-index-url ${PIP_INDEX_URL}; \
        fi \
-    && python -m pip install --no-cache-dir \
+    && python -m pip install --no-cache-dir --root-user-action=ignore \
         lightgbm xgboost catboost scikit-learn scipy pandas numpy pyarrow requests pyyaml
 
 # 业务代码：训练脚本 + 特征生成脚本

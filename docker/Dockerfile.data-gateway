@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev c
 
 # 数据源依赖
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --root-user-action=ignore \
     akshare \
     pandas \
     numpy \

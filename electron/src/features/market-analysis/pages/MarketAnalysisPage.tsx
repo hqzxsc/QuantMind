@@ -325,11 +325,16 @@ export const MarketAnalysisPage: React.FC = () => {
 
   return (
     <div
-      className={`w-full h-full ${activeTab === 'panorama' || activeTab === 'stock-flow' || activeTab === 'tag-lookup' ? 'overflow-hidden' : 'overflow-y-auto'} bg-slate-50/60 px-5 pt-4 pb-28 flex flex-col gap-2.5 font-sans`}
-      style={{
-        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
-        maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
-      }}
+      className={`w-full h-full ${activeTab === 'panorama' || activeTab === 'tag-lookup' ? 'overflow-hidden' : 'overflow-y-auto'} bg-slate-50/60 px-5 pt-4 pb-28 flex flex-col gap-2.5 font-sans`}
+      style={
+        // stock-flow 内部自滚动，不套用上下淡出遮罩，避免首尾内容被遮挡；panorama/tag-lookup 不滚动，保留装饰性淡出
+        activeTab === 'stock-flow'
+          ? undefined
+          : {
+              WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
+              maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.25) 10px, rgba(0,0,0,0.75) 20px, black 32px, black calc(100% - 28px), rgba(0,0,0,0.75) calc(100% - 16px), rgba(0,0,0,0.25) calc(100% - 8px), transparent 100%)',
+            }
+      }
     >
         {/* 🌟 紧凑 Banner 顶栏 */}
         <div className="relative rounded-2xl bg-gradient-to-r from-purple-100/90 via-indigo-50/80 to-purple-50/90 text-slate-900 px-5 py-2.5 shadow-xs border border-purple-200/60 flex items-center justify-between gap-4">
@@ -788,7 +793,7 @@ export const MarketAnalysisPage: React.FC = () => {
             </h3>
             <span className="text-xs text-slate-400">包含超大单、大单、中单、小单拆解</span>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto pb-2">
             <StockMoneyFlowTable items={stockFlows} loading={loading} latestDate={breadth?.trade_date} onStockClick={openStockDetail} />
           </div>
         </div>

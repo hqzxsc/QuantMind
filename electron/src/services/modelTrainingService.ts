@@ -638,6 +638,11 @@ class ModelTrainingService {
     return resp.data;
   }
 
+  async getModelDrift(modelId: string): Promise<any> {
+    const resp = await this.client.get<any>(`/models/${encodeURIComponent(modelId)}/drift`);
+    return resp.data;
+  }
+
   async getModelQuality(modelId: string, window = 60): Promise<any> {
     const resp = await this.client.get<any>(`/models/${modelId}/quality`, { params: { window } });
     return resp.data;

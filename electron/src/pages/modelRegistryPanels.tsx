@@ -532,57 +532,7 @@ export const ModelDetailPanel: React.FC<{ model: UserModelRecord }> = ({ model }
             </div>
           )}
 
-          {meta.drift?.enabled && (
-            <div className="glass-panel rounded-3xl p-5 border border-sky-100/60 bg-gradient-to-br from-sky-50/30 to-white">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Activity size={13} className="text-sky-500" />
-                  <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest">数据漂移 (PSI)</Text>
-                </div>
-                <Tag className={clsx('m-0 rounded-full border-0 px-2 py-0.5 text-[9px] font-black', meta.drift.overall === 'stable' ? 'bg-emerald-50 text-emerald-600' : meta.drift.overall === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600')}>
-                  {meta.drift.overall === 'stable' ? '稳定' : meta.drift.overall === 'warning' ? '预警' : '严重漂移'}
-                </Tag>
-              </div>
 
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                <div className="flex flex-col items-center gap-0.5 p-2 bg-white/70 rounded-xl border border-slate-100/60">
-                  <Text className="text-[8px] text-slate-400 uppercase tracking-wider">最大结构漂移</Text>
-                  <Text className={clsx('text-base font-black font-mono', Number(meta.drift.max_psi) < 0.1 ? 'text-emerald-600' : Number(meta.drift.max_psi) < 0.2 ? 'text-amber-600' : 'text-rose-500')}>
-                    {Number(meta.drift.max_psi).toFixed(4)}
-                  </Text>
-                </div>
-                <div className="flex flex-col items-center gap-0.5 p-2 bg-white/70 rounded-xl border border-slate-100/60">
-                  <Text className="text-[8px] text-slate-400 uppercase tracking-wider">漂移特征</Text>
-                  <Text className="text-[12px] font-black font-mono text-slate-700 whitespace-nowrap">
-                    稳 {meta.drift.drift?.stable ?? 0} / 中 {meta.drift.drift?.medium ?? 0} / 重 {meta.drift.drift?.severe ?? 0}
-                  </Text>
-                </div>
-              </div>
-
-              {meta.drift.top_drift_features?.length > 0 && (
-                <div className="space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
-                  {meta.drift.top_drift_features.slice(0, 6).map((f: any, i: number) => (
-                    <div key={i} className="flex items-center gap-2 px-2 py-1 bg-white/60 rounded-lg border border-slate-100/50">
-                      <Text className="text-[9px] font-mono text-slate-500 flex-1 truncate">{f.feature}</Text>
-                      {f.benign_scale && (
-                        <Tag className="m-0 rounded-md border-0 px-1.5 py-0 text-[8px] font-black bg-sky-50 text-sky-500">量能</Tag>
-                      )}
-                      <Text className={clsx('text-[10px] font-black font-mono', f.level === 'stable' ? 'text-emerald-600' : f.level === 'medium' ? 'text-amber-600' : 'text-rose-500')}>
-                        {Number(f.rank_disp ?? f.psi).toFixed(3)}
-                      </Text>
-                      <Tag className={clsx('m-0 rounded-md border-0 px-1.5 py-0 text-[8px] font-black', f.level === 'stable' ? 'bg-emerald-50 text-emerald-600' : f.level === 'medium' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600')}>
-                        {f.level === 'stable' ? '稳定' : f.level === 'medium' ? '中' : '重'}
-                      </Tag>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <Text className="block mt-3 text-[10px] text-slate-400 leading-relaxed">
-                训练 {meta.drift.train_start}~{meta.drift.train_end} vs 实盘 {meta.drift.recent_start}~{meta.drift.recent_end}。数值为截面 rank 位移，重训前请结合实盘 RankIC 判断。
-              </Text>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -1013,7 +963,7 @@ export const InferenceCenterPanel: React.FC<{
     };
   }, [lastRun?.run_id, lastRun?.status]);
 
-  const topRankings = rankingResult?.rankings?.slice(0, 10) ?? [];
+  const topRankings = rankingResult?.rankings?.slice(0, 200) ?? [];
 
   return (
     <div className="pt-0 pb-10">
@@ -1196,23 +1146,23 @@ export const InferenceCenterPanel: React.FC<{
               </Spin>
            </div>
 
-           {/* 本次推理排名 */}
-           <div className="glass-panel rounded-2xl p-4 border border-slate-100/50 bg-white flex-1 flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between mb-3">
-                <Text className="text-[9px] font-black text-slate-400 uppercase tracking-widest">本次推理排名</Text>
-                {rankingLoading && <Spin size="small" />}
-                {!rankingLoading && rankingResult && (
-                  <Tag className="m-0 border-0 text-[9px] font-black px-2 rounded-md bg-blue-50 text-blue-600">
-                    {rankingResult.target_date} · {rankingResult.rankings.length} 只
-                  </Tag>
-                )}
-              </div>
-              {rankingLoading ? (
-                <div className="flex-1 flex items-center justify-center py-8">
-                  <Text className="text-[10px] text-slate-400">正在加载排名...</Text>
-                </div>
-              ) : topRankings.length > 0 ? (
-                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar -mx-1 px-1">
+            {/* 本次推理排名 - 固定高度 420px + 内部滚动，展示前200 */}
+            <div className="glass-panel rounded-2xl p-4 border border-slate-100/50 bg-white flex flex-col overflow-hidden shrink-0" style={{ height: 420 }}>
+               <div className="flex items-center justify-between mb-3 shrink-0">
+                 <Text className="text-[9px] font-black text-slate-400 uppercase tracking-widest">本次推理排名</Text>
+                 {rankingLoading && <Spin size="small" />}
+                 {!rankingLoading && rankingResult && (
+                   <Tag className="m-0 border-0 text-[9px] font-black px-2 rounded-md bg-blue-50 text-blue-600">
+                     {rankingResult.target_date} · {rankingResult.rankings.length} 只 · 显示前200
+                   </Tag>
+                 )}
+               </div>
+               {rankingLoading ? (
+                 <div className="flex-1 flex items-center justify-center py-8">
+                   <Text className="text-[10px] text-slate-400">正在加载排名...</Text>
+                 </div>
+               ) : topRankings.length > 0 ? (
+                 <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar -mx-1 px-1 overscroll-contain">
                   <div className="flex flex-col gap-1">
                     {topRankings.map((r) => (
                       <div

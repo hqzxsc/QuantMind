@@ -817,6 +817,28 @@ async def delete_strategy_binding(
     return {"deleted": bool(deleted), "strategy_id": strategy_id}
 
 
+@router.get("/{model_id}/drift", summary="获取模型数据漂移 PSI 详情（用户态）")
+async def get_model_drift(
+    model_id: str,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
+    tenant_id = str(current_user.get("tenant_id") or "default")
+    user_id = str(current_user.get("user_id") or current_user.get("sub") or "")
+    model = await model_registry_service.get_model(
+        tenant_id=tenant_id, user_id=user_id, model_id=model_id
+    )
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    metadata = model.get("metadata_json") if isinstance(model.get("metadata_json"), dict) else {}
+    drift = metadata.get("drift") if isinstance(metadata.get("drift"), dict) else None
+    if not drift or not drift.get("enabled"):
+        # 尝试从 fallback 位置（metadata.drift 已在训练时写入，二选一）
+        drift = metadata.get("drift") if isinstance(metadata.get("drift"), dict) else None
+    if not drift:
+        return {"enabled": False, "reason": "drift not available", "model_id": model_id}
+    return {"model_id": model_id, **drift}
+
+
 @router.get("/{model_id}", summary="获取单个用户模型（用户态）")
 async def get_user_model(
     model_id: str,

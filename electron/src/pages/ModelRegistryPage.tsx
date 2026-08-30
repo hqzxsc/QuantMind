@@ -4,7 +4,7 @@ import {
   Layers, Star, RefreshCw, Search, Code, Calendar, Layers2,
   Archive, Brain, Clock, XCircle, X,
   ChevronRight, Play, Download, ChevronDown,
-  ChevronUp, Shield, Zap, ListFilter,
+  ChevronUp, Shield, Zap, ListFilter, Activity,
   Compass, Sparkles,
 } from 'lucide-react';
 import {
@@ -47,6 +47,7 @@ import {
 } from './modelRegistryPanels';
 import { CreateEnsembleModal } from './CreateEnsembleModal';
 import { PublishModelModal } from './hub/PublishModelModal';
+import { DriftTabPanel } from './DriftTabPanel';
 import {
   buildFeatureLabelMap,
   DEFAULT_FEATURE_CATEGORIES,
@@ -764,6 +765,15 @@ export const ModelRegistryPage: React.FC = () => {
                             }}
                           />
                         ),
+                      },
+                      {
+                        key: 'drift',
+                        label: (
+                          <span className="text-xs font-black uppercase tracking-widest px-1 flex items-center gap-1.5">
+                            数据漂移
+                          </span>
+                        ),
+                        children: <DriftTabPanel modelId={selectedModel.model_id} />,
                       },
                     ]}
                   />

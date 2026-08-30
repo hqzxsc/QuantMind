@@ -147,7 +147,11 @@ function CreateSessionForm({ onCreate }: { onCreate: (s: ReplaySession) => void 
                 const tpls = await listStrategyTemplates();
                 if (cancelled) return;
                 setTemplates(tpls);
-                if (tpls.length > 0) setSelectedTemplateId(tpls[0].id);
+                // 默认选中「默认 Top-K 选股策略」，找不到时退回第一个模板
+                if (tpls.length > 0) {
+                    const preferred = tpls.find(t => t.id === 'standard_topk') ?? tpls[0];
+                    setSelectedTemplateId(preferred.id);
+                }
             } catch {
                 // ignore
             } finally {
@@ -1168,15 +1172,19 @@ function SessionCard({
                                 {autoAdvance.records.map((r, i) => (
                                     <div
                                         key={i}
-                                        className={`flex items-center justify-between px-2 py-1 rounded text-xs ${
+                                        className={`grid grid-cols-[86px_1fr_auto] items-center gap-2 px-2 py-1 rounded text-xs ${
                                             i === autoAdvance.records.length - 1 && autoAdvance.state === 'running'
                                                 ? 'bg-blue-50 animate-pulse'
                                                 : ''
                                         }`}
                                     >
                                         <span className="font-mono text-gray-600">{r.trade_date}</span>
-                                        <span className="text-gray-400">{r.fill_count} 笔</span>
-                                        <span className={r.day_pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}>
+                                        <span className="text-gray-400 font-mono">
+                                            {r.sell_count || r.buy_count
+                                                ? `轮换 ${Math.min(r.sell_count, r.buy_count)} 只 (卖${r.sell_count}/买${r.buy_count})`
+                                                : '无调仓'}
+                                        </span>
+                                        <span className={`font-mono text-right ${r.day_pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                                             {r.day_pnl >= 0 ? '+' : ''}{r.day_pnl.toFixed(0)}
                                         </span>
                                     </div>

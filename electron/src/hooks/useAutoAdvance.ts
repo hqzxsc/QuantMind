@@ -29,6 +29,10 @@ const SPEED_MS: Record<AutoAdvanceSpeed, number> = {
 export interface DailyRecord {
     trade_date: string;
     fill_count: number;
+    /** 卖出成交笔数（轮换掉的持仓） */
+    sell_count: number;
+    /** 买入成交笔数（新换入的持仓） */
+    buy_count: number;
     day_pnl: number;
     cum_pnl: number;
     rejected: number;
@@ -158,6 +162,8 @@ export function useAutoAdvance(opts: UseAutoAdvanceOptions = {}): UseAutoAdvance
                 const record: DailyRecord = {
                     trade_date: result.trade_date,
                     fill_count: result.filled.length,
+                    sell_count: result.filled.filter(f => f.side.toUpperCase() === 'SELL').length,
+                    buy_count: result.filled.filter(f => f.side.toUpperCase() === 'BUY').length,
                     day_pnl: result.snapshot.day_pnl,
                     cum_pnl: result.snapshot.cum_pnl,
                     rejected: result.rejected.length,

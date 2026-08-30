@@ -38,6 +38,18 @@ def _get_proxy_client() -> httpx.AsyncClient:
     return _client
 
 
+# 重接口（手动任务预览/创建：账户快照 + 全市场信号计划构建，
+# 信号表被覆盖清空时还要回退读 pred.parquet 截面）的读超时，
+# 避免 10 秒全局超时把慢而正确的请求打成 504。
+_SLOW_PATH_TIMEOUT_SECONDS = float(os.getenv("TRADE_PROXY_SLOW_TIMEOUT_SECONDS", "120"))
+
+
+def _resolve_proxy_timeout(path: str) -> httpx.Timeout:
+    if "/manual-executions" in path:
+        return httpx.Timeout(_SLOW_PATH_TIMEOUT_SECONDS, connect=3.0)
+    return httpx.Timeout(10.0, connect=3.0)
+
+
 async def _do_proxy(request: Request, user: dict | None = None) -> Response:
     path = request.url.path
 
@@ -80,6 +92,7 @@ async def _do_proxy(request: Request, user: dict | None = None) -> Response:
                 headers=headers,
                 content=body if body else None,
                 follow_redirects=True,
+                timeout=_resolve_proxy_timeout(path),
             )
 
             resp_headers = {

@@ -64,31 +64,84 @@ def _get_quote_redis():
     return _quote_redis
 
 
+def _snapshot_candidate_keys(symbol: str) -> list[str]:
+    """快照兼容键候选列表（与 stream 服务 remote_redis_source 口径一致）。
+
+    快照由第三方推送，历史存在多种键格式，按优先级全路径探测：
+      1. market:snapshot:{小写前缀}（规范，如 market:snapshot:sh600036）
+      2. market:snapshot:{大写前缀}（大小写容错）
+      3. stock:{code}.{MARKET}（Legacy 后缀式，如 stock:600036.SH）
+    """
+    from backend.shared.stock_utils import StockCodeUtil
+
+    prefix = StockCodeUtil.to_prefix(str(symbol or "").strip().upper())
+    if not prefix:
+        return []
+    code = prefix[2:]
+    market = prefix[:2]
+    return [
+        f"market:snapshot:{prefix.lower()}",
+        f"market:snapshot:{prefix}",
+        f"stock:{code}.{market}",
+    ]
+
+
+_SNAPSHOT_PRICE_FIELDS = ("Now", "price", "PreClose", "Close")
+
+
+def _snapshot_price_from_hash(data: dict | None) -> float | None:
+    """从快照 Hash 中提取价格，兼容不同推送方的字段命名。"""
+    if not data:
+        return None
+    for field in _SNAPSHOT_PRICE_FIELDS:
+        raw = data.get(field)
+        if raw is None:
+            continue
+        try:
+            price = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            return price
+    return None
+
+
 def _get_realtime_price(symbol: str) -> float | None:
+    """读取第三方推送的行情快照价格（兼容多键格式）。
+
+    快照由外部推送到行情 Redis（db3），键格式不唯一；用 pipeline 一次往返
+    探测全部候选键（规范前缀式大小写 + Legacy 后缀式），命中即返回，
+    全部未命中时回退 QuantDB 本地日线（模拟撮合同源），保证能算出手数。
+    """
     try:
         r = _get_quote_redis()
-        if not r:
-            return None
-        sym = symbol.replace("SH", "").replace("SZ", "").replace("BJ", "")
-        if symbol.startswith("SH"):
-            key = f"stock:{sym}.SH"
-        elif symbol.startswith("SZ"):
-            key = f"stock:{sym}.SZ"
-        elif symbol.startswith("BJ") or symbol.startswith("920"):
-            key = f"stock:{sym}.BJ"
-        else:
-            key = f"stock:{symbol}"
-        price = r.hget(key, "Now")
-        if price:
-            return float(price)
+        if r:
+            keys = _snapshot_candidate_keys(symbol)
+            if keys:
+                pipe = r.pipeline(transaction=False)
+                for key in keys:
+                    pipe.hgetall(key)
+                for data in pipe.execute():
+                    price = _snapshot_price_from_hash(data)
+                    if price:
+                        return price
     except Exception as e:
         logger.debug(f"[ManualExecution] 获取 {symbol} 实时价格失败: {e}")
     # 实时快照缺失时回退 QuantDB 本地日线（模拟撮合同源），保证能算出手数
     return _get_quantdb_last_close(symbol)
 
 
+_local_market_data = None
+
+
 def _get_quantdb_last_close(symbol: str) -> float | None:
-    """从 QuantDB 本地日线读取最近交易日收盘价（与模拟撮合同源）。"""
+    """从 QuantDB 本地日线读取最近交易日收盘价（与模拟撮合同源）。
+
+    复用模块级 LocalMarketData 实例：其内部按日缓存全市场日线，
+    避免逐股新建实例重复扫描全市场 parquet（pred.parquet 回退场景下
+    批量取价是预览耗时数十秒的主因）。
+    """
+    global _local_market_data
     try:
         from backend.services.trade.simulation.services.local_market_data import (
             LocalMarketData,
@@ -98,7 +151,9 @@ def _get_quantdb_last_close(symbol: str) -> float | None:
         suffix = StockCodeUtil.to_suffix(symbol)
         if not suffix:
             return None
-        market_data = LocalMarketData()
+        if _local_market_data is None:
+            _local_market_data = LocalMarketData()
+        market_data = _local_market_data
         latest_date = market_data.latest_trade_date()
         if latest_date is None:
             return None

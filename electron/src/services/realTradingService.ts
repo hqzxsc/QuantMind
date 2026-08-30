@@ -77,6 +77,8 @@ type RealTradingRequestConfig = {
     params?: Record<string, unknown>;
     data?: unknown;
     headers?: Record<string, string>;
+    // 重接口（手动任务预览/创建）可显式放宽超时，默认沿用 client 的 30s。
+    timeout?: number;
 };
 
 async function requestRealTradingWithFallback<T>(
@@ -651,6 +653,9 @@ export const realTradingService = {
             method: 'post',
             url: '/manual-executions/preview',
             data: payload,
+            // 后端需拉账户快照 + 构建全市场信号计划（必要时回退读 pred.parquet），
+            // 首次冷启动可能超过 30s，放宽到 120s，与网关代理超时对齐。
+            timeout: 120000,
         });
     },
 
@@ -671,6 +676,8 @@ export const realTradingService = {
             method: 'post',
             url: '/manual-executions',
             data: payload,
+            // 与预览同口径的重接口，放宽超时避免冷启动误报失败。
+            timeout: 120000,
         });
     },
 

@@ -29,6 +29,13 @@ _CACHE_MAX_ENTRIES = 1024
 _CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _CACHE_LOCK = threading.Lock()
 
+# 按数据日投影的结果缓存（投研选中日期的 50 维宽表截面）：
+# 宽表按日落盘、当天不变，TTL 内重复切日期/刷新页面直接命中
+_PROJ_DAY_CACHE: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
+_PROJ_DAY_CACHE_TTL = 600.0
+_PROJ_DAY_CACHE_MAX_ENTRIES = 32
+_PROJ_DAY_CACHE_LOCK = threading.Lock()
+
 # 特征读取线程池：DuckDB 连接按线程持有（threading.local），并发过大会同时
 # 打开多套多 GB parquet 视图扫描，故刻意限制为 2 个常驻线程。
 _FEATURE_EXECUTOR: ThreadPoolExecutor | None = None
@@ -51,6 +58,7 @@ async def _offload(coro_func, *args):
     return await asyncio.get_running_loop().run_in_executor(
         _feature_executor(), coro_func, *args
     )
+
 
 # 批量接口单次上限，避免超大请求拖垮 DuckDB 扫描
 MAX_BATCH_SYMBOLS = 200
@@ -342,7 +350,9 @@ def _to_jsonable(value: Any) -> Any:
     return None
 
 
-def _latest_rows(view: str, symbols: list[str], dt: int | None = None) -> dict[str, dict[str, Any]]:
+def _latest_rows(
+    view: str, symbols: list[str], dt: int | None = None
+) -> dict[str, dict[str, Any]]:
     """读取指定视图中每个 symbol 的最新一行。
 
     dt（YYYYMMDD 整数）传入时读取「不晚于该日的最新一行」——投研平台按选中
@@ -509,7 +519,9 @@ def _build_projected_payload(
                 continue
             name = _camel_name(column, view)
             is_wanted = name in wanted and name not in values
-            is_spare = (name in fallback_sources or name in extra_spares) and name not in spare
+            is_spare = (
+                name in fallback_sources or name in extra_spares
+            ) and name not in spare
             if not is_wanted and not is_spare:
                 continue
             value = _to_jsonable(raw)
@@ -576,6 +588,10 @@ def _query_sources(
     未落盘 features_daily 时自动回退至旧分散视图。
     include_daily 额外挂载日线视图（提供 volume，用于现算换手率）。仅投影路径需要。
     dt（YYYYMMDD 整数）传入时各视图读「不晚于该日的最新一行」（投研历史截面）。
+
+    页面减负：dt 模式（投研选中日期）只查 50 维宽表 features_daily 单视图，
+    不再合并情绪面/L1/L2/日线视图（5 次扫描 → 1 次，约 14s → 4s）。
+    宽表未覆盖的日期（历史早于宽表起始日）回退多视图。
     """
     hub = _get_hub()
     if not hub.available:
@@ -588,10 +604,15 @@ def _query_sources(
     features_daily_rows = _latest_rows("qdb_features_daily", symbols, dt)
     if features_daily_rows:
         sources["qdb_features_daily"] = features_daily_rows
+        if dt is not None:
+            # 减负模式：只加载 50 维宽表，直接返回
+            return sources
     else:
         # 回退至旧分散视图
         sources["qdb_valuation"] = _latest_rows("qdb_valuation", symbols, dt)
-        sources["qdb_technical_indicators"] = _latest_rows("qdb_technical_indicators", symbols, dt)
+        sources["qdb_technical_indicators"] = _latest_rows(
+            "qdb_technical_indicators", symbols, dt
+        )
 
     # 2. 情绪面、L1 因子、L2 因子
     sources["qdb_market_sentiment"] = _latest_rows("qdb_market_sentiment", symbols, dt)
@@ -641,11 +662,30 @@ def _load_projected_features(
 
     dt（YYYYMMDD 整数）传入时读「不晚于该日的最新截面」——投研平台按选中
     数据日查看历史状态，return_*（未来 N 日真实收益）也只有按日读取才有值。
+    dt 模式只查 50 维宽表单视图，且结果按 (日期, 字段集) 缓存（宽表按日落盘、
+    当天不变），切回已看过的日期或刷新页面直接命中，不重复扫描。
     """
+    if dt is not None:
+        cache_key = (
+            f"{dt}|{len(symbols)}|{hash(tuple(symbols))}|{','.join(sorted(wanted))}"
+        )
+        with _PROJ_DAY_CACHE_LOCK:
+            hit = _PROJ_DAY_CACHE.get(cache_key)
+            if hit and time.monotonic() - hit[0] < _PROJ_DAY_CACHE_TTL:
+                return hit[1]
+
     sources = _query_sources(symbols, include_daily="turnoverRate" in wanted, dt=dt)
     if sources is None:
         return {}
-    return {s: _build_projected_payload(s, sources, wanted) for s in symbols}
+    result = {s: _build_projected_payload(s, sources, wanted) for s in symbols}
+
+    if dt is not None and len(symbols) > 1000:
+        # 只缓存全池量级请求（投研宇宙）；小批量（详情面板等）不值得占缓存槽
+        with _PROJ_DAY_CACHE_LOCK:
+            if len(_PROJ_DAY_CACHE) > _PROJ_DAY_CACHE_MAX_ENTRIES:
+                _PROJ_DAY_CACHE.clear()
+            _PROJ_DAY_CACHE[cache_key] = (time.monotonic(), result)
+    return result
 
 
 def get_symbol_full_features_sync(symbol: str) -> dict[str, Any]:
@@ -697,7 +737,9 @@ def get_batch_full_features_sync(
     truncated = normalized[:cap]
 
     if wanted:
-        features = _load_projected_features(truncated, wanted, _normalize_dt(trade_date))
+        features = _load_projected_features(
+            truncated, wanted, _normalize_dt(trade_date)
+        )
     else:
         features = _load_features(truncated)
 

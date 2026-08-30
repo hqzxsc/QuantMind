@@ -3652,6 +3652,140 @@ async def delete_model_inference_run(
     return delete
 
 
+# 模型分数曲线主数据源：模型目录 pred.parquet（训练生成时的全量历史分数序列），
+# 不依赖每日推理批次；进程内缓存（模型+股票+起始日），避免反复扫描 100MB+ 文件
+_PRED_HIST_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_PRED_HIST_TTL = 600.0
+
+
+def _read_stock_pred_history(
+    storage_path: str, code6: str, cutoff: date, model_id: str
+) -> list[dict[str, Any]]:
+    """从模型目录 pred.parquet 读取该股历史分数时序（含每日截面排名）。
+
+    兼容多种列名（pred/fusion_score/score、trade_date/date/datetime、
+    symbol/instrument 前缀/后缀/小写式均可）；无文件或读取失败返回 []。
+    """
+    import time as _time
+
+    cache_key = f"{storage_path}|{code6}|{cutoff.isoformat()}"
+    hit = _PRED_HIST_CACHE.get(cache_key)
+    if hit and _time.time() - hit[0] < _PRED_HIST_TTL:
+        return hit[1]
+
+    items: list[dict[str, Any]] = []
+    parquet_file = next(
+        (p for p in _resolve_pred_candidates(storage_path) if p.is_file()), None
+    )
+    if parquet_file:
+        try:
+            import duckdb
+
+            con = duckdb.connect()
+            try:
+                cols = [
+                    r[0]
+                    for r in con.execute(
+                        f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0"
+                    ).description
+                ]
+                score_col = next(
+                    (c for c in ("pred", "fusion_score", "score") if c in cols), None
+                )
+                date_col = next(
+                    (c for c in ("trade_date", "date", "datetime") if c in cols), None
+                )
+                sym_col = next(
+                    (c for c in ("symbol", "instrument") if c in cols), None
+                )
+                if score_col and date_col and sym_col:
+                    # 先全市场截面算 RANK 再过滤该股（过滤在窗口前做会使排名恒为 1）；
+                    # symbol 归一化为纯 6 位数字比对，兼容 SH600000/600000.SH/sh600000
+                    rows = con.execute(
+                        f"""
+                        WITH d AS (
+                            SELECT CAST({date_col} AS DATE) AS td,
+                                   CAST({score_col} AS DOUBLE) AS sc,
+                                   regexp_replace(UPPER(CAST({sym_col} AS VARCHAR)),
+                                                  '[^0-9]', '') AS code6,
+                                   RANK() OVER (PARTITION BY CAST({date_col} AS DATE)
+                                                ORDER BY CAST({score_col} AS DOUBLE) DESC) AS rk,
+                                   COUNT(*) OVER (PARTITION BY CAST({date_col} AS DATE)) AS tot
+                            FROM read_parquet('{str(parquet_file)}')
+                            WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
+                              AND CAST({date_col} AS DATE) >= CAST(? AS DATE)
+                        )
+                        SELECT td, sc, rk, tot FROM d
+                        WHERE code6 = ? ORDER BY td DESC
+                        """,
+                        [cutoff, code6],
+                    ).fetchall()
+                    items = [
+                        {
+                            "trade_date": str(r[0])[:10],
+                            "fusion_score": float(r[1]),
+                            "signal_side": None,
+                            "score_rank": int(r[2]),
+                            "total_in_market": int(r[3]),
+                            "run_id": "",
+                            "created_at": None,
+                            "data_trade_date": None,
+                            "signal_model_id": model_id,
+                            "source": "pred_parquet",
+                        }
+                        for r in rows
+                    ]
+            finally:
+                try:
+                    con.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("读取模型 pred.parquet 分数历史失败 %s: %s", parquet_file, exc)
+
+    if len(_PRED_HIST_CACHE) > 256:
+        _PRED_HIST_CACHE.clear()
+    _PRED_HIST_CACHE[cache_key] = (_time.time(), items)
+    return items
+
+
+async def _load_stock_pred_history(
+    *, tenant_id: str, user_id: str, model_id: str | None, sym: str, cutoff: date
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """解析目标模型（指定 model_id 否则用户默认模型），读其 pred.parquet 分数序列。
+
+    Returns (items, model)；无模型/无文件/读空时 items 为 []，调用方回退 engine_signal_scores。
+    """
+    try:
+        if model_id:
+            model = await model_registry_service.get_model(
+                tenant_id=tenant_id, user_id=user_id, model_id=model_id
+            )
+        else:
+            model = await model_registry_service.get_default_model(
+                tenant_id=tenant_id, user_id=user_id
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("分数曲线模型解析失败: %s", exc)
+        return [], None
+
+    storage_path = str((model or {}).get("storage_path") or "").strip()
+    if not model or not storage_path:
+        return [], None
+
+    code6 = re.sub(r"[^0-9]", "", sym)
+    if not code6:
+        return [], None
+    items = await asyncio.to_thread(
+        _read_stock_pred_history,
+        storage_path,
+        code6,
+        cutoff,
+        str(model.get("model_id") or ""),
+    )
+    return (items or []), model
+
+
 @router.get(
     "/inference/stock/{symbol}/history", summary="查询单只股票历史推理分数（用户态）"
 )
@@ -3742,6 +3876,14 @@ async def get_stock_inference_history(
                 by_date[d]["created_at"] = by_date[d]["created_at"].isoformat()
 
     items = sorted(by_date.values(), key=lambda x: x["trade_date"], reverse=True)
+
+    # ── 分数曲线锁定模型目录 pred.parquet（训练生成的全量历史分数），不受每日推理批次影响；
+    # 模型缺失/无 pred 文件时才回退上面的 engine_signal_scores 批次结果
+    pred_items, pred_model = await _load_stock_pred_history(
+        tenant_id=tenant_id, user_id=user_id, model_id=model_id, sym=sym, cutoff=cutoff
+    )
+    if pred_items:
+        items = pred_items
 
     # 附带股票名称/板块/行业（从 stocks 表）
     stock_meta: dict[str, Any] = {}
@@ -3860,6 +4002,26 @@ async def get_stock_inference_history(
     except Exception as exc:  # pragma: no cover
         logger.warning("stock history models 查询失败: %s", exc)
 
+    # 曲线来自 pred.parquet 时，模型列表保证其在内（前端下拉/名称展示用）
+    if pred_model:
+        pm_id = str(pred_model.get("model_id") or "")
+        if pm_id and not any(m.get("model_id") == pm_id for m in models):
+            pmeta = pred_model.get("metadata_json") or {}
+            if not isinstance(pmeta, dict):
+                pmeta = {}
+            models.insert(
+                0,
+                {
+                    "model_id": pm_id,
+                    "display_name": pmeta.get("display_name")
+                    or pmeta.get("model_name")
+                    or "",
+                    "is_default": bool(pred_model.get("is_default")),
+                    "train_start": str(pmeta.get("train_start") or "")[:10],
+                    "train_end": str(pmeta.get("train_end") or "")[:10],
+                },
+            )
+
     return {
         "symbol": sym,
         "normalized_symbol": norm,
@@ -3869,6 +4031,7 @@ async def get_stock_inference_history(
         "total": len(items),
         "items": items,
         "models": models,
+        "score_source": "pred_parquet" if pred_items else "inference_runs",
     }
 
 

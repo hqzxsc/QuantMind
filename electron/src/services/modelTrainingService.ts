@@ -663,6 +663,15 @@ class ModelTrainingService {
     return resp.data;
   }
 
+  async batchCheckTradingDays(market: string, dates: string[]): Promise<Record<string, boolean>> {
+    const resp = await this.client.post<{ results: Array<{ date: string; is_trading_day: boolean }> }>('/market-calendar/batch-check', { market, dates });
+    const map: Record<string, boolean> = {};
+    for (const r of resp.data.results || []) {
+      map[String(r.date).slice(0, 10)] = Boolean((r as any).is_trading_day);
+    }
+    return map;
+  }
+
   async getModelQuality(modelId: string, window = 60): Promise<any> {
     const resp = await this.client.get<any>(`/models/${modelId}/quality`, { params: { window } });
     return resp.data;

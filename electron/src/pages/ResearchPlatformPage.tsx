@@ -355,7 +355,6 @@ const COLUMN_DEFS: Record<string, ColumnDef> = {  // ---- 标识 ----
   momRet10d: { title: '动10日', width: 80, render: rColored(3) },
   momRet20d: { title: '动20日', width: 80, render: rColored(3) },
   momRet60d: { title: '动60日', width: 80, render: rColored(3) },
-  momRet120d: { title: '动120日', width: 85, render: rColored(3) },
   momEmaGap12: { title: 'EMA12偏离', width: 90, render: rNum(3) },
 
   // ---- 波动率 ----
@@ -530,13 +529,13 @@ const FILTER_SECTIONS: FilterSectionConfig[] = [
       { key: 'return5dRange', label: '5日收益 (%)', suffix: '%', step: 0.1, quickTagGroup: 'return5d' },
       // 10/20/60 日收益无可用数据源：technical_indicators.return_* 自 2018 年起全为 NaN，
       // l1_factors.mom_ret_10d/20d/60d 约 35% 的值失真（|涨幅|>100%），不足以支撑筛选。
-      // 中长期强弱改由本节末尾的”120日动量”表达。
+      // 中长期强弱改由本节末尾的”60日动量”表达。
       { key: 'maGap5Range', label: '5日乖离率 (%)', suffix: '%', step: 0.1, quickTagGroup: 'maGap' },
       { key: 'maGap20Range', label: '20日乖离率 (%)', suffix: '%', step: 0.1 },
       { key: 'rsiRange', label: 'RSI (6日)', step: 1, quickTagGroup: 'rsi' },
       { key: 'kdjKRange', label: 'KDJ-K', step: 1, quickTagGroup: 'kdjK' },
       { key: 'macdHistRange', label: 'MACD 柱', step: 0.01, quickTagGroup: 'macdHist' },
-      { key: 'breakout20dRange', label: '120日动量', step: 0.01 },
+      { key: 'breakout20dRange', label: '60日动量', step: 0.01 },
     ],
   },
   {
@@ -647,7 +646,7 @@ const RANGE_FILTER_BINDINGS: RangeFilterBinding[] = [
   { filterKey: 'rsi14Range', field: 'rsi14' },
   { filterKey: 'kdjKRange', field: 'momKdjK' },
   { filterKey: 'macdHistRange', field: 'macdHist' },
-  { filterKey: 'breakout20dRange', field: 'momRet120d' },
+  { filterKey: 'breakout20dRange', field: 'momRet60d' },
   { filterKey: 'volStd5Range', field: 'volStd5' },
   { filterKey: 'volStd20Range', field: 'volStd20' },
   { filterKey: 'volStd60Range', field: 'volStd60' },
@@ -686,7 +685,7 @@ const SORT_OPTIONS: Array<{ key: SortKey; label: string; field: keyof ResearchSt
   { key: 'turnover', label: '换手', field: 'turnoverRate' },
   { key: 'amount', label: '成交额', field: 'amount' },
   { key: 'return1d', label: '1日', field: 'return1d' },
-  { key: 'return20d', label: '120日动量', field: 'momRet120d' },
+  { key: 'return20d', label: '60日动量', field: 'momRet60d' },
   { key: 'volStd20', label: '波动', field: 'volStd20' },
   { key: 'mainFlow', label: '资金', field: 'mainFlow' },
 ];
@@ -1286,7 +1285,7 @@ export const ResearchPlatformPage: React.FC = () => {
     if (config.turnoverTop !== undefined) setMin('turnoverRange', 'turnoverRate', 1 - config.turnoverTop, 100000);
     if (config.amountTop !== undefined) setMin('amountRange', 'amount', 1 - config.amountTop, 100000);
     if (config.volStd20Top !== undefined) setMin('volStd20Range', 'volStd20', 1 - config.volStd20Top, 100000);
-    if (config.momRet120dTop !== undefined) setMin('breakout20dRange', 'momRet120d', 1 - config.momRet120dTop, 100000);
+    if (config.momRet60dTop !== undefined) setMin('breakout20dRange', 'momRet60d', 1 - config.momRet60dTop, 100000);
     if (config.indStrength20Top !== undefined)
       setMin('indStrength20Range', 'indStrength20', 1 - config.indStrength20Top, 100000);
     if (config.flowNetAmountTop !== undefined)

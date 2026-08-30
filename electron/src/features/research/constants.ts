@@ -14,7 +14,7 @@ export const PRESET_FILTER_MAP: Record<string, any> = {
   题材活跃: { turnoverTop: 0.25, amountTop: 0.25 },
   低位反弹: { maGap20Bottom: 0.25, rsiBottom: 0.25 },
   高波动: { volStd20Top: 0.25 },
-  强势动量: { momRet120dTop: 0.3, indStrength20Top: 0.3 },
+  强势动量: { momRet60dTop: 0.3, indStrength20Top: 0.3 },
   资金流入: { flowNetAmountTop: 0.25 },
   筹码获利: { chipProfitRatio20Top: 0.25 },
   低估值: { peBottom: 0.25, pbBottom: 0.3 },
@@ -167,7 +167,7 @@ export const COLUMN_GROUPS: ColumnGroup[] = [
   {
     key: 'momentum',
     label: '动量',
-    columns: ['momRet1d', 'momRet3d', 'momRet5d', 'momRet10d', 'momRet20d', 'momRet60d', 'momRet120d', 'momEmaGap12'],
+    columns: ['momRet1d', 'momRet3d', 'momRet5d', 'momRet10d', 'momRet20d', 'momRet60d', 'momEmaGap12'],
     defaultVisible: false,
   },
   {

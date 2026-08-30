@@ -116,7 +116,6 @@ export interface ResearchStockRow {
   momRet10d?: number;
   momRet20d?: number;
   momRet60d?: number;
-  momRet120d?: number;
   momEmaGap12?: number;
   momEmaGap26?: number;
   momMacdDif?: number;

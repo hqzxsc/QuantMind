@@ -66,7 +66,7 @@ const SkillsCenterPage: React.FC = () => {
         footer={null}
         width="82vw"
         centered
-        destroyOnClose
+        destroyOnHidden
       >
         {previewFile && (
           <PdfPreview

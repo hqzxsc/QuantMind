@@ -564,11 +564,12 @@ class ModelTrainingService {
   }
 
   async getActiveTrainingRun(): Promise<ModelTrainingRunStatus | null> {
+    // 后端对「无活跃训练任务」返回 200 + null（不再 404），此处兜底网络/未知错误
     try {
-      const resp = await this.client.get<ModelTrainingRunStatus>(`/models/training-runs/active`);
-      return resp.data;
+      const resp = await this.client.get<ModelTrainingRunStatus | null>(`/models/training-runs/active`);
+      return resp.data ?? null;
     } catch {
-      return null; // 404 = 无记录，视为无活跃训练
+      return null; // 无记录视为无活跃训练
     }
   }
 

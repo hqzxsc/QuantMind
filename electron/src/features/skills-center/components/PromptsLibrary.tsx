@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { PROMPTS, type PromptMeta } from '../prompts.generated';
 
-const CATEGORY_ORDER = ['平台运营', '环境初始化', '研究分析', '策略·因子·模型·回测', '交易', '券商 SDK'];
+const CATEGORY_ORDER = ['平台运营', '环境初始化', '研究分析', '策略·因子·模型·回测', '交易'];
 
 interface CategoryStyle {
   dot: string;
@@ -31,7 +31,6 @@ const CATEGORY_STYLE: Record<string, CategoryStyle> = {
   '策略·因子·模型·回测': { dot: '#7c3aed', chipBg: '#f5f3ff', chipText: '#6d28d9', chipBorder: '#ede9fe', accent: '#8b5cf6' },
   交易: { dot: '#ea580c', chipBg: '#fff7ed', chipText: '#c2410c', chipBorder: '#ffedd5', accent: '#f97316' },
   平台运营: { dot: '#16a34a', chipBg: '#f0fdf4', chipText: '#15803d', chipBorder: '#dcfce7', accent: '#22c55e' },
-  '券商 SDK': { dot: '#64748b', chipBg: '#f1f5f9', chipText: '#475569', chipBorder: '#e2e8f0', accent: '#94a3b8' },
   环境初始化: { dot: '#0e7490', chipBg: '#ecfeff', chipText: '#0e7490', chipBorder: '#cffafe', accent: '#06b6d4' },
 };
 

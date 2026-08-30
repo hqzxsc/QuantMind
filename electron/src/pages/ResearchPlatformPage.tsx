@@ -1068,9 +1068,24 @@ export const ResearchPlatformPage: React.FC = () => {
   }, [selectedModelId, refreshNonce]);
 
   // 批次切换或同步刷新时加载原始数据（按数据日直读 pred.parquet 全市场分数）
+  const prevDateContext = React.useRef<string>('');
   React.useEffect(() => {
     if (!selectedModelId || !selectedDate) {
       setCandidatePool([]);
+      return;
+    }
+    const dateContext = `${selectedModelId}|${selectedDate}`;
+    // 仅「切换了模型/日期」才允许走内存缓存；同步刷新（refreshNonce）或筛选条件
+    // 变化时 context 不变，仍强制重拉，保证 pred.parquet 最新分数被读回。
+    const isContextSwitch = dateContext !== prevDateContext.current;
+    prevDateContext.current = dateContext;
+    const cached = isContextSwitch ? researchDateCache.get(dateContext) : undefined;
+    if (cached) {
+      setCandidatePool(cached.candidatePool);
+      setOverview(cached.overview);
+      setUniverseFeatures(cached.universeFeatures);
+      currentScoreDist = cached.overview?.summary?.scoreDistribution || null;
+      setOverviewLoading(false);
       return;
     }
     let cancelled = false;
@@ -1079,51 +1094,56 @@ export const ResearchPlatformPage: React.FC = () => {
       try {
         const result = await researchService.getResearchUniverseByDate(selectedModelId, selectedDate, 10000);
         if (cancelled) return;
-        setCandidatePool(
-          (result.candidates || []).map((raw: any) => {
-            const item = camelizeRow(raw || {});
-            return {
-              ...item,
-              score: safeNum(item?.score, 0),
-              // null 保留：universe（SDL 缺失）无值时留给 QuantDB 投影填充，
-              // 若默认 0 会被 mergePoolFeatures 视为合法涨跌幅而不覆盖
-              latestChange: item?.latestChange != null ? safeNum(item?.latestChange, 0) : null,
-              turnoverRate: item?.turnoverRate != null ? safeNum(item?.turnoverRate, 0) : null,
-              amount: item?.amount != null ? safeNum(item?.amount, 0) : null,
-              pe: item?.pe != null ? safeNum(item?.pe, 0) : null,
-              roe: item?.roe != null ? normalizeRoe(item?.roe) : null,
-              rsi: item?.rsi != null ? safeNum(item?.rsi, 0) : null,
-              profitGrowth: item?.profitGrowth ?? null,
-              ma5: item?.ma5 != null ? safeNum(item?.ma5, 0) : null,
-              ma10: item?.ma10 != null ? safeNum(item?.ma10, 0) : null,
-              ma20: item?.ma20 != null ? safeNum(item?.ma20, 0) : null,
-              pb: item?.pb != null ? safeNum(item?.pb, 0) : null,
-              totalMv: item?.totalMv ?? item?.marketCap ?? null,
-              floatMv: item?.floatMv ?? null,
-              listedDays: item?.listedDays ?? null,
-              return3d: item?.return3d ?? null,
-              maGap5: item?.maGap5 ?? null,
-              maGap10: item?.maGap10 ?? null,
-              maGap20: item?.maGap20 ?? null,
-              rsi14: item?.rsi14 ?? item?.rsi ?? null,
-              volRatio5: item?.volRatio5 ?? item?.volumeRatio5 ?? null,
-              volRatio20: item?.volRatio20 ?? item?.volumeRatio20 ?? null,
-              atr: item?.atr ?? null,
-              macdHist: item?.macdHist ?? null,
-              conceptTags: Array.isArray(item?.conceptTags) ? item.conceptTags : [],
-              indexTags: Array.isArray(item?.indexTags) ? item.indexTags : [],
-              concept: item?.concept || '',
-              isSt: Boolean(item?.isSt),
-              isTradable: item?.isTradable !== undefined ? Boolean(item?.isTradable) : true,
-              isHs300: Boolean(item?.isHs300),
-              isCsi500: Boolean(item?.isCsi500),
-              isCsi1000: Boolean(item?.isCsi1000),
-              confidence: item?.confidence || 'watch',
-            } as ResearchStockRow;
-          })
-        );
+        const pool: ResearchStockRow[] = (result.candidates || []).map((raw: any) => {
+          const item = camelizeRow(raw || {});
+          return {
+            ...item,
+            score: safeNum(item?.score, 0),
+            // null 保留：universe（SDL 缺失）无值时留给 QuantDB 投影填充，
+            // 若默认 0 会被 mergePoolFeatures 视为合法涨跌幅而不覆盖
+            latestChange: item?.latestChange != null ? safeNum(item?.latestChange, 0) : null,
+            turnoverRate: item?.turnoverRate != null ? safeNum(item?.turnoverRate, 0) : null,
+            amount: item?.amount != null ? safeNum(item?.amount, 0) : null,
+            pe: item?.pe != null ? safeNum(item?.pe, 0) : null,
+            roe: item?.roe != null ? normalizeRoe(item?.roe) : null,
+            rsi: item?.rsi != null ? safeNum(item?.rsi, 0) : null,
+            profitGrowth: item?.profitGrowth ?? null,
+            ma5: item?.ma5 != null ? safeNum(item?.ma5, 0) : null,
+            ma10: item?.ma10 != null ? safeNum(item?.ma10, 0) : null,
+            ma20: item?.ma20 != null ? safeNum(item?.ma20, 0) : null,
+            pb: item?.pb != null ? safeNum(item?.pb, 0) : null,
+            totalMv: item?.totalMv ?? item?.marketCap ?? null,
+            floatMv: item?.floatMv ?? null,
+            listedDays: item?.listedDays ?? null,
+            return3d: item?.return3d ?? null,
+            maGap5: item?.maGap5 ?? null,
+            maGap10: item?.maGap10 ?? null,
+            maGap20: item?.maGap20 ?? null,
+            rsi14: item?.rsi14 ?? item?.rsi ?? null,
+            volRatio5: item?.volRatio5 ?? item?.volumeRatio5 ?? null,
+            volRatio20: item?.volRatio20 ?? item?.volumeRatio20 ?? null,
+            atr: item?.atr ?? null,
+            macdHist: item?.macdHist ?? null,
+            conceptTags: Array.isArray(item?.conceptTags) ? item.conceptTags : [],
+            indexTags: Array.isArray(item?.indexTags) ? item.indexTags : [],
+            concept: item?.concept || '',
+            isSt: Boolean(item?.isSt),
+            isTradable: item?.isTradable !== undefined ? Boolean(item?.isTradable) : true,
+            isHs300: Boolean(item?.isHs300),
+            isCsi500: Boolean(item?.isCsi500),
+            isCsi1000: Boolean(item?.isCsi1000),
+            confidence: item?.confidence || 'watch',
+          } as ResearchStockRow;
+        });
+        setCandidatePool(pool);
         currentScoreDist = result?.summary?.scoreDistribution || null;
         setOverview(result);
+        // 先写候选池+概览，投影特征由投影 useEffect 完成后补充写入
+        _setResearchDateCache(dateContext, {
+          candidatePool: pool,
+          overview: result,
+          universeFeatures: researchDateCache.get(dateContext)?.universeFeatures ?? {},
+        });
       } catch (error) {
         console.error('[ResearchPlatformPage] load universe failed:', error);
         if (!cancelled) setCandidatePool([]);
@@ -1337,6 +1357,15 @@ export const ResearchPlatformPage: React.FC = () => {
       return;
     }
 
+    // 命中内存缓存：universeFeatures 已完整写入则直接恢复，不再请求 QuantDB 宽表
+    const cacheKey = `${selectedModelId}|${selectedDate}`;
+    const cachedUniverse = researchDateCache.get(cacheKey)?.universeFeatures;
+    if (cachedUniverse && Object.keys(cachedUniverse).length) {
+      setUniverseFeatures(cachedUniverse);
+      setUniverseFeaturesLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setUniverseFeaturesLoading(true);
     void researchService
@@ -1348,12 +1377,19 @@ export const ResearchPlatformPage: React.FC = () => {
           next[symbol] = flattenProjectedValues(values);
         });
         setUniverseFeatures(next);
+        // 补全缓存条目中的投影特征
+        const existing = researchDateCache.get(cacheKey);
+        if (existing) {
+          _setResearchDateCache(cacheKey, { ...existing, universeFeatures: next });
+        } else {
+          _setResearchDateCache(cacheKey, { candidatePool, overview: null, universeFeatures: next });
+        }
       })
       .finally(() => {
         if (!cancelled) setUniverseFeaturesLoading(false);
       });
     return () => { cancelled = true; };
-  }, [candidatePool, selectedDate]);
+  }, [candidatePool, selectedDate, selectedModelId]);
 
   /** 参与筛选/排序的池：universe 基础字段优先，QuantDB 投影仅补空缺 */
 

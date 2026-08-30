@@ -713,11 +713,11 @@ async def get_active_training_run(
     """优先从 redis 活跃索引返回该用户最近一次的进行中/最近训练任务快照。
 
     前端切页后再回到训练页时，用此接口恢复进度与日志（轮询的心智保持连续）。
-    无任何记录时返回 404。
+    无任何记录时返回 200 + null。
     """
     latest = await get_latest_training_run_for_owner(current_user)
-    if latest is None:
-        raise HTTPException(status_code=404, detail="No training run found")
+    # 无记录是正常态（新用户/从未训练）：返回 200 + null 而非 404，
+    # 避免被前端全局错误拦截器当作异常处理，产生无意义的报错日志。
     return latest
 
 

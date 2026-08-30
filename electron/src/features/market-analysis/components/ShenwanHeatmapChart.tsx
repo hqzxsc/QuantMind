@@ -23,6 +23,10 @@ export const ShenwanHeatmapChart: React.FC<ShenwanHeatmapChartProps> = ({
 
   const sectorItems = data && data.length > 0 ? data : [];
 
+  // 两行 rich 文本（名称行高15 + 数值行~12.5）加上 gapWidth 裁剪补偿的总高校准值（离屏 SVG 渲染实测，误差 ±0.25px）；
+  // echarts treemap 会把文本盒钉死为色块尺寸并忽略 verticalAlign，只能靠 padding 在盒内下移实现居中
+  const LABEL_TEXT_HEIGHT = 31;
+
   useEffect(() => {
     if (!chartRef.current || sectorItems.length === 0) return;
 
@@ -87,10 +91,6 @@ export const ShenwanHeatmapChart: React.FC<ShenwanHeatmapChartProps> = ({
           breadcrumb: { show: false },
           label: {
             show: true,
-            // 色块内水平+垂直居中：默认 'inside' 贴左上角，改为锚点定位到色块中心再居中对齐文本块（默认贴左上角显得排版失衡）
-            position: ['50%', '50%'],
-            align: 'center',
-            verticalAlign: 'middle',
             formatter: (params: any) => {
               const d = params.data || {};
               const pct = d.pct_change ?? 0;
@@ -121,9 +121,42 @@ export const ShenwanHeatmapChart: React.FC<ShenwanHeatmapChartProps> = ({
       ],
     };
 
+    // 第一遍渲染：确定每个色块的实际布局（treemap 布局只取决于 value，与 label padding 无关）
     chart.setOption(option);
 
-    const handleResize = () => chart.resize();
+    // 第二遍渲染：按每个色块自身高度注入上下 padding，实现文字水平+垂直居中；
+    // padding 在「盒高=色块高」的文本盒内生效：上下各留 (块高-文字高)/2，两行文本整体上下居中；
+    // align: 'center' 让名称/涨跌幅两行水平居中于色块中心线（块宽不足时由 truncate 兜底）
+    const applyCenteredLabels = () => {
+      try {
+        const seriesModel = (chart as any).getModel?.()?.getSeriesByIndex?.(0);
+        const treeRoot = seriesModel?.getData?.()?.tree?.root;
+        if (!treeRoot) return;
+        const layoutByName: Record<string, { width: number; height: number }> = {};
+        treeRoot.eachNode({ attr: 'viewChildren', order: 'preorder' }, (node: any) => {
+          const layout = node.getLayout?.();
+          if (node.isRoot || !layout || layout.width <= 0) return;
+          layoutByName[node.name] = layout;
+        });
+        const centeredData = formattedData.map((item) => {
+          const layout = layoutByName[item.name];
+          if (!layout) return item;
+          const pad = Math.max(0, (layout.height - LABEL_TEXT_HEIGHT) / 2);
+          return { ...item, label: { padding: [pad, 0, pad, 0], align: 'center' } };
+        });
+        chart.setOption({ series: [{ data: centeredData }] });
+      } catch {
+        // 内部 API 变化时退化为默认顶部对齐，不影响图表展示
+      }
+    };
+    applyCenteredLabels();
+
+    // resize 后色块高度变化，先恢复无 padding 布局再按新尺寸重算居中，避免旧 padding 错位（数据未变时布局不变，重算是幂等的）
+    const handleResize = () => {
+      chart.resize();
+      chart.setOption({ series: [{ data: formattedData }] });
+      applyCenteredLabels();
+    };
     window.addEventListener('resize', handleResize);
 
     return () => {

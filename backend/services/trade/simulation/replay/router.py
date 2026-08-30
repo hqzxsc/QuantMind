@@ -838,7 +838,9 @@ async def get_trades(
                 id=int(t.get("id", 0)),
                 trade_date=str(t.get("trade_date", "")),
                 symbol=str(t.get("symbol", "")),
-                side=str(t.get("side", "")),
+                # 统一输出大写（BUY/SELL），与前端比较口径一致；
+                # 库里枚举值为小写，直接透出会导致方向列全部渲染成「卖出」
+                side=str(t.get("side", "")).upper(),
                 origin=str(t.get("origin", "signal")),
                 quantity=float(t.get("quantity", 0)),
                 price=round(float(t.get("price", 0)), 4),
@@ -917,7 +919,8 @@ async def _load_trades(
 
     q = select(ReplayTrade).where(ReplayTrade.session_id == session_id)
     if side:
-        q = q.where(ReplayTrade.side == side)  # type: ignore[assignment]
+        # 兼容前端传大写（BUY/SELL），库内枚举值为小写
+        q = q.where(ReplayTrade.side == side.lower())  # type: ignore[assignment]
     rows = (await db.execute(q.order_by(ReplayTrade.trade_date))).scalars().all()
     return [
         {

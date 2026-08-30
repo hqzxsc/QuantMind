@@ -197,7 +197,7 @@ function TradesTable({ sessionId }: { sessionId: string }) {
         const headers = ['日期', '标的', '方向', '来源', '数量', '价格', '金额', '手续费', '已实现盈亏', '成本', '持有天数'];
         const rows = trades.map(t => [
             t.trade_date, t.symbol, t.side, t.origin, t.quantity,
-            t.price.toFixed(2), t.trade_value.toFixed(2), t.total_fee.toFixed(2),
+            t.price.toFixed(4), t.trade_value.toFixed(2), t.total_fee.toFixed(2),
             t.realized_pnl?.toFixed(2) ?? '', t.avg_cost_before?.toFixed(4) ?? '',
             t.holding_days?.toString() ?? '',
         ]);
@@ -256,9 +256,10 @@ function TradesTable({ sessionId }: { sessionId: string }) {
                                 <tr key={t.id} className="border-b border-gray-50">
                                     <td className="py-1 px-2">{t.trade_date}</td>
                                     <td className="py-1 px-2 font-mono">{t.symbol}</td>
-                                    <td className="py-1 px-2"><span className={t.side === 'BUY' ? 'text-red-600' : 'text-green-600'}>{t.side === 'BUY' ? '买入' : '卖出'}</span></td>
+                                    <td className="py-1 px-2"><span className={t.side.toUpperCase() === 'BUY' ? 'text-red-600' : 'text-green-600'}>{t.side.toUpperCase() === 'BUY' ? '买入' : '卖出'}</span></td>
                                     <td className="py-1 px-2 text-right font-mono">{t.quantity}</td>
-                                    <td className="py-1 px-2 text-right font-mono">{t.price.toFixed(2)}</td>
+                                    {/* 开盘价撮合保留 4 位小数，保证 数量×价格=金额 自洽 */}
+                                    <td className="py-1 px-2 text-right font-mono">{t.price.toFixed(4)}</td>
                                     <td className="py-1 px-2 text-right font-mono">{t.trade_value.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</td>
                                     <td className="py-1 px-2 text-right font-mono text-gray-400">{t.total_fee.toFixed(2)}</td>
                                     <td className="py-1 px-2 text-right font-mono">

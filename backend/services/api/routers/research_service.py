@@ -1146,8 +1146,34 @@ async def get_inference_runs(tid: str, uid: str, model_id: str) -> dict[str, Any
         )
         run_rows = res.fetchall()
 
+        # 候选池快照按 (run_id, data_trade_date) 聚合：同一数据日可能有多个
+        # run（全市场批次 + 单股推理 1 行快照），取行数最多的作为该日批次。
+        # 快照表是投研宇宙的真实数据源，且补全批次只写快照不写 run 记录，
+        # 因此挂接优先级高于 qm_model_inference_runs。
+        snap_res = await session.execute(
+            text(
+                """
+                SELECT run_id, data_trade_date, MAX(prediction_trade_date) AS ptd, COUNT(*) AS cnt
+                FROM qm_research_candidate_snapshot
+                WHERE tenant_id = :tid AND user_id = :uid AND model_id = :mid
+                GROUP BY run_id, data_trade_date
+                """
+            ),
+            {"tid": tid, "uid": uid, "mid": model_id},
+        )
+        snap_rows = snap_res.fetchall()
+        snap_by_date: dict[str, tuple[str, Any, int]] = {}
+        for r in snap_rows:
+            d = _serialize_date(r[1])
+            if not d:
+                continue
+            cnt = int(r[3] or 0)
+            cur = snap_by_date.get(d)
+            if cur is None or cnt > cur[2]:
+                snap_by_date[d] = (str(r[0]), r[2], cnt)
+
         # 批次日期改走 pred.parquet（B 套）：日历绿点 = parquet 中存在分数的
-        # 交易日；run 记录按 data_trade_date 挂接，决定该日是否可加载候选池快照
+        # 交易日；快照按 data_trade_date 挂接，决定该日是否可加载候选池
         storage_path = ""
         try:
             sp = (
@@ -1169,14 +1195,16 @@ async def get_inference_runs(tid: str, uid: str, model_id: str) -> dict[str, Any
             except Exception:
                 parquet_dates = []
 
-        def _run_entry(r: Any, has_snapshot: bool) -> dict[str, Any]:
+        def _entry(
+            run_id: str, infer_d: str | None, target_d: Any, status: str, updated: Any, has_snapshot: bool
+        ) -> dict[str, Any]:
             return {
-                "runId": r[0],
+                "runId": run_id,
                 "modelId": model_id,
-                "inferenceDate": _serialize_date(r[1]),
-                "targetDate": _serialize_date(r[2]),
-                "status": str(r[3] or "completed"),
-                "lastUpdatedAt": _serialize_date(r[4]),
+                "inferenceDate": infer_d,
+                "targetDate": _serialize_date(target_d),
+                "status": status,
+                "lastUpdatedAt": _serialize_date(updated),
                 "universeLabel": "",
                 "hasSnapshot": has_snapshot,
             }
@@ -1184,36 +1212,35 @@ async def get_inference_runs(tid: str, uid: str, model_id: str) -> dict[str, Any
         runs: list[dict[str, Any]] = []
         seen_dates: set[str] = set()
         if parquet_dates:
+            # run 记录（补全批次缺失时的次选挂接源）
             runs_by_date: dict[str, Any] = {}
             for r in run_rows:
                 d = _serialize_date(r[1])
                 if d and d not in runs_by_date:
                     runs_by_date[d] = r
             for d in reversed(parquet_dates):
-                r = runs_by_date.get(d)
-                if r is not None:
-                    runs.append(_run_entry(r, True))
+                snap = snap_by_date.get(d)
+                if snap is not None:
+                    runs.append(_entry(snap[0], d, snap[1], "completed", None, True))
                 else:
-                    # 训练期测试集日期：仅有历史分数，无批次快照
-                    runs.append(
-                        {
-                            "runId": "",
-                            "modelId": model_id,
-                            "inferenceDate": d,
-                            "targetDate": None,
-                            "status": "completed",
-                            "lastUpdatedAt": None,
-                            "universeLabel": "",
-                            "hasSnapshot": False,
-                        }
-                    )
+                    r = runs_by_date.get(d)
+                    if r is not None:
+                        runs.append(_entry(str(r[0]), d, r[2], str(r[3] or "completed"), r[4], True))
+                    else:
+                        # 训练期测试集日期：仅有历史分数，无批次快照
+                        runs.append(_entry("", d, None, "completed", None, False))
                 seen_dates.add(d)
-        # 无 pred.parquet（或 parquet 为空）时退回 run 记录，保证批次可用
+        # 无 pred.parquet（或 parquet 为空）时退回快照/run 记录，保证批次可用
+        for d, snap in sorted(snap_by_date.items(), key=lambda kv: kv[0], reverse=True):
+            if d in seen_dates:
+                continue
+            runs.append(_entry(snap[0], d, snap[1], "completed", None, True))
+            seen_dates.add(d)
         for r in run_rows:
             d = _serialize_date(r[1])
             if d and d in seen_dates:
                 continue
-            runs.append(_run_entry(r, True))
+            runs.append(_entry(str(r[0]), d, r[2], str(r[3] or "completed"), r[4], True))
             if d:
                 seen_dates.add(d)
 

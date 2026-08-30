@@ -1,4 +1,4 @@
-/** 默认模型推理分折线图：历史分数时序（红正绿负），点击点联动右侧详情 */
+/** 默认模型推理分折线图：仅展示用户设置的默认模型（数据源锁定其 pred.parquet），红正绿负，点击点联动右侧详情 */
 import { useEffect, useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { Spin } from 'antd';
@@ -7,7 +7,8 @@ import { modelTrainingService } from '../../../services/modelTrainingService';
 
 interface Props {
   symbol: string; // suffix 600519.SH
-  modelId?: string; // 未传则取默认模型
+  /** @deprecated 曲线固定跟随用户默认模型，不再按 modelId 查询；仅为兼容旧调用方保留 */
+  modelId?: string;
   selectedDate?: string | null; // 当前联动日期（高亮）
   onPointClick?: (date: string) => void;
   onScoresLoaded?: (points: Point[]) => void; // 分数点回传，供 K 线对齐及副图
@@ -22,34 +23,10 @@ export interface Point {
   side: string | null;
 }
 
-export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClick, onScoresLoaded, alignedDates, refreshKey = 0, height = 220 }: Props) {
+export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScoresLoaded, alignedDates, refreshKey = 0, height = 220 }: Props) {
   const [points, setPoints] = useState<Point[]>([]);
   const [loading, setLoading] = useState(false);
   const [modelName, setModelName] = useState<string>('');
-  const [resolvedModelId, setResolvedModelId] = useState<string | undefined>(modelId);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (modelId) {
-      setResolvedModelId(modelId);
-      return;
-    }
-    modelTrainingService
-      .getDefaultModel()
-      .then((m) => {
-        const mid = (m as any)?.model_id || (m as any)?.id;
-        if (!cancelled && mid) {
-          setResolvedModelId(mid);
-          setModelName((m as any)?.display_name || mid);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setResolvedModelId(undefined);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [modelId]);
 
   useEffect(() => {
     if (!symbol) {
@@ -59,8 +36,9 @@ export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClic
     let cancelled = false;
     setLoading(true);
     const code = symbol.split('.')[0];
+    // 不传 model_id：后端锁定用户默认模型的 pred.parquet，响应 models 恒为默认模型一个
     modelTrainingService
-      .getStockInferenceHistory(code, 180, resolvedModelId || undefined)
+      .getStockInferenceHistory(code, 180)
       .then((resp) => {
         if (cancelled) return;
         const pts: Point[] = (resp.items ?? [])
@@ -73,8 +51,10 @@ export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClic
           .sort((a, b) => a.date.localeCompare(b.date));
         setPoints(pts);
         onScoresLoaded?.(pts);
-        if (!modelId && resp.models?.[0]) {
+        if (resp.models?.[0]) {
           setModelName(resp.models[0].display_name || resp.models[0].model_id || '');
+        } else {
+          setModelName('');
         }
       })
       .catch(() => {
@@ -89,7 +69,7 @@ export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClic
     return () => {
       cancelled = true;
     };
-  }, [symbol, resolvedModelId, refreshKey, modelId]);
+  }, [symbol, refreshKey]);
 
   const option = useMemo(() => {
     if (!points.length) return null;
@@ -194,8 +174,8 @@ export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClic
     return (
       <div className="h-full flex flex-col items-center justify-center gap-2 text-xs text-slate-400" style={{ height }}>
         <TrendingDown className="w-5 h-5 opacity-40" />
-        暂无推理分数
-        <span className="text-[11px]">请先在模型管理为该股补推理</span>
+        暂无默认模型分数
+        <span className="text-[11px]">请先在模型管理设置默认模型（需含 pred 历史分数）</span>
       </div>
     );
   }

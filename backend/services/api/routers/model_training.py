@@ -3753,21 +3753,18 @@ def _read_stock_pred_history(
 async def _load_stock_pred_history(
     *, tenant_id: str, user_id: str, model_id: str | None, sym: str, cutoff: date
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """解析目标模型（指定 model_id 否则用户默认模型），读其 pred.parquet 分数序列。
+    """分数曲线仅使用用户设置的默认模型（model_id 参数不参与选择），
+    读其目录 pred.parquet 的全量历史分数序列。
 
-    Returns (items, model)；无模型/无文件/读空时 items 为 []，调用方回退 engine_signal_scores。
+    Returns (items, model)；未设置默认模型/无文件/读空时 items 为 []，
+    调用方回退 engine_signal_scores。
     """
     try:
-        if model_id:
-            model = await model_registry_service.get_model(
-                tenant_id=tenant_id, user_id=user_id, model_id=model_id
-            )
-        else:
-            model = await model_registry_service.get_default_model(
-                tenant_id=tenant_id, user_id=user_id
-            )
+        model = await model_registry_service.get_default_model(
+            tenant_id=tenant_id, user_id=user_id
+        )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("分数曲线模型解析失败: %s", exc)
+        logger.warning("分数曲线默认模型解析失败: %s", exc)
         return [], None
 
     storage_path = str((model or {}).get("storage_path") or "").strip()
@@ -3878,8 +3875,9 @@ async def get_stock_inference_history(
 
     items = sorted(by_date.values(), key=lambda x: x["trade_date"], reverse=True)
 
-    # ── 分数曲线锁定模型目录 pred.parquet（训练生成的全量历史分数），不受每日推理批次影响；
-    # 模型缺失/无 pred 文件时才回退上面的 engine_signal_scores 批次结果
+    # ── 分数曲线锁定「用户默认模型」目录的 pred.parquet（训练生成的全量历史分数），
+    # 不受每日推理批次影响，也不展示非默认模型；默认模型缺失/无 pred 文件时才回退
+    # 上面的 engine_signal_scores 批次结果
     pred_items, pred_model = await _load_stock_pred_history(
         tenant_id=tenant_id, user_id=user_id, model_id=model_id, sym=sym, cutoff=cutoff
     )
@@ -3924,104 +3922,24 @@ async def get_stock_inference_history(
     else:
         board = "其他"
 
-    # 该股历史信号涉及的模型列表（供前端下拉选择）
-    # 过滤已归档模型；默认模型(is_default)排最前，其余按该股最新分数日倒序
+    # 曲线仅展示用户默认模型：模型列表固定为默认模型一个（前端下拉/名称展示用），
+    # 不再按 engine_signal_scores 涉及的历史模型列表展示
     models: list[dict[str, Any]] = []
-    try:
-        # 只查该股涉及的去重模型ID（避免 join 大表慢查询）
-        async with get_session(read_only=True) as s3:
-            mrows = (
-                (
-                    await s3.execute(
-                        text(
-                            """
-                        SELECT r.model_id,
-                               MAX(e.trade_date) AS latest,
-                               MAX(u.is_default::int) AS is_default
-                        FROM engine_signal_scores e
-                        LEFT JOIN qm_model_inference_runs r ON r.run_id = e.run_id
-                        LEFT JOIN qm_user_models u ON u.model_id = r.model_id
-                        WHERE e.symbol = :sym AND e.trade_date >= :cutoff
-                          AND e.tenant_id = :tenant_id AND e.user_id = :user_id
-                          AND r.model_id IS NOT NULL
-                          AND (u.status IS NULL OR u.status <> 'archived')
-                        GROUP BY r.model_id
-                        ORDER BY MAX(u.is_default::int) DESC NULLS LAST,
-                                 MAX(e.trade_date) DESC
-                        """
-                        ),
-                        {
-                            "sym": sym,
-                            "cutoff": cutoff,
-                            "tenant_id": tenant_id,
-                            "user_id": user_id,
-                        },
-                    )
-                )
-                .mappings()
-                .all()
-            )
-        mids = [str(r["model_id"]) for r in mrows]
-        # 批量查模型元数据（名称/训练区间）
-        if mids:
-            async with get_session(read_only=True) as s4:
-                ur = (
-                    (
-                        await s4.execute(
-                            text(
-                                "SELECT model_id, metadata_json FROM qm_user_models WHERE model_id = ANY(:mids)"
-                            ),
-                            {"mids": mids},
-                        )
-                    )
-                    .mappings()
-                    .all()
-                )
-            meta_by_id = {
-                str(r["model_id"]): (r.get("metadata_json") or {}) for r in ur
-            }
-            for r in mrows:
-                mid = str(r["model_id"])
-                meta = meta_by_id.get(mid) or {}
-                if not isinstance(meta, dict):
-                    meta = {}
-                models.append(
-                    {
-                        "model_id": mid,
-                        "display_name": meta.get("display_name")
-                        or meta.get("model_name")
-                        or "",
-                        "is_default": bool(r.get("is_default")),
-                        "train_start": str(meta.get("train_start") or "")[:10]
-                        if meta.get("train_start")
-                        else "",
-                        "train_end": str(meta.get("train_end") or "")[:10]
-                        if meta.get("train_end")
-                        else "",
-                    }
-                )
-    except Exception as exc:  # pragma: no cover
-        logger.warning("stock history models 查询失败: %s", exc)
-
-    # 曲线来自 pred.parquet 时，模型列表保证其在内（前端下拉/名称展示用）
     if pred_model:
-        pm_id = str(pred_model.get("model_id") or "")
-        if pm_id and not any(m.get("model_id") == pm_id for m in models):
-            pmeta = pred_model.get("metadata_json") or {}
-            if not isinstance(pmeta, dict):
-                pmeta = {}
-            models.insert(
-                0,
-                {
-                    "model_id": pm_id,
-                    "display_name": pmeta.get("display_name")
-                    or pmeta.get("model_name")
-                    or "",
-                    "is_default": bool(pred_model.get("is_default")),
-                    "train_start": str(pmeta.get("train_start") or "")[:10],
-                    "train_end": str(pmeta.get("train_end") or "")[:10],
-                },
-            )
+        pmeta = pred_model.get("metadata_json") or {}
+        if not isinstance(pmeta, dict):
+            pmeta = {}
+        models.append(
+            {
+                "model_id": str(pred_model.get("model_id") or ""),
+                "display_name": pmeta.get("display_name")
+                or pmeta.get("model_name")
+                or "",
+                "is_default": bool(pred_model.get("is_default")),
+                "train_start": str(pmeta.get("train_start") or "")[:10],
+                "train_end": str(pmeta.get("train_end") or "")[:10],
+            }
+        )
 
     return {
         "symbol": sym,

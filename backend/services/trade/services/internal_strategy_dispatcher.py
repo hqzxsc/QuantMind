@@ -51,7 +51,10 @@ async def dispatch_internal_strategy_order(
     db: AsyncSession,
 ) -> dict[str, Any]:
     """复用内部策略下单逻辑：实盘走真实风控/柜台，影子/模拟走虚拟成交。"""
-    uid = int(user_id)
+    # user_id 口径与模拟盘接口（simulation.py _require_user_id）对齐：
+    # 非数字 JWT sub 统一映射为 0，保证命中同一模拟账户 Redis 键。
+    _uid_raw = str(user_id or "").strip()
+    uid = int(_uid_raw) if _uid_raw.isdigit() else 0
     tenant = (tenant_id or "").strip() or "default"
     trading_mode_raw = str(order_data.get("trading_mode", "REAL")).upper()
     try:

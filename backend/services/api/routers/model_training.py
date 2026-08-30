@@ -3153,6 +3153,85 @@ async def get_model_inference_run_detail(
             )
             signals = []
 
+    # ── pred.parquet 回退：信号表被后续覆盖清空时，从模型目录读当日截面 ──
+    # 历史单股补推曾整桶删除当日全市场信号（已修复），已 completed 的批次
+    # 明细可能查不到任何信号行；此时用模型 pred.parquet 的数据日 T 截面兜底，
+    # 恢复批次信号展示（字段口径对齐 DB 路径，缺失列留 None）。
+    if run.get("status") == "completed" and not signals:
+        try:
+            from backend.services.api.routers.research_service import (
+                _read_model_pred_day,
+            )
+
+            _model_id = run.get("model_id")
+            _storage_path: str | None = None
+            if _model_id:
+                _model_meta = await model_registry_service.get_model(
+                    tenant_id=tenant_id, user_id=user_id, model_id=_model_id
+                )
+                if not _model_meta:
+                    # 兼容：历史模型可能挂在其他用户名下，按租户放宽查询
+                    async with get_session(read_only=True) as session:
+                        _row = (
+                            (
+                                await session.execute(
+                                    text(
+                                        """
+                                        SELECT storage_path
+                                        FROM qm_user_models
+                                        WHERE tenant_id = :tenant_id
+                                          AND model_id = :model_id
+                                        LIMIT 1
+                                        """
+                                    ),
+                                    {"tenant_id": tenant_id, "model_id": _model_id},
+                                )
+                            )
+                            .mappings()
+                            .first()
+                        )
+                        if _row:
+                            _storage_path = str(_row.get("storage_path") or "") or None
+                else:
+                    _storage_path = str(_model_meta.get("storage_path") or "") or None
+
+            if _storage_path:
+                _data_date = str(
+                    run.get("data_trade_date") or run.get("inference_date") or ""
+                )[:10]
+                if _data_date:
+                    _pred_rows = await asyncio.to_thread(
+                        _read_model_pred_day, _storage_path, _data_date
+                    )
+                    for _pr in _pred_rows:
+                        _sym = str(_pr.get("symbol") or "")
+                        signals.append(
+                            {
+                                # 归一为纯数字，与 DB 路径及后续板块/市值标注口径一致
+                                "symbol": re.sub(r"[^0-9]", "", _sym) or _sym,
+                                "fusion_score": _pr.get("score"),
+                                "light_score": None,
+                                "tft_score": None,
+                                "score_rank": _pr.get("rank"),
+                                "signal_side": None,
+                                "expected_price": None,
+                                "quality": None,
+                                "created_at": None,
+                                "stock_name": "",
+                            }
+                        )
+                    if signals:
+                        logger.info(
+                            "inference run %s 信号表为空，已从 pred.parquet 回退 %d 条截面 (date=%s)",
+                            run_id,
+                            len(signals),
+                            _data_date,
+                        )
+        except Exception as exc:  # pragma: no cover - pred.parquet fallback
+            logger.warning(
+                "pred.parquet fallback failed for %s: %s", run_id, exc
+            )
+
     summary = dict(run)
     summary["rows_count"] = len(signals)
     summary["symbols_count"] = len(

@@ -889,14 +889,18 @@ class ManualExecutionService:
     async def _load_simulation_account_snapshot(
         self, *, tenant_id: str, user_id: str
     ) -> dict[str, Any] | None:
-        """读取模拟账户快照（simulation:account Redis 缓存），供手动任务模拟模式使用。"""
+        """读取模拟账户快照（simulation:account Redis 缓存），供手动任务模拟模式使用。
+
+        user_id 口径与模拟盘接口（simulation.py _require_user_id）对齐：
+        非数字 JWT sub 在模拟盘初始化时被映射为 0 建账，这里查键时同样回退 0，
+        否则手动任务会因键不命中误报「未检测到模拟账户」。
+        """
         from backend.services.trade.services.simulation_manager import (
             SimulationAccountManager,
         )
 
-        uid = str(user_id or "").strip()
-        if not uid.isdigit():
-            return None
+        uid_raw = str(user_id or "").strip()
+        uid = uid_raw if uid_raw.isdigit() else "0"
         manager = SimulationAccountManager(get_redis())
         account = await manager.get_account(int(uid), tenant_id=tenant_id or "default")
         if not account:
@@ -1267,7 +1271,13 @@ class ManualExecutionService:
         }
 
     async def _load_signal_rows(
-        self, *, tenant_id: str, user_id: str, run_id: str
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+        model_id: str | None = None,
+        data_trade_date: str | None = None,
     ) -> list[dict[str, Any]]:
         async with get_session(read_only=True) as session:
             rows = (
@@ -1298,6 +1308,87 @@ class ManualExecutionService:
             if item.get("created_at") is not None:
                 item["created_at"] = item["created_at"].isoformat()
             normalized.append(item)
+        if normalized:
+            return normalized
+
+        # ── pred.parquet 回退：信号表被后续覆盖清空时，从模型目录读当日截面 ──
+        # 历史单股补推曾整桶删除当日全市场信号（已修复），旧批次信号行可能为空；
+        # 用模型 pred.parquet 的数据日 T 截面兜底（无 signal_side 时计划构建器
+        # 自动走 TopK 推断路径），口径与批次明细接口一致。
+        if not model_id or not data_trade_date:
+            return normalized
+        try:
+            import asyncio as _asyncio
+
+            from backend.services.api.routers.research_service import (
+                _read_model_pred_day,
+            )
+            from backend.shared.model_registry import model_registry_service
+
+            _storage_path: str | None = None
+            _model_meta = await model_registry_service.get_model(
+                tenant_id=tenant_id, user_id=user_id, model_id=model_id
+            )
+            if not _model_meta:
+                async with get_session(read_only=True) as session:
+                    _row = (
+                        (
+                            await session.execute(
+                                text(
+                                    """
+                                    SELECT storage_path
+                                    FROM qm_user_models
+                                    WHERE tenant_id = :tenant_id
+                                      AND model_id = :model_id
+                                    LIMIT 1
+                                    """
+                                ),
+                                {"tenant_id": tenant_id, "model_id": model_id},
+                            )
+                        )
+                        .mappings()
+                        .first()
+                    )
+                    if _row:
+                        _storage_path = str(_row.get("storage_path") or "") or None
+            else:
+                _storage_path = str(_model_meta.get("storage_path") or "") or None
+
+            if _storage_path:
+                _pred_rows = await _asyncio.to_thread(
+                    _read_model_pred_day,
+                    _storage_path,
+                    str(data_trade_date)[:10],
+                )
+                for _pr in _pred_rows:
+                    normalized.append(
+                        {
+                            "symbol": _normalize_to_broker_symbol(
+                                _pr.get("symbol") or ""
+                            ),
+                            "fusion_score": _pr.get("score"),
+                            "light_score": None,
+                            "tft_score": None,
+                            "score_rank": _pr.get("rank"),
+                            "signal_side": None,
+                            "expected_price": None,
+                            "quality": None,
+                            "created_at": None,
+                        }
+                    )
+                if normalized:
+                    logger.info(
+                        "手动任务信号表为空，已从 pred.parquet 回退 %d 条截面 run_id=%s date=%s",
+                        len(normalized),
+                        run_id,
+                        str(data_trade_date)[:10],
+                    )
+        except Exception as exc:  # pragma: no cover - pred.parquet fallback
+            logger.warning(
+                "pred.parquet fallback failed for manual task signals %s: %s",
+                run_id,
+                exc,
+            )
         return normalized
 
     async def _ensure_active_portfolio_exists(
@@ -1439,6 +1530,8 @@ class ManualExecutionService:
             tenant_id=prepared.tenant_id,
             user_id=prepared.user_id,
             run_id=prepared.run_id,
+            model_id=prepared.model_id,
+            data_trade_date=prepared.run.get("data_trade_date"),
         )
         if not signal_rows:
             raise HTTPException(status_code=400, detail="当前推理批次无可用信号明细")
@@ -1876,6 +1969,8 @@ class ManualExecutionService:
             tenant_id=prepared.tenant_id,
             user_id=prepared.user_id,
             run_id=prepared.run_id,
+            model_id=prepared.model_id,
+            data_trade_date=prepared.run.get("data_trade_date"),
         )
         strategy_params = _normalize_strategy_params(prepared.strategy)
         execution_plan = _build_execution_plan_from_signals(
@@ -2261,6 +2356,8 @@ class ManualExecutionService:
                     tenant_id=tenant_id,
                     user_id=user_id,
                     run_id=run_id,
+                    model_id=prepared.model_id,
+                    data_trade_date=prepared.run.get("data_trade_date"),
                 )
                 if not signal_rows:
                     error_msg = "推理结果无可执行信号"

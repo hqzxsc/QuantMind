@@ -446,7 +446,9 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                 model_id: effectiveModelId,
                 run_id: selectedRunId,
                 strategy_id: selectedStrategyId,
-                trading_mode: isRealMode ? 'REAL' : undefined,
+                // 手动任务同时支持实盘与模拟盘，预览与提交口径保持一致，
+                // 不再依赖后端默认值（默认 SIMULATION）。
+                trading_mode: isRealMode ? 'REAL' : 'SIMULATION',
                 note: note.trim() || undefined,
             });
             setPreview(result);
@@ -664,31 +666,31 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                             {/* 右侧：监控面板与核心指标 */}
                             <div className="flex-1 flex flex-col bg-white overflow-hidden">
                                 {selectedModelObject ? (
-                                    <div className="flex-1 flex flex-col p-6 overflow-y-auto custom-scrollbar">
-                                        <div className="flex items-start justify-between mb-6">
-                                            <div>
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <h2 className="text-xl font-bold text-gray-900">
-                                                        {modelDisplayName(selectedModelObject as any)}
-                                                    </h2>
-                                                    <Tag color="blue" bordered={false} className="m-0 text-[10px] font-black rounded-md px-2 py-0.5 uppercase tracking-wider">
-                                                        {extractModelType(selectedModelObject as any)}
-                                                    </Tag>
-                                                    <Tag color="default" bordered={false} className="m-0 text-[10px] font-bold rounded-md px-2 py-0.5 uppercase tracking-wider bg-gray-100 text-gray-500">
-                                                        {String(getMeta(selectedModelObject as any).data_source || '全局数据')}
-                                                    </Tag>
-                                                    <Tag color="purple" bordered={false} className="m-0 text-[10px] font-bold rounded-md px-2 py-0.5 uppercase tracking-wider bg-purple-50 text-purple-600">
-                                                        {String(getMeta(selectedModelObject as any).freq || 'Daily')}
-                                                    </Tag>
-                                                </div>
-                                                <div className="text-xs text-gray-400 font-mono flex items-center gap-2">
-                                                    <span className="bg-gray-50 px-1.5 py-0.5 rounded text-gray-500 border border-gray-100">{selectedModelObject.model_id}</span>
-                                                    <span>创建于 {dayjs(selectedModelObject.created_at).format('YYYY-MM-DD')}</span>
-                                                    <span className="text-gray-200">|</span>
-                                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{String(getMeta(selectedModelObject as any).version || 'v1.0.0')}</span>
-                                                </div>
+                                    <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
+                                        {/* 内容块整体水平居中，内部元素统一居中对齐 */}
+                                        <div className="mx-auto w-full max-w-3xl flex flex-col min-h-full">
+                                        <div className="flex flex-col items-center text-center mb-6">
+                                            <div className="flex flex-wrap items-center justify-center gap-2 mb-1">
+                                                <h2 className="text-xl font-bold text-gray-900">
+                                                    {modelDisplayName(selectedModelObject as any)}
+                                                </h2>
+                                                <Tag color="blue" bordered={false} className="m-0 text-[10px] font-black rounded-md px-2 py-0.5 uppercase tracking-wider">
+                                                    {extractModelType(selectedModelObject as any)}
+                                                </Tag>
+                                                <Tag color="default" bordered={false} className="m-0 text-[10px] font-bold rounded-md px-2 py-0.5 uppercase tracking-wider bg-gray-100 text-gray-500">
+                                                    {String(getMeta(selectedModelObject as any).data_source || '全局数据')}
+                                                </Tag>
+                                                <Tag color="purple" bordered={false} className="m-0 text-[10px] font-bold rounded-md px-2 py-0.5 uppercase tracking-wider bg-purple-50 text-purple-600">
+                                                    {String(getMeta(selectedModelObject as any).freq || 'Daily')}
+                                                </Tag>
                                             </div>
-                                            <div className="flex flex-col items-end gap-1.5">
+                                            <div className="text-xs text-gray-400 font-mono flex flex-wrap items-center justify-center gap-2">
+                                                <span className="bg-gray-50 px-1.5 py-0.5 rounded text-gray-500 border border-gray-100">{selectedModelObject.model_id}</span>
+                                                <span>创建于 {dayjs(selectedModelObject.created_at).format('YYYY-MM-DD')}</span>
+                                                <span className="text-gray-200">|</span>
+                                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{String(getMeta(selectedModelObject as any).version || 'v1.0.0')}</span>
+                                            </div>
+                                            <div className="flex flex-col items-center gap-1.5 mt-3">
                                                 <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">当前状态</div>
                                                 <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 border border-emerald-100 rounded-full">
                                                     <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
@@ -704,11 +706,11 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                                             if (!formula) return null;
                                             return (
                                                 <div className="mb-6 p-3 rounded-xl bg-slate-900 border border-slate-800 shadow-inner group transition-all hover:bg-slate-800">
-                                                    <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">
+                                                    <div className="flex items-center justify-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">
                                                         <Target size={12} className="text-blue-400" />
                                                         预测目标 (Target Factor Formula)
                                                     </div>
-                                                    <code className="text-[11px] font-mono font-bold text-blue-300 break-all leading-relaxed">
+                                                    <code className="block text-center text-[11px] font-mono font-bold text-blue-300 break-all leading-relaxed">
                                                         {String(formula)}
                                                     </code>
                                                 </div>
@@ -725,21 +727,21 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                                                 
                                                 return (
                                                     <>
-                                                        <div className="rounded-2xl bg-blue-50/50 border border-blue-100/50 p-4">
+                                                        <div className="rounded-2xl bg-blue-50/50 border border-blue-100/50 p-4 text-center">
                                                             <div className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-1">平均 IC</div>
                                                             <div className="text-xl font-black text-slate-800 font-mono tracking-tighter">
                                                                 {icVal?.toFixed(4) || '0.0000'}
                                                             </div>
                                                         </div>
 
-                                                        <div className="rounded-2xl bg-indigo-50/50 border border-indigo-100/50 p-4">
+                                                        <div className="rounded-2xl bg-indigo-50/50 border border-indigo-100/50 p-4 text-center">
                                                             <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-1">Rank IC</div>
                                                             <div className="text-xl font-black text-slate-800 font-mono tracking-tighter">
                                                                 {rankIcVal?.toFixed(4) || icVal?.toFixed(4) || '0.0000'}
                                                             </div>
                                                         </div>
 
-                                                        <div className="rounded-2xl bg-emerald-50/50 border border-emerald-100/50 p-4">
+                                                        <div className="rounded-2xl bg-emerald-50/50 border border-emerald-100/50 p-4 text-center">
                                                             <div className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-1">ICIR (稳定度)</div>
                                                             <div className="text-xl font-black text-slate-800 font-mono tracking-tighter">
                                                                 {icirVal?.toFixed(3) || '0.000'}
@@ -760,11 +762,11 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                                                     if (features.length === 0) return null;
                                                     return (
                                                         <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/60 overflow-hidden flex flex-col">
-                                                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-center gap-2">
                                                                 <Database size={12} className="text-blue-500" />
                                                                 特征因子 (Top 5)
                                                             </div>
-                                                            <div className="flex flex-wrap gap-1.5">
+                                                            <div className="flex flex-wrap justify-center gap-1.5">
                                                                 {features.slice(0, 5).map(f => (
                                                                     <span key={f} className="px-2 py-0.5 rounded-md bg-white border border-slate-100 text-[10px] font-mono text-slate-600 font-bold truncate max-w-full">
                                                                         {f}
@@ -784,17 +786,17 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                                                     if (!periods) return null;
                                                     return (
                                                         <div className="p-4 rounded-2xl bg-indigo-50/20 border border-indigo-100/50">
-                                                            <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                                            <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-3 flex items-center justify-center gap-2">
                                                                 <Calendar size={12} />
                                                                 数据周期
                                                             </div>
                                                             <div className="space-y-2">
-                                                                <div className="flex items-center justify-between">
+                                                                <div className="flex items-center justify-center gap-3">
                                                                     <span className="text-[9px] font-bold text-slate-400 uppercase">训练</span>
                                                                     <span className="text-[10px] font-mono text-blue-700 font-black">{periods.train[0].slice(2)} → {periods.train[1].slice(2)}</span>
                                                                 </div>
                                                                 {periods.test && (
-                                                                    <div className="flex items-center justify-between">
+                                                                    <div className="flex items-center justify-center gap-3">
                                                                         <span className="text-[9px] font-bold text-slate-400 uppercase">测试</span>
                                                                         <span className="text-[10px] font-mono text-emerald-700 font-black">{periods.test[0].slice(2)} → {periods.test[1].slice(2)}</span>
                                                                     </div>
@@ -806,17 +808,17 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                                             </div>
 
                                             <div className="p-4 rounded-2xl bg-gray-50/50 border border-gray-100">
-                                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center justify-center gap-2">
                                                     <Search size={12} />
                                                     模型描述与适用场景
                                                 </div>
-                                                <div className="text-[11px] text-gray-600 leading-relaxed italic">
+                                                <div className="text-[11px] text-gray-600 leading-relaxed italic text-center">
                                                     {String(getMeta(selectedModelObject as any).description || '暂无详细描述。该模型专为 A 股市场 T+N 调仓场景设计，采用了 Qlib 工业级特征工程，在回测期内表现稳健。')}
                                                 </div>
                                             </div>
 
                                             <div className="grid grid-cols-2 gap-3">
-                                                <div className="flex flex-col gap-1.5">
+                                                <div className="flex flex-col items-center gap-1.5">
                                                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">特征维度</span>
                                                     <div className="text-xs font-bold text-gray-800 flex items-center gap-2">
                                                         <Cpu size={14} className="text-blue-500" />
@@ -826,7 +828,7 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                                                         })()} 维
                                                     </div>
                                                 </div>
-                                                <div className="flex flex-col gap-1.5">
+                                                <div className="flex flex-col items-center gap-1.5">
                                                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">预测周期</span>
                                                     <div className="text-xs font-bold text-gray-800 flex items-center gap-2">
                                                         <Clock size={14} className="text-amber-500" />
@@ -838,11 +840,12 @@ const ManualTaskPage: React.FC<ManualTaskPageProps> = ({ tradingMode, onBack }) 
                                                 </div>
                                             </div>
                                         </div>
-                                        <div className="mt-auto pt-6 border-t border-gray-50 flex items-center justify-between">
+                                        <div className="mt-auto pt-6 border-t border-gray-50 flex items-center justify-center">
                                             <div className="flex items-center gap-2">
                                                 <Sparkles className="text-amber-400" size={16} />
                                                 <p className="text-[11px] text-gray-400 font-medium">只有处于 READY 状态的模型可产生有效信号</p>
                                             </div>
+                                        </div>
                                         </div>
                                     </div>
                                 ) : (

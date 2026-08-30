@@ -644,7 +644,7 @@ export const realTradingService = {
         model_id: string;
         run_id: string;
         strategy_id: string;
-        trading_mode?: 'REAL';
+        trading_mode?: 'REAL' | 'SHADOW' | 'SIMULATION';
         note?: string;
     }): Promise<ManualExecutionPreview> => {
         return await requestRealTradingWithFallback<ManualExecutionPreview>({

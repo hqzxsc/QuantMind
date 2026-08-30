@@ -228,6 +228,29 @@ interface ColumnDef {
 // 当前批次分数分位数（由 overview.summary.scoreDistribution 更新，供 score 列动态着色）
 let currentScoreDist: { p25?: number; p50?: number; p75?: number } | null = null;
 
+/**
+ * 投研候选池按 (模型, 日期) 的内存缓存：候选池 + 概览 + 50 维投影特征。
+ * 切换回已看过的日期直接命中，不再重复请求 pred.parquet 与 QuantDB 宽表。
+ * 模块级（非组件内）保证切 tab / 组件重挂载后仍生效；超过上限时淘汰最旧条目。
+ */
+interface DateCacheEntry {
+  candidatePool: ResearchStockRow[];
+  overview: any;
+  universeFeatures: Record<string, Partial<ResearchStockRow>>;
+}
+const RESEARCH_DATE_CACHE_MAX = 12;
+const researchDateCache = new Map<string, DateCacheEntry>();
+
+function _setResearchDateCache(key: string, entry: DateCacheEntry): void {
+  researchDateCache.set(key, entry);
+  // Map 迭代保持插入序，超出上限淘汰最旧（第一个）
+  while (researchDateCache.size > RESEARCH_DATE_CACHE_MAX) {
+    const oldest = researchDateCache.keys().next().value;
+    if (oldest === undefined) break;
+    researchDateCache.delete(oldest);
+  }
+}
+
 const COLUMN_DEFS: Record<string, ColumnDef> = {  // ---- 标识 ----
   rank: {
     title: '排名',
@@ -848,14 +871,8 @@ export const ResearchPlatformPage: React.FC = () => {
   const [selectedStockKey, setSelectedStockKey] = React.useState<string | null>(null);
   const [klineData, setKlineData] = React.useState<any[]>([]);
   const [klineLoading, setKlineLoading] = React.useState<boolean>(false);
-  // ---- K线参考线：模式 + 数值 ----
-  type RefLineMode = 'off' | 'above' | 'below' | 'range';
-  const [refLineMode, setRefLineMode] = React.useState<RefLineMode>('off');
-  const [refLineValue, setRefLineValue] = React.useState<number | null>(null);
-  const [refLineValue2, setRefLineValue2] = React.useState<number | null>(null);
 
-  // ---- 表格密度（列固定为 50 维宽表字段集，不再支持列自定义勾选） ----
-  const [tableDensity, setTableDensity] = React.useState<'compact' | 'default' | 'relaxed'>('compact');
+  // ---- 表格密度固定为“标准”（middle），不再提供紧凑/宽松切换；列固定为 50 维宽表字段集 ----
 
   // ---- 分页状态 ----
   const [candidatePage, setCandidatePage] = React.useState<number>(1);
@@ -1672,22 +1689,6 @@ export const ResearchPlatformPage: React.FC = () => {
   }, [selectedDate]);
 
   // K 线图表配置
-  // 参考线过滤：根据模式决定每根 K 线是否命中条件（组件作用域，供 useMemo 与 JSX 复用）
-  const refActive = refLineMode !== 'off' && typeof refLineValue === 'number' && Number.isFinite(refLineValue);
-  const refMatches = React.useCallback((d: any): boolean => {
-    if (!refActive) return false;
-    const close = Number(d?.close);
-    if (!Number.isFinite(close)) return false;
-    if (refLineMode === 'above') return close >= refLineValue!;
-    if (refLineMode === 'below') return close <= refLineValue!;
-    if (refLineMode === 'range' && typeof refLineValue2 === 'number' && Number.isFinite(refLineValue2)) {
-      const lo = Math.min(refLineValue!, refLineValue2);
-      const hi = Math.max(refLineValue!, refLineValue2);
-      return close >= lo && close <= hi;
-    }
-    return false;
-  }, [refActive, refLineMode, refLineValue, refLineValue2]);
-
   const klineOption = React.useMemo(() => {
     if (!klineData.length) return null;
 
@@ -1695,11 +1696,9 @@ export const ResearchPlatformPage: React.FC = () => {
     const predictionDate = inferenceDate;
 
     const dates = klineData.map((d) => d.date);
-    // 逐根显式着色：涨（close>=open）红、跌绿、参考线命中琥珀，避免依赖 itemStyle 回调
+    // 逐根显式着色：涨（close>=open）红、跌绿，避免依赖 itemStyle 回调
     const ohlc = klineData.map((d) => {
-      const color = refMatches(d)
-        ? '#f59e0b'
-        : d.close >= d.open ? '#ef4444' : '#22c55e';
+      const color = d.close >= d.open ? '#ef4444' : '#22c55e';
       return {
         value: [d.open, d.close, d.low, d.high],
         itemStyle: { color, color0: color, borderColor: color, borderColor0: color },
@@ -1750,60 +1749,6 @@ export const ResearchPlatformPage: React.FC = () => {
       if (totalPoints <= 0) return { start: 0, end: 100 };
       return { start: (startIdx / totalPoints) * 100, end: (endIdx / totalPoints) * 100 };
     })();
-
-    // 参考线 markLine 数据（水平价格线）
-    const refMarkLine = refActive
-      ? {
-          symbol: ['none', 'none'],
-          silent: true,
-          data: [
-            {
-              yAxis: refLineValue!,
-              label: {
-                show: true,
-                position: 'end',
-                formatter: `${refLineValue!.toFixed(2)}`,
-                backgroundColor: '#f59e0b',
-                color: '#fff',
-                padding: [2, 4],
-                borderRadius: 4,
-                fontSize: 10,
-                fontWeight: 'bold',
-              },
-              lineStyle: { color: '#f59e0b', type: 'dashed', width: 1.5, opacity: 0.8 },
-            },
-            ...(refLineMode === 'range' && typeof refLineValue2 === 'number' && Number.isFinite(refLineValue2)
-              ? [{
-                  yAxis: refLineValue2,
-                  label: {
-                    show: true,
-                    position: 'end',
-                    formatter: `${refLineValue2.toFixed(2)}`,
-                    backgroundColor: '#f59e0b',
-                    color: '#fff',
-                    padding: [2, 4],
-                    borderRadius: 4,
-                    fontSize: 10,
-                    fontWeight: 'bold',
-                  },
-                  lineStyle: { color: '#f59e0b', type: 'dashed', width: 1.5, opacity: 0.8 },
-                }]
-              : []),
-          ],
-        }
-      : undefined;
-
-    // 参考线 markArea 数据（区间高亮底色）
-    const refMarkArea =
-      refActive && refLineMode === 'range' && typeof refLineValue2 === 'number' && Number.isFinite(refLineValue2)
-        ? {
-            silent: true,
-            data: [[
-              { yAxis: Math.min(refLineValue!, refLineValue2), itemStyle: { color: 'rgba(245,158,11,0.08)' } },
-              { yAxis: Math.max(refLineValue!, refLineValue2) },
-            ]],
-          }
-        : undefined;
 
     return {
       animation: false,
@@ -1881,9 +1826,7 @@ export const ResearchPlatformPage: React.FC = () => {
                 lineStyle: { color: '#3b82f6', type: 'dashed', width: 2, opacity: 0.8 },
               }],
             } : {}),
-            ...(refMarkLine ? { silent: refMarkLine.silent, symbol: refMarkLine.symbol, data: refMarkLine.data } : {}),
           },
-          markArea: refMarkArea,
         },
         {
           name: 'MA5',
@@ -1919,7 +1862,7 @@ export const ResearchPlatformPage: React.FC = () => {
         },
       ],
     };
-  }, [klineData, inferenceDate, refActive, refMatches, refLineValue, refLineValue2, refLineMode]);
+  }, [klineData, inferenceDate]);
 
   /* ------------------------------ 概览统计 ------------------------------ */
 
@@ -2244,8 +2187,8 @@ export const ResearchPlatformPage: React.FC = () => {
           </header>
 
           <div className="flex min-h-0 flex-1 flex-col">
-            {/* 底部预留 Dock 高度，避免固定后的左栏被悬浮导航栏遮挡 */}
-            <div className={`${PAGE_LAYOUT.contentOuterClass} flex min-h-0 flex-1 flex-col pb-[calc(var(--dock-height)+8px)]`}>
+            {/* 底部按 Dock 高度预留，并上探 12px 让左右两栏尽量吃满可视高度 */}
+            <div className={`${PAGE_LAYOUT.contentOuterClass} flex min-h-0 flex-1 flex-col pb-[calc(var(--dock-height)-12px)]`}>
               <div className="grid min-h-0 flex-1 gap-4 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
                 {/* ---------------- 左侧筛选侧栏（固定，不随右侧滚动） ---------------- */}
                 <div className="flex min-h-0 flex-col gap-4">
@@ -2673,24 +2616,6 @@ export const ResearchPlatformPage: React.FC = () => {
                           onChange={(event) => setKeyword(event.target.value)}
                           allowClear
                         />
-                        {activeDataSource === 'candidates' && (
-                          <div className="flex items-center gap-0.5 rounded-[18px] border border-slate-200 bg-slate-50/50 p-0.5">
-                            {(['compact', 'default', 'relaxed'] as const).map((density) => (
-                              <button
-                                key={density}
-                                type="button"
-                                onClick={() => setTableDensity(density)}
-                                className={`whitespace-nowrap rounded-xl px-2 py-1 text-[10px] font-black transition-all ${
-                                  tableDensity === density
-                                    ? 'bg-slate-800 text-white shadow-sm'
-                                    : 'text-slate-500 hover:bg-white hover:text-slate-700'
-                                }`}
-                              >
-                                {density === 'compact' ? '紧凑' : density === 'default' ? '标准' : '宽松'}
-                              </button>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     </div>
 
@@ -2705,7 +2630,7 @@ export const ResearchPlatformPage: React.FC = () => {
                             loading={overviewLoading}
                             pagination={false}
                             scroll={{ x: candidateScrollX }}
-                            size={tableDensity === 'compact' ? 'small' : tableDensity === 'relaxed' ? 'large' : 'middle'}
+                            size="middle"
                             locale={{ emptyText: <Empty description="暂无符合条件的候选个股。" /> }}
                             onRow={(record) => ({
                               onClick: () => {
@@ -2825,33 +2750,33 @@ export const ResearchPlatformPage: React.FC = () => {
           <div className="custom-scrollbar max-h-[75vh] space-y-3 overflow-y-auto py-2 pr-2">
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <div className="flex min-h-[64px] flex-col items-center justify-center rounded-xl bg-slate-50 p-3 text-center">
                   <div className="text-[9px] font-bold text-slate-400">模型分数</div>
-                  <div className="text-lg font-black text-blue-500">{safeNum(selectedStock.score, 0).toFixed(3)}</div>
+                  <div className="text-lg font-black leading-7 text-blue-500">{safeNum(selectedStock.score, 0).toFixed(3)}</div>
                 </div>
-                <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <div className="flex min-h-[64px] flex-col items-center justify-center rounded-xl bg-slate-50 p-3 text-center">
                   <div className="text-[9px] font-bold text-slate-400">PE (TTM)</div>
-                  <div className="text-lg font-black text-slate-700">{fmtPositiveOrDash(selectedStock.pe, 1)}</div>
+                  <div className="text-lg font-black leading-7 text-slate-700">{fmtPositiveOrDash(selectedStock.pe, 1)}</div>
                 </div>
-                <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <div className="flex min-h-[64px] flex-col items-center justify-center rounded-xl bg-slate-50 p-3 text-center">
                   <div className="text-[9px] font-bold text-slate-400">ROE</div>
-                  <div className="text-lg font-black text-rose-500">
+                  <div className="text-lg font-black leading-7 text-rose-500">
                     {Math.abs(safeNum(selectedStock.roe, 0)) <= 100
                       ? fmtPositiveOrDash(selectedStock.roe, 1, '%')
                       : '-'}
                   </div>
                 </div>
-                <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <div className="flex min-h-[64px] flex-col items-center justify-center rounded-xl bg-slate-50 p-3 text-center">
                   <div className="text-[9px] font-bold text-slate-400">RSI</div>
-                  <div className="text-lg font-black text-emerald-500">{fmtPositiveOrDash(selectedStock.rsi ?? selectedStock.rsi14, 1)}</div>
+                  <div className="text-lg font-black leading-7 text-emerald-500">{fmtPositiveOrDash(selectedStock.rsi ?? selectedStock.rsi14, 1)}</div>
                 </div>
-                <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <div className="flex min-h-[64px] flex-col items-center justify-center rounded-xl bg-slate-50 p-3 text-center">
                   <div className="text-[9px] font-bold text-slate-400">20日波动</div>
-                  <div className="text-lg font-black text-amber-500">{fmtPositiveOrDash(selectedStock.volStd20, 2)}</div>
+                  <div className="text-lg font-black leading-7 text-amber-500">{fmtPositiveOrDash(selectedStock.volStd20, 2)}</div>
                 </div>
-                <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <div className="flex min-h-[64px] flex-col items-center justify-center rounded-xl bg-slate-50 p-3 text-center">
                   <div className="text-[9px] font-bold text-slate-400">换手率</div>
-                  <div className="text-lg font-black text-indigo-500">{fmtPositiveOrDash(selectedStock.turnoverRate, 1, '%')}</div>
+                  <div className="text-lg font-black leading-7 text-indigo-500">{fmtPositiveOrDash(selectedStock.turnoverRate, 1, '%')}</div>
                 </div>
               </div>
               <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-2">
@@ -2936,57 +2861,6 @@ export const ResearchPlatformPage: React.FC = () => {
             <div className="mt-2 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">K 线走势 (近 120 日)</div>
-                {/* 参考线控制 */}
-                <div className="flex items-center gap-2">
-                  <Segmented
-                    size="small"
-                    value={refLineMode}
-                    onChange={(v) => setRefLineMode(v as RefLineMode)}
-                    options={[
-                      { label: '关闭', value: 'off' },
-                      { label: '高于', value: 'above' },
-                      { label: '低于', value: 'below' },
-                      { label: '区间', value: 'range' },
-                    ]}
-                    className="!text-[10px]"
-                  />
-                  {(refLineMode === 'above' || refLineMode === 'below') && (
-                    <InputNumber
-                      size="small"
-                      placeholder="价格"
-                      value={refLineValue}
-                      onChange={(v) => setRefLineValue(typeof v === 'number' ? v : null)}
-                      className="!w-20 !text-[10px]"
-                      step={0.01}
-                    />
-                  )}
-                  {refLineMode === 'range' && (
-                    <>
-                      <InputNumber
-                        size="small"
-                        placeholder="低值"
-                        value={refLineValue}
-                        onChange={(v) => setRefLineValue(typeof v === 'number' ? v : null)}
-                        className="!w-20 !text-[10px]"
-                        step={0.01}
-                      />
-                      <span className="text-[10px] text-slate-400">~</span>
-                      <InputNumber
-                        size="small"
-                        placeholder="高值"
-                        value={refLineValue2}
-                        onChange={(v) => setRefLineValue2(typeof v === 'number' ? v : null)}
-                        className="!w-20 !text-[10px]"
-                        step={0.01}
-                      />
-                    </>
-                  )}
-                  {refLineMode !== 'off' && (
-                    <Tag className="m-0 border-0 bg-amber-50 text-amber-600 text-[9px] font-bold">
-                      命中 {refActive ? klineData.filter(refMatches).length : 0} 根
-                    </Tag>
-                  )}
-                </div>
               </div>
               {klineLoading ? (
                 <div className="flex h-[240px] items-center justify-center text-slate-400">加载中...</div>

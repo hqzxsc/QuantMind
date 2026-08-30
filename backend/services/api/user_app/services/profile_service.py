@@ -18,8 +18,8 @@ from backend.shared.redis_sentinel_client import get_redis_sentinel_client
 
 logger = logging.getLogger(__name__)
 
-# 默认头像路径
-DEFAULT_AVATAR_URL = "/uploads/default_avatar.png"
+# 默认头像路径（前端 electron/public/logo.png，构建后位于 Web 根路径，同源相对访问）
+DEFAULT_AVATAR_URL = "/logo.png"
 
 
 class ProfileService:
@@ -72,6 +72,10 @@ class ProfileService:
 
         cos_base = os.getenv("TENCENT_COS_URL", "").strip().rstrip("/")
         if not cos_base:
+            return value
+
+        # 站内静态资源（默认头像 /logo.png）不属于对象存储，保持同源相对路径
+        if value == DEFAULT_AVATAR_URL:
             return value
 
         # 明确 key/path（非 URL）时直接补全到自定义域名

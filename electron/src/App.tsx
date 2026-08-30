@@ -657,7 +657,22 @@ export default function App() {
                     path="/alpha-research"
                     element={
                       <ProtectedRoute>
-                        <Suspense fallback={<Spin size="large" />}>
+                        {/* 首次加载（lazy chunk 拉取）时载入动画居中展示，而不是贴在内容区顶部 */}
+                        <Suspense
+                          fallback={
+                            <div
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              <Spin size="large" />
+                            </div>
+                          }
+                        >
                           <AlphaResearchPage />
                         </Suspense>
                       </ProtectedRoute>

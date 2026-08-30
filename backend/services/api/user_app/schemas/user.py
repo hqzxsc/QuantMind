@@ -153,7 +153,8 @@ class UserProfileResponse(BaseModel):
     def default_avatar(cls, v: str | None) -> str:
         """如果没有头像，返回默认头像"""
         if v is None or v == "":
-            return "/uploads/default_avatar.png"
+            # 默认头像：前端 electron/public/logo.png，构建后位于 Web 根路径
+            return "/logo.png"
         return v
 
 

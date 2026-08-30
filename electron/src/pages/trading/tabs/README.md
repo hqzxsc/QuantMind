@@ -91,6 +91,12 @@ fetch(`${apiGatewayBase}/api/v1/api-keys/init`, { method: 'POST' });
   - 当前前端下载的是独立 QMT Agent 部署包，不是单独的配置模板，也不是和 Electron 绑定的本机控制模块；
   - `SettingsCenter.tsx` 当前只负责用户维护、远端绑定状态和独立安装包下载，不直接控制客户侧 Agent。
 
+- 实盘控制台首屏加载遮罩（2026-08-31）：
+  - `StrategyManagement.tsx` 根节点改为 `relative h-full overflow-hidden` 包裹原 `h-full overflow-y-auto` 滚动容器，内部内容结构未变；
+  - 新增 `bootstrapping` 遮罩：策略列表 / 默认模型 / 生产批次 / 环境监控四类接口首轮返回前，以 `bg-white/50` + `backdrop-blur-[6px]` 毛玻璃盖住整块内容，中央展示旋转环动画与四项完成状态；
+  - 遮罩为单向锁定：`firstPaintReady` 满足后延时 200ms 收起，之后 15s 轮询不再重弹；另有 12s 兜底超时，接口挂起时也不会把页面锁死；
+  - 「生产批次」完成判定记录对应的模型 ID（`batchCheckedFor === effectiveModelId`），避免默认模型到达后短暂闪现“暂无可用生产批次”。
+
 ## 下次开发提示
 
 - 若继续完善客户端交付，优先补齐 Windows `.exe` / 安装器产物与自动升级；

@@ -253,6 +253,32 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
         return displayName || defaultModel?.model_id || '未配置默认模型';
     }, [defaultModel]);
 
+    // ---- 首屏加载遮罩 ----
+    // 策略列表 / 默认模型 / 生产批次 / 环境监控首轮返回前，用毛玻璃 + 动画遮住未完成的内容，
+    // 避免闪现「暂无可用生产批次」「启动后显示」等中间态。单向锁定：收起后 15s 轮询不再重弹。
+    const [bootstrapping, setBootstrapping] = useState(true);
+    const [strategiesBooted, setStrategiesBooted] = useState(false);
+    const [modelBooted, setModelBooted] = useState(false);
+    const [monitorBooted, setMonitorBooted] = useState(false);
+    // 记录「生产批次」首轮完成时对应的模型 ID，防止默认模型到达后又短暂展示空批次
+    const [batchCheckedFor, setBatchCheckedFor] = useState<string | null>(null);
+
+    const firstPaintReady =
+        strategiesBooted && modelBooted && monitorBooted && batchCheckedFor === effectiveModelId;
+
+    useEffect(() => {
+        if (!firstPaintReady) return;
+        const timer = window.setTimeout(() => setBootstrapping(false), 200);
+        return () => window.clearTimeout(timer);
+    }, [firstPaintReady]);
+
+    useEffect(() => {
+        if (!bootstrapping) return;
+        // 兜底：任一请求长时间挂起（接口无响应）时也不能把页面锁在遮罩下
+        const safety = window.setTimeout(() => setBootstrapping(false), 12000);
+        return () => window.clearTimeout(safety);
+    }, [bootstrapping]);
+
     const loadStrategies = useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -264,6 +290,7 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
             setError("无法加载策略列表，请稍后重试");
         } finally {
             setLoading(false);
+            setStrategiesBooted(true);
         }
     }, [userId]);
 
@@ -277,6 +304,8 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
                 console.warn('Failed to load default model', e);
             }
             setDefaultModel(null);
+        } finally {
+            setModelBooted(true);
         }
     }, []);
 
@@ -290,6 +319,7 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
             setLatestInferenceRun(null);
         } finally {
             setLatestInferenceRunLoading(false);
+            setBatchCheckedFor(effectiveModelId);
         }
     }, [effectiveModelId]);
 
@@ -452,6 +482,8 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
                 console.warn('Failed to load strategy monitor snapshot', e);
                 setMonitorChecks([]);
                 setMonitorCheckedAt(null);
+            } finally {
+                if (!cancelled) setMonitorBooted(true);
             }
         };
 
@@ -715,7 +747,8 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
     }, [hostedLogsVisible, latestHostedTask?.task_id, loadHostedLogs]);
 
     return (
-        <div className="h-full overflow-y-auto custom-scrollbar">
+        <div className="relative h-full overflow-hidden">
+            <div className="h-full overflow-y-auto custom-scrollbar">
             <div className={`p-4 flex flex-col gap-4 ${selectedStrategy ? 'pb-28' : 'pb-12'}`}>
                 {/* Header Control Bar */}
                 <div className="bg-white rounded-2xl shadow-xs border border-slate-200/80 p-4 px-6 flex flex-col md:flex-row items-center justify-between gap-4">
@@ -1264,6 +1297,34 @@ const StrategyManagement: React.FC<StrategyManagementProps> = ({
                     </div>
                 )}
             </div>
+            </div>
+
+            {/* 首屏遮罩：毛玻璃 + 加载动画，逐项亮出已完成的接口 */}
+            {bootstrapping && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center bg-white/50 backdrop-blur-[6px]">
+                    <div className="flex flex-col items-center gap-3 rounded-3xl border border-slate-200/70 bg-white/90 px-10 py-8 shadow-xl shadow-slate-300/30">
+                        <div className="relative h-10 w-10">
+                            <div className="absolute inset-0 rounded-full border-[3px] border-slate-200" />
+                            <div className="absolute inset-0 animate-spin rounded-full border-[3px] border-transparent border-t-blue-500" />
+                        </div>
+                        <div className="text-sm font-bold text-slate-700">正在加载实盘控制台…</div>
+                        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-bold">
+                            <span className={strategiesBooted ? 'text-emerald-500' : 'text-slate-400'}>
+                                {strategiesBooted ? '✓' : '○'} 策略列表
+                            </span>
+                            <span className={modelBooted ? 'text-emerald-500' : 'text-slate-400'}>
+                                {modelBooted ? '✓' : '○'} 默认模型
+                            </span>
+                            <span className={batchCheckedFor !== null ? 'text-emerald-500' : 'text-slate-400'}>
+                                {batchCheckedFor !== null ? '✓' : '○'} 生产批次
+                            </span>
+                            <span className={monitorBooted ? 'text-emerald-500' : 'text-slate-400'}>
+                                {monitorBooted ? '✓' : '○'} 环境监控
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -42,3 +42,4 @@
 - 个人中心策略详情页改为通过 `userCenterService` 访问统一策略接口，不再直连 `http://localhost:8011`。
 - antd v5 起 `Card.bodyStyle` 已弃用，统一改为 `styles={{ body: ... }}`。
 - 智能图表模块已增加响应兼容归一化：当网关返回 `{data: ...}` 对象而非数组时，`useIntelligenceCharts` 会先转换为数组；`chartOptions` 也增加非数组保护，避免 `data.filter is not a function`。
+- `App.tsx` 中 `/alpha-research`（因子挖掘）路由的 lazy `Suspense` fallback 已从裸 `<Spin size="large" />` 改为 `width/height 100% + flex items-center justify-center` 包裹，首次加载时载入动画居中显示（fallback div 是 `.app-main` 的直接子节点，`ProtectedRoute` 仅返回 fragment 不插入额外 DOM）。后台管理子路由仍保持顶部对齐的 Spin。

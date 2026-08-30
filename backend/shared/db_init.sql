@@ -2238,7 +2238,7 @@ WHERE model_id IN ('model_qlib', 'alpha158', 'sys-model_qlib', 'sys-alpha158');
 
 -- ========================
 -- 默认管理员（admin / admin123）
--- NOTE: 幂等，仅在不存在时创建，不覆盖用户已改密码
+-- NOTE: 幂等，仅在不存在时创建，不覆盖用户已改密码；display_name / 头像由启动期 seed_data.py 负责
 -- ========================
 INSERT INTO users (user_id, tenant_id, username, email, password_hash, is_active, is_admin, is_verified, is_locked, login_count, created_at, updated_at, is_deleted)
 VALUES ('admin', 'default', 'admin', 'admin@quantmind.local',

@@ -228,6 +228,15 @@ export class UserCenterService extends BaseApiClient {
       return normalizedPath;
     }
 
+    // 同源静态资源（默认头像 /logo.png，来自 electron/public）：保持原样，不拼存储域名
+    if (input.startsWith('/') && !input.startsWith('//') && !input.startsWith('/api/')) {
+      // 桌面端打包后页面走 file:// 协议，需转成相对 index.html 的路径（public 产物在 dist 根目录）
+      if (window.location?.protocol === 'file:') {
+        return new URL(`.${input}`, window.location.href).href;
+      }
+      return input;
+    }
+
     // 仅给了 key/path 的情况，统一补存储域名
     if (!/^https?:\/\//i.test(input)) {
       const trimmed = input.replace(/^\/+/, '');

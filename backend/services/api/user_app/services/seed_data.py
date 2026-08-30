@@ -20,6 +20,13 @@ logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# 默认显示名（user_profiles.display_name，前端「用户名」位置展示的就是它）
+DEFAULT_ADMIN_DISPLAY_NAME = "QuantMind"
+# 旧默认显示名，命中才升级，用户自行修改过的昵称不动
+LEGACY_ADMIN_DISPLAY_NAME = "System Administrator"
+# 默认头像：electron/public/logo.png，构建后位于 Web 根目录，故用同源相对路径
+DEFAULT_ADMIN_AVATAR_URL = "/logo.png"
+
 
 async def init_admin_data(db: AsyncSession):
     """初始化管理员数据"""
@@ -90,10 +97,10 @@ async def init_admin_data(db: AsyncSession):
         profile = UserProfile(
             user_id=admin_user.user_id,
             tenant_id=default_tenant_id,
-            display_name="System Administrator",
+            display_name=DEFAULT_ADMIN_DISPLAY_NAME,
             bio="QuantMind 系统管理员",
             location="Server Room",
-            avatar_url="https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff",
+            avatar_url=DEFAULT_ADMIN_AVATAR_URL,
             trading_experience="advanced",
             risk_tolerance="high",
             preferences=default_preferences,
@@ -106,6 +113,12 @@ async def init_admin_data(db: AsyncSession):
             profile.preferences = default_preferences
         if not profile.notification_settings:
             profile.notification_settings = default_notifications
+        # 默认显示名升级：仅命中旧默认值时替换
+        if (profile.display_name or "").strip() == LEGACY_ADMIN_DISPLAY_NAME:
+            profile.display_name = DEFAULT_ADMIN_DISPLAY_NAME
+        # 默认头像升级：空头像或旧的 ui-avatars 外链统一换成站内 Logo 相对路径
+        if not profile.avatar_url or profile.avatar_url.startswith("https://ui-avatars.com/"):
+            profile.avatar_url = DEFAULT_ADMIN_AVATAR_URL
 
     await db.commit()
     logger.info("Admin data initialization completed.")

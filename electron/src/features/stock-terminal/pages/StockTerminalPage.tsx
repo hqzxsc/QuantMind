@@ -1,6 +1,6 @@
 /** 个股终端 — 搜索驱动展示：顶部搜索 + 左右布局（左上K线/左下推理分 + 右详情） */
 import { useCallback, useEffect, useState } from 'react';
-import { CandlestickChart, Search, Layers, Building2 } from 'lucide-react';
+import { CandlestickChart, Search, Layers, Building2, Database } from 'lucide-react';
 import { message } from 'antd';
 import { PAGE_LAYOUT } from '../../../config/pageLayout';
 import { StockListItem, StockProfile, KlineBar } from '../types';
@@ -194,6 +194,11 @@ export default function StockTerminalPage() {
             <div className="text-sm font-bold text-slate-700">在上方搜索框输入代码或名称开始</div>
             <div className="text-xs text-slate-400 max-w-[420px] leading-relaxed">
               不会预加载全量列表，输入关键词后联想最相关的 8 只股票；选中后左侧展示历史K线与默认模型推理分，右侧展示个股详情。
+            </div>
+            {/* 数据提示：一句话引导下载完整数据包并保持更新 */}
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+              <Database className="w-3.5 h-3.5 shrink-0 text-slate-300" />
+              <span>温馨提示：请先下载完整行情数据包并保持每日更新，否则可能搜不到标的、K线或推理分为空。</span>
             </div>
           </div>
         ) : (

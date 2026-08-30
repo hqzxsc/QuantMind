@@ -649,6 +649,11 @@ services:
   # 7. QwenPaw (QuantBot 聊天机器人)
   qwenpaw:
     # Docker registry mirror 由部署脚本统一配置。
+    # 扩展镜像：在上游基础上加装 reportlab（研报 MD→PDF）与 docker CLI，
+    # 见 docker/Dockerfile.qwenpaw。image 标签保留以兼容离线包保存/加载。
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.qwenpaw
     image: agentscope/qwenpaw:latest
     container_name: qwenpaw
     ports:
@@ -699,6 +704,8 @@ services:
       - ./CLAUDE.md:/app/CLAUDE.md:ro
       # 项目根目录（只读，供 Agent 查找本地文件/技能 zip 等）
       - ./:/quantmind:ro
+      # 研报 PDF 中文字体（md_to_pdf_report.py 按 /app/docker/training/fonts 解析）
+      - ./docker/training/fonts:/app/docker/training/fonts:ro
       # RD-Agent 已 pip install 到镜像中，不再需要运行时挂载
       # QuantMind 数据（读写）
       - ./data:/data

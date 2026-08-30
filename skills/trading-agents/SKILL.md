@@ -13,11 +13,12 @@ description: "个股深度投研分析（智能体自主版）— 拉取 QuantMi
 >    docker cp <脚本路径> quantmind:/tmp/<脚本名> && docker exec -w /app quantmind python3 /tmp/<脚本名> <参数>
 >    ```
 >    脚本源三选一：宿主机 repo `skills/<name>/scripts/`、QwenPaw 工作区 `/app/working/workspaces/default/skills/<name>/scripts/`、挂载目录 `/quantmind/skills/<name>/scripts/`。纯标准库脚本（无重依赖）可在 QwenPaw 本地直接跑。
-> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/data/reports/trading_agents/{市场或类别}/{股票名}/`（QwenPaw 对 `/app/db` 有写权限，**直接写文件，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`（`/data` 可写）。
+> 3. **报告落盘**：股票报告页可见的 MD/PDF 报告，直接写 `/data/reports/trading_agents/{市场或类别}/{股票名}/`（`/data` 是 QwenPaw 与 quantmind 容器共享的可读写挂载，**QwenPaw 直接 mkdir/cp 即可，不要 docker cp**）；过程数据 facts 写 `/data/reports/<类别>/`。
 > 4. **MD → PDF 转换（按优先级降级）**：
->    ① `docker exec -w /app quantmind python3 backend/scripts/md_to_pdf_report.py <输入.md> <输出.pdf>`（研报级排版，首选）；
->    ② docker 不可用时，**改用 QwenPaw 内置 `pdf` 技能**把 MD 转成 PDF；
->    ③ 两者都不可用则只交付 MD，并明确告知用户 PDF 未能生成及原因。
+>    ① QwenPaw 本地直接跑 `python3 /app/backend/scripts/md_to_pdf_report.py <输入.md> <输出.pdf>`（扩展镜像已内置 reportlab + 中文字体，研报级排版，首选）；
+>    ② QwenPaw 环境缺依赖时，`docker exec -w /app quantmind python3 backend/scripts/md_to_pdf_report.py <输入.md> <输出.pdf>`（扩展镜像已含 docker CLI）；
+>    ③ 以上都不可用时，**改用 QwenPaw 内置 `pdf` 技能**把 MD 转成 PDF；
+>    ④ 全部失败则只交付 MD，并明确告知用户 PDF 未能生成及原因。
 > 5. 本文中的 `~/.claude`、`cp -r ... ~/.claude/skills` 等说明仅适用于本地 Claude Code 维护者，**QuantBot 不要执行**。
 
 # 个股深度投研分析（智能体自主版）
@@ -48,7 +49,7 @@ description: "个股深度投研分析（智能体自主版）— 拉取 QuantMi
   ↓
 ⑥ 导出 PDF（容器内 md_to_pdf_report.py，TTF 内嵌中文字体）
   ↓
-⑦ 保存到 db/trading_agents_results/{市场名}/{股票名}/  → 用户去「股票报告」页查看
+⑦ 保存到 /data/reports/trading_agents/{市场名}/{股票名}/  → 用户去「股票报告」页查看
 ```
 
 ## 二、认证
@@ -228,19 +229,21 @@ curl -s -H "$AUTH" "$BASE/api/v1/news/articles?tickers=600519&sort=sentiment_bea
 
 ```bash
 # 目录结构: 市场文件夹 / 股票名文件夹（A股市场 / 美股市场 / 港股市场 / 区块链市场 / 期货市场）
-mkdir -p "/home/zbox/projects/quantmind/db/trading_agents_results/A股市场/贵州茅台"
+mkdir -p "/data/reports/trading_agents/A股市场/贵州茅台"
 # 文件名: {股票名}{代码}_{trade_date}_投研分析报告.md（股票名查不到时省略股票名）
 # 例: 贵州茅台600519_2026-08-15_投研分析报告.md
 ```
 
-> ⚠️ 宿主机直接写 db/ 可能 EACCES（目录 owner 是容器内 root）——md 先写 `/tmp` 再 `docker cp` 进容器，或用 `docker exec quantmind python` 直接落盘（见 FAQ）。
+> QwenPaw 对 `/data` 有直接读写权限（与 quantmind 容器共享挂载），md 直接写入即可，**无需 docker cp**；仅宿主机本地 Claude Code 场景目录 owner 是容器内 root 时，才用 `docker exec quantmind python` 落盘（见 FAQ）。
 
-### 7.2 转 PDF（在 quantmind 容器内执行，reportlab 已装）
+### 7.2 转 PDF（首选 QwenPaw 本地，reportlab + 中文字体已内置）
 
 ```bash
-docker exec quantmind python /app/backend/scripts/md_to_pdf_report.py \
+python3 /app/backend/scripts/md_to_pdf_report.py \
   "/data/reports/trading_agents/A股市场/贵州茅台/贵州茅台600519_2026-08-15_投研分析报告.md" \
   "/data/reports/trading_agents/A股市场/贵州茅台/贵州茅台600519_2026-08-15_投研分析报告.pdf"
+# 备选（本地缺依赖时）：
+# docker exec quantmind python /app/backend/scripts/md_to_pdf_report.py <同上路径>
 ```
 
 **PDF 特性**：A4、TTF 内嵌中文字体（任何 PDF 阅读器含浏览器 pdfjs 都正常渲染）、**粗体真实加粗**（正文文泉驿 MicroHei + 粗体 ZenHei 独立字重）、h1 居中大标题、h2 蓝色小节、表格深蓝表头 + 隔行底色。
@@ -287,7 +290,9 @@ print(df.columns.tolist())   # 找 name 列
 ### 7.4 验证导出成功
 
 ```bash
-ls -la "/home/zbox/projects/quantmind/db/trading_agents_results/A股市场/{股票名}/" | grep {ticker}
+ls -la "/data/reports/trading_agents/A股市场/{股票名}/" | grep {ticker}
+# 或调用列表接口确认（报告档案页同源）:
+curl -s "$BASE/api/v1/trading-agents/files/list" | python3 -m json.tool | grep {ticker}
 ```
 
 ## 八、告知用户（收尾话术）

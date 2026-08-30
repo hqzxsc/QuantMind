@@ -1147,22 +1147,42 @@ def _read_pred_dates(parquet_file: Path) -> list[str]:
 def _latest_trading_date() -> date:
     try:
         import exchange_calendars as xcals
+        import pandas as pd
+        from datetime import timedelta
 
         cal = xcals.get_calendar("XSHG")
         today = date.today()
-        # is_session 检查需 Timestamp
-        import pandas as pd
-
-        ts_today = pd.Timestamp(today)
-        if cal.is_session(ts_today):
-            return today
-        # previous session
-        prev = cal.previous_session(ts_today)
-        return (
-            prev.date() if hasattr(prev, "date") else date.fromisoformat(str(prev)[:10])
-        )
+        # 逐日回退至最近交易日，避免 is_session/previous_session 异常时回退到 date.today()（周末会误显示为交易日）
+        for i in range(10):
+            cur = today - timedelta(days=i)
+            ts = pd.Timestamp(cur)
+            try:
+                if cal.is_session(ts):
+                    return cur
+            except Exception:
+                continue
+        # 兜底：previous_session
+        try:
+            prev = cal.previous_session(pd.Timestamp(today))
+            return (
+                prev.date()
+                if hasattr(prev, "date")
+                else date.fromisoformat(str(prev)[:10])
+            )
+        except Exception:
+            pass
+        # 仍失败则按周末回退
+        cur = today
+        while cur.weekday() >= 5:
+            cur -= timedelta(days=1)
+        return cur
     except Exception:
-        return date.today()
+        cur = date.today()
+        from datetime import timedelta
+
+        while cur.weekday() >= 5:
+            cur -= timedelta(days=1)
+        return cur
 
 
 @router.get("/{model_id}/inference/coverage", summary="获取推理覆盖（用户态）")

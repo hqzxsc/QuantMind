@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Table, Tag, Typography, Spin, Empty, Collapse, Progress, Modal, message } from 'antd';
+import { Button, Card, Tag, Typography, Spin, Empty, Collapse, Progress, Modal, message } from 'antd';
 import { Database, Calendar, RefreshCw, Zap, CheckCircle2, AlertTriangle, Clock } from 'lucide-react';
 import { modelTrainingService } from '../services/modelTrainingService';
 
@@ -10,6 +10,7 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
   const [coverage, setCoverage] = useState<any>(null);
   const [backfilling, setBackfilling] = useState(false);
   const [task, setTask] = useState<any>(null);
+  const [tradingMap, setTradingMap] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     if (!modelId) return;
@@ -27,6 +28,23 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
 
   useEffect(() => { void load(); }, [load]);
 
+  // 量化交易日历：批量判断 3 个月所有日期是否为交易日，替代周末判断
+  useEffect(() => {
+    const latest = coverage?.latest_trade_date ? String(coverage.latest_trade_date).slice(0, 10) : null;
+    const baseDate = latest ? new Date(latest) : new Date();
+    const months = [-2, -1, 0].map((off) => {
+      const d = new Date(baseDate.getFullYear(), baseDate.getMonth() + off, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    });
+    const allDates: string[] = [];
+    for (const ym of months) {
+      const [y, m] = ym.split('-').map(Number);
+      const days = new Date(y, m, 0).getDate();
+      for (let d = 1; d <= days; d++) allDates.push(`${ym}-${String(d).padStart(2, '0')}`);
+    }
+    void modelTrainingService.batchCheckTradingDays('SSE', allDates).then(setTradingMap).catch(() => setTradingMap({}));
+  }, [coverage?.latest_trade_date]);
+
   const gapCount = coverage?.gap_dates?.length ?? 0;
   const isUpToDate = coverage?.is_up_to_date ?? (gapCount === 0 && coverage?.max_date);
 
@@ -36,6 +54,10 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
       content: `将从 ${coverage?.max_date ?? '—'} 的下一交易日起补至 ${coverage?.latest_trade_date ?? '最新交易日'}，共 ${gapCount} 个交易日，逐日推理并追加到 pred.parquet。是否继续？`,
       okText: '开始补全',
       cancelText: '取消',
+      centered: false,
+      style: { top: 200 },
+      wrapClassName: 'inference-backfill-modal-wrap',
+      styles: { mask: { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', backgroundColor: 'rgba(15,23,42,0.2)' } } as any,
       onOk: async () => {
         setBackfilling(true);
         setTask({ status: 'running', progress: 0, logs: '' });
@@ -43,7 +65,9 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
           const res = await modelTrainingService.triggerInferenceBackfill(modelId);
           const taskId = res?.task_id || res?.taskId;
           if (!taskId) {
-            message.success('已触发补全');
+            if (res?.status === 'completed' && res?.gap === 0) message.info(res?.message || '已是最新，无需补全');
+            else if (res?.status === 'failed') message.error(res?.error || res?.message || '触发失败');
+            else message.success(res?.message || '已触发补全');
             setBackfilling(false);
             void load();
             return;
@@ -81,6 +105,7 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
 
   return (
     <div className="space-y-4">
+      <style>{`.inference-backfill-modal-wrap .ant-modal{top:200px !important;} .inference-backfill-modal-wrap.ant-modal-wrap{padding-top:100px;}`}</style>
       <Card size="small" className="rounded-2xl">
         <Collapse
           ghost
@@ -128,24 +153,75 @@ export const InferenceCoveragePanel: React.FC<{ modelId: string }> = ({ modelId 
       )}
 
       <Card size="small" className="rounded-2xl">
-        <div className="flex items-center justify-between mb-2">
-          <Text className="text-xs font-black text-slate-700 flex items-center gap-1.5"><Calendar size={12} className="text-slate-400"/>覆盖明细（近 90 日缺口）</Text>
+        <div className="flex items-center justify-between mb-3">
+          <Text className="text-xs font-black text-slate-700 flex items-center gap-1.5"><Calendar size={12} className="text-slate-400"/>覆盖日历（6-8月）</Text>
           <Tag className="rounded-full">{gapCount} 个缺口日</Tag>
         </div>
-        {coverage?.gap_dates?.length ? (
-          <Table
-            size="small"
-            rowKey={(r: any) => String(r)}
-            dataSource={coverage.gap_dates.map((d: string) => ({ date: d }))}
-            pagination={{ pageSize: 20 }}
-            columns={[
-              { title: '缺口日期', dataIndex: 'date', key: 'date', render: (v: string) => <span className="font-mono text-xs">{v}</span> },
-              { title: '状态', key: 'status', render: () => <Tag color="gold">待补</Tag> },
-            ]}
-          />
-        ) : (
-          <Empty description={isUpToDate ? '已覆盖至最新交易日' : '暂无缺口，或后端未部署覆盖接口'} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-        )}
+        {(() => {
+          const latest = coverage?.latest_trade_date ? String(coverage.latest_trade_date).slice(0, 10) : null;
+          const maxDate = coverage?.max_date ? String(coverage.max_date).slice(0, 10) : null;
+          const gapSet = new Set((coverage?.gap_dates || []).map((d: string) => String(d).slice(0, 10)));
+          // 动态展示最近 3 个月（含最新交易月），如 8.30 则 6-8 月
+          const baseDate = latest ? new Date(latest) : new Date();
+          const months = [-2, -1, 0].map((off) => {
+            const d = new Date(baseDate.getFullYear(), baseDate.getMonth() + off, 1);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          });
+          const weekDays = ['一', '二', '三', '四', '五', '六', '日'];
+          const isTradingDay = (d: string) => tradingMap[d] ?? false;
+          return (
+            <div className="space-y-4">
+              <div className="flex gap-2 text-[10px] flex-wrap">
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-500/30 border border-emerald-200" /> 已覆盖</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-400/30 border border-amber-200" /> 待补缺口</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 border border-slate-200" /> 未来</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {months.map((ym) => {
+                  const [y, m] = ym.split('-').map(Number);
+                  const first = new Date(y, m - 1, 1);
+                  const daysInMonth = new Date(y, m, 0).getDate();
+                  const startWeek = (first.getDay() + 6) % 7; // 周一为 0
+                  const cells: (string | null)[] = Array(startWeek).fill(null);
+                  for (let d = 1; d <= daysInMonth; d++) cells.push(`${ym}-${String(d).padStart(2, '0')}`);
+                  while (cells.length % 7 !== 0) cells.push(null);
+                  return (
+                    <div key={ym} className="border border-slate-100 rounded-xl p-2 bg-white">
+                      <div className="text-xs font-black text-slate-700 text-center mb-1">{m}月</div>
+                      <div className="grid grid-cols-7 gap-1 text-[10px] text-center text-slate-400 mb-1">
+                        {weekDays.map((w) => <div key={w}>{w}</div>)}
+                      </div>
+                      <div className="grid grid-cols-7 gap-1">
+                        {cells.map((d, i) => {
+                          if (!d) return <div key={i} className="h-7" />;
+                          const isFuture = latest ? d > latest : false;
+                          const isGap = gapSet.has(d);
+                          const isTrading = isTradingDay(d);
+                          const isCovered = maxDate ? d <= maxDate && !isGap && !isFuture && isTrading : false;
+                          const bg = isFuture
+                            ? 'bg-slate-100 text-slate-400 border-slate-200'
+                            : isGap
+                              ? 'bg-amber-400/30 text-amber-700 border-amber-200 font-bold'
+                              : isCovered
+                                ? 'bg-emerald-500/30 text-emerald-700 border-emerald-200'
+                                : !isTrading
+                                  ? 'bg-slate-50 text-slate-300 border-slate-100'
+                                  : 'bg-white text-slate-500 border-slate-100';
+                          return (
+                            <div key={d} className={`h-7 flex items-center justify-center rounded-lg border text-[11px] ${bg}`}>
+                              {Number(d.slice(8, 10))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {gapCount === 0 && <Empty description="已覆盖至最新交易日" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </div>
+          );
+        })()}
       </Card>
     </div>
   );

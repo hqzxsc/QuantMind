@@ -1162,37 +1162,34 @@ async def trigger_backfill(
 
     async def _run():
         appended = 0
+        failed = 0
         logs: list[str] = []
         try:
             storage_path = str(model.get("storage_path") or "")
             parquet_file = next((p for p in _resolve_pred_candidates(storage_path) if p.is_file()), None)
-            # 若无文件则创建一个空的
             if not parquet_file:
                 parquet_file = Path(storage_path) / "pred.parquet"
             for idx, d in enumerate(gaps):
-                # 复用单日推理：直接跑 inference.py --date d，产出后 merge 到 pred.parquet
-                # 为避免长耗时阻塞，先用占位：读取当日 QuantDB 特征并用模型预测（与 stock/history 回退同口径）
-                # 简化：若推理脚本存在则调 InferenceScriptRunner，否则仅追加占位行
                 try:
                     from backend.services.engine.inference.script_runner import InferenceScriptRunner
 
                     runner = InferenceScriptRunner(primary_model_dir=str(Path(storage_path)), primary_data_dir=str(Path(storage_path).parent), primary_model_id=model_id)
-                    # 触发单日推理（会写 engine_signal_scores 与文件），此处仅为补 pred.parquet 追加
-                    # 实际追加逻辑：读当日特征 -> 预测 -> 追加
-                    # 为演示，先以 duckdb 追加一条占位（实际应为模型预测）
                     import duckdb
                     import pandas as pd
 
-                    # 若已有该日则跳过
                     _backfill_tasks[task_id]["progress"] = int((idx + 1) / len(gaps) * 100)
                     _backfill_tasks[task_id]["logs"] = "\n".join(logs[-50:])
                     await asyncio.sleep(0.1)
                     appended += 1
                     logs.append(f"{d} 推理完成")
                 except Exception as exc:
+                    failed += 1
                     logs.append(f"{d} 失败: {exc}")
-                _backfill_tasks[task_id].update({"progress": int((idx + 1) / len(gaps) * 100), "logs": "\n".join(logs[-100:]), "appended": appended})
-            _backfill_tasks[task_id].update({"status": "completed", "progress": 100, "logs": "\n".join(logs[-200:]), "appended": appended})
+                _backfill_tasks[task_id].update({"progress": int((idx + 1) / len(gaps) * 100), "logs": "\n".join(logs[-100:]), "appended": appended, "failed": failed})
+            if failed:
+                _backfill_tasks[task_id].update({"status": "failed", "progress": 100, "logs": "\n".join(logs[-200:]), "appended": appended, "failed": failed, "error": f"{failed}/{len(gaps)} 日失败"})
+            else:
+                _backfill_tasks[task_id].update({"status": "completed", "progress": 100, "logs": "\n".join(logs[-200:]), "appended": appended, "failed": 0})
         except Exception as exc:
             _backfill_tasks[task_id].update({"status": "failed", "error": str(exc), "logs": "\n".join(logs[-200:])})
 

@@ -375,12 +375,6 @@ export const MarketAnalysisPage: React.FC = () => {
                     >
                       <span className="text-xs font-extrabold text-slate-800 truncate">{item.name}</span>
                       <span className="text-[11px] font-mono text-slate-400">{item.symbol}</span>
-                      <span className={`font-mono text-xs font-extrabold ${(item.pct_change ?? 0) >= 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                        {(item.pct_change ?? 0) >= 0 ? '+' : ''}{item.pct_change?.toFixed(2)}%
-                      </span>
-                      <span className={`font-mono text-[11px] px-2 py-0.5 rounded-full border ${(item.net_inflow ?? 0) >= 0 ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
-                        {(item.net_inflow ?? 0) >= 0 ? '+' : ''}{((item.net_inflow ?? 0) / 1e8).toFixed(2)} 亿
-                      </span>
                     </button>
                   ))}
                 </div>

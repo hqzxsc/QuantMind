@@ -3700,14 +3700,15 @@ def _read_stock_pred_history(
                 )
                 if score_col and date_col and sym_col:
                     # 先全市场截面算 RANK 再过滤该股（过滤在窗口前做会使排名恒为 1）；
-                    # symbol 归一化为纯 6 位数字比对，兼容 SH600000/600000.SH/sh600000
+                    # regexp_extract 抽连续数字段，兼容 SH600000/600000.SH/sh600000
+                    # （注：duckdb 的 regexp_replace 默认只替换首个匹配，不能用于去前缀）
                     rows = con.execute(
                         f"""
                         WITH d AS (
                             SELECT CAST({date_col} AS DATE) AS td,
                                    CAST({score_col} AS DOUBLE) AS sc,
-                                   regexp_replace(UPPER(CAST({sym_col} AS VARCHAR)),
-                                                  '[^0-9]', '') AS code6,
+                                   regexp_extract(CAST({sym_col} AS VARCHAR),
+                                                  '[0-9]+', 0) AS code6,
                                    RANK() OVER (PARTITION BY CAST({date_col} AS DATE)
                                                 ORDER BY CAST({score_col} AS DOUBLE) DESC) AS rk,
                                    COUNT(*) OVER (PARTITION BY CAST({date_col} AS DATE)) AS tot

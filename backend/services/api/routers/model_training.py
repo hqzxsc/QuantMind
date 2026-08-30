@@ -1210,8 +1210,7 @@ async def get_inference_coverage(
     parquet_file = next(
         (p for p in _resolve_pred_candidates(storage_path) if p.is_file()), None
     )
-    # Windows 本地开发：storage_path 为 Linux 绝对路径 /app/models/... 本地不存在；
-    # 此时 QuantDB 目录 D:/quant_data 仍可用，用因子可用日期兜底展示日历
+    # Ubuntu 容器：storage_path 为 /app/models/...；若本地 pred 缺失则用 QuantDB 因子可覆盖日期兜底
     quantdb_fallback_dates: list[str] | None = None
     if not parquet_file:
         try:
@@ -1230,7 +1229,6 @@ async def get_inference_coverage(
                 market_data_dir,
             )
 
-            # 复用已修复的 market_data_dir（会正确指向 D:/quant_data）
             qdir = market_data_dir(market)
             if qdir.is_dir():
                 reader = QuantDBFactorReader(qdir, market=market)
@@ -1238,7 +1236,6 @@ async def get_inference_coverage(
         except Exception:
             quantdb_fallback_dates = None
         if quantdb_fallback_dates:
-            # 用 QuantDB 因子可覆盖日期作为模板日历兜底
             min_date, max_date = quantdb_fallback_dates[0], quantdb_fallback_dates[-1]
             latest = _latest_trading_date()
             try:
@@ -1377,54 +1374,89 @@ async def trigger_backfill(
                 parquet_file = Path(storage_path) / "pred.parquet"
             for idx, d in enumerate(gaps):
                 try:
-                    import duckdb
-                    import pandas as pd
-
                     _backfill_tasks[task_id]["progress"] = int(
                         (idx + 1) / len(gaps) * 100
                     )
                     _backfill_tasks[task_id]["logs"] = "\n".join(logs[-50:])
-                    # 真实追加：取最近已覆盖日的全量行，改 trade_date 为缺口日后 append
-                    # 若模型为 LightGBM 且 QuantDB 特征可用，后续可替换为 runner 推理
-                    con = duckdb.connect()
+                    # 优先通过 InferenceScriptRunner 真实推理（Ubuntu /data/quantdb）
+                    # 若 runner 不可用或失败则回退到模板复制
+                    executed = False
                     try:
-                        # 取最近已覆盖日作为模板
-                        last_date = (
-                            _read_pred_dates(parquet_file)[-1]
-                            if parquet_file.is_file()
-                            else None
+                        runner = InferenceScriptRunner(
+                            primary_model_dir=str(Path(storage_path)),
+                            primary_model_id=model_id,
                         )
-                        if last_date:
-                            df = con.execute(
-                                f"SELECT * FROM read_parquet('{str(parquet_file)}') WHERE CAST(trade_date AS VARCHAR) = '{last_date}'"
-                            ).df()
-                            if not df.empty:
-                                df["trade_date"] = pd.Timestamp(d)
-                                # 追加写回（duckdb 追加需用 pandas + parquet）
-                                import pyarrow as pa
-                                import pyarrow.parquet as pq
+                        # 同步推理较慢，放线程池避免阻塞事件循环
+                        import concurrent.futures
 
-                                # 读全量后追加
-                                existing = con.execute(
-                                    f"SELECT * FROM read_parquet('{str(parquet_file)}')"
-                                ).df()
-                                combined = pd.concat([existing, df], ignore_index=True)
-                                # 去重：同一 trade_date+symbol 保留最新
-                                combined = combined.drop_duplicates(
-                                    subset=["symbol", "trade_date"], keep="last"
-                                )
-                                combined.to_parquet(str(parquet_file), index=False)
-                                appended += 1
-                                logs.append(f"{d} 推理完成（模板复制 {len(df)} 行）")
-                            else:
-                                logs.append(f"{d} 跳过：模板日无数据")
+                        _d, _runner = d, runner
+
+                        def _sync_run(
+                            _d=_d, _runner=_runner, _tenant=tenant_id, _user=user_id
+                        ):
+                            return _runner.execute(
+                                date=_d, tenant_id=_tenant, user_id=_user
+                            )
+
+                        loop = asyncio.get_running_loop()
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=1
+                        ) as pool:
+                            result = await loop.run_in_executor(pool, _sync_run)
+                        if getattr(result, "success", False):
+                            appended += 1
+                            logs.append(
+                                f"{d} 推理完成（runner {result.signals_count} 行）"
+                            )
+                            executed = True
                         else:
-                            logs.append(f"{d} 跳过：无模板日")
-                    finally:
+                            logs.append(
+                                f"{d} runner 失败: {getattr(result, 'error', '')}"
+                            )
+                    except Exception as exc:
+                        logs.append(f"{d} runner 异常: {exc}")
+                    if not executed:
+                        import duckdb
+                        import pandas as pd
+
+                        con = duckdb.connect()
                         try:
-                            con.close()
-                        except Exception:
-                            pass
+                            last_date = (
+                                _read_pred_dates(parquet_file)[-1]
+                                if parquet_file.is_file()
+                                else None
+                            )
+                            if last_date:
+                                df = con.execute(
+                                    f"SELECT * FROM read_parquet('{str(parquet_file)}') WHERE CAST(trade_date AS VARCHAR) = '{last_date}'"
+                                ).df()
+                                if not df.empty:
+                                    df["trade_date"] = pd.Timestamp(d)
+                                    existing = con.execute(
+                                        f"SELECT * FROM read_parquet('{str(parquet_file)}')"
+                                    ).df()
+                                    combined = pd.concat(
+                                        [existing, df], ignore_index=True
+                                    )
+                                    combined = combined.drop_duplicates(
+                                        subset=["symbol", "trade_date"], keep="last"
+                                    )
+                                    combined.to_parquet(str(parquet_file), index=False)
+                                    appended += 1
+                                    logs.append(
+                                        f"{d} 推理完成（模板复制 {len(df)} 行）"
+                                    )
+                                else:
+                                    failed += 1
+                                    logs.append(f"{d} 跳过：模板日无数据")
+                            else:
+                                failed += 1
+                                logs.append(f"{d} 失败：无模板日且 runner 未成功")
+                        finally:
+                            try:
+                                con.close()
+                            except Exception:
+                                pass
                     await asyncio.sleep(0.05)
                 except Exception as exc:
                     failed += 1

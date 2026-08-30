@@ -116,9 +116,73 @@ class SignalLoader:
                 uid,
                 run_id or "latest",
             )
-            return signals
+            if signals or run_id:
+                return signals
+            # 取最新批次路径且信号表为空（如被后续补推覆盖清空）：回退默认模型
+            # pred.parquet 数据日截面，与手动任务信号加载共用同一兜底源。
+            return await self._load_pred_parquet_fallback(tenant, uid)
         except Exception as e:
             logger.error("SignalLoader: 加载信号失败 %s", e, exc_info=True)
+            return []
+
+    async def _load_pred_parquet_fallback(
+        self, tenant_id: str, user_id: str
+    ) -> list[SignalScore]:
+        """信号表为空时从默认模型 pred.parquet 回退最新截面。
+
+        trade_date 用生效日（T+1，与信号表口径一致）；无生效日时用数据日。
+        任何解析失败都静默返回空列表，不影响主路径。
+        """
+        try:
+            from datetime import date as _date
+
+            from backend.services.trade.services.manual_execution_service import (
+                manual_execution_service,
+            )
+
+            hosted = await manual_execution_service.get_default_model_hosted_status(
+                tenant_id=tenant_id, user_id=user_id
+            )
+            model_id = str(hosted.get("latest_default_model_id") or "").strip()
+            data_trade_date = str(hosted.get("data_trade_date") or "").strip()[:10]
+            if not model_id or not data_trade_date:
+                return []
+            effective_raw = (
+                hosted.get("prediction_trade_date") or data_trade_date
+            )
+            effective_date = _date.fromisoformat(str(effective_raw)[:10])
+            fallback_run_id = f"pred_parquet_{model_id}"
+
+            rows = await manual_execution_service.load_pred_parquet_signal_rows(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                model_id=model_id,
+                data_trade_date=data_trade_date,
+            )
+            signals = [
+                SignalScore(
+                    symbol=str(row.get("symbol") or "").upper(),
+                    score=float(row.get("fusion_score") or 0.0),
+                    trade_date=effective_date,
+                    run_id=fallback_run_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
+                for row in rows
+                if row.get("symbol")
+            ]
+            if signals:
+                logger.info(
+                    "SignalLoader: 信号表为空，从 pred.parquet 回退 %d 条截面, "
+                    "tenant=%s user=%s date=%s",
+                    len(signals),
+                    tenant_id,
+                    user_id,
+                    effective_date,
+                )
+            return signals
+        except Exception as e:
+            logger.warning("SignalLoader: pred.parquet 回退失败 %s", e)
             return []
 
     async def load_signals_for_date(

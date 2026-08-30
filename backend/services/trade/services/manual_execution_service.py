@@ -1325,6 +1325,87 @@ class ManualExecutionService:
             "model_source": latest_model_source or None,
         }
 
+    async def load_pred_parquet_signal_rows(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        model_id: str,
+        data_trade_date: str,
+    ) -> list[dict[str, Any]]:
+        """从模型目录 pred.parquet 读取指定数据日全市场截面（共享回退源）。
+
+        手动任务信号加载、信号就绪判定与模拟盘定时调度共用：信号表被后续批次
+        覆盖清空时，用模型历史预测兜底。返回行已归一为券商代码口径，
+        signal_side 等字段留 None（计划构建器自动走 TopK 推断路径）。
+        """
+        model = str(model_id or "").strip()
+        dtd = str(data_trade_date or "").strip()[:10]
+        if not model or not dtd:
+            return []
+        try:
+            import asyncio as _asyncio
+
+            from backend.services.api.routers.research_service import (
+                _read_model_pred_day,
+            )
+            from backend.shared.model_registry import model_registry_service
+
+            _storage_path: str | None = None
+            _model_meta = await model_registry_service.get_model(
+                tenant_id=tenant_id, user_id=user_id, model_id=model
+            )
+            if not _model_meta:
+                async with get_session(read_only=True) as session:
+                    _row = (
+                        (
+                            await session.execute(
+                                text(
+                                    """
+                                    SELECT storage_path
+                                    FROM qm_user_models
+                                    WHERE tenant_id = :tenant_id
+                                      AND model_id = :model_id
+                                    LIMIT 1
+                                    """
+                                ),
+                                {"tenant_id": tenant_id, "model_id": model},
+                            )
+                        )
+                        .mappings()
+                        .first()
+                    )
+                    if _row:
+                        _storage_path = str(_row.get("storage_path") or "") or None
+            else:
+                _storage_path = str(_model_meta.get("storage_path") or "") or None
+            if not _storage_path:
+                return []
+
+            _pred_rows = await _asyncio.to_thread(
+                _read_model_pred_day, _storage_path, dtd
+            )
+            return [
+                {
+                    "symbol": _normalize_to_broker_symbol(_pr.get("symbol") or ""),
+                    "fusion_score": _pr.get("score"),
+                    "light_score": None,
+                    "tft_score": None,
+                    "score_rank": _pr.get("rank"),
+                    "signal_side": None,
+                    "expected_price": None,
+                    "quality": None,
+                    "created_at": None,
+                }
+                for _pr in _pred_rows
+                if _pr.get("symbol")
+            ]
+        except Exception as exc:  # pragma: no cover - pred.parquet fallback
+            logger.warning(
+                "pred.parquet 截面读取失败 model=%s date=%s: %s", model, dtd, exc
+            )
+            return []
+
     async def _load_signal_rows(
         self,
         *,
@@ -1372,77 +1453,19 @@ class ManualExecutionService:
         # 自动走 TopK 推断路径），口径与批次明细接口一致。
         if not model_id or not data_trade_date:
             return normalized
-        try:
-            import asyncio as _asyncio
-
-            from backend.services.api.routers.research_service import (
-                _read_model_pred_day,
-            )
-            from backend.shared.model_registry import model_registry_service
-
-            _storage_path: str | None = None
-            _model_meta = await model_registry_service.get_model(
-                tenant_id=tenant_id, user_id=user_id, model_id=model_id
-            )
-            if not _model_meta:
-                async with get_session(read_only=True) as session:
-                    _row = (
-                        (
-                            await session.execute(
-                                text(
-                                    """
-                                    SELECT storage_path
-                                    FROM qm_user_models
-                                    WHERE tenant_id = :tenant_id
-                                      AND model_id = :model_id
-                                    LIMIT 1
-                                    """
-                                ),
-                                {"tenant_id": tenant_id, "model_id": model_id},
-                            )
-                        )
-                        .mappings()
-                        .first()
-                    )
-                    if _row:
-                        _storage_path = str(_row.get("storage_path") or "") or None
-            else:
-                _storage_path = str(_model_meta.get("storage_path") or "") or None
-
-            if _storage_path:
-                _pred_rows = await _asyncio.to_thread(
-                    _read_model_pred_day,
-                    _storage_path,
-                    str(data_trade_date)[:10],
-                )
-                for _pr in _pred_rows:
-                    normalized.append(
-                        {
-                            "symbol": _normalize_to_broker_symbol(
-                                _pr.get("symbol") or ""
-                            ),
-                            "fusion_score": _pr.get("score"),
-                            "light_score": None,
-                            "tft_score": None,
-                            "score_rank": _pr.get("rank"),
-                            "signal_side": None,
-                            "expected_price": None,
-                            "quality": None,
-                            "created_at": None,
-                        }
-                    )
-                if normalized:
-                    logger.info(
-                        "手动任务信号表为空，已从 pred.parquet 回退 %d 条截面 run_id=%s date=%s",
-                        len(normalized),
-                        run_id,
-                        str(data_trade_date)[:10],
-                    )
-        except Exception as exc:  # pragma: no cover - pred.parquet fallback
-            logger.warning(
-                "pred.parquet fallback failed for manual task signals %s: %s",
+        fallback_rows = await self.load_pred_parquet_signal_rows(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            model_id=str(model_id),
+            data_trade_date=str(data_trade_date),
+        )
+        if fallback_rows:
+            normalized.extend(fallback_rows)
+            logger.info(
+                "手动任务信号表为空，已从 pred.parquet 回退 %d 条截面 run_id=%s date=%s",
+                len(fallback_rows),
                 run_id,
-                exc,
+                str(data_trade_date)[:10],
             )
         return normalized
 
@@ -2011,15 +2034,28 @@ class ManualExecutionService:
             trading_mode=mode,
             note=note,
         )
-        latest_snapshot = await self._load_latest_account_snapshot(
-            tenant_id=prepared.tenant_id,
-            user_id=prepared.user_id,
-        )
-        if not latest_snapshot:
-            raise HTTPException(
-                status_code=400,
-                detail="未检测到最新实盘账户快照，请先确认 QMT Agent 已上报账户数据",
+        if prepared.trading_mode == "SIMULATION":
+            # 模拟盘托管任务读模拟账户快照，与手动任务预览口径一致；
+            # 实盘快照（QMT 上报）仅 REAL/SHADOW 模式需要。
+            latest_snapshot = await self._load_simulation_account_snapshot(
+                tenant_id=prepared.tenant_id,
+                user_id=prepared.user_id,
             )
+            if not latest_snapshot:
+                raise HTTPException(
+                    status_code=400,
+                    detail="未检测到模拟账户，请先在模拟盘页面初始化账户",
+                )
+        else:
+            latest_snapshot = await self._load_latest_account_snapshot(
+                tenant_id=prepared.tenant_id,
+                user_id=prepared.user_id,
+            )
+            if not latest_snapshot:
+                raise HTTPException(
+                    status_code=400,
+                    detail="未检测到最新实盘账户快照，请先确认 QMT Agent 已上报账户数据",
+                )
         normalized_signals = await self._load_signal_rows(
             tenant_id=prepared.tenant_id,
             user_id=prepared.user_id,

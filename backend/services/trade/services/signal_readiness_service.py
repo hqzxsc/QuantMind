@@ -130,14 +130,19 @@ class SignalReadinessService:
             redis_latest_run_id = latest_run_id
 
         if not redis_latest_run_id:
-            result.update(
-                {
-                    "available": False,
-                    "status": "missing_redis_latest_run",
-                    "message": f"未检测到最新信号 Redis 标记 {redis_key}",
-                }
+            # 标记缺失（推理完成后 mark_latest_run 未写成功或 TTL 过期）时，
+            # 以 DB 权威自动补齐标记后继续判定，与上方不一致分支口径一致。
+            logger.warning(
+                "Redis 最新信号标记缺失，自动补齐: key=%s db=%s",
+                redis_key,
+                latest_run_id,
             )
-            return self._apply_mode_policy(result)
+            try:
+                redis_client.set(redis_key, latest_run_id, ex=86400)
+            except Exception as exc:
+                logger.warning("补齐 Redis 最新信号标记失败: %s", exc)
+            result["redis_latest_run_id"] = latest_run_id
+            redis_latest_run_id = latest_run_id
 
         signal_count = await self._count_signal_rows(
             db,
@@ -147,11 +152,37 @@ class SignalReadinessService:
         )
         result["signal_count"] = signal_count
         if signal_count <= 0:
+            # 信号表为空（如被后续补推覆盖清空）时，回退默认模型 pred.parquet
+            # 数据日截面计数，与手动任务信号加载共用同一兜底源，避免自动交易空转。
+            pred_rows = await manual_execution_service.load_pred_parquet_signal_rows(
+                tenant_id=tenant,
+                user_id=uid,
+                model_id=str(hosted_status.get("latest_default_model_id") or ""),
+                data_trade_date=str(result.get("data_trade_date") or ""),
+            )
+            if pred_rows:
+                result.update(
+                    {
+                        "available": True,
+                        "status": "ready",
+                        "signal_count": len(pred_rows),
+                        "signal_source_fallback": "pred_parquet",
+                        "message": (
+                            "最新推理批次信号表为空，已从 pred.parquet 回退截面，"
+                            f"可用于自动交易（run_id={latest_run_id}, "
+                            f"fallback_count={len(pred_rows)}）"
+                        ),
+                    }
+                )
+                return self._apply_mode_policy(result)
             result.update(
                 {
                     "available": False,
                     "status": "empty_signal",
-                    "message": "最新推理批次没有可执行的 engine_signal_scores 信号",
+                    "message": (
+                        "最新推理批次没有可执行的 engine_signal_scores 信号，"
+                        "且无 pred.parquet 可回退截面"
+                    ),
                 }
             )
             return self._apply_mode_policy(result)

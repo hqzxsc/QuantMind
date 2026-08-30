@@ -10,10 +10,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class VectorizedBacktestConfig:
     initial_capital: float = 100000.0
-    commission: float = 0.001
+    # 默认费率与主引擎 CnExchange 对齐：佣金万2.5(双向)，
+    # sell_cost 为仅卖出侧费率(印花税万5+过户费万0.1)
+    commission: float = 0.00025
     slippage: float = 0.0001
     topk: int = 50
-    sell_cost: float = 0.0  # stamp duty + sell commission (sell-only cost)
+    sell_cost: float = 0.00051  # stamp duty + transfer fee (sell-only cost)
 
 @dataclass
 class VectorizedBacktestResult:

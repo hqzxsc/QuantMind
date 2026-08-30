@@ -502,14 +502,24 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
             }
 
             # 使用自定义 CnExchange
+            # 费率口径统一：无论走聚合费率(buy_cost/sell_cost)还是明细费率路径，
+            # 过户费均按明细费率计算，佣金从聚合买入费率中剥离过户费部分，
+            # 避免两条路径沪市费用口径不一致。
             comm = (
                 request.buy_cost if request.buy_cost is not None else request.commission
             )
-            tf = 0 if request.buy_cost is not None else request.transfer_fee
+            tf = request.transfer_fee
+            if request.buy_cost is not None:
+                # 聚合买入费率 = 佣金 + 过户费（前端口径），剥离出纯佣金
+                comm = max(0.0, request.buy_cost - request.transfer_fee)
             tax = (
-                (request.sell_cost - comm)
-                if request.sell_cost is not None
-                else request.stamp_duty
+                (request.sell_cost - request.buy_cost)
+                if request.sell_cost is not None and request.buy_cost is not None
+                else (
+                    (request.sell_cost - request.commission)
+                    if request.sell_cost is not None
+                    else request.stamp_duty
+                )
             )
 
             enable_short_selling = self._should_enable_short_selling(request)
@@ -645,10 +655,13 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
 
                 cfg = VectorizedBacktestConfig(
                     initial_capital=request.initial_capital,
-                    commission=comm + tax + tf,
+                    # 向量化引擎换手成本公式: avg_cost = commission + slippage + sell_cost*0.5
+                    # commission 应为纯佣金(双向), sell_cost 为仅卖出侧费率(印花税+过户费)，
+                    # 与主引擎 CnExchange 口径对齐, 不再重复计税。
+                    commission=comm,
                     slippage=request.impact_cost_coefficient,
                     topk=request.strategy_params.topk,
-                    sell_cost=max(0, tax),
+                    sell_cost=max(0, tax + tf),
                 )
 
                 v_engine = VectorizedBacktestEngine(cfg)

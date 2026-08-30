@@ -90,6 +90,15 @@ class NewsMatcher:
     def __init__(self):
         self.alias_automaton = ahocorasick.Automaton()
         self.lex_automaton = ahocorasick.Automaton()
+        # 空自动机也需 make_automaton，否则 iter() 抛 Not an Aho-Corasick automaton yet
+        try:
+            self.alias_automaton.make_automaton()
+        except Exception:
+            pass
+        try:
+            self.lex_automaton.make_automaton()
+        except Exception:
+            pass
         self._alias_index: dict[str, list[_AliasEntry]] = {}
         self._lex_index: dict[str, list[_LexEntry]] = {}
         self.loaded_at: float = 0.0
@@ -141,6 +150,7 @@ class NewsMatcher:
         alias_aut = ahocorasick.Automaton()
         for term in new_alias_idx:
             alias_aut.add_word(term, term)
+        # 即使词表为空也需 make_automaton，避免并发 match 时 iter 抛异常
         alias_aut.make_automaton()
 
         lex_aut = ahocorasick.Automaton()
@@ -233,7 +243,7 @@ class NewsMatcher:
 
         # 股票别名匹配 (同时记录每次命中的位置, 用于"调研词同句"加权)
         ticker_positions: list[tuple[str, int]] = []  # (ticker, start_pos)
-        for end_idx, term in alias_aut.iter(text):
+        for end_idx, term in (alias_aut.iter(text) if self.alias_count else []):
             start = end_idx - len(term) + 1
             end = end_idx + 1
             # 已知实体名（alias_type=name，如"苹果"→AAPL）放宽边界：允许右侧粘
@@ -262,7 +272,7 @@ class NewsMatcher:
         # 否则"美国对""广东省"被边界检查挡掉，匹配不到
         _ENTITY_TAGS = ("国家", "地区", "省份", "城市", "领导人", "调研", "部门")
         visit_positions: list[int] = []  # 调研词位置, 后面用于同句加权 ticker
-        for end_idx, term in lex_aut.iter(text):
+        for end_idx, term in (lex_aut.iter(text) if self.lex_count else []):
             start = end_idx - len(term) + 1
             end = end_idx + 1
             entries = lex_idx.get(term, [])
@@ -375,7 +385,7 @@ class NewsMatcher:
         entities: list[tuple[str, int, int]] = []
         sentiments: list[tuple[int, int, float, str]] = []  # pos, end, weight (+/-), tag(pos|neg)
 
-        for end_idx, term in alias_aut.iter(text):
+        for end_idx, term in (alias_aut.iter(text) if self.alias_count else []):
             start = end_idx - len(term) + 1
             end = end_idx + 1
             if not self._boundary_ok(text, start, end, term):
@@ -383,7 +393,7 @@ class NewsMatcher:
             for entry in alias_idx.get(term, []):
                 entities.append((f"ticker:{entry.ticker}", start, end))
 
-        for end_idx, term in lex_aut.iter(text):
+        for end_idx, term in (lex_aut.iter(text) if self.lex_count else []):
             start = end_idx - len(term) + 1
             end = end_idx + 1
             if not self._boundary_ok(text, start, end, term):

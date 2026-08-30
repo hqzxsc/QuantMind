@@ -831,19 +831,23 @@ async def get_model_drift(
     if not model:
         async with get_session(read_only=True) as session:
             row = (
-                await session.execute(
-                    text(
-                        """
+                (
+                    await session.execute(
+                        text(
+                            """
                         SELECT tenant_id, user_id, model_id, storage_path, model_file,
                                metadata_json, metrics_json, is_default, created_at
                         FROM qm_user_models
                         WHERE tenant_id = :tenant_id AND model_id = :model_id
                         LIMIT 1
                         """
-                    ),
-                    {"tenant_id": tenant_id, "model_id": model_id},
+                        ),
+                        {"tenant_id": tenant_id, "model_id": model_id},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if row:
                 model = {
                     "tenant_id": row["tenant_id"],
@@ -851,17 +855,27 @@ async def get_model_drift(
                     "model_id": row["model_id"],
                     "storage_path": row["storage_path"],
                     "model_file": row["model_file"],
-                    "metadata_json": row["metadata_json"] if isinstance(row["metadata_json"], dict) else {},
-                    "metrics_json": row["metrics_json"] if isinstance(row["metrics_json"], dict) else {},
+                    "metadata_json": row["metadata_json"]
+                    if isinstance(row["metadata_json"], dict)
+                    else {},
+                    "metrics_json": row["metrics_json"]
+                    if isinstance(row["metrics_json"], dict)
+                    else {},
                     "is_default": row["is_default"],
                     "created_at": row["created_at"],
                 }
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    metadata = model.get("metadata_json") if isinstance(model.get("metadata_json"), dict) else {}
+    metadata = (
+        model.get("metadata_json")
+        if isinstance(model.get("metadata_json"), dict)
+        else {}
+    )
     drift = metadata.get("drift") if isinstance(metadata.get("drift"), dict) else None
     if not drift or not drift.get("enabled"):
-        drift = metadata.get("drift") if isinstance(metadata.get("drift"), dict) else None
+        drift = (
+            metadata.get("drift") if isinstance(metadata.get("drift"), dict) else None
+        )
     if not drift:
         return {"enabled": False, "reason": "drift not available", "model_id": model_id}
     return {"model_id": model_id, **drift}
@@ -881,19 +895,23 @@ async def get_model_market_regime(
     if not model:
         async with get_session(read_only=True) as session:
             row = (
-                await session.execute(
-                    text(
-                        """
+                (
+                    await session.execute(
+                        text(
+                            """
                         SELECT tenant_id, user_id, model_id, storage_path, model_file,
                                metadata_json, metrics_json, is_default, created_at
                         FROM qm_user_models
                         WHERE tenant_id = :tenant_id AND model_id = :model_id
                         LIMIT 1
                         """
-                    ),
-                    {"tenant_id": tenant_id, "model_id": model_id},
+                        ),
+                        {"tenant_id": tenant_id, "model_id": model_id},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if row:
                 model = {
                     "tenant_id": row["tenant_id"],
@@ -901,8 +919,12 @@ async def get_model_market_regime(
                     "model_id": row["model_id"],
                     "storage_path": row["storage_path"],
                     "model_file": row["model_file"],
-                    "metadata_json": row["metadata_json"] if isinstance(row["metadata_json"], dict) else {},
-                    "metrics_json": row["metrics_json"] if isinstance(row["metrics_json"], dict) else {},
+                    "metadata_json": row["metadata_json"]
+                    if isinstance(row["metadata_json"], dict)
+                    else {},
+                    "metrics_json": row["metrics_json"]
+                    if isinstance(row["metrics_json"], dict)
+                    else {},
                     "is_default": row["is_default"],
                     "created_at": row["created_at"],
                 }
@@ -937,7 +959,12 @@ async def get_model_market_regime(
                             LIMIT :window
                             """
                         ),
-                        {"tenant_id": tenant_id, "user_id": user_id, "model_id": model_id, "window": int(window)},
+                        {
+                            "tenant_id": tenant_id,
+                            "user_id": user_id,
+                            "model_id": model_id,
+                            "window": int(window),
+                        },
                     )
                 )
                 .mappings()
@@ -946,16 +973,26 @@ async def get_model_market_regime(
         for row in rows:
             d = dict(row)
             avg = float(d.get("avg_score") or 0)
-            regime = "bull" if avg >= bull_thr else "bear" if avg < bear_thr else "sideways"
-            color = "#ef4444" if regime == "bull" else "#10b981" if regime == "bear" else "#94a3b8"
-            series.append({
-                "trade_date": str(d.get("trade_date") or "")[:10],
-                "avg_score": round(avg, 4),
-                "median_score": round(float(d.get("median_score") or 0), 4),
-                "count": int(d.get("cnt") or 0),
-                "regime": regime,
-                "color": color,
-            })
+            regime = (
+                "bull" if avg >= bull_thr else "bear" if avg < bear_thr else "sideways"
+            )
+            color = (
+                "#ef4444"
+                if regime == "bull"
+                else "#10b981"
+                if regime == "bear"
+                else "#94a3b8"
+            )
+            series.append(
+                {
+                    "trade_date": str(d.get("trade_date") or "")[:10],
+                    "avg_score": round(avg, 4),
+                    "median_score": round(float(d.get("median_score") or 0), 4),
+                    "count": int(d.get("cnt") or 0),
+                    "regime": regime,
+                    "color": color,
+                }
+            )
         # 与个股终端一致：若 engine_signal_scores 为空，回退读历史推理 parquet 平均分（pred.parquet）
         if not series:
             storage_path = str(model.get("storage_path") or "").strip()
@@ -964,16 +1001,37 @@ async def get_model_market_regime(
 
                 pred_path = Path(storage_path) / "pred.parquet"
                 # 兼容部分模型 pred 存储在上级或 pred/ 目录
-                candidates = [pred_path, Path(storage_path) / "pred" / "pred.parquet", Path(storage_path) / "pred.parquet"]
+                candidates = [
+                    pred_path,
+                    Path(storage_path) / "pred" / "pred.parquet",
+                    Path(storage_path) / "pred.parquet",
+                ]
                 parquet_file = next((p for p in candidates if p.is_file()), None)
                 if parquet_file:
                     try:
                         # 统一字段：pred / fusion_score 均可能
                         con = duckdb.connect()
                         # 先探列
-                        cols = [r[0] for r in con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0").description]
-                        score_col = "pred" if "pred" in cols else "fusion_score" if "fusion_score" in cols else None
-                        date_col = "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
+                        cols = [
+                            r[0]
+                            for r in con.execute(
+                                f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0"
+                            ).description
+                        ]
+                        score_col = (
+                            "pred"
+                            if "pred" in cols
+                            else "fusion_score"
+                            if "fusion_score" in cols
+                            else None
+                        )
+                        date_col = (
+                            "trade_date"
+                            if "trade_date" in cols
+                            else "date"
+                            if "date" in cols
+                            else None
+                        )
                         if score_col and date_col:
                             q = f"""
                                 SELECT CAST(trade_date AS VARCHAR) AS trade_date,
@@ -997,23 +1055,43 @@ async def get_model_market_regime(
                                     avg = float(avg_score or 0)
                                 except Exception:
                                     continue
-                                regime = "bull" if avg >= bull_thr else "bear" if avg < bear_thr else "sideways"
-                                color = "#ef4444" if regime == "bull" else "#10b981" if regime == "bear" else "#94a3b8"
-                                series.append({
-                                    "trade_date": str(trade_date)[:10],
-                                    "avg_score": round(avg, 4),
-                                    "median_score": round(float(median_score or 0), 4),
-                                    "count": int(cnt or 0),
-                                    "regime": regime,
-                                    "color": color,
-                                })
+                                regime = (
+                                    "bull"
+                                    if avg >= bull_thr
+                                    else "bear"
+                                    if avg < bear_thr
+                                    else "sideways"
+                                )
+                                color = (
+                                    "#ef4444"
+                                    if regime == "bull"
+                                    else "#10b981"
+                                    if regime == "bear"
+                                    else "#94a3b8"
+                                )
+                                series.append(
+                                    {
+                                        "trade_date": str(trade_date)[:10],
+                                        "avg_score": round(avg, 4),
+                                        "median_score": round(
+                                            float(median_score or 0), 4
+                                        ),
+                                        "count": int(cnt or 0),
+                                        "regime": regime,
+                                        "color": color,
+                                    }
+                                )
                             con.close()
                     except Exception as exc:
-                        logger.warning("market-regime parquet fallback failed %s: %s", model_id, exc)
+                        logger.warning(
+                            "market-regime parquet fallback failed %s: %s",
+                            model_id,
+                            exc,
+                        )
         series.sort(key=lambda x: x["trade_date"])
         # 仅保留最近 90 交易日
         if len(series) > int(window):
-            series = series[-int(window):]
+            series = series[-int(window) :]
         current = series[-1] if series else None
         return {
             "model_id": model_id,
@@ -1032,7 +1110,11 @@ _backfill_tasks: dict[str, dict[str, Any]] = {}
 
 def _resolve_pred_candidates(storage_path: str) -> list[Path]:
     base = Path(storage_path)
-    return [base / "pred.parquet", base / "pred" / "pred.parquet", base / "pred.parquet"]
+    return [
+        base / "pred.parquet",
+        base / "pred" / "pred.parquet",
+        base / "pred.parquet",
+    ]
 
 
 def _read_pred_dates(parquet_file: Path) -> list[str]:
@@ -1040,11 +1122,20 @@ def _read_pred_dates(parquet_file: Path) -> list[str]:
 
     con = duckdb.connect()
     try:
-        cols = [r[0] for r in con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0").description]
-        date_col = "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
+        cols = [
+            r[0]
+            for r in con.execute(
+                f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0"
+            ).description
+        ]
+        date_col = (
+            "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
+        )
         if not date_col:
             return []
-        rows = con.execute(f"SELECT DISTINCT CAST({date_col} AS DATE) AS d FROM read_parquet('{str(parquet_file)}') ORDER BY d").fetchall()
+        rows = con.execute(
+            f"SELECT DISTINCT CAST({date_col} AS DATE) AS d FROM read_parquet('{str(parquet_file)}') ORDER BY d"
+        ).fetchall()
         return [str(r[0])[:10] for r in rows if r[0] is not None]
     finally:
         try:
@@ -1067,7 +1158,9 @@ def _latest_trading_date() -> date:
             return today
         # previous session
         prev = cal.previous_session(ts_today)
-        return prev.date() if hasattr(prev, "date") else date.fromisoformat(str(prev)[:10])
+        return (
+            prev.date() if hasattr(prev, "date") else date.fromisoformat(str(prev)[:10])
+        )
     except Exception:
         return date.today()
 
@@ -1079,29 +1172,121 @@ async def get_inference_coverage(
 ):
     tenant_id = str(current_user.get("tenant_id") or "default")
     user_id = str(current_user.get("user_id") or current_user.get("sub") or "")
-    model = await model_registry_service.get_model(tenant_id=tenant_id, user_id=user_id, model_id=model_id)
+    model = await model_registry_service.get_model(
+        tenant_id=tenant_id, user_id=user_id, model_id=model_id
+    )
     if not model:
         async with get_session(read_only=True) as session:
             row = (
-                await session.execute(
-                    text("SELECT tenant_id, user_id, model_id, storage_path FROM qm_user_models WHERE tenant_id=:t AND model_id=:m LIMIT 1"),
-                    {"t": tenant_id, "m": model_id},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT tenant_id, user_id, model_id, storage_path FROM qm_user_models WHERE tenant_id=:t AND model_id=:m LIMIT 1"
+                        ),
+                        {"t": tenant_id, "m": model_id},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if row:
-                model = {"storage_path": row["storage_path"], "model_id": row["model_id"]}
+                model = {
+                    "storage_path": row["storage_path"],
+                    "model_id": row["model_id"],
+                }
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     storage_path = str(model.get("storage_path") or "").strip()
     if not storage_path:
-        return {"model_id": model_id, "min_date": None, "max_date": None, "count": 0, "gap_dates": [], "latest_trade_date": str(_latest_trading_date()), "is_up_to_date": False}
-    parquet_file = next((p for p in _resolve_pred_candidates(storage_path) if p.is_file()), None)
+        return {
+            "model_id": model_id,
+            "min_date": None,
+            "max_date": None,
+            "count": 0,
+            "gap_dates": [],
+            "latest_trade_date": str(_latest_trading_date()),
+            "is_up_to_date": False,
+        }
+    parquet_file = next(
+        (p for p in _resolve_pred_candidates(storage_path) if p.is_file()), None
+    )
+    # Windows 本地开发：storage_path 为 Linux 绝对路径 /app/models/... 本地不存在；
+    # 此时 QuantDB 目录 D:/quant_data 仍可用，用因子可用日期兜底展示日历
+    quantdb_fallback_dates: list[str] | None = None
     if not parquet_file:
-        return {"model_id": model_id, "min_date": None, "max_date": None, "count": 0, "gap_dates": [], "latest_trade_date": str(_latest_trading_date()), "is_up_to_date": False}
+        try:
+            meta = (
+                model.get("metadata_json")
+                if isinstance(model.get("metadata_json"), dict)
+                else {}
+            )
+            ctx = meta.get("context") if isinstance(meta.get("context"), dict) else {}
+            factor_source = str(
+                meta.get("factor_source") or ctx.get("factor_source") or "l1_factors"
+            )
+            market = str(ctx.get("market") or meta.get("market") or "CN")
+            from backend.services.engine.data_platform.quantdb_factor_reader import (
+                QuantDBFactorReader,
+                market_data_dir,
+            )
+
+            # 复用已修复的 market_data_dir（会正确指向 D:/quant_data）
+            qdir = market_data_dir(market)
+            if qdir.is_dir():
+                reader = QuantDBFactorReader(qdir, market=market)
+                quantdb_fallback_dates = reader.available_dates(factor_source)
+        except Exception:
+            quantdb_fallback_dates = None
+        if quantdb_fallback_dates:
+            # 用 QuantDB 因子可覆盖日期作为模板日历兜底
+            min_date, max_date = quantdb_fallback_dates[0], quantdb_fallback_dates[-1]
+            latest = _latest_trading_date()
+            try:
+                import exchange_calendars as xcals
+                import pandas as pd
+
+                cal = xcals.get_calendar("XSHG")
+                start = pd.Timestamp(max_date) + pd.Timedelta(days=1)
+                end = pd.Timestamp(latest)
+                gap = (
+                    [d.strftime("%Y-%m-%d") for d in cal.sessions_in_range(start, end)]
+                    if start <= end
+                    else []
+                )
+            except Exception:
+                gap = []
+            return {
+                "model_id": model_id,
+                "min_date": min_date,
+                "max_date": max_date,
+                "count": len(quantdb_fallback_dates),
+                "gap_dates": gap,
+                "latest_trade_date": str(latest),
+                "is_up_to_date": len(gap) == 0,
+                "source": "quantdb_fallback",
+            }
+        return {
+            "model_id": model_id,
+            "min_date": None,
+            "max_date": None,
+            "count": 0,
+            "gap_dates": [],
+            "latest_trade_date": str(_latest_trading_date()),
+            "is_up_to_date": False,
+            "reason": "pred.parquet not found and quantdb unavailable",
+        }
     try:
         dates = _read_pred_dates(parquet_file)
         if not dates:
-            return {"model_id": model_id, "min_date": None, "max_date": None, "count": 0, "gap_dates": [], "latest_trade_date": str(_latest_trading_date()), "is_up_to_date": False}
+            return {
+                "model_id": model_id,
+                "min_date": None,
+                "max_date": None,
+                "count": 0,
+                "gap_dates": [],
+                "latest_trade_date": str(_latest_trading_date()),
+                "is_up_to_date": False,
+            }
         min_date, max_date = dates[0], dates[-1]
         latest = _latest_trading_date()
         # 生成交易日缺口
@@ -1140,17 +1325,28 @@ async def trigger_backfill(
 ):
     tenant_id = str(current_user.get("tenant_id") or "default")
     user_id = str(current_user.get("user_id") or current_user.get("sub") or "")
-    model = await model_registry_service.get_model(tenant_id=tenant_id, user_id=user_id, model_id=model_id)
+    model = await model_registry_service.get_model(
+        tenant_id=tenant_id, user_id=user_id, model_id=model_id
+    )
     if not model:
         async with get_session(read_only=True) as session:
             row = (
-                await session.execute(
-                    text("SELECT storage_path FROM qm_user_models WHERE tenant_id=:t AND model_id=:m LIMIT 1"),
-                    {"t": tenant_id, "m": model_id},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT storage_path FROM qm_user_models WHERE tenant_id=:t AND model_id=:m LIMIT 1"
+                        ),
+                        {"t": tenant_id, "m": model_id},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if row:
-                model = {"storage_path": row["storage_path"], "model_id": row["model_id"]}
+                model = {
+                    "storage_path": row["storage_path"],
+                    "model_id": row["model_id"],
+                }
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     cov = await get_inference_coverage(model_id, current_user)
@@ -1158,7 +1354,15 @@ async def trigger_backfill(
     if not gaps:
         return {"task_id": None, "status": "completed", "message": "已是最新", "gap": 0}
     task_id = f"backfill_{uuid.uuid4().hex[:8]}"
-    _backfill_tasks[task_id] = {"task_id": task_id, "model_id": model_id, "status": "running", "progress": 0, "gap": len(gaps), "logs": "", "appended": 0}
+    _backfill_tasks[task_id] = {
+        "task_id": task_id,
+        "model_id": model_id,
+        "status": "running",
+        "progress": 0,
+        "gap": len(gaps),
+        "logs": "",
+        "appended": 0,
+    }
 
     async def _run():
         appended = 0
@@ -1166,7 +1370,9 @@ async def trigger_backfill(
         logs: list[str] = []
         try:
             storage_path = str(model.get("storage_path") or "")
-            parquet_file = next((p for p in _resolve_pred_candidates(storage_path) if p.is_file()), None)
+            parquet_file = next(
+                (p for p in _resolve_pred_candidates(storage_path) if p.is_file()), None
+            )
             if not parquet_file:
                 parquet_file = Path(storage_path) / "pred.parquet"
             for idx, d in enumerate(gaps):
@@ -1174,16 +1380,24 @@ async def trigger_backfill(
                     import duckdb
                     import pandas as pd
 
-                    _backfill_tasks[task_id]["progress"] = int((idx + 1) / len(gaps) * 100)
+                    _backfill_tasks[task_id]["progress"] = int(
+                        (idx + 1) / len(gaps) * 100
+                    )
                     _backfill_tasks[task_id]["logs"] = "\n".join(logs[-50:])
                     # 真实追加：取最近已覆盖日的全量行，改 trade_date 为缺口日后 append
                     # 若模型为 LightGBM 且 QuantDB 特征可用，后续可替换为 runner 推理
                     con = duckdb.connect()
                     try:
                         # 取最近已覆盖日作为模板
-                        last_date = _read_pred_dates(parquet_file)[-1] if parquet_file.is_file() else None
+                        last_date = (
+                            _read_pred_dates(parquet_file)[-1]
+                            if parquet_file.is_file()
+                            else None
+                        )
                         if last_date:
-                            df = con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}') WHERE CAST(trade_date AS VARCHAR) = '{last_date}'").df()
+                            df = con.execute(
+                                f"SELECT * FROM read_parquet('{str(parquet_file)}') WHERE CAST(trade_date AS VARCHAR) = '{last_date}'"
+                            ).df()
                             if not df.empty:
                                 df["trade_date"] = pd.Timestamp(d)
                                 # 追加写回（duckdb 追加需用 pandas + parquet）
@@ -1191,10 +1405,14 @@ async def trigger_backfill(
                                 import pyarrow.parquet as pq
 
                                 # 读全量后追加
-                                existing = con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}')").df()
+                                existing = con.execute(
+                                    f"SELECT * FROM read_parquet('{str(parquet_file)}')"
+                                ).df()
                                 combined = pd.concat([existing, df], ignore_index=True)
                                 # 去重：同一 trade_date+symbol 保留最新
-                                combined = combined.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
+                                combined = combined.drop_duplicates(
+                                    subset=["symbol", "trade_date"], keep="last"
+                                )
                                 combined.to_parquet(str(parquet_file), index=False)
                                 appended += 1
                                 logs.append(f"{d} 推理完成（模板复制 {len(df)} 行）")
@@ -1212,19 +1430,52 @@ async def trigger_backfill(
                     failed += 1
                     logs.append(f"{d} 失败: {exc}")
                     logger.warning("backfill %s %s failed: %s", model_id, d, exc)
-                _backfill_tasks[task_id].update({"progress": int((idx + 1) / len(gaps) * 100), "logs": "\n".join(logs[-100:]), "appended": appended, "failed": failed})
+                _backfill_tasks[task_id].update(
+                    {
+                        "progress": int((idx + 1) / len(gaps) * 100),
+                        "logs": "\n".join(logs[-100:]),
+                        "appended": appended,
+                        "failed": failed,
+                    }
+                )
             if failed:
-                _backfill_tasks[task_id].update({"status": "failed", "progress": 100, "logs": "\n".join(logs[-200:]), "appended": appended, "failed": failed, "error": f"{failed}/{len(gaps)} 日失败"})
+                _backfill_tasks[task_id].update(
+                    {
+                        "status": "failed",
+                        "progress": 100,
+                        "logs": "\n".join(logs[-200:]),
+                        "appended": appended,
+                        "failed": failed,
+                        "error": f"{failed}/{len(gaps)} 日失败",
+                    }
+                )
             else:
-                _backfill_tasks[task_id].update({"status": "completed", "progress": 100, "logs": "\n".join(logs[-200:]), "appended": appended, "failed": 0})
+                _backfill_tasks[task_id].update(
+                    {
+                        "status": "completed",
+                        "progress": 100,
+                        "logs": "\n".join(logs[-200:]),
+                        "appended": appended,
+                        "failed": 0,
+                    }
+                )
         except Exception as exc:
-            _backfill_tasks[task_id].update({"status": "failed", "error": str(exc), "logs": "\n".join(logs[-200:])})
+            _backfill_tasks[task_id].update(
+                {"status": "failed", "error": str(exc), "logs": "\n".join(logs[-200:])}
+            )
 
     background_tasks.add_task(_run)
-    return {"task_id": task_id, "status": "running", "gap": len(gaps), "target_dates": gaps}
+    return {
+        "task_id": task_id,
+        "status": "running",
+        "gap": len(gaps),
+        "target_dates": gaps,
+    }
 
 
-@router.get("/{model_id}/inference/backfill/{task_id}", summary="查询补全任务状态（用户态）")
+@router.get(
+    "/{model_id}/inference/backfill/{task_id}", summary="查询补全任务状态（用户态）"
+)
 async def get_backfill_status(
     model_id: str,
     task_id: str,

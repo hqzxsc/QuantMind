@@ -14,7 +14,8 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
+from collections.abc import Iterable
 
 import pandas as pd
 
@@ -95,10 +96,30 @@ def default_source_for(market: str | None = None) -> FactorSource:
 
 
 def market_data_dir(market: str | None = None) -> Path:
-    """解析某市场数据根目录（api 容器内视角）。缺省回退市场默认路径。"""
+    """解析某市场数据根目录（api 容器内视角）。缺省回退市场默认路径。
+
+    Ubuntu 容器设计：仅识别容器内路径 /data/quantdb 及环境变量，
+    不探测 Windows 盘符，避免本地盘符污染服务端判断。
+    """
     market_upper = normalize_market(market)
     env_val = os.getenv(MARKET_DATA_DIR_ENV[market_upper], "").strip()
-    return Path(env_val) if env_val else Path(MARKET_DATA_DIR_DEFAULT[market_upper])
+    if env_val:
+        return Path(env_val)
+    # CN 市场优先通过 hub 统一解析（hub 按 /data/quantdb -> /app/data/quantdb 探测）
+    if market_upper == "CN":
+        try:
+            from backend.services.engine.data_platform.quantdb_hub import (
+                _resolve_data_dir,
+            )
+
+            hub_dir = _resolve_data_dir()
+            if hub_dir.is_dir():
+                return hub_dir
+        except Exception:
+            pass
+    return Path(MARKET_DATA_DIR_DEFAULT[market_upper])
+
+
 KEY_COLUMNS = {"symbol", "date", "dt", "time", "release_id", "published_at"}
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -265,7 +286,9 @@ class QuantDBFactorReader:
         if missing and set(missing) <= set(OHLCV_COLUMNS):
             # 次要源（ccass/south）：OHLCV 由同目录 l1_factors 补给，标签可构建。
             donor = self._ohlcv_donor_relation()
-            if donor is not None and set(OHLCV_COLUMNS) <= self._relation_columns(donor):
+            if donor is not None and set(OHLCV_COLUMNS) <= self._relation_columns(
+                donor
+            ):
                 missing = []
             else:
                 reason = "Missing OHLCV columns (l1_factors donor unavailable)"
@@ -280,7 +303,9 @@ class QuantDBFactorReader:
             max_date=str(date_row[1])[:10] if date_row and date_row[1] else None,
             ready=not missing,
             missing_required=missing,
-            reason=None if not missing else (reason or "Missing required common columns"),
+            reason=None
+            if not missing
+            else (reason or "Missing required common columns"),
         )
 
     def discover(self, market: str | None = None) -> dict[str, dict]:
@@ -390,7 +415,7 @@ class QuantDBFactorReader:
         if include_ohlcv:
             for column in REQUIRED_COLUMNS[2:]:
                 if column in status.columns:
-                    factor_column = f'f.{_quote(column)}'
+                    factor_column = f"f.{_quote(column)}"
                     if ohlcv_join:
                         # 源内行情列优先，缺失部分由补给表补齐
                         # （CN: daily_backward 后复权日线；HK: l1_factors）。

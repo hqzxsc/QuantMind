@@ -1,7 +1,7 @@
 /** 个股终端 — 搜索驱动展示：顶部搜索 + 左右布局（左上K线/左下推理分 + 右详情） */
 import { useCallback, useEffect, useState } from 'react';
-import { CandlestickChart, Search, Layers, Building2, Link2 } from 'lucide-react';
-import { message, Tooltip } from 'antd';
+import { CandlestickChart, Search, Layers, Building2 } from 'lucide-react';
+import { message } from 'antd';
 import { PAGE_LAYOUT } from '../../../config/pageLayout';
 import { StockListItem, StockProfile, KlineBar } from '../types';
 import { stockTerminalService, type KlineAdjust } from '../services/stockTerminalService';
@@ -75,9 +75,7 @@ export default function StockTerminalPage() {
   const [signalDate, setSignalDate] = useState<string | undefined>(undefined);
   const [detailTab, setDetailTab] = useState<DetailTab>('overview');
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
-  const [alignScores, setAlignScores] = useState(false);
   const [scorePoints, setScorePoints] = useState<ScorePoint[]>([]);
-  const scoreDates = scorePoints.map((p) => p.date);
 
   // watchlist 仅为搜索下拉星标
   useEffect(() => {
@@ -117,7 +115,8 @@ export default function StockTerminalPage() {
     };
   }, [selected, signalDate]);
 
-  // K线随选中+周期+复权方式联动
+  // K线随选中+周期+复权方式联动；锁定最长 2 年——以当前日期向前推 2 年的精确区间拉取，
+  // 周/月由日K重采样。不传 days：后端只传 days 时会按 days×2 自然日回溯，区间会超出 2 年。
   useEffect(() => {
     if (!selected) {
       setBars([]);
@@ -125,8 +124,12 @@ export default function StockTerminalPage() {
     }
     let cancelled = false;
     setBarsLoading(true);
+    const endD = new Date();
+    const startD = new Date(endD);
+    startD.setFullYear(startD.getFullYear() - 2);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
     stockTerminalService
-      .getDailyKline(selected.symbol, 250, adjust)
+      .getDailyKline(selected.symbol, 500, adjust, iso(startD), iso(endD))
       .then((items) => {
         if (cancelled) return;
         if (period !== 'daily' && items.length) {
@@ -150,25 +153,6 @@ export default function StockTerminalPage() {
   }, [selected, period, adjust]);
 
   const up = (profile?.pct_change ?? selected?.pct_change ?? 0) >= 0;
-
-  // 分数对齐：日K 时按分数日期精确过滤，周/月按区间包含
-  const scoreDateSet = new Set(scoreDates);
-  const alignedBars = (() => {
-    if (!alignScores || !scoreDateSet.size || !bars.length) return bars;
-    if (period === 'daily') {
-      return bars.filter((b) => scoreDateSet.has(b.date));
-    }
-    // 周/月：若该周期内包含任一分数日期则保留
-    return bars.filter((b) => {
-      for (const d of scoreDateSet) {
-        if (period === 'weekly') {
-          if (weekKey(d) === weekKey(b.date)) return true;
-        } else if (d.slice(0, 7) === b.date.slice(0, 7)) return true;
-      }
-      return false;
-    });
-  })();
-  const displayBars = alignScores ? alignedBars : bars;
 
   return (
     <div className={PAGE_LAYOUT.outerClass}>
@@ -230,17 +214,6 @@ export default function StockTerminalPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-full shrink-0">
-                    <Tooltip title={scoreDates.length ? `按下方 ${scoreDates.length} 个分数日同步` : '暂无分数日期'}>
-                      <button
-                        onClick={() => setAlignScores(!alignScores)}
-                        disabled={!scoreDates.length}
-                        className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${alignScores ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed'}`}
-                      >
-                        <Link2 className="w-3 h-3" />
-                        分数对齐
-                      </button>
-                    </Tooltip>
-                    <div className="w-px h-4 bg-slate-200 mx-1" />
                     {KLINE_PERIODS.map((p) => (
                       <button
                         key={p.key}
@@ -262,29 +235,23 @@ export default function StockTerminalPage() {
                     ))}
                   </div>
                 </div>
-                <div className="flex-1 min-h-0 p-2">
+                <div className="flex-1 min-h-0 p-2 flex flex-col">
                   {barsLoading ? (
                     <div className="h-full flex items-center justify-center text-xs text-slate-400">K线加载中…</div>
-                  ) : displayBars.length ? (
-                    <>
-                      {alignScores && (
-                        <div className="px-2 pb-1 text-[10px] text-indigo-500 font-mono">
-                          已按分数对齐 · 显示 {displayBars.length}/{bars.length} 根{period !== 'daily' ? `（${period === 'weekly' ? '周' : '月'}内含分数日）` : ''}
-                        </div>
-                      )}
-                      <KlineChart bars={displayBars} config={{ ma: true, boll: false, subplots: ['vol'] }} overlays={[]} height={alignScores ? 304 : 320} period={period} scorePoints={scorePoints.map((p) => ({ date: p.date, value: p.value }))} showScoreSubplot={true} />
-                    </>
-                  ) : (
-                    <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                      {alignScores ? '对齐后无重叠日期，请切换日K或取消对齐' : '暂无K线'}
+                  ) : bars.length ? (
+                    <div className="flex-1 min-h-0">
+                      <KlineChart bars={bars} config={{ ma: true, boll: false, subplots: ['vol'] }} overlays={[]} period={period} scorePoints={scorePoints.map((p) => ({ date: p.date, value: p.value }))} showScoreSubplot={true} />
                     </div>
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-xs text-slate-400">暂无K线</div>
                   )}
                 </div>
               </div>
 
               {/* 推理分折线卡 */}
               <div className="h-[280px] shrink-0 rounded-3xl bg-white border border-purple-100/80 shadow-sm overflow-hidden flex flex-col p-3">
-                <InferenceScoreChart symbol={selected.symbol} selectedDate={signalDate} onPointClick={setSignalDate} onScoresLoaded={(pts) => setScorePoints(pts as any)} alignedDates={alignScores ? displayBars.map((b) => b.date) : undefined} height={250} />
+                {/* days=750：K线锁定当前日期向前 2 年（≈730 自然日），分数窗口留余量保证副图覆盖整段 K 线；切换股票时随 symbol 重新拉取 */}
+                <InferenceScoreChart symbol={selected.symbol} selectedDate={signalDate} onPointClick={setSignalDate} onScoresLoaded={(pts) => setScorePoints(pts as any)} height={250} days={750} />
               </div>
             </div>
 

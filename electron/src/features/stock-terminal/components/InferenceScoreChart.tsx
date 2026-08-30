@@ -11,10 +11,12 @@ interface Props {
   modelId?: string;
   selectedDate?: string | null; // 当前联动日期（高亮）
   onPointClick?: (date: string) => void;
-  onScoresLoaded?: (points: Point[]) => void; // 分数点回传，供 K 线对齐及副图
-  alignedDates?: string[]; // K 线对齐时的 X 轴日期（与 K 线一致）
+  onScoresLoaded?: (points: Point[]) => void; // 分数点回传，供 K 线副图使用
   refreshKey?: number;
   height?: number;
+  /** 分数回溯窗口（自然日）。默认 180；个股终端需传更大值以覆盖「当前日期向前 2 年」的 K 线全区间，
+   * 否则 K 线副图左侧交易日没有分数。 */
+  days?: number;
 }
 
 export interface Point {
@@ -23,7 +25,7 @@ export interface Point {
   side: string | null;
 }
 
-export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScoresLoaded, alignedDates, refreshKey = 0, height = 220 }: Props) {
+export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScoresLoaded, refreshKey = 0, height = 220, days = 180 }: Props) {
   const [points, setPoints] = useState<Point[]>([]);
   const [loading, setLoading] = useState(false);
   const [modelName, setModelName] = useState<string>('');
@@ -36,9 +38,10 @@ export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScor
     let cancelled = false;
     setLoading(true);
     const code = symbol.split('.')[0];
-    // 不传 model_id：后端锁定用户默认模型的 pred.parquet，响应 models 恒为默认模型一个
+    // 不传 model_id：后端锁定用户默认模型的 pred.parquet，响应 models 恒为默认模型一个；
+    // days 由调用方控制窗口（个股终端传 750 保证覆盖最长 2 年的 K 线）
     modelTrainingService
-      .getStockInferenceHistory(code, 180)
+      .getStockInferenceHistory(code, days)
       .then((resp) => {
         if (cancelled) return;
         const pts: Point[] = (resp.items ?? [])
@@ -69,19 +72,12 @@ export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScor
     return () => {
       cancelled = true;
     };
-  }, [symbol, refreshKey]);
+  }, [symbol, refreshKey, days]);
 
   const option = useMemo(() => {
     if (!points.length) return null;
-    // 对齐模式：X 轴与 K 线一致（displayBars 的日期），否则用分数自身日期
-    const useAligned = !!(alignedDates && alignedDates.length);
-    const dates = useAligned ? alignedDates! : points.map((p) => p.date);
-    const values = useAligned
-      ? (() => {
-          const m = new Map(points.map((p) => [p.date, p.value]));
-          return dates.map((d) => (m.has(d) ? (m.get(d) as number) : null as any));
-        })()
-      : points.map((p) => p.value);
+    const dates = points.map((p) => p.date);
+    const values = points.map((p) => p.value);
     const numericVals = (values as any[]).filter((v) => typeof v === 'number' && Number.isFinite(v)) as number[];
     const min = numericVals.length ? Math.min(...numericVals) : 0;
     const max = numericVals.length ? Math.max(...numericVals) : 1;

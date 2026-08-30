@@ -79,10 +79,11 @@ class StockTerminalService {
     }
   }
 
-  async getDailyKline(symbol: string, days = 500, adjust: KlineAdjust = 'qfq'): Promise<KlineBar[]> {
+  /** 日K：传 start/end 时按精确日期区间拉取（后端不再做 days×2 自然日放大）；否则按 days 回溯 */
+  async getDailyKline(symbol: string, days = 500, adjust: KlineAdjust = 'qfq', start?: string, end?: string): Promise<KlineBar[]> {
     try {
       const resp = await this.client.get('/market/kline', {
-        params: { symbol, market: 'A', days, adjust },
+        params: { symbol, market: 'A', adjust, ...(start ? { start, end } : { days }) },
       });
       const items = resp.data?.data?.items ?? [];
       return items.map((it: any) => ({

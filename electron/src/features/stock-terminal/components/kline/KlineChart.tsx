@@ -1,6 +1,6 @@
 /** 个股终端 K 线图：主图（蜡烛+MA/BOLL+指数叠加+交易/参考线）+ 副图（VOL/MACD/KDJ/RSI）+ 推理分数副图（多模型+策略提醒+参考线） */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { KlineBar } from '../../types';
 import { boll, kdj, macd, rsi, sma, volMa, Series } from '../../engine/indicators';
@@ -88,7 +88,8 @@ const SEVERITY_COLOR: Record<AlertPoint['severity'], string> = {
 const AXIS_LABEL = { fontSize: 10, color: '#64748b' };
 const AXIS_LINE = { lineStyle: { color: '#e2e8f0' } };
 const SPLIT_LINE = { lineStyle: { color: '#f1f5f9' } };
-const SUB_HEIGHT = 84;  // 每个副图高度 px
+const SUB_HEIGHT = 84;  // 每个副图高度 px（VOL/MACD 等）
+const SCORE_SUB_HEIGHT = 132;  // 推理分数副图单独拉高（曲线波动小，需要更高可读性）
 /** 默认黄金线（策略 v2.0 主板黄金买入区间 0.10-0.12 的下沿） */
 const DEFAULT_REF_LINE: RefLine = { id: 'default-golden', value: 0.10, label: '黄金线', color: '#10b981' };
 
@@ -113,6 +114,20 @@ export function KlineChart({
   bars, config, overlays, height = 460, period = 'daily',
   signals = [], btEquity = [], scoreSeries = [], scorePoints, showScoreSubplot = false, alerts = [], trades = [], refLines = [], onBarClick,
 }: Props) {
+  // 自适应容器高度：图表铺满父容器（个股终端 K 线卡内部空间），不再写死 320 留下大片空白；
+  // 未测量到时回退 height 属性（其它定高调用方）
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [boxH, setBoxH] = useState(0);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBoxH(el.clientHeight));
+    ro.observe(el);
+    setBoxH(el.clientHeight);
+    return () => ro.disconnect();
+  }, []);
+  const chartH = boxH > 120 ? boxH : height;
+
   const option = useMemo(() => {
     const dates = bars.map(b => b.date);
     const closes = bars.map(b => b.close);
@@ -148,8 +163,12 @@ export function KlineChart({
     const TOP = 24;                    // 顶部留出图例行
     const hasScoreSubplot = !!(showScoreSubplot && scorePoints?.length);
     const subCount = config.subplots.length + (hasScoreSubplot ? 1 : 0);
-    const subTotal = subCount > 0 ? (subCount * SUB_HEIGHT + (subCount - 1) * SUB_GAP) : 0;
-    const mainH = Math.max(140, height - TOP - GAP - subTotal - 18);
+    const subTotal = subCount > 0
+      ? (config.subplots.length * SUB_HEIGHT
+          + (hasScoreSubplot ? SCORE_SUB_HEIGHT : 0)
+          + (subCount - 1) * SUB_GAP)
+      : 0;
+    const mainH = Math.max(140, chartH - TOP - GAP - subTotal - 26);
     const grids: any[] = [];
     const xAxes: any[] = [];
     const yAxes: any[] = [];
@@ -323,7 +342,7 @@ export function KlineChart({
       const gi = grids.length;
       const xi = xAxes.length;
       const yi = yAxes.length;
-      grids.push({ left: GRID_L, right: GRID_R, top: subTop, height: SUB_HEIGHT });
+      grids.push({ left: GRID_L, right: GRID_R, top: subTop, height: SCORE_SUB_HEIGHT });
       const showLabel = true;
       xAxes.push({
         type: 'category', gridIndex: gi, data: dates, boundaryGap: true,
@@ -370,7 +389,7 @@ export function KlineChart({
         silent: true, symbol: 'none',
         data: [{ yAxis: 0, lineStyle: { color: '#94a3b8', type: 'dashed', width: 1 }, label: { formatter: '0', fontSize: 9, color: '#94a3b8' } }],
       } as any;
-      subTop += SUB_HEIGHT + SUB_GAP;
+      subTop += SCORE_SUB_HEIGHT + SUB_GAP;
     }
 
     // ── 推理分数：叠加到主图，共用主图 x 轴 + 右侧分数轴（scoreYI）──
@@ -519,7 +538,7 @@ export function KlineChart({
       ],
       series,
     };
-  }, [bars, config, overlays, height, signals, btEquity, scoreSeries, alerts, trades, refLines]);
+  }, [bars, config, overlays, chartH, signals, btEquity, scoreSeries, scorePoints, showScoreSubplot, period, alerts, trades, refLines]);
 
   const onEvents = onBarClick ? {
     click: (params: any) => {
@@ -532,14 +551,16 @@ export function KlineChart({
   } : undefined;
 
   return (
-    <ReactECharts
-      option={option}
-      notMerge
-      lazyUpdate
-      style={{ width: '100%', height }}
-      opts={{ renderer: 'canvas' }}
-      onEvents={onEvents}
-    />
+    <div ref={wrapRef} className="w-full h-full min-h-0">
+      <ReactECharts
+        option={option}
+        notMerge
+        lazyUpdate
+        style={{ width: '100%', height: chartH }}
+        opts={{ renderer: 'canvas' }}
+        onEvents={onEvents}
+      />
+    </div>
   );
 }
 

@@ -146,6 +146,20 @@ def get_strategy_config():
 3. `reset` 方法必须兼容可变参数：`def reset(self, *args, **kwargs)`
 4. 禁用：os, sys, subprocess, requests, socket 等危险模块
 """
+        platform_data = """
+### 平台数据资产口径（涉及数据查询/取数/排查数据问题时遵守）：
+
+**QuantDB 本地数据仓**（容器内 /data/quantdb，唯一读取入口 quantdb_hub.py）：
+- 六大目录：1_kline_data（日K/分钟K）、2_base_sector（行业/日历/指数权重）、3_financial_data（财报）、4_bond_etf、5_technical_derived（估值/技术指标/情绪）、6_ml_datasets（features_daily/l1/l2 因子）
+- 分区型数据为 Hive 分区 dt=YYYYMMDD/data.parquet，dt 是整数，DuckDB 过滤必须用整数区间，走谓词下推；单文件型为 {symbol}.parquet
+
+**股票代码双格式（高频踩坑）：**
+- 平台内部（Redis 键、PG 表、API 参数）统一前缀式：SH600519 / SZ000001
+- QuantDB parquet 内 symbol 为后缀式：600519.SH / 000001.SZ；查询前用 StockCodeUtil.to_suffix() 转换，反向用 to_prefix()
+- 用前缀式直查 parquet 会静默返回空且不报错，排查「查不到数据」先核对代码格式与响应的 source_used 字段
+
+**关键单位：**个股 volume=股、amount=万元（close*volume/amount≈1e4 可验证）；指数 volume=手；市值=元；比例类字段单位按数据集而定，不确定时先提示用户核对。
+"""
         return (
             "你是 QuantMind 的智能助手，用自然、友好的方式与用户交流。\n\n"
             "## 核心对话规则（必须严格遵守）\n"
@@ -161,6 +175,7 @@ def get_strategy_config():
             "- 只有当用户明确说'帮我写一个...策略'、'修改代码'、'回测'等技术指令时，才使用下面的技术规范\n"
             "- 下面的技术文档仅供参考，不要在用户未要求时主动使用\n\n"
             f"{strategy_classes}\n\n"
+            f"{platform_data}\n\n"
             "FORMATTING RULES:\n"
             "1. 使用标准 Markdown 输出。\n"
             "2. 涉及代码修改时，优先使用 SEARCH/REPLACE：\n"

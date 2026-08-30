@@ -121,7 +121,8 @@ const AI_ASSISTANT_DEVELOPMENT_RULES = [
     '3. 不要直接假设上下文不足；信息不全时先提问。',
     '4. 回答尽量简洁、可执行，避免长篇空话。',
     '5. 默认回测时间跨度设定为近 1 年；若信号覆盖不足，系统将自动自适应截断，请知悉并提示用户。',
-    '6. 股票代码强制使用 Prefix 格式（如 SH600036），禁止使用 Suffix 格式（如 600036.SH）。',
+    '6. 股票代码双格式口径：平台内部（Redis 键、PG 表、API 参数）强制前缀式（如 SH600036）；直读 QuantDB parquet 时 symbol 是后缀式（600036.SH），查询前必须用 StockCodeUtil.to_suffix() 转换，不要混用。',
+    '7. QuantDB 数据读取统一走 quantdb_hub.py；分区数据用整数 dt=YYYYMMDD 过滤；单位口径：个股 volume=股、amount=万元，指数 volume=手，市值=元。',
 ].join('\n');
 
 type SetRootOptions = {

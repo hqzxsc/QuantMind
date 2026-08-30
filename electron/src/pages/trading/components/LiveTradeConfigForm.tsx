@@ -198,7 +198,7 @@ const LiveTradeConfigForm: React.FC<Props> = ({
             <div className="mb-1 text-sm">卖出时间</div>
             <input
               type="time"
-              className={`${controlClassName} ${!isTimeInSessions(liveTradeConfig.sell_time, liveTradeConfig.enabled_sessions) ? 'border-red-500 bg-red-50' : ''}`}
+              className={`${controlClassName} h-11 ${!isTimeInSessions(liveTradeConfig.sell_time, liveTradeConfig.enabled_sessions) ? 'border-red-500 bg-red-50' : ''}`}
               value={liveTradeConfig.sell_time}
               min={liveTradeConfig.enabled_sessions.includes('AM') ? '09:00' : '13:00'}
               max={liveTradeConfig.enabled_sessions.includes('PM') ? '15:00' : '11:30'}
@@ -219,7 +219,7 @@ const LiveTradeConfigForm: React.FC<Props> = ({
             <div className="mb-1 text-sm">买入时间</div>
             <input
               type="time"
-              className={`${controlClassName} ${!isTimeInSessions(liveTradeConfig.buy_time, liveTradeConfig.enabled_sessions) ? 'border-red-500 bg-red-50' : ''}`}
+              className={`${controlClassName} h-11 ${!isTimeInSessions(liveTradeConfig.buy_time, liveTradeConfig.enabled_sessions) ? 'border-red-500 bg-red-50' : ''}`}
               value={liveTradeConfig.buy_time}
               min={liveTradeConfig.enabled_sessions.includes('AM') ? '09:00' : '13:00'}
               max={liveTradeConfig.enabled_sessions.includes('PM') ? '15:00' : '11:30'}
@@ -236,13 +236,16 @@ const LiveTradeConfigForm: React.FC<Props> = ({
             )}
           </label>
 
-          <label className="mt-7 flex min-h-[44px] items-center gap-2 rounded-2xl border border-gray-200 px-4">
-            <input
-              type="checkbox"
-              checked={liveTradeConfig.sell_first}
-              onChange={(e) => updateLive({ sell_first: e.target.checked })}
-            />
-            <span className="text-sm">先卖后买</span>
+          <label>
+            <div className="mb-1 text-sm">执行顺序</div>
+            <div className="flex h-11 items-center gap-2 rounded-2xl border border-gray-300 bg-white px-4">
+              <input
+                type="checkbox"
+                checked={liveTradeConfig.sell_first}
+                onChange={(e) => updateLive({ sell_first: e.target.checked })}
+              />
+              <span className="text-sm">先卖后买</span>
+            </div>
           </label>
         </div>
       </section>

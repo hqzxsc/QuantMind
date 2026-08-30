@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Divider, Alert, Descriptions, Tag, Space, Typography, Empty, Button, Table, Tooltip as AntTooltip } from 'antd';
+import { Card, Divider, Alert, Tag, Space, Typography, Empty, Button, Table, Tooltip as AntTooltip } from 'antd';
 import { BarChart, MonitorPlay, Activity, Download, Filter } from 'lucide-react';
 import { 
   BarChart as ReBarChart, 
@@ -72,13 +72,6 @@ const SectionHeader: React.FC<{ title: string; desc: string; icon?: React.ReactN
   </div>
 );
 
-const renderMetaLabel = (zh: string, en: string): React.ReactNode => (
-  <div className="flex flex-col items-start text-left leading-tight">
-    <span className="text-slate-700">{zh}</span>
-    <span className="mt-1 text-xs font-normal text-slate-500">{en}</span>
-  </div>
-);
-
 interface FactorReportRow {
   name: string;
   ic: number | null;
@@ -110,10 +103,11 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
       title: '特征',
       dataIndex: 'name',
       key: 'name',
-      width: 260,
+      width: 220,
+      align: 'center' as const,
       ellipsis: true,
       render: (v: string, row: FactorReportRow) => (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-center gap-1.5">
           <span className="font-mono text-[11px]">{v}</span>
           {row.status === 'selected' && <Tag className="m-0" color="green">入选</Tag>}
         </div>
@@ -124,7 +118,7 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
       dataIndex: 'ic',
       key: 'ic',
       width: 70,
-      align: 'right' as const,
+      align: 'center' as const,
       render: (v: number | null) => (v == null ? '—' : v.toFixed(4)),
     },
     {
@@ -132,7 +126,7 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
       dataIndex: 'icir',
       key: 'icir',
       width: 70,
-      align: 'right' as const,
+      align: 'center' as const,
       render: (v: number | null) => (v == null ? '—' : v.toFixed(3)),
     },
     {
@@ -140,7 +134,7 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
       dataIndex: 'ic_positive_rate',
       key: 'ic_positive_rate',
       width: 80,
-      align: 'right' as const,
+      align: 'center' as const,
       render: (v: number | null) => (v == null ? '—' : `${(v * 100).toFixed(0)}%`),
     },
     {
@@ -148,14 +142,14 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
       dataIndex: 'n_days',
       key: 'n_days',
       width: 70,
-      align: 'right' as const,
+      align: 'center' as const,
     },
     {
       title: '训练段覆盖',
       dataIndex: 'coverage',
       key: 'coverage',
       width: 96,
-      align: 'right' as const,
+      align: 'center' as const,
       render: (v: number) => {
         const pct = v * 100;
         const cls = v >= 0.99 ? 'text-emerald-600' : v >= 0.9 ? 'text-amber-600' : 'text-red-500 font-semibold';
@@ -166,6 +160,8 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
       title: '淘汰原因',
       dataIndex: 'reason',
       key: 'reason',
+      width: 240,
+      align: 'center' as const,
       ellipsis: true,
       render: (v: string, row: FactorReportRow) => (
         <span className={row.status === 'selected' ? 'text-emerald-600' : 'text-slate-500'}>{v}</span>
@@ -199,25 +195,26 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
         {report?.method ? <span className="font-mono">{report.method}</span> : null}
       </div>
 
-      {/* 逐特征明细 */}
+      {/* 逐特征明细：各列定宽不吞剩余空间，整体居中包裹避免超宽拉伸 */}
       {features.length > 0 ? (
-        <Table<FactorReportRow>
-          className="mt-3"
-          size="small"
-          rowKey="name"
-          columns={columns}
-          dataSource={features}
-          pagination={{ pageSize: 20, showSizeChanger: false, size: 'small' }}
-          scroll={{ y: 380 }}
-          title={() => (
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-slate-500">共 {features.length} 个特征 · 入选 {features.filter((f) => f.status === 'selected').length} 个</span>
-              <AntTooltip title="训练段覆盖 = 训练窗口内特征非空比例。低于 90% 说明上游数据存在缺失（如 L2 vpin 系 2024Q4-2025Q1 空窗），红色需排查。">
-                <span className="cursor-help text-[11px] text-slate-400">覆盖度说明</span>
-              </AntTooltip>
-            </div>
-          )}
-        />
+        <div className="mx-auto mt-3 w-full" style={{ maxWidth: 900 }}>
+          <Table<FactorReportRow>
+            size="small"
+            rowKey="name"
+            columns={columns}
+            dataSource={features}
+            pagination={{ pageSize: 20, showSizeChanger: false, size: 'small' }}
+            scroll={{ y: 380 }}
+            title={() => (
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-slate-500">共 {features.length} 个特征 · 入选 {features.filter((f) => f.status === 'selected').length} 个</span>
+                <AntTooltip title="训练段覆盖 = 训练窗口内特征非空比例。低于 90% 说明上游数据存在缺失（如 L2 vpin 系 2024Q4-2025Q1 空窗），红色需排查。">
+                  <span className="cursor-help text-[11px] text-slate-400">覆盖度说明</span>
+                </AntTooltip>
+              </div>
+            )}
+          />
+        </div>
       ) : (
         <Empty description="本次训练未产出因子筛选报告" className="mt-4" />
       )}
@@ -282,6 +279,109 @@ const WfaInterpretation: React.FC<{ wfa: any }> = ({ wfa }) => {
   );
 };
 
+/** 数据漂移检测 (PSI)：训练区间 vs 最近实盘的截面 rank 位移对比，独立卡片供三列并排展示 */
+const DriftReport: React.FC<{ drift: any }> = ({ drift }) => {
+  const s = drift.drift?.stable ?? 0;
+  const m = drift.drift?.medium ?? 0;
+  const r = drift.drift?.severe ?? 0;
+  const tot = Math.max(1, s + m + r);
+  const disp = Number(drift.max_psi ?? 0);
+  const overall = drift.overall;
+  const badgeText = overall === 'stable' ? '稳定' : overall === 'warning' ? '预警' : '严重漂移';
+  const badgeCls = overall === 'stable' ? 'bg-emerald-50 text-emerald-600' : overall === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600';
+  return (
+    <div className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      {/* ⚡️ 头部 */}
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+            <Activity size={15} />
+          </div>
+          <div>
+            <div className="text-xs font-black text-slate-800">数据漂移检测 (PSI)</div>
+            <div className="text-[10px] text-slate-400">
+              训练 {drift.train_start} ~ {drift.train_end}  ×  实盘 {drift.recent_start} ~ {drift.recent_end}
+            </div>
+          </div>
+        </div>
+        <Tag className={clsx('m-0 rounded-full border-0 px-3 py-1 font-black', badgeCls)}>
+          {badgeText}
+        </Tag>
+      </div>
+
+      {/* 📊 三档分布 + 分布条 */}
+      <div className="mb-4 grid grid-cols-3 gap-2">
+        {[
+          { label: '稳定', n: s, color: 'text-emerald-600', bg: 'bg-emerald-50', ring: 'ring-emerald-100' },
+          { label: '中', n: m, color: 'text-amber-600', bg: 'bg-amber-50', ring: 'ring-amber-100' },
+          { label: '重', n: r, color: 'text-rose-600', bg: 'bg-rose-50', ring: 'ring-rose-100' },
+        ].map((c) => (
+          <div key={c.label} className={clsx('rounded-xl px-3 py-2.5 text-center ring-1', c.bg, c.ring)}>
+            <div className={clsx('text-sm font-bold leading-none', c.color)}>{c.n}</div>
+            <div className="mt-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">{c.label} 漂移</div>
+          </div>
+        ))}
+      </div>
+      <div className="mb-1 flex h-2 w-full gap-1 overflow-hidden rounded-full">
+        <div className="h-full rounded-full bg-emerald-400" style={{ width: `${(s / tot) * 100}%` }} />
+        <div className="h-full rounded-full bg-amber-400" style={{ width: `${(m / tot) * 100}%` }} />
+        <div className="h-full rounded-full bg-rose-400" style={{ width: `${(r / tot) * 100}%` }} />
+      </div>
+      <div className="mb-4 flex items-center justify-between text-[10px] text-slate-400">
+        <span>最大结构漂移 <span className={clsx('font-bold font-mono', disp < 0.1 ? 'text-emerald-600' : disp < 0.25 ? 'text-amber-600' : 'text-rose-500')}>{(disp).toFixed(4)}</span></span>
+        <span>共 {tot} 个特征</span>
+      </div>
+
+      {/* 🎯 漂移特征 Top */}
+      <div className="mb-1 flex items-center gap-2 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+        <span>漂移特征 Top</span>
+      </div>
+      {drift.top_drift_features?.length > 0 && (
+        <div className="space-y-1.5">
+          {drift.top_drift_features.slice(0, 6).map((f: any, i: number) => {
+            const val = Number(f.rank_disp ?? f.psi ?? 0);
+            const lv = f.level;
+            const tagCls = lv === 'stable' ? 'bg-emerald-50 text-emerald-600' : lv === 'medium' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600';
+            const barCls = lv === 'stable' ? 'bg-emerald-400' : lv === 'medium' ? 'bg-amber-400' : 'bg-rose-400';
+            return (
+              <div key={i} className="group flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 transition-colors hover:bg-slate-50">
+                <span className="w-5 shrink-0 text-center text-[11px] font-black text-slate-300">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Text className="truncate font-mono text-[11px] font-semibold text-slate-700">{f.feature}</Text>
+                    {f.benign_scale && (
+                      <Tag className="m-0 rounded-md border-0 px-1.5 py-0 text-[8px] font-black bg-sky-50 text-sky-500">量能</Tag>
+                    )}
+                  </div>
+                  {/* 相对 0.25 的位移条：>>0.2 严重 >>0.1 中 */}
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/70">
+                    <div className={clsx('h-full rounded-full', barCls)} style={{ width: `${Math.min(100, (val / 0.25) * 100)}%` }} />
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className={clsx('text-[12px] font-black font-mono leading-none', lv === 'stable' ? 'text-emerald-600' : lv === 'medium' ? 'text-amber-600' : 'text-rose-500')}>
+                    {val.toFixed(3)}
+                  </div>
+                  <div className={clsx('mt-0.5 inline-block rounded-md px-1.5 py-0 text-[8px] font-black', tagCls)}>
+                    {lv === 'stable' ? '稳定' : lv === 'medium' ? '中' : '重'}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 等高拉伸时说明文字贴底，完整数据见漂移检测专门页面 */}
+      <div className="mt-auto rounded-xl border border-dashed border-slate-200 bg-white px-3 py-2.5">
+        <Text className="block text-[10px] leading-relaxed text-slate-400">
+          对比「训练区间」与「最近实盘」的个股截面 rank 位移（0~1）：≥0.1 中等漂移、≥0.25 严重。标记「量能」为水平膨胀但截面稳定的良性漂移。重训前请结合实盘 RankIC 判断。
+        </Text>
+      </div>
+    </div>
+  );
+};
+
 export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
   result,
   resultError,
@@ -304,8 +404,14 @@ export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
     );
   }
 
+  // 入模因子（因子筛选报告中 selected 的特征）：填第三排左列对齐后的剩余高度
+  const selectedFactors: FactorReportRow[] = (
+    (result?.metadata?.factor_selection?.features ?? []) as FactorReportRow[]
+  ).filter((f) => f.status === 'selected');
+
   return (
-    <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+    <div className="space-y-4">
+      {/* 第一排：结果入库概览全宽横条（状态 + 注册 + 关键指标 + 产物） */}
       <Card className="rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
         <SectionHeader
           title="第五步：结果入库"
@@ -378,7 +484,7 @@ export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
               </div>
             </Card>
 
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard
                 label="模型标识"
                 value={result.modelId}
@@ -407,26 +513,6 @@ export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
               />
             </div>
             
-            <Card className="rounded-2xl border-slate-200" size="small" title="模型元数据预览">
-              <Descriptions size="small" bordered column={1}>
-                <Descriptions.Item label={renderMetaLabel('展示名称', 'display_name')}>
-                  <Text code className="text-[11px] break-all">{result.metadata.display_name}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label={renderMetaLabel('预测类型', 'target_mode')}>
-                  {getTargetModeDescription(result.metadata.target_mode)}
-                </Descriptions.Item>
-                <Descriptions.Item label={renderMetaLabel('标签公式', 'label_formula')}>
-                  <Text code className="text-[11px] break-all">{result.metadata.label_formula}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label={renderMetaLabel('时间窗口', 'training_window')}>
-                  <Text code className="text-[11px] break-all">{result.metadata.training_window}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label={renderMetaLabel('目标函数', 'objective_metric')}>
-                  {getObjectiveMetricDescription(result.metadata.objective, result.metadata.metric)}
-                </Descriptions.Item>
-              </Descriptions>
-            </Card>
-
             <Card className="rounded-2xl border-slate-200" size="small" title="建议落盘文件">
               <div className="flex flex-wrap gap-2">
                 {result.artifacts.map((artifact) => (
@@ -440,17 +526,58 @@ export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
         ) : null}
       </Card>
 
+      {/* 第二排：因子筛选报告独占全宽，表格列舒展不拥挤 */}
       {result?.metadata?.factor_selection ? (
         <FactorSelectionReport report={result.metadata.factor_selection} />
       ) : null}
 
-      <Card className="rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
-        <SectionHeader
-          title="结果摘要"
-          desc="给模型管理页与后续回放使用的最小信息集合。"
-          icon={<MonitorPlay size={18} className="text-indigo-500" />}
-        />
-        <Divider className="my-4" />
+      {/* 第三排：模型元数据预览 / 结果摘要 / 数据漂移检测 三等列并排，高度随内容 */}
+      {result ? (
+      <div className="grid gap-4 xl:grid-cols-3">
+      <Card className="h-full rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20, height: '100%', display: 'flex', flexDirection: 'column' } }}>
+        <div className="mb-3 flex items-center gap-2">
+          <BarChart size={15} className="text-indigo-500" />
+          <span className="text-sm font-black text-slate-800">模型元数据预览</span>
+        </div>
+        <div className="space-y-2">
+          {([
+            { zh: '展示名称', en: 'display_name', value: <Text code className="text-[11px] break-all">{result.metadata.display_name}</Text> },
+            { zh: '预测类型', en: 'target_mode', value: <span>{getTargetModeDescription(result.metadata.target_mode)}</span> },
+            { zh: '标签公式', en: 'label_formula', value: <Text code className="text-[11px] break-all">{result.metadata.label_formula}</Text> },
+            { zh: '时间窗口', en: 'training_window', value: <Text code className="text-[11px] break-all">{result.metadata.training_window}</Text> },
+            { zh: '目标函数', en: 'objective_metric', value: <span>{getObjectiveMetricDescription(result.metadata.objective, result.metadata.metric)}</span> },
+          ] as { zh: string; en: string; value: React.ReactNode }[]).map((it) => (
+            <div key={it.en} className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2">
+              <div className="text-[9px] font-bold tracking-wider text-slate-400">{it.zh} · <span className="font-mono">{it.en}</span></div>
+              <div className="mt-1 text-[11px] font-semibold leading-relaxed text-slate-800 break-all">{it.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* 入模因子：只显示名称，标签流一行多个，填充等高后的剩余区域 */}
+        {selectedFactors.length > 0 && (
+          <div className="mt-4 flex flex-col">
+            <div className="mb-2 flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-slate-400">
+              <span>入模因子</span>
+              <span>{selectedFactors.length} 个</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {selectedFactors.map((f) => (
+                <span key={f.name} className="rounded-md border border-indigo-100 bg-indigo-50/70 px-2 py-0.5 font-mono text-[10px] font-semibold text-indigo-600">
+                  {f.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <Card className="h-full rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
+        <div className="mb-3 flex items-center gap-2">
+          <MonitorPlay size={15} className="text-indigo-500" />
+          <span className="text-sm font-black text-slate-800">结果摘要</span>
+          <span className="text-[10px] text-slate-400">给模型管理页与后续回放使用的最小信息集合</span>
+        </div>
         {result ? (
           <div className="space-y-4">
             <MetricCard label="结果状态" value={trainingStatus === 'completed' ? '已生成' : '等待完成'} hint={result.completedAt ? dayjs(result.completedAt).format('YYYY-MM-DD HH:mm:ss') : ''} />
@@ -586,107 +713,6 @@ export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
               </div>
             )}
 
-            {result.drift?.enabled && (() => {
-              const s = result.drift.drift?.stable ?? 0;
-              const m = result.drift.drift?.medium ?? 0;
-              const r = result.drift.drift?.severe ?? 0;
-              const tot = Math.max(1, s + m + r);
-              const disp = Number(result.drift.max_psi ?? 0);
-              const overall = result.drift.overall;
-              const badgeText = overall === 'stable' ? '稳定' : overall === 'warning' ? '预警' : '严重漂移';
-              const badgeCls = overall === 'stable' ? 'bg-emerald-50 text-emerald-600' : overall === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600';
-              return (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  {/* ⚡️ 头部 */}
-                  <div className="mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
-                        <Activity size={15} />
-                      </div>
-                      <div>
-                        <div className="text-xs font-black text-slate-800">数据漂移检测 (PSI)</div>
-                        <div className="text-[10px] text-slate-400">
-                          训练 {result.drift.train_start} ~ {result.drift.train_end}  ×  实盘 {result.drift.recent_start} ~ {result.drift.recent_end}
-                        </div>
-                      </div>
-                    </div>
-                    <Tag className={clsx('m-0 rounded-full border-0 px-3 py-1 font-black', badgeCls)}>
-                      {badgeText}
-                    </Tag>
-                  </div>
-
-                  {/* 📊 三档分布 + 分布条 */}
-                  <div className="mb-4 grid grid-cols-3 gap-2">
-                    {[
-                      { label: '稳定', n: s, color: 'text-emerald-600', bg: 'bg-emerald-50', ring: 'ring-emerald-100' },
-                      { label: '中', n: m, color: 'text-amber-600', bg: 'bg-amber-50', ring: 'ring-amber-100' },
-                      { label: '重', n: r, color: 'text-rose-600', bg: 'bg-rose-50', ring: 'ring-rose-100' },
-                    ].map((c) => (
-                      <div key={c.label} className={clsx('rounded-xl px-3 py-2.5 text-center ring-1', c.bg, c.ring)}>
-                        <div className={clsx('text-sm font-bold leading-none', c.color)}>{c.n}</div>
-                        <div className="mt-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">{c.label} 漂移</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mb-1 flex h-2 w-full gap-1 overflow-hidden rounded-full">
-                    <div className="h-full rounded-full bg-emerald-400" style={{ width: `${(s / tot) * 100}%` }} />
-                    <div className="h-full rounded-full bg-amber-400" style={{ width: `${(m / tot) * 100}%` }} />
-                    <div className="h-full rounded-full bg-rose-400" style={{ width: `${(r / tot) * 100}%` }} />
-                  </div>
-                  <div className="mb-4 flex items-center justify-between text-[10px] text-slate-400">
-                    <span>最大结构漂移 <span className={clsx('font-bold font-mono', disp < 0.1 ? 'text-emerald-600' : disp < 0.25 ? 'text-amber-600' : 'text-rose-500')}>{(disp).toFixed(4)}</span></span>
-                    <span>共 {tot} 个特征</span>
-                  </div>
-
-                  {/* 🎯 漂移特征 Top */}
-                  <div className="mb-1 flex items-center gap-2 text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                    <span>漂移特征 Top</span>
-                  </div>
-                  {result.drift.top_drift_features?.length > 0 && (
-                    <div className="space-y-1.5">
-                      {result.drift.top_drift_features.slice(0, 6).map((f, i) => {
-                        const val = Number(f.rank_disp ?? f.psi ?? 0);
-                        const lv = f.level;
-                        const tagCls = lv === 'stable' ? 'bg-emerald-50 text-emerald-600' : lv === 'medium' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600';
-                        const barCls = lv === 'stable' ? 'bg-emerald-400' : lv === 'medium' ? 'bg-amber-400' : 'bg-rose-400';
-                        return (
-                          <div key={i} className="group flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 transition-colors hover:bg-slate-50">
-                            <span className="w-5 shrink-0 text-center text-[11px] font-black text-slate-300">{i + 1}</span>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <Text className="truncate font-mono text-[11px] font-semibold text-slate-700">{f.feature}</Text>
-                                {f.benign_scale && (
-                                  <Tag className="m-0 rounded-md border-0 px-1.5 py-0 text-[8px] font-black bg-sky-50 text-sky-500">量能</Tag>
-                                )}
-                              </div>
-                              {/* 相对 0.25 的位移条：>>0.2 严重 >>0.1 中 */}
-                              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/70">
-                                <div className={clsx('h-full rounded-full', barCls)} style={{ width: `${Math.min(100, (val / 0.25) * 100)}%` }} />
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <div className={clsx('text-[12px] font-black font-mono leading-none', lv === 'stable' ? 'text-emerald-600' : lv === 'medium' ? 'text-amber-600' : 'text-rose-500')}>
-                                {val.toFixed(3)}
-                              </div>
-                              <div className={clsx('mt-0.5 inline-block rounded-md px-1.5 py-0 text-[8px] font-black', tagCls)}>
-                                {lv === 'stable' ? '稳定' : lv === 'medium' ? '中' : '重'}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white px-3 py-2.5">
-                    <Text className="block text-[10px] leading-relaxed text-slate-400">
-                      对比「训练区间」与「最近实盘」的个股截面 rank 位移（0~1）：≥0.1 中等漂移、≥0.25 严重。标记「量能」为水平膨胀但截面稳定的良性漂移。重训前请结合实盘 RankIC 判断。
-                    </Text>
-                  </div>
-                </div>
-              );
-            })()}
-
             {result.multiHorizon && result.multiHorizon.horizons?.length > 0 && (
               <div className="rounded-2xl border border-indigo-200 bg-white p-4">
                 <div className="mb-3 flex items-center justify-between">
@@ -752,6 +778,11 @@ export const TrainingResultView: React.FC<TrainingResultViewProps> = ({
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="训练完成后，这里会展示元数据摘要" />
         )}
       </Card>
+
+      {/* 数据漂移检测（第三列，无漂移数据时不占位） */}
+      {result.drift?.enabled ? <DriftReport drift={result.drift} /> : null}
+      </div>
+      ) : null}
     </div>
   );
 };

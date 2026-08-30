@@ -16,15 +16,15 @@ export function fmtFactor(v: number | null | undefined): string {
 /** 因子强度徽标：14 因子均为正向 alpha，百分位越高信号越强 */
 export function StrengthBadge({ pct }: { pct: number | null }) {
   if (pct == null) {
-    return <span className="text-[8px] leading-none px-1 py-0.5 rounded bg-slate-50 text-slate-300 font-bold">--</span>;
+    return <span className="text-[9px] leading-none px-1.5 py-0.5 rounded bg-slate-50 text-slate-300 font-bold shrink-0">--</span>;
   }
   if (pct >= 0.8) {
-    return <span className="text-[8px] leading-none px-1 py-0.5 rounded bg-rose-100 text-rose-600 font-black">强·{Math.round(pct * 100)}%</span>;
+    return <span className="text-[9px] leading-none px-1.5 py-0.5 rounded bg-rose-100 text-rose-600 font-black shrink-0">强·{Math.round(pct * 100)}%</span>;
   }
   if (pct >= 0.5) {
-    return <span className="text-[8px] leading-none px-1 py-0.5 rounded bg-amber-100 text-amber-600 font-bold">中·{Math.round(pct * 100)}%</span>;
+    return <span className="text-[9px] leading-none px-1.5 py-0.5 rounded bg-amber-100 text-amber-600 font-bold shrink-0">中·{Math.round(pct * 100)}%</span>;
   }
-  return <span className="text-[8px] leading-none px-1 py-0.5 rounded bg-slate-100 text-slate-400 font-bold">{Math.round(pct * 100)}%</span>;
+  return <span className="text-[9px] leading-none px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 font-bold shrink-0">{Math.round(pct * 100)}%</span>;
 }
 
 export interface L2FeatureData {
@@ -45,26 +45,34 @@ interface Props {
   signalDate?: string | null;
 }
 
-/** 因子 hover 解释：含义 + 数值 + 百分位 + ICIR */
-function FactorChip({ f }: { f: L2FeatureData['factors'][number] }) {
-  const pct = f.pct_rank != null ? Math.round(f.pct_rank * 100) + '%' : '--';
+/** 单因子卡片：名称+强度徽标 / 值+ICIR / 全市场百分位进度条，hover 看含义 */
+function FactorTile({ f }: { f: L2FeatureData['factors'][number] }) {
+  const pct = f.pct_rank;
+  const barColor = pct == null ? 'bg-slate-200' : pct >= 0.8 ? 'bg-rose-400' : pct >= 0.5 ? 'bg-amber-400' : 'bg-slate-300';
   const content = (
     <div className="text-[10px] leading-relaxed max-w-60">
       <div className="font-black text-slate-800">
         {f.label} <span className="font-normal text-slate-400">· {f.category} · ICIR {f.icir}</span>
       </div>
       <div className="mt-0.5 text-slate-600">{f.desc || '暂无该因子说明'}</div>
-      <div className="mt-1 text-slate-400">{`值 ${fmtFactor(f.value)} · 全市场百分位 ${pct}（越高=信号越强）`}</div>
+      <div className="mt-1 text-slate-400">{`值 ${fmtFactor(f.value)} · 全市场百分位 ${pct != null ? Math.round(pct * 100) + '%' : '--'}（越高=信号越强）`}</div>
     </div>
   );
   return (
     <Tooltip title={content} placement="top" mouseEnterDelay={0.15}>
-      <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-50 hover:bg-slate-200 border border-slate-100 transition-colors cursor-help">
-        <span className="text-[9px] text-slate-500">{f.label}</span>
-        <span className="text-[9px] font-bold text-slate-700">{fmtFactor(f.value)}</span>
-        <StrengthBadge pct={f.pct_rank} />
-        <span className="w-3 h-3 rounded-full bg-slate-200 text-slate-500 text-[7px] leading-[12px] text-center font-black">?</span>
-      </span>
+      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-2.5 hover:border-slate-200 hover:bg-slate-50 transition-colors cursor-help">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-bold text-slate-600 truncate">{f.label}</span>
+          <StrengthBadge pct={pct} />
+        </div>
+        <div className="mt-1.5 flex items-end justify-between gap-2">
+          <span className="text-base font-black text-slate-900 leading-none">{fmtFactor(f.value)}</span>
+          <span className="text-[10px] text-slate-400 font-bold shrink-0">ICIR {f.icir}</span>
+        </div>
+        <div className="mt-1.5 h-1 rounded-full bg-slate-200/70 overflow-hidden">
+          <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct != null ? Math.round(pct * 100) : 0}%` }} />
+        </div>
+      </div>
     </Tooltip>
   );
 }
@@ -78,35 +86,40 @@ export function L2FeatureCard({ l2, signalDate }: Props) {
   }));
 
   return (
-    <div className="bg-white/70 rounded-2xl border border-slate-100 px-4 py-2.5">
-      <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100">
-        <div className="flex items-center gap-1.5">
-          <Layers className="w-3 h-3 text-rose-500" />
-          <span className="text-[11px] font-black text-slate-700">L2 微观结构因子</span>
-          <span className="text-[9px] text-slate-400 font-bold">(hover 因子查看含义)</span>
+    <div className="flex flex-col gap-3">
+      {/* 标题卡：名称 + 预测日/特征日 + 口径说明 */}
+      <div className="bg-white/70 rounded-2xl border border-slate-100 p-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="w-6 h-6 rounded-lg bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-500">
+              <Layers className="w-3.5 h-3.5" />
+            </span>
+            <span className="text-xs font-black text-slate-700">L2 微观结构因子</span>
+          </div>
+          <span className="text-[10px] font-bold text-slate-400">
+            {'预测日 '}<b className="text-slate-600">{signalDate ?? '--'}</b>
+            <span className="mx-1 text-slate-300">→</span>
+            {'特征日 '}<b className="text-slate-600">{l2?.feature_date ?? '--'}</b>
+          </span>
         </div>
-        <span className="text-[9px] font-bold text-slate-400">
-          {'预测日 '}
-          <b className="text-slate-500">{signalDate ?? '--'}</b>
-          {' → 特征日 '}
-          <b className="text-slate-500">{l2?.feature_date ?? '--'}</b>
-        </span>
+        <p className="mt-2 text-[10px] text-slate-400 leading-relaxed">
+          14 个推荐因子（VPIN / 时段 / 资金流等微观结构，单因子 ICIR 0.16~0.56）；徽标与进度条为当日全市场百分位，越高信号越强（正向）。悬停因子卡查看含义。
+        </p>
       </div>
 
       {l2 ? (
-        <div className="flex flex-col gap-1">
-          {byCat.map(({ cat, items }) => (
-            <div key={cat} className="flex items-center gap-1.5 flex-wrap">
-              <span className="w-10 shrink-0 text-[9px] font-black text-slate-400">{cat}</span>
-              {items.map(f => <FactorChip key={f.name} f={f} />)}
+        byCat.map(({ cat, items }) => (
+          <div key={cat} className="bg-white/70 rounded-2xl border border-slate-100 p-3">
+            <div className="text-[11px] font-bold text-slate-500 mb-2">{cat}</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {items.map(f => <FactorTile key={f.name} f={f} />)}
             </div>
-          ))}
-          <p className="text-[9px] text-slate-400 pt-0.5">
-            14 个推荐因子（VPIN/时段/资金流等微观结构，单因子 ICIR 0.16~0.56）· 徽标=当日全市场百分位（越高=因子越强，正向信号）
-          </p>
-        </div>
+          </div>
+        ))
       ) : (
-        <p className="py-2.5 text-center text-[10px] text-slate-400">该股无推理信号，无预测日前日 L2 特征</p>
+        <div className="bg-white/70 rounded-2xl border border-slate-100 p-6 text-center text-[11px] text-slate-400">
+          该股无推理信号，无预测日前日 L2 特征
+        </div>
       )}
     </div>
   );

@@ -11,12 +11,33 @@ export interface TabProps { symbol: string; asof?: string; }
 const _divFmt = (v: number | null, digits = 3): string => v == null ? '--' : Number(v).toFixed(digits);
 const _f2 = (v: number | null): string => v == null ? '--' : Number(v).toFixed(2);
 
-function TabShell({ title, icon: Icon, children, loading }: {
+/** 按日期对齐合并多个时序响应：日期取并集，各列按日期映射后对齐，缺失补 null。
+ * 不能直接 { ...a.columns, ...b.columns } 拼数组——两组日期跨度不同时（如 technical 3 年 vs
+ * sentiment 2 年），ECharts 按数组下标对齐 category 轴，短数组会整体错位且尾部显示不全。 */
+function mergeSeriesByDate(...resps: SeriesResponse[]): SeriesResponse {
+  const dateSet = new Set<string>();
+  resps.forEach(r => r.dates.forEach(d => dateSet.add(d)));
+  const dates = Array.from(dateSet).sort();
+  const columns: Record<string, (number | null)[]> = {};
+  resps.forEach(r => {
+    const idxByDate = new Map(r.dates.map((d, i) => [d, i]));
+    Object.entries(r.columns).forEach(([k, arr]) => {
+      columns[k] = dates.map(d => {
+        const i = idxByDate.get(d);
+        return i != null ? (arr[i] ?? null) : null;
+      });
+    });
+  });
+  return { dates, columns };
+}
+
+function TabShell({ title, icon: Icon, children, loading, centerTitle, autoHeight }: {
   title: string; icon: any; children: React.ReactNode; loading?: boolean;
+  centerTitle?: boolean; autoHeight?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-3 h-full">
-      <div className="flex items-center gap-1.5">
+    <div className={`flex flex-col gap-3 ${autoHeight ? '' : 'h-full'}`}>
+      <div className={`flex items-center gap-1.5 ${centerTitle ? 'justify-center' : ''}`}>
         <div className="w-6 h-6 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
           <Icon className="w-3.5 h-3.5" />
         </div>
@@ -28,27 +49,27 @@ function TabShell({ title, icon: Icon, children, loading }: {
   );
 }
 
-/** 表格式记录渲染（倒序，columns=periods） */
+/** 表格式记录渲染（倒序，columns=periods；单列布局下内容较宽，横向溢出时出左右滚动条） */
 function FinTable({ records, periods }: { records: { period: string; items: Record<string, number | null> }[]; periods: string[] }) {
   if (!records.length) return <div className="text-[11px] text-slate-400 py-4 text-center">暂无数据</div>;
   const rows = Object.keys(records[0]?.items ?? {});
   return (
-    <div className="overflow-auto">
-      <table className="w-full text-[11px]">
+    <div className="overflow-x-auto overflow-y-visible custom-scrollbar">
+      <table className="text-[11px]" style={{ minWidth: `${76 + periods.length * 84}px` }}>
         <thead>
           <tr className="text-slate-400 font-bold">
-            <th className="text-left py-1 pr-2 sticky left-0 bg-white/90">指标</th>
-            {periods.map(p => <th key={p} className="text-right py-1 font-mono">{p}</th>)}
+            <th className="text-left py-1 pr-2 sticky left-0 z-10 bg-white/90">指标</th>
+            {periods.map(p => <th key={p} className="text-right py-1 font-mono whitespace-nowrap" style={{ minWidth: 78 }}>{p}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map(r => (
             <tr key={r} className="border-t border-slate-50">
-              <td className="py-1 pr-2 sticky left-0 bg-white/90 font-bold text-slate-600 whitespace-nowrap">{r}</td>
+              <td className="py-1 pr-2 sticky left-0 z-10 bg-white/90 font-bold text-slate-600 whitespace-nowrap">{r}</td>
               {periods.map(p => {
                 const rec = records.find(x => x.period === p);
                 const v = rec?.items[r];
-                return <td key={p} className="text-right py-1 font-mono text-slate-700">{v == null ? '--' : _f2(v)}</td>;
+                return <td key={p} className="text-right py-1 font-mono text-slate-700 whitespace-nowrap">{v == null ? '--' : _f2(v)}</td>;
               })}
             </tr>
           ))}
@@ -70,32 +91,33 @@ export function FinancialsTab({ symbol, asof }: TabProps) {
   }, [symbol, asof]);
   if (!data) return <TabShell title="财务报表" icon={BarChart3} loading={loading}><div /></TabShell>;
   return (
-    <TabShell title="财务报表" icon={BarChart3} loading={loading}>
+    <TabShell title="财务报表" icon={BarChart3} loading={loading} centerTitle autoHeight>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         {data.per_share?.[0] && (
           <>
-            <div className="bg-white/70 rounded-xl border border-slate-100 p-2">
+            <div className="bg-white/70 rounded-xl border border-slate-100 p-2 h-[60px] flex flex-col">
               <div className="text-[10px] text-slate-400 font-bold">ROE</div>
-              <div className="text-base font-black text-blue-600">{_f2(data.per_share[0].items['ROE(%)'])}%</div>
+              <div className="flex-1 flex items-center justify-center text-base font-black text-slate-900 whitespace-nowrap">{_f2(data.per_share[0].items['ROE(%)'])}%</div>
             </div>
-            <div className="bg-white/70 rounded-xl border border-slate-100 p-2">
+            <div className="bg-white/70 rounded-xl border border-slate-100 p-2 h-[60px] flex flex-col">
               <div className="text-[10px] text-slate-400 font-bold">毛利率</div>
-              <div className="text-base font-black text-emerald-600">{_f2(data.per_share[0].items['毛利率(%)'])}%</div>
+              <div className="flex-1 flex items-center justify-center text-base font-black text-slate-900 whitespace-nowrap">{_f2(data.per_share[0].items['毛利率(%)'])}%</div>
             </div>
-            <div className="bg-white/70 rounded-xl border border-slate-100 p-2">
+            <div className="bg-white/70 rounded-xl border border-slate-100 p-2 h-[60px] flex flex-col">
               <div className="text-[10px] text-slate-400 font-bold">净利率</div>
-              <div className="text-base font-black text-emerald-600">{_f2(data.per_share[0].items['净利率(%)'])}%</div>
+              <div className="flex-1 flex items-center justify-center text-base font-black text-slate-900 whitespace-nowrap">{_f2(data.per_share[0].items['净利率(%)'])}%</div>
             </div>
-            <div className="bg-white/70 rounded-xl border border-slate-100 p-2">
-              <div className="text-[10px] text-slate-400 font-bold">营收增速 / 净利增速</div>
-              <div className="text-base font-black text-amber-600">
+            <div className="bg-white/70 rounded-xl border border-slate-100 p-2 h-[60px] flex flex-col">
+              <div className="text-[10px] text-slate-400 font-bold whitespace-nowrap">营收增速 / 净利增速</div>
+              <div className="flex-1 flex items-center justify-center text-sm font-black text-slate-900 whitespace-nowrap">
                 {_f2(data.per_share[0].items['营收增速(%)'])}% / {_f2(data.per_share[0].items['净利增速(%)'])}%
               </div>
             </div>
           </>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-3 min-h-0">
+      {/* 四张报表单列堆叠，超出面板高度时由外层容器向下滚动 */}
+      <div className="flex flex-col gap-3">
         <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">利润表（亿元）</div>
           <FinTable records={data.income} periods={data.periods} />
@@ -136,15 +158,16 @@ export function ValuationTab({ symbol, asof }: TabProps) {
     { key: 'dividend_rate', name: '股息率(%)', color: '#10b981' },
   ]);
   return (
-    <TabShell title="估值走势" icon={Coins} loading={loading}>
-      <div className="grid grid-cols-2 gap-3">
+    <TabShell title="估值走势" icon={Coins} loading={loading} autoHeight>
+      {/* 单列堆叠避免拥挤（数据口径已是最近 3 年），超出面板高度时由外层容器向下滚动 */}
+      <div className="flex flex-col gap-3">
         <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">PE / PB / PS</div>
-          <SeriesChart resp={resp} series={series} height={200} tooltipFmt={(n, v) => `${n}: ${_f2(v)}`} />
+          <SeriesChart resp={resp} series={series} height={280} tooltipFmt={(n, v) => `${n}: ${_f2(v)}`} />
         </div>
         <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">股息率</div>
-          <SeriesChart resp={resp} series={div} height={200} tooltipFmt={(n, v) => `${n}: ${_divFmt(v)}%`} />
+          <SeriesChart resp={resp} series={div} height={280} tooltipFmt={(n, v) => `${n}: ${_divFmt(v)}%`} />
         </div>
       </div>
     </TabShell>
@@ -175,15 +198,15 @@ export function ChipFlowTab({ symbol, asof }: TabProps) {
     { key: 'flow_super_net', name: '超大单净流入(元)', color: '#f97316' },
   ]);
   return (
-    <TabShell title="筹码与资金" icon={PieChart} loading={loading}>
-      <div className="grid grid-cols-2 gap-3">
+    <TabShell title="筹码与资金" icon={PieChart} loading={loading} autoHeight>
+      <div className="flex flex-col gap-3">
         <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">筹码分布（获利盘 / 集中度）</div>
-          <SeriesChart resp={chip} series={chipS} height={220} tooltipFmt={(n, v) => `${n}: ${_divFmt(v)}`} />
+          <SeriesChart resp={chip} series={chipS} height={280} tooltipFmt={(n, v) => `${n}: ${_divFmt(v)}`} />
         </div>
         <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">主力资金流（元）</div>
-          <SeriesChart resp={flow} series={flowS} height={220} tooltipFmt={(n, v) => `${n}: ${_divFmt(v, 0)}`} />
+          <SeriesChart resp={flow} series={flowS} height={280} tooltipFmt={(n, v) => `${n}: ${_divFmt(v, 0)}`} />
         </div>
       </div>
     </TabShell>
@@ -205,9 +228,9 @@ export function MarginTab({ symbol, asof }: TabProps) {
     { key: 'finance_net', name: '融资净买入(元)', color: '#f59e0b' },
   ]);
   return (
-    <TabShell title="融资融券" icon={Landmark} loading={loading}>
+    <TabShell title="融资融券" icon={Landmark} loading={loading} autoHeight>
       <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
-        <SeriesChart resp={resp} series={series} height={260} tooltipFmt={(n, v) => `${n}: ${_divFmt(v, 0)}`} />
+        <SeriesChart resp={resp} series={series} height={280} tooltipFmt={(n, v) => `${n}: ${_divFmt(v, 0)}`} />
       </div>
     </TabShell>
   );
@@ -222,10 +245,11 @@ export function SentimentTab({ symbol, asof }: TabProps) {
     setLoading(true);
     Promise.all([
       stockTerminalService.getSeries(symbol, 'technical', 3, asof),
-      stockTerminalService.getSeries(symbol, 'sentiment', 2, asof),
+      stockTerminalService.getSeries(symbol, 'sentiment', 3, asof),
     ]).then(([t, s]) => {
       if (!c) {
-        setResp({ dates: t.dates, columns: { ...t.columns, ...s.columns } });
+        // 按日期对齐合并（两组均取 3 年窗口，原始数据 2016 起全覆盖）
+        setResp(mergeSeriesByDate(t, s));
       }
     }).catch(() => message.error('情绪加载失败')).finally(() => { if (!c) setLoading(false); });
     return () => { c = true; };
@@ -240,15 +264,15 @@ export function SentimentTab({ symbol, asof }: TabProps) {
     { key: 'liquidity_score', name: '流动性评分', color: '#3b82f6' },
   ]);
   return (
-    <TabShell title="技术形态与情绪" icon={BrainCircuit} loading={loading}>
-      <div className="grid grid-cols-2 gap-3">
+    <TabShell title="技术形态与情绪" icon={BrainCircuit} loading={loading} autoHeight>
+      <div className="flex flex-col gap-3">
         <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">RSI / MACD</div>
-          <SeriesChart resp={resp} series={tech} height={220} tooltipFmt={(n, v) => `${n}: ${_f2(v)}`} />
+          <SeriesChart resp={resp} series={tech} height={280} tooltipFmt={(n, v) => `${n}: ${_f2(v)}`} />
         </div>
         <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">买卖压力 / 流动性</div>
-          <SeriesChart resp={resp} series={senti} height={220} tooltipFmt={(n, v) => `${n}: ${_f2(v)}`} />
+          <SeriesChart resp={resp} series={senti} height={280} tooltipFmt={(n, v) => `${n}: ${_f2(v)}`} />
         </div>
       </div>
     </TabShell>
@@ -271,15 +295,15 @@ export function HoldersTab({ symbol, asof }: TabProps) {
   }, [symbol, asof]);
   const hS = buildSeries(hn, [{ key: 'holder_num', name: '股东户数', color: '#3b82f6' }]);
   return (
-    <TabShell title="股东户数与分红" icon={Users2} loading={loading}>
-      <div className="grid grid-cols-2 gap-3">
+    <TabShell title="股东户数与分红" icon={Users2} loading={loading} autoHeight>
+      <div className="flex flex-col gap-3">
         <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">股东户数（户数降=筹码集中）</div>
-          <SeriesChart resp={hn} series={hS} height={200} tooltipFmt={(n, v) => `${n}: ${v == null ? '--' : Math.round(v).toLocaleString()}`} />
+          <SeriesChart resp={hn} series={hS} height={280} tooltipFmt={(n, v) => `${n}: ${v == null ? '--' : Math.round(v).toLocaleString()}`} />
         </div>
-        <div className="bg-white/70 rounded-2xl border border-slate-100 p-2 min-h-0">
+        <div className="bg-white/70 rounded-2xl border border-slate-100 p-2">
           <div className="text-[11px] font-bold text-slate-500 mb-1">分红记录</div>
-          <div className="h-[200px] overflow-auto">
+          <div className="overflow-x-auto custom-scrollbar">
             <table className="w-full text-[11px]">
               <thead className="text-slate-400 font-bold">
                 <tr><th className="text-left py-1">除权日</th><th className="text-right">每股派息(元)</th><th className="text-right">送/转</th></tr>

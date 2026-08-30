@@ -3753,18 +3753,23 @@ def _read_stock_pred_history(
 async def _load_stock_pred_history(
     *, tenant_id: str, user_id: str, model_id: str | None, sym: str, cutoff: date
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """分数曲线仅使用用户设置的默认模型（model_id 参数不参与选择），
-    读其目录 pred.parquet 的全量历史分数序列。
+    """读模型目录 pred.parquet 的全量历史分数序列。
 
-    Returns (items, model)；未设置默认模型/无文件/读空时 items 为 []，
-    调用方回退 engine_signal_scores。
+    model_id 为空时取用户设置的默认模型（个股终端下方分数曲线就是此路径，只展默认模型）；
+    仅推理批次详情页等明确指定模型的调用方会传 model_id。
+    Returns (items, model)；模型缺失/无文件/读空时 items 为 []，调用方回退 engine_signal_scores。
     """
     try:
-        model = await model_registry_service.get_default_model(
-            tenant_id=tenant_id, user_id=user_id
-        )
+        if model_id:
+            model = await model_registry_service.get_model(
+                tenant_id=tenant_id, user_id=user_id, model_id=model_id
+            )
+        else:
+            model = await model_registry_service.get_default_model(
+                tenant_id=tenant_id, user_id=user_id
+            )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("分数曲线默认模型解析失败: %s", exc)
+        logger.warning("分数曲线模型解析失败: %s", exc)
         return [], None
 
     storage_path = str((model or {}).get("storage_path") or "").strip()
@@ -3795,10 +3800,11 @@ async def get_stock_inference_history(
     ),
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
-    """返回某只股票的历史推理分数（按交易日去重取最新批次），供 K 线叠加。
+    """返回某只股票的历史模型分数（供 K 线下方分数曲线叠加）。
 
-    model_id 为空时：同一天多个 run（不同模型）只取最新一个，混合展示；
-    model_id 指定时：只返回该模型的历史分数（排名在该模型内计算）。
+    主数据源为模型目录的 pred.parquet（训练生成的全量历史分数），不受每日推理批次影响；
+    model_id 为空时取用户默认模型（个股终端下方曲线），显式传 model_id 时取该模型（推理批次详情）。
+    无 pred.parquet 时才回退 engine_signal_scores 批次（按交易日去重取最新批次）。
     """
     tenant_id, user_id = _owner_scope(current_user)
     from datetime import timedelta as _td
@@ -3922,8 +3928,7 @@ async def get_stock_inference_history(
     else:
         board = "其他"
 
-    # 曲线仅展示用户默认模型：模型列表固定为默认模型一个（前端下拉/名称展示用），
-    # 不再按 engine_signal_scores 涉及的历史模型列表展示
+    # 曲线只展示单一模型（个股终端不传 model_id → 用户默认模型），不再返回历史涉及的多模型列表
     models: list[dict[str, Any]] = []
     if pred_model:
         pmeta = pred_model.get("metadata_json") or {}

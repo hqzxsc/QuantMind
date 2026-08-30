@@ -3047,6 +3047,54 @@ async def list_model_inference_runs(
     return result
 
 
+# 推理历史股票简称映射（QuantDB instrument_list，进程内 TTL 缓存）：
+# PG stocks 表已随数据源迁移废弃，名称一律以 QuantDB 全量股票列表为准。
+_QUANTDB_NAMES_CACHE: dict[str, str] | None = None
+_QUANTDB_NAMES_CACHE_AT = 0.0
+_QUANTDB_NAMES_TTL = 600.0
+
+
+def _load_quantdb_stock_names() -> dict[str, str]:
+    """从 QuantDB instrument_list 加载 {prefix_symbol: 股票简称}。"""
+    global _QUANTDB_NAMES_CACHE, _QUANTDB_NAMES_CACHE_AT  # noqa: PLW0603
+    import time
+
+    now = time.monotonic()
+    if (
+        _QUANTDB_NAMES_CACHE is not None
+        and now - _QUANTDB_NAMES_CACHE_AT < _QUANTDB_NAMES_TTL
+    ):
+        return _QUANTDB_NAMES_CACHE
+
+    from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
+    from backend.shared.stock_utils import StockCodeUtil
+
+    result: dict[str, str] = {}
+    try:
+        hub = QuantDBDataHub.get_instance()
+        df = hub.fetch_stock_list()
+        if df is not None and not df.empty:
+            symbol_col = (
+                "Symbol" if "Symbol" in df.columns
+                else "symbol" if "symbol" in df.columns else None
+            )
+            name_col = (
+                "Name" if "Name" in df.columns
+                else "stock_name" if "stock_name" in df.columns else None
+            )
+            if symbol_col and name_col:
+                for _, row in df[[symbol_col, name_col]].dropna().iterrows():
+                    sym = StockCodeUtil.to_prefix(str(row[symbol_col]).strip())
+                    nm = str(row[name_col]).strip()
+                    if sym and nm:
+                        result[sym] = nm
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取 QuantDB 股票简称失败: %s", exc)
+    _QUANTDB_NAMES_CACHE = result
+    _QUANTDB_NAMES_CACHE_AT = time.monotonic()
+    return result
+
+
 @router.get("/inference/runs/{run_id}", summary="查看模型推理结果明细（用户态）")
 async def get_model_inference_run_detail(
     run_id: str,
@@ -3231,6 +3279,26 @@ async def get_model_inference_run_detail(
             logger.warning(
                 "pred.parquet fallback failed for %s: %s", run_id, exc
             )
+
+    # ── 股票简称兜底：PG stocks 表已废弃，名称以 QuantDB instrument_list 为准 ──
+    # 覆盖 DB JOIN 取不到名称（stocks 表为空/格式不匹配）与 pred.parquet 回退
+    # 路径硬编码空名称两种情况；summary 中依赖 stock_name 的字段随之正确。
+    try:
+        from backend.shared.stock_utils import StockCodeUtil
+
+        name_map = _load_quantdb_stock_names()
+        for item in signals:
+            if item.get("stock_name"):
+                continue
+            sym = str(item.get("symbol") or "").strip()
+            if not sym:
+                continue
+            prefix = StockCodeUtil.to_prefix(sym)
+            nm = name_map.get(prefix) if prefix else None
+            if nm:
+                item["stock_name"] = nm
+    except Exception as exc:  # pragma: no cover - 名称兜底失败不影响主流程
+        logger.warning("回填 QuantDB 股票简称失败: %s", exc)
 
     summary = dict(run)
     summary["rows_count"] = len(signals)

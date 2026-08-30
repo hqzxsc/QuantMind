@@ -151,6 +151,14 @@ async def lifespan(app: FastAPI):
             run_simulation_t1_unlock_task(),
             name="simulation-t1-unlock",
         )
+        from backend.services.trade.services.simulation_corporate_action_task import (
+            run_simulation_corporate_action_task,
+        )
+
+        corp_action_task = asyncio.create_task(
+            run_simulation_corporate_action_task(),
+            name="simulation-corporate-action",
+        )
         from backend.services.trade.services.tdx_l2_capture_task import run_tdx_l2_capture_task
         from backend.services.trade.services.tdx_l2_realtime import run_tdx_l2_realtime_task
 
@@ -232,7 +240,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (scanner_task, margin_task, snapshot_task, ledger_settlement_task, manual_execution_task, sandbox_signal_task, tdx_account_sync_task, tdx_quote_feed_task, tdx_l2_capture_task, tdx_l2_realtime_task, t1_unlock_task):
+    for task in (scanner_task, margin_task, snapshot_task, ledger_settlement_task, manual_execution_task, sandbox_signal_task, tdx_account_sync_task, tdx_quote_feed_task, tdx_l2_capture_task, tdx_l2_realtime_task, t1_unlock_task, corp_action_task):
         if task is None:
             continue
         task.cancel()

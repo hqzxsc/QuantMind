@@ -1,9 +1,11 @@
 """回放信号批量预生成器。
 
-不走 InferenceScriptRunner（它有 30 天保留期清理、Redis 覆写、ST 前视三个坑），
-而是直接读 parquet + 载模型 + 批量 predict，结果写入 replay_signals 表。
-
-窗口内只读一次 parquet、只载一次模型，按交易日切片 predict。
+不走 InferenceScriptRunner（它有 30 天保留期清理、Redis 覆写、ST 前视三个坑）。
+信号来源优先级：
+  1. pred.parquet 直读 —— 训练产出 + 每日推理回写的全量历史分数，与生产
+     个股分数曲线/推理覆盖同一数据源，无需重新推理（快且与展示口径一致）；
+  2. 无 pred.parquet 时才回退：读特征 + 载模型 + 批量 predict。
+结果统一写入 replay_signals 表，窗口内只读一次数据、按交易日切片。
 
 T+1 偏移说明：
   parquet 里的 trade_date 是「数据日 D」（用 D 日的行情/特征推理）。
@@ -128,6 +130,69 @@ def _parquet_paths_for_range(data_dir: Path, start: date, end: date) -> list[Pat
         if legacy.is_file():
             paths.append(legacy)
     return paths
+
+
+def _find_pred_parquet(model_dir: Path) -> Path | None:
+    """定位模型目录的 pred.parquet（兼容 pred/ 子目录存法）。"""
+    for candidate in (model_dir / "pred.parquet", model_dir / "pred" / "pred.parquet"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_pred_parquet(
+    parquet_file: Path, start: date, end: date
+) -> pd.DataFrame | None:
+    """直读训练产出的全量历史分数（pred.parquet）。
+
+    列：symbol（SH/SZ 前缀式）/ trade_date（数据日 T）/ label / pred（或
+    fusion_score）/ split。trade_date 语义与重新推理路径的「数据日 D」一致，
+    下游 T+1 偏移逻辑可直接复用。失败返回 None。
+    """
+    import duckdb
+
+    try:
+        con = duckdb.connect()
+        try:
+            cols = [
+                r[0]
+                for r in con.execute(
+                    f"SELECT * FROM read_parquet('{parquet_file}') LIMIT 0"
+                ).description
+            ]
+            score_col = (
+                "pred"
+                if "pred" in cols
+                else "fusion_score"
+                if "fusion_score" in cols
+                else None
+            )
+            date_col = "trade_date" if "trade_date" in cols else (
+                "date" if "date" in cols else None
+            )
+            if not score_col or not date_col or "symbol" not in cols:
+                logger.error("回放信号: pred.parquet 缺必要列: %s", cols)
+                return None
+            frame = con.execute(
+                f"""
+                SELECT symbol,
+                       CAST({date_col} AS DATE) AS trade_date,
+                       CAST({score_col} AS DOUBLE) AS score
+                FROM read_parquet('{parquet_file}')
+                WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
+                  AND CAST({date_col} AS DATE) BETWEEN CAST(? AS DATE)
+                      AND CAST(? AS DATE)
+                """,
+                [start.isoformat(), end.isoformat()],
+            ).fetchdf()
+        finally:
+            con.close()
+        if frame.empty:
+            return None
+        return frame.dropna(subset=["symbol", "trade_date", "score"])
+    except Exception as exc:  # noqa: BLE001 - 直读失败降级为重新推理
+        logger.error("回放信号: pred.parquet 读取失败: %s", exc)
+        return None
 
 
 def _load_quantdb_features(
@@ -264,7 +329,6 @@ class ReplaySignalGenerator:
         """
         model_dir = self._model_dir or _resolve_model_dir(self._model_id)
         meta = _load_metadata(model_dir)
-        model = _load_model(model_dir, meta)
         feature_cols = meta.get("feature_columns") or meta.get("features", [])
         fill_values = meta.get("fill_values", {})
 
@@ -289,54 +353,78 @@ class ReplaySignalGenerator:
                 "errors": ["区间内无交易日"],
             }
 
-        # 2. 读特征数据：QuantDB 直读模型走因子 reader（Hive 分区），
-        #    旧模型回退年度快照 parquet。
-        if str(meta.get("data_source") or "") == "quantdb_factors":
-            df_all = _load_quantdb_features(
-                meta, feature_cols, _dt_int_to_date(data_start_int), end_date
+        # 2. 读特征数据：优先直读模型目录 pred.parquet（训练产出 + 每日推理回写的全量历史分数，
+        #    与生产个股分数曲线同源，无需重新推理）；无 pred.parquet 时回退：QuantDB 直读模型走特征
+        #    reader 重推理，旧模型读年度快照。
+        pred_file = _find_pred_parquet(model_dir)
+        df_pred: pd.DataFrame | None = None
+        df_all: pd.DataFrame | None = None
+        if pred_file is not None:
+            df_pred = _load_pred_parquet(
+                pred_file, _dt_int_to_date(data_start_int), end_date
             )
-            if df_all is None or df_all.empty:
-                return {
-                    "total_days": total,
-                    "signals_by_date": {},
-                    "errors": ["QuantDB 因子数据读取失败或区间内无已发布分区"],
-                }
-        else:
-            data_dir = _resolve_data_dir()
-            parquet_paths = _parquet_paths_for_range(
-                data_dir, _dt_int_to_date(data_start_int), end_date
-            )
-            if not parquet_paths:
-                return {
-                    "total_days": total,
-                    "signals_by_date": {},
-                    "errors": ["无 parquet 数据文件"],
-                }
+            if df_pred is not None and not df_pred.empty:
+                logger.info(
+                    "回放信号: 直读 pred.parquet（%s，%d 行）",
+                    pred_file,
+                    len(df_pred),
+                )
 
-            needed_cols = {"trade_date", "symbol"}
-            needed_cols.update(feature_cols)
-            optional_cols = {"is_st", "volume"}
-            all_cols = needed_cols | optional_cols
+        if df_pred is None or df_pred.empty:
+            model = _load_model(model_dir, meta)
+            if str(meta.get("data_source") or "") == "quantdb_factors":
+                df_all = _load_quantdb_features(
+                    meta, feature_cols, _dt_int_to_date(data_start_int), end_date
+                )
+                if df_all is None or df_all.empty:
+                    return {
+                        "total_days": total,
+                        "signals_by_date": {},
+                        "errors": ["QuantDB 因子数据读取失败或区间内无已发布分区"],
+                    }
+            else:
+                data_dir = _resolve_data_dir()
+                parquet_paths = _parquet_paths_for_range(
+                    data_dir, _dt_int_to_date(data_start_int), end_date
+                )
+                if not parquet_paths:
+                    return {
+                        "total_days": total,
+                        "signals_by_date": {},
+                        "errors": ["无 parquet 数据文件"],
+                    }
 
-            dfs: list[pd.DataFrame] = []
-            for p in parquet_paths:
-                try:
-                    available = set(pd.read_parquet(p, engine="pyarrow").columns)
-                    read_cols = [c for c in all_cols if c in available]
-                    chunk = pd.read_parquet(p, columns=read_cols, engine="pyarrow")
-                    dfs.append(chunk)
-                except Exception as exc:
-                    logger.error("读取 parquet 失败 %s: %s", p, exc)
+                needed_cols = {"trade_date", "symbol"}
+                needed_cols.update(feature_cols)
+                optional_cols = {"is_st", "volume"}
+                all_cols = needed_cols | optional_cols
 
-            if not dfs:
-                return {
-                    "total_days": total,
-                    "signals_by_date": {},
-                    "errors": ["parquet 读取全部失败"],
-                }
+                dfs: list[pd.DataFrame] = []
+                for p in parquet_paths:
+                    try:
+                        available = set(
+                            pd.read_parquet(p, engine="pyarrow").columns
+                        )
+                        read_cols = [c for c in all_cols if c in available]
+                        chunk = pd.read_parquet(
+                            p, columns=read_cols, engine="pyarrow"
+                        )
+                        dfs.append(chunk)
+                    except Exception as exc:
+                        logger.error("读取 parquet 失败 %s: %s", p, exc)
 
-            df_all = pd.concat(dfs, ignore_index=True)
+                if not dfs:
+                    return {
+                        "total_days": total,
+                        "signals_by_date": {},
+                        "errors": ["parquet 读取全部失败"],
+                    }
 
+                df_all = pd.concat(dfs, ignore_index=True)
+
+        use_pred_scores = df_pred is not None and not df_pred.empty
+        if use_pred_scores:
+            df_all = df_pred
         df_all["trade_date"] = pd.to_datetime(df_all["trade_date"]).dt.strftime(
             "%Y-%m-%d"
         )
@@ -356,25 +444,30 @@ class ReplaySignalGenerator:
                 logger.debug("回放信号: %s 无数据，跳过", dt_str)
                 continue
 
-            day_df = _filter_untradable(day_df)
-            if day_df.empty:
-                continue
+            if use_pred_scores:
+                # pred.parquet 直读：分数即列，无行情列可过滤停牌，
+                # 不可交易标的由 day_runner 撮合层兜底拒绝。
+                scores = day_df["score"].to_numpy(dtype=np.float64)
+            else:
+                day_df = _filter_untradable(day_df)
+                if day_df.empty:
+                    continue
 
-            # 补缺失列 + 统一数值类型：历史年份 parquet 特征列可能是
-            # Int64 掩码数组，fillna(浮点) 会抛 TypeError（见 _coerce_feature_columns）
-            day_df = _coerce_feature_columns(day_df, feature_cols)
-            for c, val in fill_values.items():
-                if c in day_df.columns:
-                    day_df[c] = day_df[c].fillna(val)
-            X = day_df[feature_cols].fillna(0.0).values.astype(np.float32)
+                # 补缺失列 + 统一数值类型：历史年份 parquet 特征列可能是
+                # Int64 掩码数组，fillna(浮点) 会抛 TypeError（见 _coerce_feature_columns）
+                day_df = _coerce_feature_columns(day_df, feature_cols)
+                for c, val in fill_values.items():
+                    if c in day_df.columns:
+                        day_df[c] = day_df[c].fillna(val)
+                X = day_df[feature_cols].fillna(0.0).values.astype(np.float32)
 
-            try:
-                scores = _predict(model, X, meta)
-            except Exception as exc:
-                msg = f"{dt_str} predict 失败: {exc}"
-                logger.error(msg)
-                errors.append(msg)
-                continue
+                try:
+                    scores = _predict(model, X, meta)
+                except Exception as exc:
+                    msg = f"{dt_str} predict 失败: {exc}"
+                    logger.error(msg)
+                    errors.append(msg)
+                    continue
 
             # T+1 偏移：数据日 D → 信号生效日 = next_session(D)
             try:

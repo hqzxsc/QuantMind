@@ -148,21 +148,36 @@ def _load_quantdb_features(
         reader = QuantDBFactorReader(pinned_dir if pinned_dir.is_dir() else None)
         source = str(meta.get("factor_source") or "l1_l2_factors")
 
-        # 分区目录名快速路径：先看区间内是否有已发布分区，避免 assert_ready
-        # 对全量 dt=* 做 DESCRIBE 扫描（回放默认近半年，全量扫描无谓耗时）。
+        # 分区目录名快速路径（读目录名，不扫数据）：把请求区间钳制到实际已发布
+        # 分区范围内。回放默认结束于「今天」，而当日分区往往尚未发布（周一早上
+        # 还差周五数据），read_range 的 assert_ready 对越界区间直接抛错，会让整个
+        # 读取失败；钳制后缺数据的日子由下游逐日循环自然跳过。
         try:
-            available = reader.available_dates(
+            in_range = reader.available_dates(
                 source,
                 start=start.strftime("%Y-%m-%d"),
                 end=end.strftime("%Y-%m-%d"),
             )
         except Exception:  # noqa: BLE001 - 快速路径失败回退全量校验
-            available = None
-        if available is not None and not available:
-            logger.error(
-                "回放信号: QuantDB %s 在 %s~%s 无分区", source, start, end
-            )
-            return None
+            in_range = None
+        if in_range is not None:
+            if not in_range:
+                logger.error(
+                    "回放信号: QuantDB %s 在 %s~%s 无分区", source, start, end
+                )
+                return None
+            clamped_start = date.fromisoformat(in_range[0])
+            clamped_end = date.fromisoformat(in_range[-1])
+            if (clamped_start, clamped_end) != (start, end):
+                logger.info(
+                    "回放信号: QuantDB %s 读取区间由 %s~%s 钳制为 %s~%s（按已发布分区）",
+                    source,
+                    start,
+                    end,
+                    clamped_start,
+                    clamped_end,
+                )
+            start, end = clamped_start, clamped_end
 
         return reader.read_range(
             source,
@@ -284,7 +299,7 @@ class ReplaySignalGenerator:
                 return {
                     "total_days": total,
                     "signals_by_date": {},
-                    "errors": ["QuantDB 因子数据读取失败或区间内无分区"],
+                    "errors": ["QuantDB 因子数据读取失败或区间内无已发布分区"],
                 }
         else:
             data_dir = _resolve_data_dir()

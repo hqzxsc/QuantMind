@@ -1374,7 +1374,7 @@ async def list_stocks(
     index_code: str | None = Query(None, description="宽基指数成分过滤（index_weights parquet 名）"),
     with_counts: bool = Query(False, description="附带筛选下拉的选项命中数（option_counts）"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=10, le=6000),
+    page_size: int = Query(100, ge=1, le=6000),
     find_symbol: str | None = Query(None, description="定位股票（600519.SH 或纯代码），返回当前排序中的名次与页数"),
     symbols: str | None = Query(None, description="自选股列表（逗号分隔，prefix/suffix/纯代码均可），按当前排序保留分数降序"),
     current_user: dict = Depends(get_current_user),

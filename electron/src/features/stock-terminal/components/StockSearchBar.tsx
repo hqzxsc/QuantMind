@@ -53,7 +53,7 @@ export function StockSearchBar({ onSelect, watchlistSymbols, placeholder = 'æœç
     setLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const resp = await stockTerminalService.getStockList({ q: trimmed, page: 1, page_size: 8 });
+        const resp = await stockTerminalService.getStockList({ q: trimmed, page: 1, page_size: 10 });
         setItems(resp.items ?? []);
       } catch {
         setItems([]);
@@ -192,7 +192,7 @@ export function StockSearchBar({ onSelect, watchlistSymbols, placeholder = 'æœç
                           key={h}
                           onClick={async () => {
                             try {
-                              const resp = await stockTerminalService.getStockList({ q: sym, page: 1, page_size: 1 });
+                              const resp = await stockTerminalService.getStockList({ q: sym, page: 1, page_size: 10 });
                               const hit = resp.items?.find((x) => x.symbol === sym) ?? resp.items?.[0];
                               if (hit) handleSelect(hit);
                               else handleSelect({ symbol: sym, name: name || sym } as StockListItem);

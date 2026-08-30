@@ -910,7 +910,7 @@ async def get_model_market_regime(
                         # 统一字段：pred / fusion_score 均可能
                         con = duckdb.connect()
                         # 先探列
-                        cols = [r[1] for r in con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0").description]
+                        cols = [r[0] for r in con.execute(f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0").description]
                         score_col = "pred" if "pred" in cols else "fusion_score" if "fusion_score" in cols else None
                         date_col = "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
                         if score_col and date_col:

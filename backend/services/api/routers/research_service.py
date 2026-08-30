@@ -600,7 +600,6 @@ def _format_candidate_record(row: dict[str, Any]) -> dict[str, Any]:
 
     concept_tags = parse_json(row.get("concept_tags"))
     index_tags = parse_json(row.get("index_tags"))
-    risk_flags = parse_json(row.get("risk_flags"))
     return_1d = _serialize_float(row.get("return_1d"))
     return_3d = _serialize_float(row.get("return_3d"))
     return_5d = _serialize_float(row.get("return_5d"))
@@ -670,7 +669,6 @@ def _format_candidate_record(row: dict[str, Any]) -> dict[str, Any]:
         "concept": " / ".join(concept_tags[:3]) if isinstance(concept_tags, list) and concept_tags else "",
         "conceptTags": concept_tags if isinstance(concept_tags, list) else [],
         "indexTags": index_tags if isinstance(index_tags, list) else [],
-        "riskFlags": risk_flags if isinstance(risk_flags, list) else [],
         "closePrice": _to_nominal_price(close_price_raw, adj_factor_raw),
         "pe": round(pe_raw, 2) if pe_raw is not None else None,
         "pb": round(_serialize_float(row.get("pb")) or 0.0, 2),

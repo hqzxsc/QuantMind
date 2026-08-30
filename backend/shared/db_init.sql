@@ -453,7 +453,6 @@ CREATE TABLE IF NOT EXISTS qm_research_candidate_snapshot (
     universe_tag            TEXT,
     confidence_level        TEXT,
     thesis_summary          TEXT,
-    risk_flags              JSONB,
     created_at              TIMESTAMPTZ DEFAULT NOW(),
     updated_at              TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE (tenant_id, user_id, run_id, symbol)

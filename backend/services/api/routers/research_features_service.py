@@ -1,12 +1,11 @@
-"""QuantDB parquet 全量特征聚合服务。
+"""QuantDB parquet 投影特征服务。
 
-为投研平台提供 `stock_daily_latest` 之外的完整因子视图：
-- 5_technical_derived/{valuation,technical_indicators,market_sentiment}
-- 6_ml_datasets/{l1_factors,l2_factors}
+为投研平台提供按需字段投影（一级：候选池列表选中日期后加载 50 维宽表
+所需字段；二级：个股详情点击后动态加载）。全量分类特征路径已随
+FactorPanel 下线移除。
 
 所有读取都复用 QuantDBDataHub 单例的 DuckDB 视图（懒加载 + 线程本地连接），
-不额外创建连接。字段按类别（估值/技术/动量/波动/流动性/资金流/风格/行业/
-筹码/概念/微观结构/情绪）分组返回，缺失字段返回 null。
+不额外创建连接。
 """
 
 from __future__ import annotations
@@ -23,11 +22,6 @@ from typing import Any
 from backend.shared.stock_utils import StockCodeUtil
 
 logger = logging.getLogger(__name__)
-
-_CACHE_TTL_SECONDS = 60
-_CACHE_MAX_ENTRIES = 1024
-_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_CACHE_LOCK = threading.Lock()
 
 # 按数据日投影的结果缓存（投研选中日期的 50 维宽表截面）：
 # 宽表按日落盘、当天不变，TTL 内重复切日期/刷新页面直接命中
@@ -60,10 +54,7 @@ async def _offload(coro_func, *args):
     )
 
 
-# 批量接口单次上限，避免超大请求拖垮 DuckDB 扫描
-MAX_BATCH_SYMBOLS = 200
-
-# 投影模式（只取表格/筛选所需字段）下的上限：响应体小得多，可覆盖整个候选池。
+# 投影模式（只取表格/筛选所需字段）上限：响应体小得多，可覆盖整个候选池。
 # 投研宇宙按数据日直读 pred.parquet 全市场截面（约 5400 只），上限需覆盖全市场
 MAX_BATCH_SYMBOLS_PROJECTED = 6000
 
@@ -88,121 +79,6 @@ _META_COLUMNS = frozenset(
     }
 )
 
-# 排除在全量分类输出之外的列（基础价格与前瞻收益率标签，最新日全为 None，不属于历史技术特征）
-_EXCLUDED_FROM_CATEGORIES = frozenset(
-    {
-        "open",
-        "high",
-        "low",
-        "volume",
-        "amount",
-        "return_1d",
-        "return_3d",
-        "return_5d",
-        "return_10d",
-        "return_20d",
-        "return_60d",
-    }
-)
-
-# DuckDB 视图 → 默认输出类别（视图内未命中前缀规则的列归入此类别）
-_VIEW_DEFAULT_CATEGORY: dict[str, str] = {
-    "qdb_features_daily": "technical",
-    "qdb_valuation": "valuation",
-    "qdb_technical_indicators": "technical",
-    "qdb_market_sentiment": "sentiment",
-    "qdb_l1_factors": "other",
-    "qdb_l2_factors": "other",
-}
-
-# 显式字段分类映射（用于 features_daily 等混合视图中无前缀列的精确归类）
-_COLUMN_EXPLICIT_CATEGORY: dict[str, str] = {
-    # 估值与基本面
-    "pe_ttm": "valuation",
-    "pe_static": "valuation",
-    "pb": "valuation",
-    "ps_ttm": "valuation",
-    "dividend_rate": "valuation",
-    "total_mv": "valuation",
-    "float_mv": "valuation",
-    "total_capital": "valuation",
-    "circulating_capital": "valuation",
-    "net_profit_ttm": "valuation",
-    "revenue_ttm": "valuation",
-    "equity": "valuation",
-    "annual_net_profit": "valuation",
-    # 核心技术指标（均线、乖离率、超买超卖、动能）
-    "ma5": "technical",
-    "ma10": "technical",
-    "ma20": "technical",
-    "ma30": "technical",
-    "ma60": "technical",
-    "ma_gap_5": "technical",
-    "ma_gap_10": "technical",
-    "ma_gap_20": "technical",
-    "ma_gap_60": "technical",
-    "rsi_6": "technical",
-    "rsi_14": "technical",
-    "kdj_k": "technical",
-    "kdj_d": "technical",
-    "kdj_j": "technical",
-    "macd_dif": "technical",
-    "macd_dea": "technical",
-    "macd_hist": "technical",
-    "vol_to_ma5": "technical",
-    "vol_to_ma20": "technical",
-    "volume_ma_3": "technical",
-    "amount_ma_5": "technical",
-    "volume_trend_3d": "technical",
-    "beta_20": "technical",
-    "pct_change": "technical",
-    # 波动率
-    "vol_std_5": "volatility",
-    "vol_std_20": "volatility",
-    "vol_std_60": "volatility",
-    "vol_atr_14": "volatility",
-    # 换手率（l1/l2_factors 的 turn_* 为小数，归入流动性并按百分数展示）
-    "turn_1": "liquidity",
-    "turn_3": "liquidity",
-    "turn_5": "liquidity",
-    "turn_10": "liquidity",
-    "turn_20": "liquidity",
-    "turn_60": "liquidity",
-}
-
-# 因子列前缀 → 类别（按前缀长度降序匹配，长前缀优先）
-_PREFIX_CATEGORY: tuple[tuple[str, str], ...] = (
-    ("mom_", "momentum"),
-    ("vol_", "volatility"),
-    ("liq_", "liquidity"),
-    ("tech_", "technical"),
-    ("fun_", "fundamental"),
-    ("style_", "style"),
-    ("ind_", "industry"),
-    ("chip_", "chip"),
-    ("concept_", "concept"),
-    ("micro_", "microstructure"),
-    ("flow_", "fundFlow"),
-)
-
-# 输出类别顺序（保证响应结构稳定，即使某类别为空）
-CATEGORIES: tuple[str, ...] = (
-    "valuation",
-    "technical",
-    "momentum",
-    "volatility",
-    "liquidity",
-    "fundFlow",
-    "fundamental",
-    "style",
-    "industry",
-    "chip",
-    "concept",
-    "microstructure",
-    "sentiment",
-    "other",
-)
-
 
 def _get_hub():
     """获取 QuantDBHub 单例（延迟导入，避免 API 服务启动强依赖 engine 模块）。"""
@@ -222,15 +98,6 @@ def normalize_symbols(symbols: list[str]) -> list[str]:
         seen.add(suffix)
         result.append(suffix)
     return result
-
-
-def _category_for(column: str, default: str) -> str:
-    if column in _COLUMN_EXPLICIT_CATEGORY:
-        return _COLUMN_EXPLICIT_CATEGORY[column]
-    for prefix, category in _PREFIX_CATEGORY:
-        if column.startswith(prefix):
-            return category
-    return default
 
 
 # ----------------------------------------------------------------------
@@ -312,12 +179,6 @@ _UNIT_SCALES: dict[str, float] = {
     # l2_factors.flow_super_net 单位是元，与其他 flow* 一致（同类别统一 → 百万元）
     "flowSuperNet": 1e-6,
 }
-
-# 换手率字段：l1/l2_factors 的 turn_N 为小数（0.016 = 1.6%），统一 ×100 转为百分数，
-# 与投影路径现算的 turnoverRate（百分比量纲）及 /research/universe 对齐。
-_TURNOVER_PERCENT_FIELDS: frozenset[str] = frozenset(
-    {"turn_1", "turn_3", "turn_5", "turn_10", "turn_20", "turn_60"}
-)
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -431,58 +292,12 @@ def _resolve_trade_date(rows: dict[str, dict[str, Any]]) -> str | None:
 def _apply_unit_scales(values: dict[str, Any]) -> None:
     """对需要单位换算的字段就地缩放（元→亿元 / 元→百万元）。
 
-    全量路径 `_build_payload` 和投影路径 `_build_projected_payload` 共用此函数，
-    确保两者返回的同名字段量纲一致（与 `/research/universe` 已换算后的值对齐）。
-
-    `_UNIT_SCALES` 用 camelCase 键（totalMv / mainFlow），但 `_build_payload`
-    的 grouped 字典保留原始 snake_case 列名（total_mv / main_flow），因此
-    这里同时尝试两种命名。
+    与 `/research/universe` 已换算后的值对齐（universe 缺值或 0 占位时前端
+    才采用 QuantDB 投影值，量纲必须一致）。
     """
     for camel_name, scale in _UNIT_SCALES.items():
-        # camelCase 键（投影路径）
         if camel_name in values:
             values[camel_name] = values[camel_name] * scale
-        # snake_case 键（全量路径）：totalMv → total_mv
-        snake = re.sub(r"(?<!^)(?=[A-Z])", "_", camel_name).lower()
-        if snake in values:
-            values[snake] = values[snake] * scale
-
-    # 换手率：小数 → 百分数（全量路径的 turn_* 保留 snake_case 列名）
-    for field in _TURNOVER_PERCENT_FIELDS:
-        if field in values:
-            values[field] = values[field] * 100
-
-
-def _build_payload(symbol: str, sources: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """将各数据源的行按类别合并为单只股票的响应体。"""
-    grouped: dict[str, dict[str, Any]] = {name: {} for name in CATEGORIES}
-    available: list[str] = []
-
-    for view, rows_by_symbol in sources.items():
-        row = rows_by_symbol.get(symbol)
-        if not row:
-            continue
-        available.append(view.removeprefix("qdb_"))
-        default_category = _VIEW_DEFAULT_CATEGORY.get(view, "other")
-        for column, value in row.items():
-            if column in _META_COLUMNS or column in _EXCLUDED_FROM_CATEGORIES:
-                continue
-            category = _category_for(column, default_category)
-            grouped[category][column] = _to_jsonable(value)
-
-    # 对含单位换算的字段统一缩放，与投影路径和 /research/universe 的量纲对齐
-    for category_values in grouped.values():
-        _apply_unit_scales(category_values)
-
-    payload: dict[str, Any] = {
-        "symbol": symbol,
-        "tradeDate": _resolve_trade_date(
-            {v: r[symbol] for v, r in sources.items() if symbol in r}
-        ),
-        "sources": sorted(available),
-    }
-    payload.update(grouped)
-    return payload
 
 
 def _build_projected_payload(
@@ -559,26 +374,6 @@ def _build_projected_payload(
     }
 
 
-def _cache_get(symbol: str) -> dict[str, Any] | None:
-    # 缓存现在被事件循环与特征线程池并发访问，读写均加锁
-    with _CACHE_LOCK:
-        cached = _CACHE.get(symbol)
-        if not cached:
-            return None
-        if (time.monotonic() - cached[0]) > _CACHE_TTL_SECONDS:
-            _CACHE.pop(symbol, None)
-            return None
-        return cached[1]
-
-
-def _cache_set(symbol: str, payload: dict[str, Any]) -> None:
-    with _CACHE_LOCK:
-        _CACHE[symbol] = (time.monotonic(), payload)
-        if len(_CACHE) > _CACHE_MAX_ENTRIES:
-            oldest = min(_CACHE.items(), key=lambda kv: kv[1][0])[0]
-            _CACHE.pop(oldest, None)
-
-
 def _query_sources(
     symbols: list[str], *, include_daily: bool = False, dt: int | None = None
 ) -> dict[str, dict[str, Any]] | None:
@@ -630,31 +425,6 @@ def _query_sources(
     return sources
 
 
-def _load_features(symbols: list[str]) -> dict[str, dict[str, Any]]:
-    """查询所有 QuantDB 数据源，返回 {symbol: payload}（含缓存读写）。"""
-    result: dict[str, dict[str, Any]] = {}
-    pending: list[str] = []
-    for symbol in symbols:
-        cached = _cache_get(symbol)
-        if cached is not None:
-            result[symbol] = cached
-        else:
-            pending.append(symbol)
-
-    if not pending:
-        return result
-
-    sources = _query_sources(pending)
-    if sources is None:
-        return result
-
-    for symbol in pending:
-        payload = _build_payload(symbol, sources)
-        _cache_set(symbol, payload)
-        result[symbol] = payload
-    return result
-
-
 def _load_projected_features(
     symbols: list[str], wanted: frozenset[str], dt: int | None = None
 ) -> dict[str, dict[str, Any]]:
@@ -688,29 +458,6 @@ def _load_projected_features(
     return result
 
 
-def get_symbol_full_features_sync(symbol: str) -> dict[str, Any]:
-    """单只股票全量特征的同步实现（唯一实现，异步端点经由线程池调用）。
-
-    特征读取链路含 DuckDB/pandas 同步 IO，在 API 单 worker 进程中直接执行
-    会阻塞事件循环导致健康检查超时，因此所有调用方都应走 _offload。
-    """
-    normalized = normalize_symbols([symbol])
-    if not normalized:
-        return {"code": 400, "message": f"无效股票代码: {symbol}", "data": None}
-
-    target = normalized[0]
-    features = _load_features(normalized)
-    payload = features.get(target)
-    if payload is None or not payload.get("sources"):
-        return {"code": 404, "message": f"无 QuantDB 特征数据: {target}", "data": None}
-    return {"code": 200, "data": payload}
-
-
-async def get_symbol_full_features(symbol: str) -> dict[str, Any]:
-    """单只股票的全量 QuantDB 特征（线程池卸载版）。"""
-    return await _offload(get_symbol_full_features_sync, symbol)
-
-
 def _normalize_dt(trade_date: str | None) -> int | None:
     """'2026-08-28' / '20260828' → 20260828；无效输入返回 None（读最新行）。"""
     if not trade_date:
@@ -722,10 +469,10 @@ def _normalize_dt(trade_date: str | None) -> int | None:
 def get_batch_full_features_sync(
     symbols: list[str], fields: list[str] | None = None, trade_date: str | None = None
 ) -> dict[str, Any]:
-    """批量股票全量/投影特征的同步实现（唯一实现）。
+    """批量股票投影特征的同步实现（唯一实现）。
 
-    传入 fields（camelCase）时走投影模式：响应只含这些字段且平铺在 values 下，
-    上限提高到 MAX_BATCH_SYMBOLS_PROJECTED，可一次覆盖整个候选池以支持全池筛选。
+    fields（camelCase）为投影字段集：响应只含这些字段且平铺在 values 下，
+    上限 MAX_BATCH_SYMBOLS_PROJECTED 覆盖整个候选池以支持全池筛选。
     trade_date 传入时投影按「不晚于该日的最新截面」读取（投研历史日期回看）。
     """
     normalized = normalize_symbols(symbols or [])
@@ -733,15 +480,16 @@ def get_batch_full_features_sync(
         return {"code": 200, "data": {"items": [], "total": 0, "missing": []}}
 
     wanted = frozenset(f for f in (fields or []) if f)
-    cap = MAX_BATCH_SYMBOLS_PROJECTED if wanted else MAX_BATCH_SYMBOLS
-    truncated = normalized[:cap]
+    if not wanted:
+        return {
+            "code": 400,
+            "message": "fields 不能为空：投影接口必须指定字段集",
+            "data": None,
+        }
 
-    if wanted:
-        features = _load_projected_features(
-            truncated, wanted, _normalize_dt(trade_date)
-        )
-    else:
-        features = _load_features(truncated)
+    cap = MAX_BATCH_SYMBOLS_PROJECTED
+    truncated = normalized[:cap]
+    features = _load_projected_features(truncated, wanted, _normalize_dt(trade_date))
 
     items = [features[s] for s in truncated if features.get(s, {}).get("sources")]
     missing = [s for s in truncated if not features.get(s, {}).get("sources")]
@@ -752,7 +500,7 @@ def get_batch_full_features_sync(
             "total": len(items),
             "missing": missing,
             "truncated": len(normalized) > cap,
-            "projected": bool(wanted),
+            "projected": True,
         },
     }
 
@@ -760,5 +508,5 @@ def get_batch_full_features_sync(
 async def get_batch_full_features(
     symbols: list[str], fields: list[str] | None = None, trade_date: str | None = None
 ) -> dict[str, Any]:
-    """批量股票的全量 QuantDB 特征（线程池卸载版，用于表格增强）。"""
+    """批量股票的 QuantDB 特征投影（线程池卸载版，用于表格增强）。"""
     return await _offload(get_batch_full_features_sync, symbols, fields, trade_date)

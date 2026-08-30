@@ -213,6 +213,18 @@ class TradingService {
     }
 
     /**
+     * 获取模拟成交列表（读 sim_trades，模拟盘专用口径）
+     * 注意：/api/v1/simulation/trades 不接受 trading_mode/user_id 参数（后端从 JWT 取用户）
+     */
+    async listSimulationTrades(params: { limit?: number; offset?: number } = {}): Promise<Trade[]> {
+        const queryParams: Record<string, unknown> = {
+            limit: params.limit ?? 50,
+            offset: params.offset ?? 0,
+        };
+        return await this.client.get<Trade[]>(API_ENDPOINTS.SIMULATION_TRADES, queryParams);
+    }
+
+    /**
      * 获取成交列表
      */
     async listTrades(params: ListTradesParams = {}): Promise<Trade[]> {
@@ -279,7 +291,11 @@ class TradingService {
             if (tradingMode) {
                 params['trading_mode'] = String(tradingMode).toUpperCase();
             }
-            const response = await this.client.get<TradeStatsSummaryResponse | ChartDataPoint[]>(API_ENDPOINTS.TRADING_STATS, params);
+            // 模拟模式分流：模拟成交统计读 sim_trades 专用接口（同样返回 daily_counts）
+            const endpoint = String(tradingMode).toLowerCase() === 'simulation'
+                ? API_ENDPOINTS.SIMULATION_TRADES_STATS
+                : API_ENDPOINTS.TRADING_STATS;
+            const response = await this.client.get<TradeStatsSummaryResponse | ChartDataPoint[]>(endpoint, params);
             if (Array.isArray(response)) {
                 return response;
             }
@@ -323,6 +339,20 @@ class TradingService {
         tradingMode?: TradingMode,
     ): Promise<{ records: TradeRecord[]; isOffline: boolean; isFallbackToOrders: boolean }> {
         const normalizedTradingMode = this.normalizeTradingMode(tradingMode);
+
+        // 模拟模式分流：读 sim_trades 台账（手动/托管任务虚拟成交已补写落库），
+        // 不再查实盘 trades 表，避免模拟盘记录恒为空。
+        if (normalizedTradingMode === 'simulation') {
+            try {
+                const simTrades = await this.listSimulationTrades({ limit });
+                const records = simTrades.map((trade) => this.mapTradeToTradeRecord(trade));
+                return { records, isOffline: false, isFallbackToOrders: false };
+            } catch (simError) {
+                console.warn('模拟成交服务不可用，返回空列表:', simError);
+                return { records: [], isOffline: true, isFallbackToOrders: false };
+            }
+        }
+
         try {
             const trades = await this.listTrades({
                 limit,

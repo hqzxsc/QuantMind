@@ -14,7 +14,6 @@ from backend.services.api.routers.research_schemas import (
 )
 from backend.services.api.routers.research_features_service import (
     get_batch_full_features as get_batch_full_features_service,
-    get_symbol_full_features as get_symbol_full_features_service,
 )
 from backend.services.api.routers.research_service import (
     add_to_research_pool as add_to_research_pool_service,
@@ -177,22 +176,12 @@ async def get_stock_kline(symbol: str, days: int = Query(60), current_user: dict
     return await get_stock_kline_service(symbol, days)
 
 
-@router.get("/features/{symbol}")
-async def get_symbol_features(
-    symbol: str,
-    current_user: dict = Depends(get_current_user),
-):
-    """单只股票的全量 QuantDB 分类特征（估值/技术/动量/波动/…/微观结构）。"""
-    _ = current_user
-    return await get_symbol_full_features_service(symbol)
-
-
 @router.post("/batch-features")
 async def get_batch_features(
     req: BatchFeaturesRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """批量 QuantDB 特征：fields 传入时走投影模式（仅返回指定字段），否则返回全量。"""
+    """批量 QuantDB 特征投影：按 fields 返回指定字段（按需加载）。"""
     _ = current_user
     return await get_batch_full_features_service(req.symbols, req.fields, req.trade_date)
 

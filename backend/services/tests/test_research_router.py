@@ -130,7 +130,6 @@ async def test_do_get_overview_uses_run_date_market_snapshot(monkeypatch):
                         "return_3d": -0.0434,
                         "concept_tags": ["玻纤"],
                         "index_tags": ["中证1000"],
-                        "risk_flags": [],
                         "is_st": False,
                         "is_hs300": False,
                         "is_csi1000": True,

@@ -40,7 +40,6 @@ import {
 import type { ColumnsType, ColumnType } from 'antd/es/table';
 import { PAGE_LAYOUT } from '../config/pageLayout';
 import { researchService, type ResearchRunOption } from '../services/researchService';
-import RiskScoreCard from '../components/Research/RiskScoreCard';
 import {
   BUTTON_STYLES,
   COLUMN_GROUPS,
@@ -52,7 +51,6 @@ import {
 import {
   type DataSourceTab,
   type FilterSectionKey,
-  type QuantDbFeatures,
   type ResearchFiltersState,
   type ResearchModelOption,
   type ResearchPoolRow,
@@ -63,11 +61,7 @@ import {
 } from '../features/research/types';
 import {
   fmt2,
-  fmtMainFlowCn,
-  fmtNullableExponential,
-  fmtNullableFloat,
   fmtNullableSignedPercent2,
-  fmtNullableYi,
   fmtPercent2,
   fmtPositiveOrDash,
   fmtSignedPercent2,
@@ -77,12 +71,9 @@ import {
 } from '../features/research/utils/formatters';
 import {
   flattenProjectedValues,
-  flattenQuantDbFeatures,
   mergePoolFeatures,
-  mergeQuantDbFeatures,
   toSuffixSymbol,
 } from '../features/research/utils/featureMapper';
-import { FactorPanel } from '../features/research/components/FactorPanel';
 import '../styles/research-next-theme.css';
 import { useAppSelector } from '../store';
 import { selectCurrentMarket } from '../store/slices/uiSlice';
@@ -91,8 +82,6 @@ import { getMarketConfig } from '../config/marketConfig';
 /* ------------------------------------------------------------------ *
  * 常量与工具
  * ------------------------------------------------------------------ */
-
-const VISIBLE_GROUPS_STORAGE_KEY = 'research.visibleColumnGroups';
 
 /** snake_case -> camelCase，用于兼容后端两种字段命名 */
 const toCamelKey = (key: string): string => key.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
@@ -197,27 +186,6 @@ const rRoe: CellRenderer = (value) => {
   return <span className="whitespace-nowrap font-bold text-rose-500">{n.toFixed(1)}%</span>;
 };
 
-/** 科学计数法（Amihud 等极小量级指标） */
-const rExp: CellRenderer = (value) =>
-  isNil(value) ? DASH : <span className="whitespace-nowrap text-xs text-slate-600">{Number(value).toExponential(2)}</span>;
-
-/** 资金流：后端口径为百万，统一走 fmtMainFlowCn */
-const rFlow: CellRenderer = (value) => {
-  if (isNil(value)) return DASH;
-  const n = Number(value);
-  return (
-    <span className={`whitespace-nowrap font-medium ${n >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-      {fmtMainFlowCn(n)}
-    </span>
-  );
-};
-
-/** 原始元 -> 亿元 */
-const rYuanToYi: CellRenderer = (value) =>
-  isNil(value) ? DASH : (
-    <span className="whitespace-nowrap font-medium text-slate-600">{(Number(value) / 100000000).toFixed(2)}亿</span>
-  );
-
 /** 整数（排名类） */
 const rInt: CellRenderer = (value) =>
   isNil(value) ? DASH : <span className="whitespace-nowrap font-medium text-slate-600">{Number(value).toFixed(0)}</span>;
@@ -300,7 +268,7 @@ const COLUMN_DEFS: Record<string, ColumnDef> = {  // ---- 标识 ----
   },
   latestChange: { title: '涨跌幅', width: 96, render: rSigned(2) },
 
-  // ---- 收益 ----
+  // ---- 收益（features_daily.return_Nd，未来 N 日真实收益） ----
   return1d: { title: '1日收益', width: 96, render: rSigned(2) },
   return3d: { title: '3日收益', width: 96, render: rSigned(2) },
   return5d: { title: '5日收益', width: 96, render: rSigned(2) },
@@ -317,11 +285,8 @@ const COLUMN_DEFS: Record<string, ColumnDef> = {  // ---- 标识 ----
   amount: { title: '成交额', width: 108, render: rNum(2, '亿') },
   volRatio5: { title: '5日量比', width: 90, render: rNum(2) },
   volRatio20: { title: '20日量比', width: 90, render: rNum(2) },
-  liqAmountMa5: { title: '5日均额', width: 100, render: rYuanToYi },
-  liqMfi14: { title: 'MFI(14)', width: 80, render: rNum(1) },
-  liqAmihud20: { title: 'Amihud', width: 85, render: rExp },
 
-  // ---- 基本面 ----
+  // ---- 基本面（pe_ttm/pb/ps_ttm/total_mv/float_mv 来自宽表；roe/利润增速/上市天数来自 universe） ----
   pe: { title: 'PE(TTM)', width: 92, render: rPositive(1) },
   pb: { title: 'PB', width: 80, render: rNum(2) },
   roe: { title: 'ROE(%)', width: 92, render: rRoe },
@@ -331,10 +296,11 @@ const COLUMN_DEFS: Record<string, ColumnDef> = {  // ---- 标识 ----
   floatMv: { title: '流通市值', width: 100, render: rNum(2, '亿') },
   listedDays: { title: '上市天数', width: 85, render: rInt },
 
-  // ---- 技术面 ----
+  // ---- 技术面（ma*/ma_gap_*/rsi_6/rsi_14/vol_atr_14/macd_hist/kdj_k/beta_20 均来自宽表） ----
   ma5: { title: 'MA5', width: 80, render: rNum(2) },
   ma10: { title: 'MA10', width: 80, render: rNum(2) },
   ma20: { title: 'MA20', width: 80, render: rNum(2) },
+  ma60: { title: 'MA60', width: 80, render: rNum(2) },
   maGap5: { title: '5日乖离', width: 92, render: rGap },
   maGap10: { title: '10日乖离', width: 92, render: rGap },
   maGap20: { title: '20日乖离', width: 92, render: rGap },
@@ -342,93 +308,13 @@ const COLUMN_DEFS: Record<string, ColumnDef> = {  // ---- 标识 ----
   rsi14: { title: 'RSI(14)', width: 76, render: rRsi },
   atr: { title: 'ATR', width: 80, render: rNum(3) },
   macdHist: { title: 'MACD', width: 80, render: rColored(3) },
-  kdjK: { title: 'KDJ-K', width: 76, dataIndex: 'momKdjK', render: rNum(1) },
-  kdjD: { title: 'KDJ-D', width: 76, dataIndex: 'momKdjD', render: rNum(1) },
-  kdjJ: { title: 'KDJ-J', width: 76, dataIndex: 'momKdjJ', render: rNum(1) },
-  bbPos: { title: 'BB位置', width: 80, dataIndex: 'techBbPos', render: rNum(2) },
-  adx14: { title: 'ADX(14)', width: 80, dataIndex: 'techAdx14', render: rNum(1) },
+  kdjK: { title: 'KDJ-K', width: 76, render: rNum(1) },
+  beta20: { title: 'β20', width: 70, render: rNum(2) },
 
-  // ---- 动量 ----
-  momRet1d: { title: '动1日', width: 80, render: rColored(3) },
-  momRet3d: { title: '动3日', width: 80, render: rColored(3) },
-  momRet5d: { title: '动5日', width: 80, render: rColored(3) },
-  momRet10d: { title: '动10日', width: 80, render: rColored(3) },
-  momRet20d: { title: '动20日', width: 80, render: rColored(3) },
-  momRet60d: { title: '动60日', width: 80, render: rColored(3) },
-  momEmaGap12: { title: 'EMA12偏离', width: 90, render: rNum(3) },
-
-  // ---- 波动率 ----
+  // ---- 波动率（vol_std_* 来自宽表） ----
   volStd5: { title: '波5日', width: 80, render: rNum(4) },
   volStd20: { title: '波20日', width: 80, render: rNum(4) },
   volStd60: { title: '波60日', width: 80, render: rNum(4) },
-  volAtr14: { title: 'ATR14', width: 80, render: rNum(3) },
-  volParkinson20: { title: 'Parkinson', width: 85, render: rNum(4) },
-  volUpDownRatio: { title: '涨跌波比', width: 90, render: rNum(3) },
-  volSkew: { title: '波动偏度', width: 85, render: rNum(3) },
-  volRealizedRv: { title: '已实现波', width: 85, render: rNum(4) },
-
-  // ---- 资金流 ----
-  mainFlow: { title: '主力净流入', width: 100, render: rFlow },
-  flowNetAmount: { title: '净流入', width: 100, render: rFlow },
-  flowLargeNet: { title: '大单净额', width: 100, render: rFlow },
-  flowMediumNet: { title: '中单净额', width: 100, render: rFlow },
-  flowSmallNet: { title: '小单净额', width: 100, render: rFlow },
-  flowNetRatio: { title: '净流入比', width: 90, render: rNum(2, '%') },
-  flowLargeRatio: { title: '大单比', width: 80, render: rNum(2, '%') },
-  flowImbalanceVolume: { title: '买卖失衡', width: 90, render: rNum(3) },
-  flowMoneyFlowIndex: { title: '资金MFI', width: 85, render: rNum(1) },
-
-  // ---- 风格 ----
-  styleBeta20: { title: 'β20', width: 70, render: rNum(2) },
-  styleBeta60: { title: 'β60', width: 70, render: rNum(2) },
-  styleIdioVol20: { title: '特质波', width: 80, render: rNum(4) },
-  styleValue20: { title: '价值', width: 70, render: rNum(2) },
-  styleSize20: { title: '规模', width: 70, render: rNum(2) },
-  styleMvRank: { title: '市值排名', width: 85, render: rInt },
-
-  // ---- 行业 ----
-  indStrength20: { title: '行业强度', width: 90, render: rNum(3) },
-  indStrength60: { title: '行业强度60', width: 95, render: rNum(3) },
-  indRet20: { title: '行业收益', width: 90, render: rColored(3) },
-  indRelativeMomentum20: { title: '相对动量', width: 90, render: rColored(3) },
-  indCrowding20: { title: '拥挤度', width: 80, render: rNum(3) },
-  indRotationSpeed20: { title: '行业轮动', width: 90, render: rNum(3) },
-
-  // ---- 筹码 ----
-  chipProfitRatio20: { title: '获利盘20', width: 90, render: rNum(3) },
-  chipProfitRatio60: { title: '获利盘60', width: 90, render: rNum(3) },
-  chipProfitRatio120: { title: '获利盘120', width: 90, render: rNum(3) },
-  chipCost90Width: { title: '成本90宽', width: 90, render: rNum(3) },
-  chipConcentration20: { title: '集中度', width: 80, render: rNum(3) },
-  chipPeakDistance: { title: '峰距', width: 80, render: rNum(3) },
-
-  // ---- 概念 ----
-  conceptHotScore: { title: '热度', width: 70, render: rNum(2) },
-  conceptMomentumTop3: { title: '动量TOP3', width: 90, render: rNum(2) },
-  conceptExposureTop1: { title: '暴露TOP1', width: 90, render: rNum(2) },
-  conceptLeaderScore: { title: '龙头分', width: 80, render: rNum(2) },
-  conceptVolumeRatio: { title: '概念量比', width: 90, render: rNum(3) },
-
-  // ---- 情绪 ----
-  sentimentLiquidityScore: { title: '流动性分', width: 90, render: rNum(2) },
-  sentimentBuyPressure: { title: '买压', width: 70, render: rNum(2) },
-  sentimentSellPressure: { title: '卖压', width: 70, render: rNum(2) },
-  sentimentBodyRatio: { title: '实体比', width: 75, render: rNum(2) },
-  sentimentIntradayVol: { title: '日内波', width: 75, render: rNum(2) },
-
-  // ---- 微观结构 ----
-  microVpin8: { title: 'VPIN8', width: 75, render: rNum(3) },
-  microVpin20: { title: 'VPIN20', width: 75, render: rNum(3) },
-  microVpin50: { title: 'VPIN50', width: 75, render: rNum(3) },
-  microEspEqual: { title: '有效价差', width: 85, render: rNum(4) },
-  microAmihudIlliquidity: { title: '非流动性', width: 90, render: rExp },
-  microJumpFlag: {
-    title: '跳跃',
-    width: 60,
-    render: (value) => (Number(value) === 1 ? <Tag color="orange" className="rounded-lg border-none font-bold">是</Tag> : DASH),
-  },
-  microDepthImbalance1: { title: '深度失衡', width: 85, render: rNum(3) },
-  microRealizedSpread: { title: '已实现价差', width: 95, render: rNum(5) },
 
   // ---- 标签 ----
   sector: { title: '行业', width: 100, ellipsis: true },
@@ -527,15 +413,11 @@ const FILTER_SECTIONS: FilterSectionConfig[] = [
       { key: 'return1dRange', label: '1日收益 (%)', suffix: '%', step: 0.1, quickTagGroup: 'return1d' },
       { key: 'return3dRange', label: '3日收益 (%)', suffix: '%', step: 0.1, quickTagGroup: 'return3d' },
       { key: 'return5dRange', label: '5日收益 (%)', suffix: '%', step: 0.1, quickTagGroup: 'return5d' },
-      // 10/20/60 日收益无可用数据源：technical_indicators.return_* 自 2018 年起全为 NaN，
-      // l1_factors.mom_ret_10d/20d/60d 约 35% 的值失真（|涨幅|>100%），不足以支撑筛选。
-      // 中长期强弱改由本节末尾的”60日动量”表达。
       { key: 'maGap5Range', label: '5日乖离率 (%)', suffix: '%', step: 0.1, quickTagGroup: 'maGap' },
       { key: 'maGap20Range', label: '20日乖离率 (%)', suffix: '%', step: 0.1 },
       { key: 'rsiRange', label: 'RSI (6日)', step: 1, quickTagGroup: 'rsi' },
       { key: 'kdjKRange', label: 'KDJ-K', step: 1, quickTagGroup: 'kdjK' },
       { key: 'macdHistRange', label: 'MACD 柱', step: 0.01, quickTagGroup: 'macdHist' },
-      { key: 'breakout20dRange', label: '60日动量', step: 0.01 },
     ],
   },
   {
@@ -546,9 +428,6 @@ const FILTER_SECTIONS: FilterSectionConfig[] = [
       { key: 'volStd20Range', label: '20日波动率', step: 0.001, quickTagGroup: 'volStd20' },
       { key: 'volStd60Range', label: '60日波动率', step: 0.001 },
       { key: 'atr14Range', label: 'ATR(14)', step: 0.01, quickTagGroup: 'atr14' },
-      { key: 'volDownside20Range', label: '涨跌波动比', step: 0.001 },
-      { key: 'volUpside20Range', label: '波动偏度', step: 0.1 },
-      { key: 'volRealizedRvRange', label: '已实现波动率', step: 0.001 },
     ],
   },
   {
@@ -557,47 +436,7 @@ const FILTER_SECTIONS: FilterSectionConfig[] = [
     fields: [
       { key: 'maGap10Range', label: '10日乖离率 (%)', suffix: '%', step: 0.1 },
       { key: 'rsi14Range', label: 'RSI (14日)', step: 1 },
-      { key: 'mfi14Range', label: 'MFI (14日)', step: 1 },
-      { key: 'bbPosRange', label: '布林带位置', step: 0.01 },
-      { key: 'adx14Range', label: 'ADX (14日)', step: 1 },
-    ],
-  },
-  {
-    key: 'fundFlow',
-    label: '资金流',
-    fields: [
-      { key: 'mainFlowRange', label: '主力净流入 (百万)', step: 10, quickTagGroup: 'mainFlow' },
-      { key: 'flowNetAmountRange', label: '净流入 (百万)', step: 10, quickTagGroup: 'mainFlow' },
-      { key: 'flowLargeNetRange', label: '大单净额 (百万)', step: 10 },
-      { key: 'flowImbalanceRange', label: '买卖失衡', step: 0.01 },
-      { key: 'flowMfiRange', label: '资金 MFI', step: 1 },
-    ],
-  },
-  {
-    key: 'style',
-    label: '风格因子',
-    fields: [
       { key: 'beta20Range', label: 'Beta (20日)', step: 0.1, quickTagGroup: 'beta20' },
-      { key: 'beta60Range', label: 'Beta (60日)', step: 0.1 },
-      { key: 'idioVol20Range', label: '特质波动率', step: 0.001 },
-    ],
-  },
-  {
-    key: 'industry',
-    label: '行业因子',
-    fields: [
-      { key: 'indStrength20Range', label: '行业强度 (20日)', step: 0.01 },
-      { key: 'indRet20Range', label: '行业收益 (20日)', step: 0.01 },
-      { key: 'indRelativeMomentum20Range', label: '相对动量 (20日)', step: 0.01 },
-    ],
-  },
-  {
-    key: 'chip',
-    label: '筹码分析',
-    fields: [
-      { key: 'chipProfitRatio20Range', label: '获利盘 (20日)', step: 0.01 },
-      { key: 'chipProfitRatio60Range', label: '获利盘 (60日)', step: 0.01 },
-      { key: 'chipFloatingRatioRange', label: '成本90分位宽度', step: 0.1 },
     ],
   },
   {
@@ -609,7 +448,6 @@ const FILTER_SECTIONS: FilterSectionConfig[] = [
       { key: 'profitGrowthRange', label: '利润增速 (%)', suffix: '%', step: 0.1, quickTagGroup: 'profitGrowth' },
       { key: 'pbRange', label: 'PB', step: 0.1, quickTagGroup: 'pb' },
       { key: 'psTtmRange', label: 'PS (TTM)', step: 0.1 },
-      { key: 'instOwnershipRange', label: '机构持仓 (%)', suffix: '%', step: 0.1 },
       { key: 'listedDaysRange', label: '上市天数', suffix: '天' },
     ],
   },
@@ -644,33 +482,13 @@ const RANGE_FILTER_BINDINGS: RangeFilterBinding[] = [
   { filterKey: 'maGap20Range', field: 'maGap20' },
   { filterKey: 'rsiRange', field: 'rsi' },
   { filterKey: 'rsi14Range', field: 'rsi14' },
-  { filterKey: 'kdjKRange', field: 'momKdjK' },
+  { filterKey: 'kdjKRange', field: 'kdjK' },
   { filterKey: 'macdHistRange', field: 'macdHist' },
-  { filterKey: 'breakout20dRange', field: 'momRet60d' },
   { filterKey: 'volStd5Range', field: 'volStd5' },
   { filterKey: 'volStd20Range', field: 'volStd20' },
   { filterKey: 'volStd60Range', field: 'volStd60' },
-  { filterKey: 'atr14Range', field: 'volAtr14' },
-  { filterKey: 'volDownside20Range', field: 'volUpDownRatio' },
-  { filterKey: 'volUpside20Range', field: 'volSkew' },
-  { filterKey: 'volRealizedRvRange', field: 'volRealizedRv' },
-  { filterKey: 'mfi14Range', field: 'liqMfi14' },
-  { filterKey: 'bbPosRange', field: 'techBbPos' },
-  { filterKey: 'adx14Range', field: 'techAdx14' },
-  { filterKey: 'mainFlowRange', field: 'mainFlow' },
-  { filterKey: 'flowNetAmountRange', field: 'flowNetAmount' },
-  { filterKey: 'flowLargeNetRange', field: 'flowLargeNet' },
-  { filterKey: 'flowImbalanceRange', field: 'flowImbalanceVolume' },
-  { filterKey: 'flowMfiRange', field: 'flowMoneyFlowIndex' },
-  { filterKey: 'beta20Range', field: 'styleBeta20' },
-  { filterKey: 'beta60Range', field: 'styleBeta60' },
-  { filterKey: 'idioVol20Range', field: 'styleIdioVol20' },
-  { filterKey: 'indStrength20Range', field: 'indStrength20' },
-  { filterKey: 'indRet20Range', field: 'indRet20' },
-  { filterKey: 'indRelativeMomentum20Range', field: 'indRelativeMomentum20' },
-  { filterKey: 'chipProfitRatio20Range', field: 'chipProfitRatio20' },
-  { filterKey: 'chipProfitRatio60Range', field: 'chipProfitRatio60' },
-  { filterKey: 'chipFloatingRatioRange', field: 'chipCost90Width' },
+  { filterKey: 'atr14Range', field: 'atr' },
+  { filterKey: 'beta20Range', field: 'beta20' },
   { filterKey: 'peRange', field: 'pe' },
   { filterKey: 'roeRange', field: 'roe' },
   { filterKey: 'profitGrowthRange', field: 'profitGrowth' },
@@ -685,9 +503,7 @@ const SORT_OPTIONS: Array<{ key: SortKey; label: string; field: keyof ResearchSt
   { key: 'turnover', label: '换手', field: 'turnoverRate' },
   { key: 'amount', label: '成交额', field: 'amount' },
   { key: 'return1d', label: '1日', field: 'return1d' },
-  { key: 'return20d', label: '60日动量', field: 'momRet60d' },
   { key: 'volStd20', label: '波动', field: 'volStd20' },
-  { key: 'mainFlow', label: '资金', field: 'mainFlow' },
 ];
 
 /**
@@ -726,15 +542,11 @@ const makeFallbackRow = (key: string, code: string, name: string, score: number)
   concept: '',
   conceptTags: [],
   indexTags: [],
-  riskFlags: [],
   closePrice: 0,
   pe: 0,
   roe: 0,
   profitGrowth: 0,
   rsi: 0,
-  mainFlow: 0,
-  flowNetAmount: 0,
-  instOwnership: 0,
   ma5: 0,
   ma10: 0,
   maGap5: 0,
@@ -882,11 +694,6 @@ const QUICK_TAGS: Record<string, QuickTagConfig[]> = {
     { label: '中波动', filterKey: 'volStd20Range', range: [0.02, 0.05] },
     { label: '高波动', filterKey: 'volStd20Range', range: [0.05, 100] },
   ],
-  mainFlow: [
-    { label: '资金净流入', filterKey: 'mainFlowRange', range: [500, 1000000] },
-    { label: '大幅流入', filterKey: 'mainFlowRange', range: [2000, 1000000] },
-    { label: '资金净流出', filterKey: 'mainFlowRange', range: [-1000000, -500] },
-  ],
   profitGrowth: [
     { label: '高增长', filterKey: 'profitGrowthRange', range: [30, 100000] },
     { label: '正增长', filterKey: 'profitGrowthRange', range: [0, 100000] },
@@ -1001,82 +808,6 @@ const RangeInput: React.FC<{
   );
 };
 
-/** 列显示控制：按 COLUMN_GROUPS 分组勾选 */
-const ColumnVisibilityControl: React.FC<{
-  visibleGroups: Set<string>;
-  onChange: (next: Set<string>) => void;
-}> = ({ visibleGroups, onChange }) => {
-  const toggle = (key: string, checked: boolean) => {
-    const next = new Set(visibleGroups);
-    if (checked) next.add(key);
-    else next.delete(key);
-    onChange(next);
-  };
-
-  const visibleColumnCount = COLUMN_GROUPS
-    .filter((group) => visibleGroups.has(group.key))
-    .reduce((total, group) => total + group.columns.length, 0);
-
-  const content = (
-    <div className="w-[300px]">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">列分组显示</span>
-        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">
-          {visibleColumnCount} 列
-        </span>
-      </div>
-      <div className="grid max-h-[320px] grid-cols-2 gap-y-2 overflow-y-auto custom-scrollbar pr-1">
-        {COLUMN_GROUPS.map((group) => (
-          <Checkbox
-            key={group.key}
-            checked={visibleGroups.has(group.key)}
-            onChange={(e) => toggle(group.key, e.target.checked)}
-          >
-            <span className="text-xs font-bold text-slate-600">
-              {group.label}
-              <span className="ml-1 text-[10px] font-medium text-slate-400">({group.columns.length})</span>
-            </span>
-          </Checkbox>
-        ))}
-      </div>
-      <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
-        <Button
-          size="small"
-          className="flex-1 rounded-lg text-[11px] font-bold"
-          onClick={() => onChange(new Set(COLUMN_GROUPS.map((group) => group.key)))}
-        >
-          全选
-        </Button>
-        <Button
-          size="small"
-          className="flex-1 rounded-lg text-[11px] font-bold"
-          onClick={() => onChange(new Set(COLUMN_GROUPS.filter((group) => group.defaultVisible).map((group) => group.key)))}
-        >
-          默认
-        </Button>
-        <Button
-          size="small"
-          className="flex-1 rounded-lg text-[11px] font-bold"
-          onClick={() => onChange(new Set(['identity']))}
-        >
-          最简
-        </Button>
-      </div>
-    </div>
-  );
-
-  return (
-    <Popover content={content} trigger="click" placement="bottomRight">
-      <Button
-        icon={<Columns3 className="h-4 w-4" />}
-        className="h-10 rounded-[18px] border-slate-200 px-3 text-xs font-bold text-slate-600 transition-all hover:border-blue-400 hover:text-blue-500"
-      >
-        列显示 ({visibleGroups.size})
-      </Button>
-    </Popover>
-  );
-};
-
 /* ------------------------------------------------------------------ *
  * 主页面
  * ------------------------------------------------------------------ */
@@ -1110,12 +841,7 @@ export const ResearchPlatformPage: React.FC = () => {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // ---- QuantDB 全字段因子缓存（ref 承担去重判断，state 触发重渲染） ----
-  const [quantDbFeatures, setQuantDbFeatures] = React.useState<Record<string, Partial<ResearchStockRow>>>({});
-  const quantDbFeaturesRef = React.useRef<Record<string, Partial<ResearchStockRow>>>({});
-  const quantDbRawRef = React.useRef<Record<string, QuantDbFeatures>>({});
-  // 详情弹窗需要原始分类结构（FactorPanel 按类别渲染），与摊平版本分开保存
-  const [quantDbRaw, setQuantDbRaw] = React.useState<Record<string, QuantDbFeatures>>({});
+  // ---- QuantDB 因子缓存 ----
   // 全池投影因子：筛选与排序在分页之前执行，必须覆盖整个候选池而非当前页
   const [universeFeatures, setUniverseFeatures] = React.useState<Record<string, Partial<ResearchStockRow>>>({});
   const [universeFeaturesLoading, setUniverseFeaturesLoading] = React.useState<boolean>(false);
@@ -1133,32 +859,9 @@ export const ResearchPlatformPage: React.FC = () => {
   const [refLineMode, setRefLineMode] = React.useState<RefLineMode>('off');
   const [refLineValue, setRefLineValue] = React.useState<number | null>(null);
   const [refLineValue2, setRefLineValue2] = React.useState<number | null>(null);
-  const [riskScore, setRiskScore] = React.useState<import('../services/researchService').RiskScoreData | null>(null);
-  const [riskLoading, setRiskLoading] = React.useState<boolean>(false);
 
-  // ---- 列显示控制 ----
+  // ---- 表格密度（列固定为 50 维宽表字段集，不再支持列自定义勾选） ----
   const [tableDensity, setTableDensity] = React.useState<'compact' | 'default' | 'relaxed'>('compact');
-  const [visibleGroups, setVisibleGroups] = React.useState<Set<string>>(() => {
-    const fallback = new Set(COLUMN_GROUPS.filter((group) => group.defaultVisible).map((group) => group.key));
-    try {
-      const stored = window.localStorage.getItem(VISIBLE_GROUPS_STORAGE_KEY);
-      if (!stored) return fallback;
-      const parsed = JSON.parse(stored);
-      if (!Array.isArray(parsed) || parsed.length === 0) return fallback;
-      const known = parsed.filter((key: unknown) => typeof key === 'string' && COLUMN_GROUPS.some((group) => group.key === key));
-      return known.length > 0 ? new Set(known as string[]) : fallback;
-    } catch {
-      return fallback;
-    }
-  });
-
-  React.useEffect(() => {
-    try {
-      window.localStorage.setItem(VISIBLE_GROUPS_STORAGE_KEY, JSON.stringify(Array.from(visibleGroups)));
-    } catch {
-      // localStorage 不可用时静默降级，不影响主流程
-    }
-  }, [visibleGroups]);
 
   // ---- 分页状态 ----
   const [candidatePage, setCandidatePage] = React.useState<number>(1);
@@ -1237,7 +940,7 @@ export const ResearchPlatformPage: React.FC = () => {
      * 按当前池的分位数取阈值。
      *
      * 各批次的数据分布差异很大（不同模型、不同交易日，PG 与 QuantDB 的覆盖也不同：
-     * 例如 chipProfitRatio20 在某批次 p25 就已到 1.00，而另一批次 p25 仅 0.04），
+     * 例如 roe 在某批次 p25 就已到 15，而另一批次 p25 可能是负值），
      * 写死阈值必然在部分批次上退化成“选不出”或“全选中”。这里改为按分位取值。
      */
     const quantile = (field: keyof ResearchStockRow, percentile: number): number | null => {
@@ -1285,13 +988,6 @@ export const ResearchPlatformPage: React.FC = () => {
     if (config.turnoverTop !== undefined) setMin('turnoverRange', 'turnoverRate', 1 - config.turnoverTop, 100000);
     if (config.amountTop !== undefined) setMin('amountRange', 'amount', 1 - config.amountTop, 100000);
     if (config.volStd20Top !== undefined) setMin('volStd20Range', 'volStd20', 1 - config.volStd20Top, 100000);
-    if (config.momRet60dTop !== undefined) setMin('breakout20dRange', 'momRet60d', 1 - config.momRet60dTop, 100000);
-    if (config.indStrength20Top !== undefined)
-      setMin('indStrength20Range', 'indStrength20', 1 - config.indStrength20Top, 100000);
-    if (config.flowNetAmountTop !== undefined)
-      setMin('flowNetAmountRange', 'flowNetAmount', 1 - config.flowNetAmountTop, 1000000);
-    if (config.chipProfitRatio20Top !== undefined)
-      setMin('chipProfitRatio20Range', 'chipProfitRatio20', 1 - config.chipProfitRatio20Top, 1);
 
     if (config.maGap20Bottom !== undefined) setMax('maGap20Range', 'maGap20', config.maGap20Bottom, -100000);
     if (config.rsiBottom !== undefined) setMax('rsiRange', 'rsi', config.rsiBottom, 0);
@@ -1390,8 +1086,6 @@ export const ResearchPlatformPage: React.FC = () => {
               roe: item?.roe != null ? normalizeRoe(item?.roe) : null,
               rsi: item?.rsi != null ? safeNum(item?.rsi, 0) : null,
               profitGrowth: item?.profitGrowth ?? null,
-              mainFlow: item?.mainFlow ?? null,
-              instOwnership: item?.instOwnership ?? null,
               ma5: item?.ma5 != null ? safeNum(item?.ma5, 0) : null,
               ma10: item?.ma10 != null ? safeNum(item?.ma10, 0) : null,
               ma20: item?.ma20 != null ? safeNum(item?.ma20, 0) : null,
@@ -1406,11 +1100,10 @@ export const ResearchPlatformPage: React.FC = () => {
               rsi14: item?.rsi14 ?? item?.rsi ?? null,
               volRatio5: item?.volRatio5 ?? item?.volumeRatio5 ?? null,
               volRatio20: item?.volRatio20 ?? item?.volumeRatio20 ?? null,
-              atr: item?.atr ?? item?.volAtr14 ?? null,
+              atr: item?.atr ?? null,
               macdHist: item?.macdHist ?? null,
               conceptTags: Array.isArray(item?.conceptTags) ? item.conceptTags : [],
               indexTags: Array.isArray(item?.indexTags) ? item.indexTags : [],
-              riskFlags: Array.isArray(item?.riskFlags) ? item.riskFlags : [],
               concept: item?.concept || '',
               isSt: Boolean(item?.isSt),
               isTradable: item?.isTradable !== undefined ? Boolean(item?.isTradable) : true,
@@ -1679,7 +1372,6 @@ export const ResearchPlatformPage: React.FC = () => {
         if (
           item.isSt ||
           item.isTradable === false ||
-          item.riskFlags?.some((flag) => flag.includes('ST')) ||
           isStByName ||
           isDelisting
         ) return;
@@ -1715,11 +1407,6 @@ export const ResearchPlatformPage: React.FC = () => {
       if (appliedFilters.volRatio20Range > 0) {
         const vr = item.volRatio20;
         if (vr != null && vr < appliedFilters.volRatio20Range) return;
-      }
-
-      // --- 机构持仓：底层数据存在负值异常，仅在用户明确设置下限时过滤 ---
-      if (appliedFilters.instOwnershipRange[0] > 0) {
-        if (item.instOwnership != null && item.instOwnership < appliedFilters.instOwnershipRange[0]) return;
       }
 
       // --- 通用区间条件（仅改动过的才参与） ---
@@ -1763,39 +1450,6 @@ export const ResearchPlatformPage: React.FC = () => {
     [filteredRows, candidatePage, candidatePageSize]
   );
 
-  /**
-   * 仅为选中个股拉取 QuantDB 全量分类特征（详情弹窗的 FactorPanel 需要全部 371 字段）。
-   * 表格列已由全池投影覆盖，无需在此重复拉取整页，避免单次数 MB 的响应。
-   */
-  React.useEffect(() => {
-    if (!selectedStockKey) return;
-    const selected = filteredRows.find((item) => item.key === selectedStockKey);
-    const symbol = selected?.code ? toSuffixSymbol(selected.code) : '';
-    if (!symbol || quantDbFeaturesRef.current[symbol] !== undefined) return;
-
-    let cancelled = false;
-    void researchService.getBatchQuantDbFeatures([symbol]).then((bySymbol) => {
-      if (cancelled) return;
-      const features = bySymbol[symbol];
-      // 未命中也写入空对象，避免同一 symbol 被反复请求
-      const next = {
-        ...quantDbFeaturesRef.current,
-        [symbol]: features ? flattenQuantDbFeatures(features) : {},
-      };
-      quantDbFeaturesRef.current = next;
-      setQuantDbFeatures(next);
-      quantDbRawRef.current = { ...quantDbRawRef.current, ...bySymbol };
-      setQuantDbRaw(quantDbRawRef.current);
-    });
-    return () => { cancelled = true; };
-  }, [selectedStockKey, filteredRows]);
-
-  // 表格行：全池投影已在 enrichedPool 合并，这里只叠加选中个股的全量字段
-  const enrichedCandidateRows = React.useMemo(
-    () => mergeQuantDbFeatures(visibleCandidateRows, quantDbFeatures),
-    [visibleCandidateRows, quantDbFeatures]
-  );
-
   React.useEffect(() => {
     if (!filteredRows.length) {
       setSelectedStockKey(null);
@@ -1806,35 +1460,20 @@ export const ResearchPlatformPage: React.FC = () => {
     }
   }, [filteredRows, selectedStockKey]);
 
-  // 详情弹窗需要全字段，优先取已富化的行
-  const selectedStock = React.useMemo(() => {
-    const base = filteredRows.find((item) => item.key === selectedStockKey);
-    if (!base) return null;
-    const features = quantDbFeatures[toSuffixSymbol(base.code)];
-    if (!features) return base;
-    // 不能直接 { ...base, ...features }：QuantDB 全量路径的市值/资金流可能未换算，
-    // 且不含 stock_name，无条件覆盖会导致"总市值 21 亿 亿"和"两行都显示代码"。
-    const merged: Record<string, unknown> = { ...base };
-    for (const [key, value] of Object.entries(features)) {
-      const current = merged[key];
-      if (current != null && current !== 0 && key !== 'name' && key !== 'code') {
-        // 市值/资金流：PG 已换算为亿/百万，QuantDB 全量路径可能仍是原始元
-        if (['totalMv', 'floatMv', 'marketCap', 'mainFlow', 'flowNetAmount', 'flowLargeNet', 'flowMediumNet', 'flowSmallNet', 'amount'].includes(key)) continue;
-      }
-      merged[key] = value;
-    }
-    return merged as unknown as ResearchStockRow;
-  }, [filteredRows, selectedStockKey, quantDbFeatures]);
+  // 详情弹窗：全池投影已在 enrichedPool 合并，直接取已富化的行
+  const selectedStock = React.useMemo(
+    () => filteredRows.find((item) => item.key === selectedStockKey) || null,
+    [filteredRows, selectedStockKey]
+  );
 
   /* ------------------------------ 表格列 ------------------------------ */
 
-  /** 按 COLUMN_GROUPS 顺序展开可见分组的列 key */
+  /** 固定列集：按 COLUMN_GROUPS 顺序展开（50 维宽表字段 + universe 基础列，不支持自定义） */
   const visibleColumnKeys = React.useMemo(
     () => COLUMN_GROUPS
-      .filter((group) => visibleGroups.has(group.key))
       .flatMap((group) => group.columns)
       .filter((key) => COLUMN_DEFS[key] !== undefined),
-    [visibleGroups]
+    []
   );
 
   const columns = React.useMemo<ColumnsType<ResearchStockRow>>(
@@ -1959,8 +1598,6 @@ export const ResearchPlatformPage: React.FC = () => {
     const activityScore = clamp((safeNum(selectedStock.turnoverRate, 0) / 30) * 100, 0, 100);
     // 波动率越低得分越高（0.05 日波动率视为满档风险）
     const stabilityScore = clamp(100 - (safeNum(selectedStock.volStd20, 0) / 0.05) * 100, 0, 100);
-    // 获利盘比例本身是 0~1，直接映射
-    const chipScore = clamp(safeNum(selectedStock.chipProfitRatio20, 0) * 100, 0, 100);
 
     return {
       indicator: [
@@ -1970,9 +1607,8 @@ export const ResearchPlatformPage: React.FC = () => {
         { name: '动量强度', max: 100 },
         { name: '活跃度', max: 100 },
         { name: '稳定性', max: 100 },
-        { name: '筹码获利', max: 100 },
       ],
-      value: [modelScore, valuationScore, profitabilityScore, momentumScore, activityScore, stabilityScore, chipScore],
+      value: [modelScore, valuationScore, profitabilityScore, momentumScore, activityScore, stabilityScore],
     };
   }, [selectedStock]);
 
@@ -2045,30 +1681,6 @@ export const ResearchPlatformPage: React.FC = () => {
     if (selectedDate && /^\d{4}-\d{2}/.test(selectedDate)) setCalendarMonth(selectedDate.slice(0, 7));
   }, [selectedDate]);
 
-  // 加载风险评分卡
-  React.useEffect(() => {
-    if (!detailModalOpen || !selectedStock) {
-      setRiskScore(null);
-      return;
-    }
-    let cancelled = false;
-    const loadRisk = async () => {
-      setRiskLoading(true);
-      try {
-        const data = await researchService.getRiskScore(normalizeSymbol(selectedStock.code), inferenceDate);
-        if (cancelled) return;
-        setRiskScore(data);
-      } catch (error) {
-        console.error('[ResearchPlatformPage] load risk score failed:', error);
-        if (!cancelled) setRiskScore(null);
-      } finally {
-        if (!cancelled) setRiskLoading(false);
-      }
-    };
-    void loadRisk();
-    return () => { cancelled = true; };
-  }, [detailModalOpen, selectedStock?.code, inferenceDate]);
-
   // K 线图表配置
   // 参考线过滤：根据模式决定每根 K 线是否命中条件（组件作用域，供 useMemo 与 JSX 复用）
   const refActive = refLineMode !== 'off' && typeof refLineValue === 'number' && Number.isFinite(refLineValue);
@@ -2093,7 +1705,16 @@ export const ResearchPlatformPage: React.FC = () => {
     const predictionDate = inferenceDate;
 
     const dates = klineData.map((d) => d.date);
-    const ohlc = klineData.map((d) => [d.open, d.close, d.low, d.high]);
+    // 逐根显式着色：涨（close>=open）红、跌绿、参考线命中琥珀，避免依赖 itemStyle 回调
+    const ohlc = klineData.map((d) => {
+      const color = refMatches(d)
+        ? '#f59e0b'
+        : d.close >= d.open ? '#ef4444' : '#22c55e';
+      return {
+        value: [d.open, d.close, d.low, d.high],
+        itemStyle: { color, color0: color, borderColor: color, borderColor0: color },
+      };
+    });
     const volumes = klineData.map((d) => d.volume);
 
     // 计算移动平均线
@@ -2251,28 +1872,6 @@ export const ResearchPlatformPage: React.FC = () => {
           type: 'candlestick',
           data: ohlc,
           barMaxWidth: 20,
-          itemStyle: {
-            color: (params: any) => {
-              const d = klineData[params.dataIndex];
-              if (refMatches(d)) return '#f59e0b';
-              return d?.close >= d?.open ? '#ef4444' : '#22c55e';
-            },
-            color0: (params: any) => {
-              const d = klineData[params.dataIndex];
-              if (refMatches(d)) return '#f59e0b';
-              return d?.close >= d?.open ? '#ef4444' : '#22c55e';
-            },
-            borderColor: (params: any) => {
-              const d = klineData[params.dataIndex];
-              if (refMatches(d)) return '#f59e0b';
-              return d?.close >= d?.open ? '#ef4444' : '#22c55e';
-            },
-            borderColor0: (params: any) => {
-              const d = klineData[params.dataIndex];
-              if (refMatches(d)) return '#f59e0b';
-              return d?.close >= d?.open ? '#ef4444' : '#22c55e';
-            },
-          },
           markLine: {
             ...(predictionDate ? {
               symbol: ['none', 'none'],
@@ -2411,7 +2010,6 @@ export const ResearchPlatformPage: React.FC = () => {
     if (appliedFilters.volumeTrendOnly) summary.push('近 5 日量能持续放大');
     if (appliedFilters.volRatio5Range > 0) summary.push(`5日量比 ≥ ${appliedFilters.volRatio5Range}`);
     if (appliedFilters.volRatio20Range > 0) summary.push(`20日量比 ≥ ${appliedFilters.volRatio20Range}`);
-    if (appliedFilters.instOwnershipRange[0] > 0) summary.push(`机构持仓 ≥ ${appliedFilters.instOwnershipRange[0]}%`);
     if (appliedFilters.selectedSectors.length) summary.push(`行业：${appliedFilters.selectedSectors.length} 个选中`);
     if (appliedFilters.selectedConcepts.length) summary.push(`概念：${appliedFilters.selectedConcepts.length} 个选中`);
     if (appliedFilters.selectedIndices.length) summary.push(`指数：${appliedFilters.selectedIndices.length} 个选中`);
@@ -2435,15 +2033,6 @@ export const ResearchPlatformPage: React.FC = () => {
     const total = filteredRows.reduce((sum, item) => sum + Math.max(safeNum(item.score, 0), 0), 0);
     return (total / filteredRows.length).toFixed(3);
   }, [filteredRows]);
-
-  const selectedStockRiskBlocks = React.useMemo(() => {
-    if (!selectedStock) return [];
-    const blocks = [...(selectedStock.riskFlags || [])];
-    if (!selectedStock.volumeTrend5d) blocks.push('近 5 日量能未持续放大');
-    if (safeNum(selectedStock.turnoverRate, 0) > 20) blocks.push('换手率偏高，追涨风险上升');
-    if (safeNum(selectedStock.latestChange, 0) > 5) blocks.push('短线涨幅较大，注意日内波动');
-    return Array.from(new Set(blocks));
-  }, [selectedStock]);
 
   /* ------------------------------ 导出 ------------------------------ */
 
@@ -3094,9 +2683,6 @@ export const ResearchPlatformPage: React.FC = () => {
                           allowClear
                         />
                         {activeDataSource === 'candidates' && (
-                          <ColumnVisibilityControl visibleGroups={visibleGroups} onChange={setVisibleGroups} />
-                        )}
-                        {activeDataSource === 'candidates' && (
                           <div className="flex items-center gap-0.5 rounded-[18px] border border-slate-200 bg-slate-50/50 p-0.5">
                             {(['compact', 'default', 'relaxed'] as const).map((density) => (
                               <button
@@ -3124,7 +2710,7 @@ export const ResearchPlatformPage: React.FC = () => {
                             className={FIELD_STYLES.table}
                             rowKey="key"
                             columns={columns}
-                            dataSource={enrichedCandidateRows}
+                            dataSource={visibleCandidateRows}
                             loading={overviewLoading}
                             pagination={false}
                             scroll={{ x: candidateScrollX }}
@@ -3273,8 +2859,8 @@ export const ResearchPlatformPage: React.FC = () => {
                   <div className="text-lg font-black text-amber-500">{fmtPositiveOrDash(selectedStock.volStd20, 2)}</div>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3 text-center">
-                  <div className="text-[9px] font-bold text-slate-400">获利盘</div>
-                  <div className="text-lg font-black text-indigo-500">{fmtNullableFloat(selectedStock.chipProfitRatio20, 3)}</div>
+                  <div className="text-[9px] font-bold text-slate-400">换手率</div>
+                  <div className="text-lg font-black text-indigo-500">{fmtPositiveOrDash(selectedStock.turnoverRate, 1, '%')}</div>
                 </div>
               </div>
               <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-2">
@@ -3306,29 +2892,16 @@ export const ResearchPlatformPage: React.FC = () => {
               </div>
             </div>
 
-            {selectedStockRiskBlocks.length > 0 && (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
-                <div className="mb-1.5 text-[10px] font-black uppercase tracking-widest text-amber-600">风险提示</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {selectedStockRiskBlocks.map((flag) => (
-                    <span key={flag} className="rounded-lg border border-amber-200 bg-white px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                      {flag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
               <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                <Activity className="h-3.5 w-3.5" /> 技术与资金面透视
+                <Activity className="h-3.5 w-3.5" /> 技术面透视
               </div>
               <div className="grid grid-cols-5 gap-2">
                 {[
                   { label: 'MA5', val: fmt2(selectedStock.ma5) },
                   { label: 'MA10', val: fmt2(selectedStock.ma10) },
-                  { label: '资金净流入', val: fmtMainFlowCn(selectedStock.flowNetAmount) },
-                  { label: '主力资金', val: fmtMainFlowCn(selectedStock.mainFlow) },
+                  { label: 'MA20', val: fmt2(selectedStock.ma20) },
+                  { label: 'MA60', val: fmt2(selectedStock.ma60) },
                   { label: '利润增长', val: fmtPercent2(selectedStock.profitGrowth) },
                 ].map((item) => (
                   <div key={item.label} className="rounded-lg border border-slate-50 bg-slate-50/50 p-2 text-center">
@@ -3361,8 +2934,6 @@ export const ResearchPlatformPage: React.FC = () => {
                   { label: '指数', val: (selectedStock.indexTags || []).slice(0, 3).join(' / ') || '-' },
                   { label: '总市值', val: `${safeNum(selectedStock.totalMv, 0).toFixed(2)} 亿` },
                   { label: '流通市值', val: `${safeNum(selectedStock.floatMv, 0).toFixed(2)} 亿` },
-                  { label: '主力净流入', val: fmtMainFlowCn(selectedStock.mainFlow) },
-                  { label: '获利盘 (20日)', val: fmt2(selectedStock.chipProfitRatio20) },
                 ].map((item) => (
                   <div key={item.label} className="min-h-[56px] rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-center">
                     <div className="text-[8px] font-black uppercase tracking-wide text-slate-400">{item.label}</div>
@@ -3371,62 +2942,6 @@ export const ResearchPlatformPage: React.FC = () => {
                 ))}
               </div>
             </div>
-
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                  <Activity className="h-3.5 w-3.5" /> 资金流结构
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {[
-                    { label: '净流入', val: fmtNullableYi(selectedStock.flowNetAmount) },
-                    { label: '大单净额', val: fmtNullableYi(selectedStock.flowLargeNet) },
-                    { label: '中单净额', val: fmtNullableYi(selectedStock.flowMediumNet) },
-                    { label: '小单净额', val: fmtNullableYi(selectedStock.flowSmallNet) },
-                    { label: '净流入占比', val: fmtNullableFloat(selectedStock.flowNetRatio, 3) },
-                    { label: '大单占比', val: fmtNullableFloat(selectedStock.flowLargeRatio, 3) },
-                    { label: '量能失衡', val: fmtNullableFloat(selectedStock.flowImbalanceVolume, 3) },
-                    { label: '资金流指数', val: fmtNullableFloat(selectedStock.flowMoneyFlowIndex, 2) },
-                    { label: '大单成交比', val: fmtNullableFloat(selectedStock.flowBigTradeRatio, 3) },
-                  ].map((item) => (
-                    <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50/70 p-2 text-center">
-                      <div className="text-[8px] font-bold text-slate-400">{item.label}</div>
-                      <div className="mt-0.5 truncate text-[11px] font-black text-slate-800">{item.val}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                  <BarChart3 className="h-3.5 w-3.5" /> 微观结构 / 筹码
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {[
-                    { label: 'VPIN(8)', val: fmtNullableFloat(selectedStock.microVpin8, 3) },
-                    { label: 'VPIN(20)', val: fmtNullableFloat(selectedStock.microVpin20, 3) },
-                    { label: 'Kyle λ', val: fmtNullableExponential(selectedStock.microKyleLambda) },
-                    { label: '有效价差', val: fmtNullableFloat(selectedStock.microEspEqual, 4) },
-                    { label: '非流动性', val: fmtNullableExponential(selectedStock.microAmihudIlliquidity) },
-                    { label: '深度失衡', val: fmtNullableFloat(selectedStock.microDepthImbalance1, 3) },
-                    { label: '获利盘60', val: fmtNullableFloat(selectedStock.chipProfitRatio60, 3) },
-                    { label: '筹码集中', val: fmtNullableFloat(selectedStock.chipConcentration20, 3) },
-                    { label: '峰值距离', val: fmtNullableFloat(selectedStock.chipPeakDistance, 3) },
-                  ].map((item) => (
-                    <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50/70 p-2 text-center">
-                      <div className="text-[8px] font-bold text-slate-400">{item.label}</div>
-                      <div className="mt-0.5 truncate text-[11px] font-black text-slate-800">{item.val}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <FactorPanel features={quantDbRaw[toSuffixSymbol(selectedStock.code)] || null} />
-            </div>
-
-            <RiskScoreCard data={riskScore} loading={riskLoading} requestedDate={inferenceDate} />
 
             <div className="mt-2 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
               <div className="mb-2 flex items-center justify-between gap-2">

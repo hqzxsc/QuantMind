@@ -14,9 +14,6 @@ export const PRESET_FILTER_MAP: Record<string, any> = {
   题材活跃: { turnoverTop: 0.25, amountTop: 0.25 },
   低位反弹: { maGap20Bottom: 0.25, rsiBottom: 0.25 },
   高波动: { volStd20Top: 0.25 },
-  强势动量: { momRet60dTop: 0.3, indStrength20Top: 0.3 },
-  资金流入: { flowNetAmountTop: 0.25 },
-  筹码获利: { chipProfitRatio20Top: 0.25 },
   低估值: { peBottom: 0.25, pbBottom: 0.3 },
 };
 
@@ -45,46 +42,21 @@ export const DEFAULT_RESEARCH_FILTERS: ResearchFiltersState = {
   rsi14Range: [0, 100],
   kdjKRange: [0, 100],
   macdHistRange: [-10, 10],
-  breakout20dRange: [-100, 100],
   // Volatility
   volStd5Range: [0, 10],
   volStd20Range: [0, 10],
   volStd60Range: [0, 10],
   atr14Range: [0, 100],
-  volDownside20Range: [0, 100],
-  volUpside20Range: [-200, 200],
-  volRealizedRvRange: [0, 10],
   // Technical
   volRatio5Range: 0,
   volRatio20Range: 0,
-  mfi14Range: [0, 100],
-  bbPosRange: [0, 1],
-  adx14Range: [0, 100],
-  // Fund Flow
-  mainFlowRange: [-1000000, 1000000],
-  flowNetAmountRange: [-1000000, 1000000],
-  flowLargeNetRange: [-1000000, 1000000],
-  flowImbalanceRange: [-1, 1],
-  flowMfiRange: [0, 100],
-  // Style
   beta20Range: [-3, 3],
-  beta60Range: [-3, 3],
-  idioVol20Range: [0, 10],
-  // Industry
-  indStrength20Range: [-10, 10],
-  indRet20Range: [-100, 100],
-  indRelativeMomentum20Range: [-10, 10],
-  // Chip
-  chipProfitRatio20Range: [0, 1],
-  chipProfitRatio60Range: [0, 1],
-  chipFloatingRatioRange: [0, 500],
   // Fundamental
   peRange: [-10000, 100000],
   roeRange: [-1000, 1000],
   profitGrowthRange: [-1000, 1000],
   pbRange: [0, 1000],
   psTtmRange: [0, 1000],
-  instOwnershipRange: [0, 100],
   listedDaysRange: [0, 30000],
   // Sector/Concept
   selectedSectors: [],
@@ -119,7 +91,8 @@ export const TEMPLATE_BUTTON_STYLES = {
   active: 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/20',
 };
 
-// Column group definitions for visibility toggle
+// Column group definitions（固定列：候选池只展示 50 维宽表 features_daily
+// 提供的字段 + universe 基础标识列，不再支持列自定义勾选）
 export interface ColumnGroup {
   key: string;
   label: string;
@@ -149,7 +122,7 @@ export const COLUMN_GROUPS: ColumnGroup[] = [
   {
     key: 'liquidity',
     label: '流动性',
-    columns: ['turnoverRate', 'amount', 'volRatio5', 'volRatio20', 'liqAmountMa5', 'liqMfi14', 'liqAmihud20'],
+    columns: ['turnoverRate', 'amount', 'volRatio5', 'volRatio20'],
     defaultVisible: true,
   },
   {
@@ -161,62 +134,14 @@ export const COLUMN_GROUPS: ColumnGroup[] = [
   {
     key: 'technical',
     label: '技术面',
-    columns: ['ma5', 'ma10', 'ma20', 'maGap5', 'maGap10', 'maGap20', 'rsi', 'rsi14', 'atr', 'macdHist', 'kdjK', 'kdjD', 'kdjJ', 'bbPos', 'adx14'],
-    defaultVisible: false,
-  },
-  {
-    key: 'momentum',
-    label: '动量',
-    columns: ['momRet1d', 'momRet3d', 'momRet5d', 'momRet10d', 'momRet20d', 'momRet60d', 'momEmaGap12'],
-    defaultVisible: false,
+    columns: ['ma5', 'ma10', 'ma20', 'ma60', 'maGap5', 'maGap10', 'maGap20', 'rsi', 'rsi14', 'atr', 'macdHist', 'kdjK', 'beta20'],
+    defaultVisible: true,
   },
   {
     key: 'volatility',
     label: '波动率',
-    columns: ['volStd5', 'volStd20', 'volStd60', 'volAtr14', 'volParkinson20', 'volUpDownRatio', 'volSkew', 'volRealizedRv'],
-    defaultVisible: false,
-  },
-  {
-    key: 'fundFlow',
-    label: '资金流',
-    columns: ['mainFlow', 'flowNetAmount', 'flowLargeNet', 'flowMediumNet', 'flowSmallNet', 'flowNetRatio', 'flowLargeRatio', 'flowImbalanceVolume', 'flowMoneyFlowIndex'],
-    defaultVisible: false,
-  },
-  {
-    key: 'style',
-    label: '风格',
-    columns: ['styleBeta20', 'styleBeta60', 'styleIdioVol20', 'styleValue20', 'styleSize20', 'styleMvRank'],
-    defaultVisible: false,
-  },
-  {
-    key: 'industry',
-    label: '行业',
-    columns: ['indStrength20', 'indStrength60', 'indRet20', 'indRelativeMomentum20', 'indCrowding20', 'indRotationSpeed20'],
-    defaultVisible: false,
-  },
-  {
-    key: 'chip',
-    label: '筹码',
-    columns: ['chipProfitRatio20', 'chipProfitRatio60', 'chipProfitRatio120', 'chipCost90Width', 'chipConcentration20', 'chipPeakDistance'],
-    defaultVisible: false,
-  },
-  {
-    key: 'concept',
-    label: '概念',
-    columns: ['conceptHotScore', 'conceptMomentumTop3', 'conceptExposureTop1', 'conceptLeaderScore', 'conceptVolumeRatio'],
-    defaultVisible: false,
-  },
-  {
-    key: 'sentiment',
-    label: '情绪',
-    columns: ['sentimentLiquidityScore', 'sentimentBuyPressure', 'sentimentSellPressure', 'sentimentBodyRatio', 'sentimentIntradayVol'],
-    defaultVisible: false,
-  },
-  {
-    key: 'microstructure',
-    label: '微观结构',
-    columns: ['microVpin8', 'microVpin20', 'microVpin50', 'microEspEqual', 'microAmihudIlliquidity', 'microJumpFlag', 'microDepthImbalance1', 'microRealizedSpread'],
-    defaultVisible: false,
+    columns: ['volStd5', 'volStd20', 'volStd60'],
+    defaultVisible: true,
   },
   {
     key: 'tags',

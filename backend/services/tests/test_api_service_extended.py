@@ -202,7 +202,6 @@ class TestAPIExtendedIntegration:
                             "concept_tags": ["金融科技", "中字头"],
                             "confidence_level": "high",
                             "hit_reasons": ["模型高分", "3日量能递增"],
-                            "risk_flags": ["近10日回撤较大"],
                             "close_price": 12.34,
                             "return_1d": 0.0236,
                             "return_3d": 0.0512,

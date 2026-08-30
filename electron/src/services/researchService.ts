@@ -1,8 +1,8 @@
 import axios, { AxiosInstance } from 'axios';
 import { SERVICE_ENDPOINTS } from '../config/services';
 import { authService } from '../features/auth/services/authService';
-import type { QuantDbFeatures, ResearchModelOption, ResearchStockRow } from '../features/research/types';
-export type { QuantDbFeatures, ResearchModelOption, ResearchStockRow } from '../features/research/types';
+import type { ResearchModelOption, ResearchStockRow } from '../features/research/types';
+export type { ResearchModelOption, ResearchStockRow } from '../features/research/types';
 
 export type ResearchSignal = 'buy' | 'hold' | 'sell';
 export type ResearchConfidence = 'high' | 'medium' | 'watch';
@@ -244,39 +244,7 @@ class ResearchService {
     return resp.data?.data?.items || [];
   }
 
-  // ============ QuantDB 全字段特征接口 ============
-
-  async getQuantDbFeatures(symbol: string): Promise<QuantDbFeatures | null> {
-    try {
-      const resp = await this.client.get<{ code: number; data: QuantDbFeatures | null }>(
-        `/research/features/${encodeURIComponent(symbol)}`
-      );
-      if (resp.data?.code !== 200) return null;
-      return resp.data?.data || null;
-    } catch (error) {
-      console.error('[ResearchService] getQuantDbFeatures failed:', error);
-      return null;
-    }
-  }
-
-  /** 批量查询，返回以规范代码（600036.SH）为键的映射。后端单次上限 200 只。 */
-  async getBatchQuantDbFeatures(symbols: string[]): Promise<Record<string, QuantDbFeatures>> {
-    if (!symbols || symbols.length === 0) return {};
-    try {
-      const resp = await this.client.post<{
-        code: number;
-        data: { items: QuantDbFeatures[]; total: number; missing: string[]; truncated?: boolean };
-      }>('/research/batch-features', { symbols });
-      const items = resp.data?.data?.items || [];
-      return items.reduce<Record<string, QuantDbFeatures>>((acc, item) => {
-        if (item?.symbol) acc[item.symbol] = item;
-        return acc;
-      }, {});
-    } catch (error) {
-      console.error('[ResearchService] getBatchQuantDbFeatures failed:', error);
-      return {};
-    }
-  }
+  // ============ QuantDB 投影特征接口 ============
 
   /**
    * 投影模式批量查询：只取 fields 指定的 camelCase 字段。
@@ -309,23 +277,6 @@ class ResearchService {
   async getKlineData(symbol: string, days = 60): Promise<KlineDataItem[]> {
     const resp = await this.client.get<KlineResponse>(`/research/kline/${symbol}?days=${days}`);
     return resp.data.data.items || [];
-  }
-
-  // ============ 风险评分卡接口 ============
-
-  async getRiskScore(symbol: string, tradeDate?: string | null): Promise<RiskScoreData | null> {
-    try {
-      const url = tradeDate
-        ? `/risk/score/${symbol}?trade_date=${encodeURIComponent(tradeDate)}`
-        : `/risk/score/${symbol}`;
-      const resp = await this.client.get<{ code: number; data: RiskScoreData | { symbol: string; error: string } }>(url);
-      const data = resp.data?.data;
-      if (!data || (data as { error?: string }).error) return null;
-      return data as RiskScoreData;
-    } catch (error) {
-      console.error('[ResearchService] getRiskScore failed:', error);
-      return null;
-    }
   }
 
   // ============ 兼容方法（对接模型中心） ============
@@ -395,26 +346,6 @@ interface KlineResponse {
     items: KlineDataItem[];
     count: number;
   };
-}
-
-export type RiskDimensionKey = 'liquidity' | 'volatility' | 'trend' | 'overheat' | 'fundamental' | 'status';
-export type RiskLevel = '极低' | '低' | '中' | '高' | '极高';
-
-export interface RiskDimensionScore {
-  score: number;          // 0-100
-  reasons: string[];
-}
-
-export interface RiskScoreData {
-  symbol: string;
-  trade_date: string;
-  risk_score: number;     // 0-100，越大越危险
-  risk_level: RiskLevel;
-  veto: boolean;
-  veto_reasons: string[];
-  dimensions: Record<RiskDimensionKey, RiskDimensionScore>;
-  weights: Record<RiskDimensionKey, number>;
-  snapshot: Record<string, unknown>;
 }
 
 export interface WatchlistItem {

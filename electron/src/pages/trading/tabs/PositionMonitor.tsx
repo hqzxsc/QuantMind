@@ -67,7 +67,6 @@ const PositionMonitor: React.FC<PositionMonitorProps> = ({ userId: _userId, isAc
     const [livePrices, setLivePrices] = useState<Record<string, number>>({});
     const livePricesRef = useRef<Record<string, number>>({});
     const [feedStatus, setFeedStatus] = useState<QuoteFeedStatus | null>(null);
-    const [memberDenied, setMemberDenied] = useState(false);
     const subscribedRef = useRef<string[]>([]);
     const apiGatewayBase = SERVICE_URLS.API_GATEWAY.replace(/\/+$/, '');
 
@@ -138,13 +137,10 @@ const PositionMonitor: React.FC<PositionMonitorProps> = ({ userId: _userId, isAc
                 headers: authHeader(),
             });
             if (res.status === 403) {
-                // 会员门控：仅 QuantDB 付费会员在期可用
-                setMemberDenied(true);
                 setFeedStatus(null);
                 return;
             }
             if (res.ok) {
-                setMemberDenied(false);
                 setFeedStatus(await res.json());
             }
         } catch (e) {
@@ -174,12 +170,7 @@ const PositionMonitor: React.FC<PositionMonitorProps> = ({ userId: _userId, isAc
             {/* 实时行情来源指示：TDX 桥实时 vs QuantDB 日线兜底（仅 CN；其余市场为日线数据） */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-white/70 text-[11px] shrink-0 ${currentMarket !== 'CN' ? 'hidden' : ''}`}>
                 <span className="font-black text-slate-500">行情来源</span>
-                {memberDenied ? (
-                    <span className="inline-flex items-center gap-1.5 font-bold text-amber-600">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                        实时行情仅 QuantDB 付费会员可用（会员在期）
-                    </span>
-                ) : feedLive ? (
+                {feedLive ? (
                     <span className="inline-flex items-center gap-1.5 font-bold text-emerald-600">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         通达信实时（{feedStatus!.last_feed_age_sec}s 前）

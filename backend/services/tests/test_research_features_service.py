@@ -1,4 +1,4 @@
-"""QuantDB 全量特征聚合服务单元测试（不依赖真实 parquet 数据）。"""
+"""QuantDB 投影特征服务单元测试（不依赖真实 parquet 数据）。"""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from backend.services.api.routers import research_features_service as svc
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    svc._CACHE.clear()  # noqa: SLF001
+    svc._PROJ_DAY_CACHE.clear()  # noqa: SLF001
     yield
-    svc._CACHE.clear()  # noqa: SLF001
+    svc._PROJ_DAY_CACHE.clear()  # noqa: SLF001
 
 
 class _FakeHub:
@@ -89,211 +89,22 @@ def test_to_jsonable_serializes_timestamps_to_iso_strings():
 
 
 # --------------------------------------------------------------------------
-# _category_for
+# get_batch_full_features（投影模式）
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    ("column", "expected"),
-    [
-        ("mom_ret_1d", "momentum"),
-        ("vol_std_20", "volatility"),
-        ("liq_turnover_os", "liquidity"),
-        ("style_beta_20", "style"),
-        ("ind_strength_20", "industry"),
-        ("chip_profit_ratio_20", "chip"),
-        ("concept_hot_score", "concept"),
-        ("micro_vpin_100", "microstructure"),
-        ("flow_net_amount", "fundFlow"),
-        ("pe_ttm", "valuation"),
-    ],
-)
-def test_category_for_maps_known_prefixes(column, expected):
-    assert svc._category_for(column, "valuation") == expected  # noqa: SLF001
-
-
-# --------------------------------------------------------------------------
-# get_symbol_full_features
-# --------------------------------------------------------------------------
-def test_get_symbol_full_features_groups_columns_by_category(monkeypatch):
-    _install_hub(
-        monkeypatch,
-        _FakeHub(
-            {
-                "qdb_valuation": [
-                    {
-                        "symbol": "600036.SH",
-                        "time": "2026-07-29",
-                        "dt": 20260729,
-                        "close": 39.0,
-                        "pe_ttm": 6.6,
-                        "release_id": "r1",
-                    }
-                ],
-                "qdb_technical_indicators": [
-                    {
-                        "symbol": "600036.SH",
-                        "dt": 20260729,
-                        "ma5": 39.08,
-                        "rsi_14": 55.1,
-                    }
-                ],
-                "qdb_market_sentiment": [
-                    {"symbol": "600036.SH", "dt": 20260729, "liquidity_score": 0.8}
-                ],
-                "qdb_l1_factors": [
-                    {
-                        "symbol": "600036.SH",
-                        "dt": 20260729,
-                        "mom_ret_1d": 0.01,
-                        "chip_profit_ratio_20": 0.7,
-                    }
-                ],
-                "qdb_l2_factors": [
-                    {"symbol": "600036.SH", "dt": 20260729, "micro_vpin_100": 0.3}
-                ],
-            }
-        ),
-    )
-
-    result = asyncio.run(svc.get_symbol_full_features("SH600036"))
-    data = result["data"]
-
-    assert result["code"] == 200
-    assert data["symbol"] == "600036.SH"
-    assert data["tradeDate"] == "2026-07-29"
-    assert data["valuation"] == {"pe_ttm": 6.6}
-    assert data["technical"] == {"ma5": 39.08, "rsi_14": 55.1}
-    assert data["sentiment"] == {"liquidity_score": 0.8}
-    assert data["momentum"] == {"mom_ret_1d": 0.01}
-    assert data["chip"] == {"chip_profit_ratio_20": 0.7}
-    assert data["microstructure"] == {"micro_vpin_100": 0.3}
-
-
-def test_get_symbol_full_features_always_returns_all_categories(monkeypatch):
-    _install_hub(
-        monkeypatch,
-        _FakeHub({"qdb_valuation": [{"symbol": "600036.SH", "dt": 1, "pe_ttm": 6.6}]}),
-    )
-
-    data = asyncio.run(svc.get_symbol_full_features("600036.SH"))["data"]
-
-    for category in svc.CATEGORIES:
-        assert category in data, f"missing category {category}"
-
-
-def test_get_symbol_full_features_excludes_metadata_columns(monkeypatch):
-    _install_hub(
-        monkeypatch,
-        _FakeHub(
-            {
-                "qdb_valuation": [
-                    {
-                        "symbol": "600036.SH",
-                        "time": "2026-07-29",
-                        "dt": 20260729,
-                        "rn": 1,
-                        "close": 39.0,
-                        "release_id": "r1",
-                        "published_at": "2026-07-30",
-                        "pe_ttm": 6.6,
-                    }
-                ]
-            }
-        ),
-    )
-
-    data = asyncio.run(svc.get_symbol_full_features("600036.SH"))["data"]
-    assert data["valuation"] == {"pe_ttm": 6.6}
-
-
-def test_get_symbol_full_features_rejects_invalid_symbol(monkeypatch):
+def test_batch_returns_empty_for_no_valid_symbols(monkeypatch):
     _install_hub(monkeypatch, _FakeHub({}))
-    result = asyncio.run(svc.get_symbol_full_features("AAPL"))
+    data = asyncio.run(svc.get_batch_full_features(["AAPL", ""]))["data"]
+    assert data == {"items": [], "total": 0, "missing": []}
+
+
+def test_batch_rejects_empty_fields(monkeypatch):
+    _install_hub(monkeypatch, _FakeHub({}))
+    result = asyncio.run(svc.get_batch_full_features(["600036.SH"]))
     assert result["code"] == 400
     assert result["data"] is None
 
 
-def test_get_symbol_full_features_returns_404_when_no_source_has_data(monkeypatch):
-    _install_hub(monkeypatch, _FakeHub({"qdb_valuation": []}))
-    result = asyncio.run(svc.get_symbol_full_features("600036.SH"))
-    assert result["code"] == 404
-
-
-def test_get_symbol_full_features_degrades_when_hub_unavailable(monkeypatch):
-    _install_hub(monkeypatch, _FakeHub({}, available=False))
-    result = asyncio.run(svc.get_symbol_full_features("600036.SH"))
-    assert result["code"] == 404
-
-
-def test_get_symbol_full_features_survives_missing_views(monkeypatch):
-    """任一视图查询抛错时应跳过该数据源而非整体失败。"""
-    hub = _install_hub(
-        monkeypatch,
-        _FakeHub({"qdb_valuation": [{"symbol": "600036.SH", "dt": 1, "pe_ttm": 6.6}]}),
-    )
-    monkeypatch.setattr(svc, "_latest_l1_from_files", lambda symbols: {})
-
-    data = asyncio.run(svc.get_symbol_full_features("600036.SH"))["data"]
-    assert data["sources"] == ["valuation"]
-    assert len(hub.queries) >= 4
-
-
-def test_get_symbol_full_features_caches_within_ttl(monkeypatch):
-    hub = _install_hub(
-        monkeypatch,
-        _FakeHub({"qdb_valuation": [{"symbol": "600036.SH", "dt": 1, "pe_ttm": 6.6}]}),
-    )
-
-    asyncio.run(svc.get_symbol_full_features("600036.SH"))
-    first_count = len(hub.queries)
-    asyncio.run(svc.get_symbol_full_features("SH600036"))
-
-    assert len(hub.queries) == first_count, "缓存命中时不应重复查询"
-
-
-def test_get_symbol_full_features_refetches_after_ttl_expiry(monkeypatch):
-    hub = _install_hub(
-        monkeypatch,
-        _FakeHub({"qdb_valuation": [{"symbol": "600036.SH", "dt": 1, "pe_ttm": 6.6}]}),
-    )
-
-    asyncio.run(svc.get_symbol_full_features("600036.SH"))
-    first_count = len(hub.queries)
-    # 将缓存时间戳回退到 TTL 之外
-    svc._CACHE["600036.SH"] = (  # noqa: SLF001
-        svc._CACHE["600036.SH"][0] - svc._CACHE_TTL_SECONDS - 1,  # noqa: SLF001
-        svc._CACHE["600036.SH"][1],  # noqa: SLF001
-    )
-    asyncio.run(svc.get_symbol_full_features("600036.SH"))
-
-    assert len(hub.queries) > first_count
-
-
-def test_get_symbol_full_features_converts_nan_to_none(monkeypatch):
-    _install_hub(
-        monkeypatch,
-        _FakeHub(
-            {
-                "qdb_valuation": [
-                    {
-                        "symbol": "600036.SH",
-                        "dt": 1,
-                        "pe_ttm": float("nan"),
-                        "pb": 1.2,
-                    }
-                ]
-            }
-        ),
-    )
-
-    data = asyncio.run(svc.get_symbol_full_features("600036.SH"))["data"]
-    assert data["valuation"]["pe_ttm"] is None
-    assert data["valuation"]["pb"] == 1.2
-
-
-# --------------------------------------------------------------------------
-# get_batch_full_features
-# --------------------------------------------------------------------------
-def test_get_batch_full_features_returns_items_and_missing(monkeypatch):
+def test_batch_returns_items_and_missing(monkeypatch):
     _install_hub(
         monkeypatch,
         _FakeHub(
@@ -307,7 +118,9 @@ def test_get_batch_full_features_returns_items_and_missing(monkeypatch):
     )
 
     data = asyncio.run(
-        svc.get_batch_full_features(["SH600036", "000001.SZ", "300750.SZ"])
+        svc.get_batch_full_features(
+            ["SH600036", "000001.SZ", "300750.SZ"], fields=["pe"]
+        )
     )["data"]
 
     assert [item["symbol"] for item in data["items"]] == ["600036.SH", "000001.SZ"]
@@ -316,14 +129,8 @@ def test_get_batch_full_features_returns_items_and_missing(monkeypatch):
     assert data["truncated"] is False
 
 
-def test_get_batch_full_features_returns_empty_for_no_valid_symbols(monkeypatch):
-    _install_hub(monkeypatch, _FakeHub({}))
-    data = asyncio.run(svc.get_batch_full_features(["AAPL", ""]))["data"]
-    assert data == {"items": [], "total": 0, "missing": []}
-
-
-def test_get_batch_full_features_truncates_oversized_requests(monkeypatch):
-    symbols = [f"{600000 + i}.SH" for i in range(svc.MAX_BATCH_SYMBOLS + 20)]
+def test_batch_truncates_oversized_requests(monkeypatch):
+    symbols = [f"{600000 + i}.SH" for i in range(svc.MAX_BATCH_SYMBOLS_PROJECTED + 20)]
     _install_hub(
         monkeypatch,
         _FakeHub(
@@ -331,12 +138,12 @@ def test_get_batch_full_features_truncates_oversized_requests(monkeypatch):
         ),
     )
 
-    data = asyncio.run(svc.get_batch_full_features(symbols))["data"]
+    data = asyncio.run(svc.get_batch_full_features(symbols, fields=["pe"]))["data"]
     assert data["truncated"] is True
-    assert data["total"] == svc.MAX_BATCH_SYMBOLS
+    assert data["total"] == svc.MAX_BATCH_SYMBOLS_PROJECTED
 
 
-def test_get_batch_full_features_issues_single_query_per_view(monkeypatch):
+def test_batch_issues_single_query_per_view(monkeypatch):
     """批量查询应一次覆盖所有 symbol，而非按 symbol 循环。"""
     hub = _install_hub(
         monkeypatch,
@@ -351,13 +158,13 @@ def test_get_batch_full_features_issues_single_query_per_view(monkeypatch):
     )
     monkeypatch.setattr(svc, "_latest_l1_from_files", lambda symbols: {})
 
-    asyncio.run(svc.get_batch_full_features(["600036.SH", "000001.SZ"]))
+    asyncio.run(svc.get_batch_full_features(["600036.SH", "000001.SZ"], fields=["pe"]))
 
     valuation_queries = [q for q in hub.queries if "qdb_valuation" in q]
     assert len(valuation_queries) == 1
 
 
-def test_get_batch_full_features_output_is_json_serializable(monkeypatch):
+def test_batch_output_is_json_serializable(monkeypatch):
     import json
 
     _install_hub(
@@ -371,7 +178,7 @@ def test_get_batch_full_features_output_is_json_serializable(monkeypatch):
         ),
     )
 
-    result = asyncio.run(svc.get_batch_full_features(["600036.SH"]))
+    result = asyncio.run(svc.get_batch_full_features(["600036.SH"], fields=["pe", "pb"]))
     encoded = json.dumps(result, allow_nan=False)
     assert "NaN" not in encoded
     assert math.isnan(float("nan"))  # sanity: NaN 确实存在于输入
@@ -564,31 +371,9 @@ def test_projected_batch_omits_unavailable_long_horizon_returns(monkeypatch):
     assert "return20d" not in result["data"]["items"][0]["values"]
 
 
-def test_projected_batch_raises_symbol_cap_above_full_pool(monkeypatch):
+def test_projected_batch_cap_covers_full_pool():
     """投影响应体小，上限需覆盖整个候选池（全池筛选的前提）。"""
     assert svc.MAX_BATCH_SYMBOLS_PROJECTED > 1015
-    assert svc.MAX_BATCH_SYMBOLS_PROJECTED > svc.MAX_BATCH_SYMBOLS
-
-
-def test_projected_batch_does_not_poison_full_feature_cache(monkeypatch):
-    """投影结果不得写入全量缓存，否则后续全量请求会拿到裁剪过的数据。"""
-    _install_hub(
-        monkeypatch,
-        _FakeHub(
-            {
-                "qdb_valuation": [
-                    {"symbol": "600036.SH", "dt": 1, "pb": 0.78, "ps_ttm": 2.2}
-                ]
-            }
-        ),
-    )
-    monkeypatch.setattr(svc, "_latest_l1_from_files", lambda symbols: {})
-
-    asyncio.run(svc.get_batch_full_features(["600036.SH"], fields=["pb"]))
-    assert svc._CACHE == {}  # noqa: SLF001
-
-    full = asyncio.run(svc.get_batch_full_features(["600036.SH"]))
-    assert full["data"]["items"][0]["valuation"]["ps_ttm"] == pytest.approx(2.2)
 
 
 # --------------------------------------------------------------------------
@@ -719,51 +504,6 @@ def test_daily_view_contributes_only_volume(monkeypatch):
     assert "open" not in values
 
 
-def test_get_symbol_full_features_from_features_daily(monkeypatch):
-    """测试优先从 qdb_features_daily 宽表提取估值、技术与波动率指标。"""
-    _install_hub(
-        monkeypatch,
-        _FakeHub(
-            {
-                "qdb_features_daily": [
-                    {
-                        "symbol": "600036.SH",
-                        "time": "2026-07-29",
-                        "dt": 20260729,
-                        "close": 39.0,
-                        "pe_ttm": 6.6,
-                        "pb": 0.85,
-                        "total_mv": 9.8e11,  # 9800 亿元
-                        "ma5": 39.08,
-                        "ma_gap_5": 0.5,
-                        "rsi_14": 55.1,
-                        "vol_atr_14": 0.88,
-                        "return_1d": 0.015,
-                    }
-                ],
-            }
-        ),
-    )
-
-    result = asyncio.run(svc.get_symbol_full_features("SH600036"))
-    data = result["data"]
-
-    assert result["code"] == 200
-    assert data["symbol"] == "600036.SH"
-    assert data["tradeDate"] == "2026-07-29"
-    assert "features_daily" in data["sources"]
-    assert data["valuation"]["pe_ttm"] == 6.6
-    assert data["valuation"]["pb"] == 0.85
-    # total_mv 应被换算为 9800 (亿元)
-    assert data["valuation"]["total_mv"] == pytest.approx(9800.0)
-    assert data["technical"]["ma5"] == 39.08
-    assert data["technical"]["ma_gap_5"] == 0.5
-    assert data["volatility"]["vol_atr_14"] == 0.88
-    # 前瞻收益率标签（训练 Label）应被屏蔽，不作为特征输出
-    assert "return_1d" not in data["momentum"]
-    assert "return_1d" not in data["technical"]
-
-
 def test_batch_projected_features_from_features_daily(monkeypatch):
     """测试批量投影模式直接从 qdb_features_daily 提取字段并自动别名与缩放。"""
     _install_hub(
@@ -804,4 +544,3 @@ def test_batch_projected_features_from_features_daily(monkeypatch):
     assert values["ma5"] == 39.08
     assert values["maGap5"] == 0.5
     assert values["atr"] == 0.88
-

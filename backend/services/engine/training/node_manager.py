@@ -114,7 +114,7 @@ def save_training_node(node: dict[str, Any]) -> dict[str, Any]:
             _PASSWORD_FIELD: pwd,
             _KEY_FIELD: key,
             "work_dir": str(node.get("work_dir") or "/workspace").strip(),
-            "docker_image": str(node.get("docker_image") or "quantmind-train:latest").strip(),
+            "docker_image": str(node.get("docker_image") or "quantmind-oss:latest").strip(),
             "gpus": str(node.get("gpus") or "all").strip(),
         })
     else:
@@ -124,7 +124,7 @@ def save_training_node(node: dict[str, Any]) -> dict[str, Any]:
         existing["user"] = str(node.get("user") or existing.get("user") or "root").strip()
         existing["work_dir"] = str(node.get("work_dir") or existing.get("work_dir") or "/workspace").strip()
         existing["docker_image"] = str(
-            node.get("docker_image") or existing.get("docker_image") or "quantmind-train:latest"
+            node.get("docker_image") or existing.get("docker_image") or "quantmind-oss:latest"
         ).strip()
         existing["gpus"] = str(node.get("gpus") or existing.get("gpus") or "all").strip()
         # 密码/密钥留空 = 保持不变
@@ -200,7 +200,7 @@ def load_training_nodes() -> list[dict[str, Any]]:
         "ssh_password": _env_or("TRAINING_AUTODL_SSH_PASSWORD", ""),
         "ssh_key": _env_or("TRAINING_AUTODL_SSH_KEY", ""),
         "work_dir": _env_or("TRAINING_AUTODL_WORK_DIR", "/workspace"),
-        "docker_image": _env_or("TRAINING_AUTODL_DOCKER_IMAGE", "quantmind-train:latest"),
+        "docker_image": _env_or("TRAINING_AUTODL_DOCKER_IMAGE", "quantmind-oss:latest"),
         "gpus": _env_or("TRAINING_AUTODL_GPUS", "all"),
     }]
 

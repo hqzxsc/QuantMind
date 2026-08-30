@@ -60,7 +60,7 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
             self.ssh_key = str(node_config.get("ssh_key") or "")
             self.ssh_password = str(node_config.get("ssh_password") or "")
             self.work_dir = str(node_config.get("work_dir") or "/workspace")
-            self.docker_image = str(node_config.get("docker_image") or "quantmind-train:latest")
+            self.docker_image = str(node_config.get("docker_image") or "quantmind-oss:latest")
             self.gpus = str(node_config.get("gpus") or "").strip()
             self.quantdb_dir = str(node_config.get("quantdb_dir") or "/data/quantdb")
         else:

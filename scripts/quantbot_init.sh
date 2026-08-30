@@ -20,6 +20,9 @@ set -euo pipefail
 
 SKILLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/skills"
 PERSONA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config/qwenpaw"
+# QwenPaw 容器内兜底：/app/scripts 是独立只读挂载，仓库根在 /quantmind
+[[ -d "$SKILLS_DIR" ]] || SKILLS_DIR="/quantmind/skills"
+[[ -d "$PERSONA_DIR" ]] || PERSONA_DIR="/quantmind/config/qwenpaw"
 QWENPAW_BASE_URL="${QWENPAW_BASE_URL:-http://127.0.0.1:8088}"
 QWENPAW_AGENT_ID="${QWENPAW_AGENT_ID:-default}"
 TMP_DIR="$(mktemp -d)"
@@ -38,7 +41,7 @@ case "${1:-}" in
 esac
 
 if ! command -v curl >/dev/null 2>&1; then die "需要 curl"; fi
-if [[ "$MODE" != "persona" ]] && ! command -v zip >/dev/null 2>&1; then die "需要 zip（--persona-only 模式不需要）"; fi
+if [[ "$MODE" != "persona" ]] && ! command -v python3 >/dev/null 2>&1; then die "需要 python3（--persona-only 模式不需要）"; fi
 
 # ---------------------------------------------------------------------------
 # 1. 技能安装
@@ -52,11 +55,19 @@ install_skills() {
   fi
 
   # 1.1 打包本地技能（每个技能目录必须含 SKILL.md，zip 根为技能目录）
+  # 用 python zipfile 打包，避免依赖宿主机 zip 命令
   local zip_file="$TMP_DIR/quantmind_skills.zip"
-  (
-    cd "$SKILLS_DIR"
-    zip -qr "$zip_file" ./
-  )
+  python3 - "$SKILLS_DIR" "$zip_file" <<'PYEOF'
+import pathlib
+import sys
+import zipfile
+
+src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]
+with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zf:
+    for p in sorted(src.rglob("*")):
+        if p.is_file():
+            zf.write(p, p.relative_to(src).as_posix())
+PYEOF
 
   # 1.2 删除同名旧技能（池中同名技能会冲突；删除后上传最新版）
   # 技能清单从本地 skills/ 目录动态枚举（含 SKILL.md 的目录），避免硬编码过期
@@ -70,8 +81,8 @@ install_skills() {
   for name in "${pool_names[@]}"; do
     local resp
     resp="$(curl -s -X DELETE "$QWENPAW_BASE_URL/api/skills/pool/$name")"
-    # 404（不存在）也继续；deleted:true 正常
-    [[ "$resp" == *'"deleted":true'* || "$resp" == *'404'* || "$resp" == *'Not Found'* ]] \
+    # 不存在时服务端返回 409 "cannot be deleted"（非 404），同样视为正常继续
+    [[ "$resp" == *'"deleted":true'* || "$resp" == *'404'* || "$resp" == *'Not Found'* || "$resp" == *'cannot be deleted'* ]] \
       || warn "删除池技能 $name 返回: $resp"
   done
 

@@ -39,8 +39,6 @@ import { InferenceCenterPanel } from './modelRegistryPanels';
 import { StockForecastChart } from '../features/inference-center/components/StockForecastChart';
 import { FeatureDriversPanel } from '../features/inference-center/components/FeatureDriversPanel';
 import { ModelConsensusPanel } from '../features/inference-center/components/ModelConsensusPanel';
-import { BatchInferencePanel } from '../components/inference/BatchInferencePanel';
-import { BatchSingleDayPanel } from '../components/inference/BatchSingleDayPanel';
 import { InferenceHistoryPanel } from '../components/inference/InferenceHistoryPanel';
 import { InferenceBacktestModule } from '../components/backtestCenter/InferenceBacktestModule';
 import { useAppSelector } from '../store';
@@ -73,7 +71,7 @@ export const InferenceCenterPage: React.FC = () => {
   // ─────────────────────────────────────────────────────────────
   // 模块 1：市场截面推理 (Cross-Section Inference) 状态
   // ─────────────────────────────────────────────────────────────
-  const [crossSectionMode, setCrossSectionMode] = useState<'single' | 'batch' | 'batch-range' | 'history' | 'backtest'>('single');
+  const [crossSectionMode, setCrossSectionMode] = useState<'single' | 'history' | 'backtest'>('single');
   const [registeredModels, setRegisteredModels] = useState<UserModelRecord[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string>(initialModelId);
@@ -593,22 +591,6 @@ export const InferenceCenterPage: React.FC = () => {
               </Button>
               <Button
                 size="small"
-                type={crossSectionMode === 'batch' ? 'primary' : 'default'}
-                className={clsx('rounded-xl text-xs font-bold h-8 px-4', crossSectionMode === 'batch' ? 'bg-violet-600 border-violet-600' : 'border-slate-200')}
-                onClick={() => setCrossSectionMode('batch')}
-              >
-                批量多日
-              </Button>
-              <Button
-                size="small"
-                type={crossSectionMode === 'batch-range' ? 'primary' : 'default'}
-                className={clsx('rounded-xl text-xs font-bold h-8 px-4', crossSectionMode === 'batch-range' ? 'bg-emerald-600 border-emerald-600' : 'border-slate-200')}
-                onClick={() => setCrossSectionMode('batch-range')}
-              >
-                批量单日
-              </Button>
-              <Button
-                size="small"
                 type={crossSectionMode === 'history' ? 'primary' : 'default'}
                 className={clsx('rounded-xl text-xs font-bold h-8 px-4', crossSectionMode === 'history' ? 'bg-indigo-600 border-indigo-600' : 'border-slate-200')}
                 onClick={() => setCrossSectionMode('history')}
@@ -667,10 +649,6 @@ export const InferenceCenterPage: React.FC = () => {
                 onHistoryDateFilterChange={setHistoryDateFilter}
                 onDeleteHistory={handleDeleteHistory}
               />
-            ) : crossSectionMode === 'batch' ? (
-              <BatchInferencePanel modelId={selectedModel.model_id} horizonDays={horizonDays} />
-            ) : crossSectionMode === 'batch-range' ? (
-              <BatchSingleDayPanel modelId={selectedModel.model_id} horizonDays={horizonDays} />
             ) : crossSectionMode === 'history' ? (
               <InferenceHistoryPanel modelId={selectedModel.model_id} onDelete={handleDeleteHistory} />
             ) : (

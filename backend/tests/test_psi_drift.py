@@ -13,8 +13,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import pytest
-
 
 def _load_training_module():
     root = Path(__file__).resolve().parents[2]
@@ -275,3 +273,33 @@ def test_max_psi_reflects_structure_not_level():
     assert feat["psi"] > 0.5
     assert res["max_psi"] < 0.1
     assert abs(res["max_psi"] - feat["rank_disp"]) < 1e-4
+
+
+def test_stationary_autocorrelated_market_not_severe():
+    """回归测试：平稳（无漂移）但截面 rank 强自相关的长历史市场，
+    旧实现拿长训练窗均值对短 recent 窗会把采样噪声误判为严重漂移。
+    修复后应判 stable（至多 warning），且输出噪声本底与自适应标记。"""
+    rng = np.random.default_rng(123)
+    n_days, n_stocks = 160, 300
+    dates = pd.date_range("2026-01-01", periods=n_days, freq="B")
+    syms = [f"S{i:04d}" for i in range(n_stocks)]
+    df = pd.DataFrame([(d, s) for d in dates for s in syms], columns=["trade_date", "symbol"])
+    # 每股 AR(1) 平稳过程：截面排序缓慢游走（强自相关），但任何窗口间无系统漂移
+    for j, feat in enumerate(["mom_ret_20d", "fun_pe", "turn_20"]):
+        vals = np.empty((n_days, n_stocks))
+        x = rng.normal(0, 1, n_stocks)
+        for i in range(n_days):
+            x = 0.9 * x + np.sqrt(1 - 0.9**2) * rng.normal(0, 1, n_stocks)
+            vals[i] = x
+        df[feat] = vals.ravel()
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+
+    res = compute_psi_drift(
+        df, ["mom_ret_20d", "fun_pe", "turn_20"],
+        str(dates[0].date()), str(dates[-16].date()), n_recent_days=15,
+    )
+    assert res["enabled"] is True
+    assert res["adaptive_thresholds"] is True
+    assert res["noise_floor"] is not None and res["noise_floor"] > 0
+    assert res["overall"] in ("stable", "warning")
+    assert res["drift"]["severe"] == 0

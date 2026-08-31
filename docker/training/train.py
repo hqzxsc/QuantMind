@@ -368,18 +368,23 @@ def _compute_rank_disp_all(
     train_df: pd.DataFrame,
     recent_df: pd.DataFrame,
     features: list[str],
-) -> dict[str, float]:
+) -> dict[str, dict]:
     """批量计算全部特征的 rank_disp，供 compute_psi_drift 使用。
 
     向量化：一次 groupby.rank 算所有特征的日截面 rank，再按 symbol 聚合均值，
     避免逐特征重复扫描。与单特征版 `_rank_displacement` 保持一致：过滤掉观测
     < min_obs 天的股票，避免次新/停复牌（仅 1-2 天）的噪声污染均值。
+
+    返回 {feature: {"mean": 位移均值, "std": 个股位移横截面标准差, "n": 交集股票数}}；
+    不可估计时为 {"mean": nan, "std": nan, "n": 0}。std/n 供显著性检验用
+    （位移均值的标准误 ≈ std/√n，相干性结构漂移在大面板上极显著）。
     """
     min_obs = 5
+    nan_entry = {"mean": float("nan"), "std": float("nan"), "n": 0}
     if not features:
         return {}
     avail = [f for f in features if f in train_df.columns and f in recent_df.columns]
-    missing = {f: float("nan") for f in features if f not in avail}
+    missing = {f: dict(nan_entry) for f in features if f not in avail}
 
     def _per_symbol_mean_rank(df: pd.DataFrame) -> pd.DataFrame:
         keep = df.groupby("symbol")[avail[0]].transform("size") >= min_obs
@@ -396,10 +401,17 @@ def _compute_rank_disp_all(
     common = tr_mean.index.intersection(rc_mean.index)
     out = dict(missing)
     if len(common) < 50:
-        out.update({f: float("nan") for f in avail})
+        out.update({f: dict(nan_entry) for f in avail})
         return out
     disp = (rc_mean.loc[common] - tr_mean.loc[common]).abs()
-    out.update({f: float(disp[f].mean()) for f in avail})
+    out.update({
+        f: {
+            "mean": float(disp[f].mean()),
+            "std": float(disp[f].std(ddof=1)) if len(common) > 1 else float("nan"),
+            "n": int(len(common)),
+        }
+        for f in avail
+    })
     return out
 
 
@@ -425,6 +437,15 @@ def compute_psi_drift(
     rank_disp 不可估计（股票交集过小/观测不足）时按 level_psi 保守判级并标
     `rank_reliable=False`，绝不静默归 0（否则会掩蔽真实漂移）。
 
+    方法学要点（2026-08 修复误报）：
+    - 基准窗与 recent 窗等长且相邻（紧邻其前的 n 个交易日）。旧实现拿整个
+      训练窗（数千日）均值对 30 日窗均值，30 日侧采样噪声（每股均值 rank
+      标准误 ~0.09）会被误读成截面重排，优秀模型也报"严重漂移"。
+    - 判级 = 显著性检验而非固定阈值：用训练段内部相邻等长窗位移作噪声本底，
+      z = (rank_disp − 本底) / (个股位移 std/√n)，z≥8 且幅度≥0.10 为严重、
+      z≥4 且幅度≥0.05 为中等。真实的结构漂移是个股相干位移，大面板上极显著；
+      纯采样噪声非相干，z≈0。本底不可估计时退回固定阈值 0.10/0.25。
+
     返回:
         {
           "enabled": True,
@@ -442,12 +463,30 @@ def compute_psi_drift(
     train_mask = (df["trade_date"] >= pd.Timestamp(train_start)) & (df["trade_date"] <= pd.Timestamp(train_end))
     train_df = df[train_mask]
     # 最近 n 个交易日
-    recent_dates = sorted(df["trade_date"].unique())[-n_recent_days:]
+    all_dates = sorted(df["trade_date"].unique())
+    recent_dates = all_dates[-n_recent_days:]
     if not recent_dates:
         return {"enabled": False, "reason": "no recent dates"}
     recent_df = df[df["trade_date"].isin(recent_dates)]
     if train_df.empty or recent_df.empty:
         return {"enabled": False, "reason": "empty train or recent frame"}
+
+    # rank_disp 基准窗：与 recent 等长、紧邻其前的交易日窗口。
+    # 不能用整个训练窗做基准——训练窗均值（数千日）极稳，而 recent 窗
+    # （30 日）的每股 rank 均值标准误 ~0.09，两者相减会把纯采样噪声
+    # 误判为截面重排（历史误报"严重漂移"的根因）。等长相邻窗对比时
+    # 两侧噪声量级相当、相互抵消，剩下的才是真实结构漂移。
+    prior_dates = all_dates[:-n_recent_days]
+    if len(prior_dates) >= n_recent_days:
+        baseline_dates = prior_dates[-n_recent_days:]
+        baseline_source = "prior_window"
+    else:
+        # 历史不足（如新上市数据）：退回训练窗并降低置信
+        baseline_dates = [d for d in all_dates if d not in set(recent_dates)]
+        baseline_source = "train_window"
+    baseline_df = df[df["trade_date"].isin(baseline_dates)]
+    if baseline_df.empty:
+        return {"enabled": False, "reason": "empty baseline frame"}
 
     # 只取可用特征
     usable = [f for f in features if f in df.columns]
@@ -457,8 +496,30 @@ def compute_psi_drift(
     if train_sample.empty or recent_sample.empty:
         return {"enabled": False, "reason": "empty sample"}
 
-    # 批量算全部特征的截面结构漂移（身份级 rank 位移）
-    rank_disp_map = _compute_rank_disp_all(train_df, recent_df, usable)
+    # 批量算全部特征的截面结构漂移（身份级 rank 位移，等长相邻窗对比）
+    rank_disp_map = _compute_rank_disp_all(baseline_df, recent_df, usable)
+
+    # 噪声本底校准：截面 rank 有强时间自相关（动量/估值类特征尤甚），
+    # 短窗均值 rank 的采样噪声很大，任何固定阈值都会随市场状态误报。
+    # 用训练段内部两个相邻等长窗的位移做"无漂移基准"，取其跨特征中位数
+    # 作为噪声本底；判级再看位移均值相对本底的统计显著性（见下方 z 检验）。
+    noise_floor_map: dict[str, dict] = {}
+    train_dates = sorted(train_df["trade_date"].unique())
+    half = len(train_dates) // 2
+    if len(train_dates) >= 4 * n_recent_days:
+        win_a = train_dates[half - n_recent_days: half]
+        win_b = train_dates[half: half + n_recent_days]
+        noise_floor_map = _compute_rank_disp_all(
+            df[df["trade_date"].isin(win_a)],
+            df[df["trade_date"].isin(win_b)],
+            usable,
+        )
+    floor_values = [
+        v["mean"] for v in noise_floor_map.values()
+        if v.get("mean") is not None and np.isfinite(v["mean"])
+    ]
+    noise_floor = float(np.median(floor_values)) if floor_values else float("nan")
+    adaptive = bool(floor_values)
 
     results = []
     for f in usable:
@@ -467,34 +528,69 @@ def compute_psi_drift(
         level_psi = _psi_single(a, b)
         if not np.isfinite(level_psi):
             continue
-        rank_disp = rank_disp_map.get(f)
+        disp_stat = rank_disp_map.get(f) or {}
+        rank_disp = disp_stat.get("mean")
         # rank_disp 不可估计（交集过小/数据不足）→ 保守处理：
         # 不能当良性置 0（会掩蔽真实漂移），按水平 PSI 判级并标记 unreliable
         rank_reliable = bool(rank_disp is not None and np.isfinite(rank_disp))
+        z = None
+        feat_floor = None
         if not rank_reliable:
             rank_disp = level_psi  # 用水平 PSI 兜底判级（不静默归 0）
+            if rank_disp >= 0.25:
+                level = "severe"
+            elif rank_disp >= 0.10:
+                level = "medium"
+            else:
+                level = "stable"
         else:
             rank_disp = float(rank_disp)
-        # 判级以 rank_disp 为主；水平高但 rank 稳定 = 良性量能膨胀
-        # 阈值（2026-08 下调以提高灵敏度）：rank_disp 中等 ≥0.10 / 严重 ≥0.25，
-        # level_psi 兜底 中等 ≥0.20 / 起判 ≥0.05；benign 要求 rank_disp <0.10
-        benign_scale = rank_reliable and level_psi >= 0.05 and rank_disp < 0.10
-        if rank_disp >= 0.25:
-            level = "severe"
-        elif rank_disp >= 0.10:
-            level = "medium"
-        elif benign_scale:
-            level = "stable"  # 仅水平平移，截面结构未变
-        elif level_psi >= 0.20:
-            level = "medium"  # 水平漂移且 rank 位移未解 → 保守中警
-        elif level_psi >= 0.05:
-            level = "stable"
-        else:
-            level = "stable"
+            # 判级 = 统计显著性检验，而非固定阈值/本底倍数：
+            # 位移均值的标准误 ≈ 个股位移横截面 std / √n，真实的结构漂移
+            # 是个股层面的相干位移，几百只股票的面板上即使幅度不大
+            # （如半壁板块 +3σ 重排，均值位移仅 ~0.24）也极显著；
+            # 纯采样噪声则只贡献本底量级的非相干位移，z≈0。
+            # 倍数法失效的原因：结构漂移的位移有几何上界（"半升半降"
+            # 重排均值位移上界 ~0.25），短窗高噪时达不到 4×本底。
+            feat_stat = noise_floor_map.get(f) or {}
+            feat_floor = feat_stat.get("mean")
+            feat_std = disp_stat.get("std")
+            feat_n = disp_stat.get("n", 0)
+            floor_ok = (
+                adaptive
+                and feat_floor is not None and np.isfinite(feat_floor) and feat_floor > 1e-4
+                and feat_std is not None and np.isfinite(feat_std) and feat_std > 1e-4
+                and feat_n >= 50
+            )
+            if floor_ok:
+                # 本底自身也是单次抽样估计 → 标准误放宽 √2
+                se = feat_std / (feat_n ** 0.5) * (2.0 ** 0.5)
+                z = (rank_disp - feat_floor) / se
+                # 幅度门槛防"统计显著但经济无意义"（超大面板下微小
+                # 相干位移也会高 z）；z 门槛防"幅度大但纯噪声"（短窗）
+                if z >= 8.0 and rank_disp >= 0.10:
+                    level = "severe"
+                elif z >= 4.0 and rank_disp >= 0.05:
+                    level = "medium"
+                else:
+                    level = "stable"
+            else:
+                # 本底不可估计：退回固定阈值（中等 ≥0.10 / 严重 ≥0.25）
+                feat_floor = None
+                if rank_disp >= 0.25:
+                    level = "severe"
+                elif rank_disp >= 0.10:
+                    level = "medium"
+                else:
+                    level = "stable"
+        # 水平高但截面结构未显著漂移 = 良性量纲膨胀
+        benign_scale = rank_reliable and level_psi >= 0.05 and level == "stable"
         results.append({
             "feature": f,
             "psi": round(level_psi, 4),      # 兼容原字段（水平 PSI）
             "rank_disp": round(rank_disp, 4), # 截面结构漂移（身份级 rank 位移）
+            "z": round(z, 2) if z is not None and np.isfinite(z) else None,
+            "noise_floor": round(feat_floor, 4) if feat_floor is not None and np.isfinite(feat_floor) else None,
             "level": level,
             "benign_scale": benign_scale,     # 良性量纲膨胀标记
             "rank_reliable": rank_reliable,   # rank 位移是否可估计
@@ -524,8 +620,13 @@ def compute_psi_drift(
         "enabled": True,
         "train_start": train_start,
         "train_end": train_end,
+        "baseline_start": str(baseline_dates[0].date()),
+        "baseline_end": str(baseline_dates[-1].date()),
+        "baseline_source": baseline_source,
         "recent_start": str(recent_dates[0].date()),
         "recent_end": str(recent_dates[-1].date()),
+        "noise_floor": round(noise_floor, 4) if np.isfinite(noise_floor) else None,
+        "adaptive_thresholds": adaptive,
         "drift": drift_counts,
         "top_drift_features": results[:top_n],
         "max_psi": round(max(r["rank_disp"] for r in results), 4),  # 最大结构漂移（rank_disp）

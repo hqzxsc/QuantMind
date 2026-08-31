@@ -8,10 +8,10 @@ ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
 ARG PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 ARG APT_MIRROR=mirrors.aliyun.com
 
-# torch 版本选择：cpu（默认，构建快、镜像小）、gpu（含 CUDA，需 GPU 且构建慢、镜像 ~24GB）
-# 或 skip（跳过 torch 安装，无 CUDA/PyTorch，适合纯行情/交易服务）
-# 用法: docker build --build-arg TORCH_DEVICE=gpu ...
-ARG TORCH_DEVICE=cpu
+# torch 版本选择：skip（默认，跳过 torch 安装，适合镜像已含训练组件/纯指标行情服务）、
+# cpu（安装 PyTorch CPU 版，构建快、镜像小）、gpu（含 CUDA，需 GPU 且构建慢、镜像 ~24GB）
+# 用法: docker build --build-arg TORCH_DEVICE=cpu ...
+ARG TORCH_DEVICE=skip
 # CPU 版 torch 下载源（国内 pytorch 镜像暂缺 2.9.1+cpu，使用官方源）
 ARG TORCH_CPU_INDEX_URL=https://download.pytorch.org/whl/cpu
 

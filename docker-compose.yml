@@ -55,7 +55,7 @@ services:
       dockerfile: docker/Dockerfile.oss
       args:
         TORCH_DEVICE: ${TORCH_DEVICE:-cpu}
-        TORCH_CPU_INDEX_URL: ${TORCH_CPU_INDEX_URL:-https://mirrors.aliyun.com/pytorch-wheels/cpu}
+        TORCH_CPU_INDEX_URL: ${TORCH_CPU_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     platform: linux/amd64
     # GPU 直通：宿主机已安装 nvidia-container-toolkit 时可开启
     # deploy:

@@ -620,14 +620,24 @@ def main():
         isinstance(meta.get("prediction_contract"), dict)
         and meta["prediction_contract"].get("kind") == "quantile_return"
     )
+    quantile_files = meta.get("quantile_models") or {}
+    required = ("p10", "p50", "p90")
+    quantile_complete = all(
+        isinstance(quantile_files.get(key), str)
+        and (model_dir / quantile_files[key]).is_file()
+        for key in required
+    )
+    # 分位模型产物缺失时回退单模型（model.lgb）推理，避免配置成分位模型但只
+    # 部署了单个模型导致当日推理整体失败。窗口提示后按普通模型继续。
+    if is_quantile_model and not quantile_complete:
+        logger.warning(
+            "分位模型产物不完整: %s，回退单模型推理（分数非分位口径）",
+            quantile_files,
+        )
+        is_quantile_model = False
     if is_quantile_model:
         if lgb is None:
             logger.error("分位 LightGBM 模型推理需要 lightgbm")
-            sys.exit(1)
-        quantile_files = meta.get("quantile_models") or {}
-        required = ("p10", "p50", "p90")
-        if not all(isinstance(quantile_files.get(key), str) and (model_dir / quantile_files[key]).is_file() for key in required):
-            logger.error("分位模型产物不完整: %s", quantile_files)
             sys.exit(1)
         quantile_models = {key: lgb.Booster(model_file=str(model_dir / quantile_files[key])) for key in required}
         model_type, model = "lgb_quantile", quantile_models["p50"]

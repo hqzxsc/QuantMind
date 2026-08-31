@@ -8,6 +8,9 @@ PROJECT_DIR="${QUANTMIND_PROJECT_DIR:-/opt/quantmind}"
 REPO_URL="${QUANTMIND_REPO_URL:-https://gitee.com/qusong0627/QuantMind.git}"
 REF="${QUANTMIND_REF:-master}"
 DOCKER_MIRROR="${QUANTMIND_DOCKER_MIRROR:-https://fx07btib0z92d2dhxl.xuanyuan.run}"
+# 国内网络加速：pip 源（构建镜像时经 build-arg 注入 Dockerfile，覆盖默认清华源）
+PIP_MIRROR="${QUANTMIND_PIP_MIRROR:-https://pypi.tuna.tsinghua.edu.cn/simple/}"
+PIP_TRUSTED_HOST="${QUANTMIND_PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}"
 FORCE=false
 
 log() { printf '[quantmind-deploy] %s\n' "$*"; }
@@ -114,7 +117,11 @@ start_services() {
     # 由下方 docker compose build 本地构建，不可对它们执行 pull。
     docker compose pull db redis huntly rsshub qwenpaw ib-gateway \
         || log '部分外部镜像未能预拉取，将在启动时重试'
-    docker compose build quantmind
+    # 构建时注入 pip 源加速（国内网络），可通过 QUANTMIND_PIP_MIRROR 覆盖
+    docker compose build \
+        --build-arg PIP_INDEX_URL="$PIP_MIRROR" \
+        --build-arg PIP_TRUSTED_HOST="$PIP_TRUSTED_HOST" \
+        quantmind
     docker compose up -d --remove-orphans
 }
 

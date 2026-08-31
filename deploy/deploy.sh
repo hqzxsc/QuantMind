@@ -109,7 +109,11 @@ EOF
 start_services() {
     log '4/5 构建并启动服务'
     cd "$PROJECT_DIR"
-    docker compose pull || log '部分镜像未能预拉取，将在构建或启动时重试'
+    # 仅预拉取第三方外部镜像（postgres/redis/huntly/rsshub/qwenpaw/ib-gateway）。
+    # 自研镜像（quantmind-oss / data-gateway / dashboard 等）未上传镜像仓库，
+    # 由下方 docker compose build 本地构建，不可对它们执行 pull。
+    docker compose pull db redis huntly rsshub qwenpaw ib-gateway \
+        || log '部分外部镜像未能预拉取，将在启动时重试'
     docker compose build quantmind
     docker compose up -d --remove-orphans
 }

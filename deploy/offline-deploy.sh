@@ -70,13 +70,21 @@ download_offline_package() {
     local file
     for file in \
         images.tar.zst data-system.tar.zst postgres-all.sql.zst \
-        quantmind_qwenpaw-data.tar.zst quantmind_qwenpaw-secrets.tar.zst \
-        quantmind_qwenpaw-backups.tar.zst quantmind_qwenpaw-shared.tar.zst \
         images.list README.txt; do
         grep -Eq "^[0-9a-f]{64}  ${file}$" "$PACKAGE_DIR/SHA256SUMS" \
             || die "离线包校验清单缺少: $file"
         download "$OFFLINE_BASE_URL/$file" "$PACKAGE_DIR/$file" \
             "$(awk -v name="$file" '$2 == name { print $1 }' "$PACKAGE_DIR/SHA256SUMS")"
+    done
+    # QwenPaw 卷为可选工件：业务内容只在 data 卷（技能池/工作区）；
+    # secrets/backups/shared 通常为空，部署时按需创建空卷即可。
+    for file in \
+        quantmind_qwenpaw-data.tar.zst quantmind_qwenpaw-secrets.tar.zst \
+        quantmind_qwenpaw-backups.tar.zst quantmind_qwenpaw-shared.tar.zst; do
+        if grep -Eq "^[0-9a-f]{64}  ${file}$" "$PACKAGE_DIR/SHA256SUMS"; then
+            download "$OFFLINE_BASE_URL/$file" "$PACKAGE_DIR/$file" \
+                "$(awk -v name="$file" '$2 == name { print $1 }' "$PACKAGE_DIR/SHA256SUMS")"
+        fi
     done
     (cd "$PACKAGE_DIR" && sha256sum --check --status SHA256SUMS) \
         || die '离线包 SHA-256 校验失败'
@@ -289,6 +297,12 @@ restore_qwenpaw_volumes() {
     for volume in data secrets backups shared; do
         file="$PACKAGE_DIR/quantmind_qwenpaw-$volume.tar.zst"
         docker volume create "quantmind_qwenpaw-$volume" >/dev/null
+        # 离线包未提供该卷工件时创建空卷即可（secrets 由用户部署后自行配置，
+        # backups/shared 为运行时产物；业务内容只在 data 卷）。
+        if [[ ! -f "$file" ]]; then
+            log "离线包未包含 $volume 卷，使用空卷"
+            continue
+        fi
         if docker run --rm -v "quantmind_qwenpaw-$volume":/target \
             --entrypoint sh postgres:15-alpine \
             -c 'find /target -mindepth 1 -print -quit | grep -q .'; then

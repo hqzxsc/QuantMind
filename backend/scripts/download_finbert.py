@@ -9,7 +9,8 @@
       # 容器内路径也可，按该环境变量定位目标目录
 
 幂等：已存在且大小一致的文件自动跳过；断点文件 *.part 会覆盖重下。
-源站顺序：hf-mirror.com（国内可达）→ huggingface.co（兜底）。
+源站顺序：魔搭社区 ModelScope（国内首选）→ hf-mirror.com → huggingface.co（兜底）。
+可通过环境变量 MODELSCOPE_ENDPOINT 覆盖魔搭社区基址（默认 https://www.modelscope.cn）。
 """
 from __future__ import annotations
 
@@ -31,6 +32,12 @@ FILES = [
     "special_tokens_map.json",
     "vocab.txt",
 ]
+# 魔搭社区（ModelScope）URL 结构为 /models/{repo}/resolve/master/{file}，
+# 与 HuggingFace /resolve/main/ 不同，因此单独维护；若该模型在魔搭上不存在会
+# 返回 404 并自动跳过，不影响后续源。
+MODELSCOPE_ENDPOINT = (
+    os.getenv("MODELSCOPE_ENDPOINT", "https://www.modelscope.cn").rstrip("/")
+)
 ENDPOINTS = [
     os.getenv("HF_ENDPOINT", "").rstrip("/") or None,
     "https://hf-mirror.com",
@@ -79,16 +86,32 @@ def main() -> int:
     fails: dict[str, int] = {}
     for name in missing:
         ok = False
-        for ep in [e for e in ENDPOINTS if e] or ["https://hf-mirror.com"]:
-            url = f"{ep}/{REPO_ID}/resolve/main/{name}"
-            print(f"· {name} ← {ep}")
+
+        # 1) 优先尝试魔搭社区 ModelScope（国内网络通常更稳定）
+        if MODELSCOPE_ENDPOINT:
+            ms_url = (
+                f"{MODELSCOPE_ENDPOINT}/models/{REPO_ID}/resolve/master/{name}"
+            )
+            print(f"· {name} ← ModelScope ({MODELSCOPE_ENDPOINT})")
             for attempt in range(2):
-                if _download_one(url, dest / name):
+                if _download_one(ms_url, dest / name):
                     ok = True
                     break
-                time.sleep(2 * (attempt + 1))
-            if ok:
-                break
+                time.sleep(1 * (attempt + 1))
+
+        # 2) 回退到 HuggingFace 系列端点
+        if not ok:
+            for ep in [e for e in ENDPOINTS if e] or ["https://hf-mirror.com"]:
+                url = f"{ep}/{REPO_ID}/resolve/main/{name}"
+                print(f"· {name} ← {ep}")
+                for attempt in range(2):
+                    if _download_one(url, dest / name):
+                        ok = True
+                        break
+                    time.sleep(2 * (attempt + 1))
+                if ok:
+                    break
+
         if not ok:
             fails[name] = fails.get(name, 0) + 1
 

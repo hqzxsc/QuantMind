@@ -115,14 +115,17 @@ async function clearStaleServerUrl(reason: string): Promise<void> {
  * 避免“隔段时间保存的 IP 丢失、需重新配置”的问题。
  */
 export async function initDynamicServerUrl(): Promise<void> {
-  // 1. 新 key 持久化配置：直接采用，后台非阻塞探测仅用于日志，绝不清除
+  // 1. 持久化配置：若探测可达则采用；若确认不可达，清除缓存并回退本机默认，
+  //    避免换 IP/克隆部署到新机器后始终连旧地址导致“验证身份”卡死。
   const persisted = readPersistedServerUrl();
   if (persisted) {
-    dynamicServerUrl = persisted;
-    void isServerReachable(persisted).then((ok) => {
-      if (!ok) console.warn(`[services] 服务器 ${persisted} 探测未通过（可能暂不可达），保留用户配置并继续使用`);
-    });
-    return;
+    const ok = await isServerReachable(persisted);
+    if (ok) {
+      dynamicServerUrl = persisted;
+      return;
+    }
+    console.warn(`[services] 服务器 ${persisted} 探测未通过，清除配置并回退本地默认后端`);
+    await clearStaleServerUrl(`换 IP 后旧地址 ${persisted} 不可达`);
   }
 
   // 2. 旧 key（quantmind_server_url）遗留缓存迁移：可达才采用，失效仅清旧 key（不动新 key）

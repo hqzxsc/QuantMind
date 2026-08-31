@@ -1,6 +1,6 @@
 FROM python:3.10-slim-bookworm
 
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
 ARG SKIP_PYQLIB=auto
 
 ENV PYTHONUNBUFFERED=1 \
@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
-    PIP_TRUSTED_HOST=mirrors.aliyun.com \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
     PYTHONPATH=/app
 
 WORKDIR /app

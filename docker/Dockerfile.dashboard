@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev c
 
 # 安装 Python 依赖
 COPY dashboard/requirements.txt .
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+RUN pip config set global.index-url ${PIP_INDEX_URL}
 RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
 
 # 复制应用代码

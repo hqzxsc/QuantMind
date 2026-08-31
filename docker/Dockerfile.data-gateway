@@ -18,7 +18,7 @@ RUN set -eux; \
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev curl && rm -rf /var/lib/apt/lists/*
 
 # 数据源依赖
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+RUN pip config set global.index-url ${PIP_INDEX_URL}
 RUN pip install --no-cache-dir --root-user-action=ignore \
     akshare \
     pandas \

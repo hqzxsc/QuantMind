@@ -127,30 +127,9 @@
 
 系统基于 Docker 容器化编排，推荐使用 **Ubuntu 22.04 / 24.04** 运行环境。
 
-> 📖 **完整部署指南**（含离线/在线/手动三种部署方式、`.env` 配置、QwenPaw 初始化、数据目录说明与常见问题排查）见 **[docs/部署指南.md](docs/部署指南.md)**。
+> 📖 **完整部署指南**（含在线/手动两种部署方式、`.env` 配置、QwenPaw 初始化、数据目录说明与常见问题排查）见 **[docs/部署指南.md](docs/部署指南.md)**。
 
-### 1. 完整离线部署（推荐 · 生产就绪）
-
-离线包内含完整预构建镜像、业务数据、预训练模型、Qlib 数据与 PostgreSQL 初始化备份：
-
-```bash
-curl -fsSL https://gitee.com/qusong0627/QuantMind/raw/master/deploy/offline-deploy.sh | sudo bash
-```
-
-部署完成后即可访问：
-- **Web 控制台**: `http://<服务器 IP>:3000`
-- **API 接口网关**: `http://<服务器 IP>:8000`
-- **Swagger API 文档**: `http://<服务器 IP>:8000/docs`
-- **默认管理员账号**: `admin` / `admin123`
-
-```bash
-# 可选：指定自定义离线包下载源或代码分支
-sudo QUANTMIND_OFFLINE_BASE_URL='https://example.com/quantmind-offline' \
-  QUANTMIND_REF='master' \
-  bash deploy/offline-deploy.sh
-```
-
-### 2. 在线部署与平滑更新
+### 1. 在线部署与平滑更新
 
 ```bash
 # 在线部署
@@ -160,7 +139,7 @@ curl -fsSL https://gitee.com/qusong0627/QuantMind/raw/master/deploy/deploy.sh | 
 sudo bash deploy/update.sh
 ```
 
-### 3. 数据准备与 QuantDB 同步
+### 2. 数据准备与 QuantDB 同步
 
 系统正常运行（行情查询、模型训练、因子挖掘、回测）需要底层量化历史数据支持。安装后请选择以下任一方式准备数据：
 
@@ -265,7 +244,7 @@ quantmind/
 │   └── scripts/              # 数据同步与特征计算脚本
 ├── electron/                 # Electron + React + TypeScript 桌面/Web 前端
 ├── tools/qmt_agent/          # Windows 独立 QMT Agent 桌面客户端与交易桥接
-├── deploy/                   # 在线/离线部署与一键更新脚本
+├── deploy/                   # 在线部署与一键更新脚本
 ├── docs/                     # 部署、架构与外部集成说明
 ├── scripts/                  # 按用途归档的开发、校验、数据与历史脚本
 ├── db/qlib_data/             # 本地 Qlib 格式二进制与 Parquet 数据

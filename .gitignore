@@ -224,6 +224,8 @@ analysis/
 openbb-cn/
 research/
 scratch/
+# 迁移约定：scratch/ 仅供一次性草稿/探测（丢弃区）。
+# 有沉淀价值的因子审计/校验脚本请移入 backend/scripts/audit/ 以纳入版本控制。
 dexter-finance/
 local_agent/
 examples/

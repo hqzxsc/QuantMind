@@ -207,8 +207,12 @@ has_qlib_features() {
 
 checkout_code() {
     log '步骤 5/8：下载最新代码'
+    # 目录已存在但非 Git 仓库：若是空目录允许 clone（git clone 支持空目标，
+    # 常见于上次安装残留的空 /opt/quantmind）；非空则拒绝，避免覆盖已有数据。
     if [[ -e "$PROJECT_DIR" && ! -d "$PROJECT_DIR/.git" ]]; then
-        die "部署目录已存在且不是 Git 仓库: $PROJECT_DIR"
+        if [[ -n "$(ls -A "$PROJECT_DIR" 2>/dev/null)" ]]; then
+            die "部署目录已存在且不是 Git 仓库（非空）: $PROJECT_DIR"
+        fi
     fi
     if [[ -d "$PROJECT_DIR/.git" ]]; then
         git -C "$PROJECT_DIR" fetch origin "$REF"

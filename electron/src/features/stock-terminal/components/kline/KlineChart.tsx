@@ -484,21 +484,16 @@ export function KlineChart({
           for (const p of list) {
             const name = String(p.seriesName ?? '');
             const data = p.data;
-            // 蜡烛：[open, close, low, high]
+            // 蜡烛：[open, close, low, high]；ECharts 6 category 轴下 tooltip 值为
+            // [xIndex, open, close, low, high]（5 元素，首位是柱下标），必须剥离后再解构，
+            // 否则下标会被当成开盘价显示（如 473.000）
             if (name === 'K线' && Array.isArray(data)) {
               const arr = (Array.isArray(data) ? data : (data as any)?.value) as number[];
-              const vals = Array.isArray(arr) && arr.length >= 4 ? arr : (Array.isArray((p as any).value) ? (p as any).value : []);
+              const src = Array.isArray(arr) && arr.length >= 4 ? arr : (Array.isArray((p as any).value) ? (p as any).value : []);
+              const vals = Array.isArray(src) && src.length >= 5 ? src.slice(src.length - 4) : src;
               if (Array.isArray(vals) && vals.length >= 4) {
                 const [open, close, low, high] = vals as number[];
                 html += `<div>开盘: ${Number(open).toFixed(3)}&nbsp;&nbsp;收盘: ${Number(close).toFixed(3)}<br/>最低: ${Number(low).toFixed(3)}&nbsp;&nbsp;最高: ${Number(high).toFixed(3)}</div>`;
-                continue;
-              }
-              // 兼容 ECharts 5 的 data.value 结构
-              const v = (p as any).value;
-              if (Array.isArray(v) && v.length >= 5) {
-                // v = [xIndex, open, close, low, high]
-                const [o, c, l, h] = v.slice(1) as number[];
-                html += `<div>开盘: ${Number(o).toFixed(3)}&nbsp;&nbsp;收盘: ${Number(c).toFixed(3)}<br/>最低: ${Number(l).toFixed(3)}&nbsp;&nbsp;最高: ${Number(h).toFixed(3)}</div>`;
                 continue;
               }
             }

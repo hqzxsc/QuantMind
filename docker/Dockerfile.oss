@@ -72,8 +72,12 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=quantmind-pip \
          python -m pip install --root-user-action=ignore "torch==2.9.1"; \
        else \
          echo "构建 CPU 版 torch（快速、无需 GPU）"; \
+         # torch 本体走官方 CPU 源；但其传递依赖（networkx/sympy/mpmath 等）必须走
+         # 默认国内源（清华）。若用单 --index-url 会把默认源覆盖为官方源，
+         # 导致这些依赖从 download.pytorch.org 拖慢构建。
          python -m pip install --root-user-action=ignore "torch==2.9.1+cpu" \
-           --index-url ${TORCH_CPU_INDEX_URL}; \
+           --index-url ${PIP_INDEX_URL} \
+           --extra-index-url ${TORCH_CPU_INDEX_URL}; \
        fi \
     && python -m pip install --root-user-action=ignore -r /tmp/requirements.txt \
     && python -m pip install --root-user-action=ignore -r /tmp/requirements-production.txt \

@@ -2120,8 +2120,55 @@ async def get_symbols_features(tid: str, uid: str, symbols: list[str], lite: boo
         return {"code": 200, "data": {"items": items}}
 
 
+def _quantdb_kline_items(normalized_symbol: str, days: int) -> list[dict[str, Any]]:
+    """从 QuantDB 读取最近 days 日「不复权」日线（真实成交价），与行情软件同口径。
+
+    当前价格/前端 K 线统一走 QuantDB（qdb_daily_unadjusted，不复权原始价）。
+    视图或数据不可用时返回空列表，由调用方回退到聚合表/实时行情源。
+    """
+    try:
+        from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
+
+        hub = QuantDBDataHub.get_instance()
+        if not hub.available:
+            return []
+        suffix = StockCodeUtil.to_suffix(normalized_symbol)
+        end = date.today()
+        # 自然日回退缓冲，确保覆盖 days 个交易日
+        start = end - timedelta(days=days * 2 + 20)
+        df = hub.fetch_daily_kline(suffix, start, end, adjust="none")
+        if df is None or df.empty or "trade_date" not in df.columns:
+            return []
+        df = df.dropna(subset=["close"]).copy()
+        df = df.drop_duplicates(subset=["trade_date"]).sort_values("trade_date")
+        df = df.tail(days)
+        items = [
+            {
+                "date": r["trade_date"].strftime("%Y-%m-%d"),
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"]),
+                "volume": float(r["volume"] if r["volume"] is not None else 0.0),
+            }
+            for _, r in df.iterrows()
+        ]
+        return items
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[get_stock_kline] QuantDB K线读取失败 %s: %s", normalized_symbol, exc)
+        return []
+
+
 async def get_stock_kline(symbol: str, days: int) -> dict[str, Any]:
     normalized_symbol = StockCodeUtil.to_prefix(symbol)
+
+    # 当前价格统一走 QuantDB（不复权真实价），避免 stock_daily_latest 空表/复权口径不一致
+    qd_items = _quantdb_kline_items(normalized_symbol, days)
+    if qd_items:
+        payload = {"code": 200, "data": {"symbol": normalized_symbol, "items": qd_items}}
+        _set_local_cache(_SDL_CACHE, f"sdl-kline:{normalized_symbol}:{days}", payload, _SDL_CACHE_MAX_ENTRIES)
+        return payload
+
     cache_key = f"sdl-kline:{normalized_symbol}:{days}"
     cached = _get_local_cache(_SDL_CACHE, cache_key, _SDL_CACHE_TTL_SECONDS)
     if cached is not None:
@@ -2410,8 +2457,21 @@ async def predict_single_stock(
             elif latest_close > 0 and atr > 0:
                 daily_vol_pct = atr / latest_close
 
-    # 若数据库中无该股历史数据，通过实时行情源获取最新收盘价与波动率
-    if latest_close == 0.0:
+    # 当前价格统一走 QuantDB（不复权真实价），与前端 K 线同口径；聚合表仅作回退。
+    qd_items = _quantdb_kline_items(normalized_symbol, days=30)
+    if qd_items:
+        latest_close = float(qd_items[-1]["close"])
+        if not target_date:
+            latest_date = str(qd_items[-1]["date"])
+        closes = [float(x["close"]) for x in qd_items]
+        if len(closes) >= 5 and latest_close > 0:
+            import numpy as np
+            daily_vol_pct = max(0.012, float(np.std(np.diff(closes) / closes[:-1])))
+            if len(closes) >= 20:
+                ma20 = float(np.mean(closes[-20:]))
+                ma_gap_20 = round((latest_close - ma20) / ma20 * 100, 2)
+    elif latest_close == 0.0:
+        # QuantDB 与聚合表均无该股数据时，通过实时行情感底获取最新收盘价与波动率
         k_payload = await get_stock_kline(normalized_symbol, days=30)
         k_items = (k_payload.get("data") or {}).get("items") or []
         if k_items:

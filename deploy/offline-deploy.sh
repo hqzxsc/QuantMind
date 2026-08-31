@@ -159,7 +159,7 @@ import_images() {
         quantmind-oss:latest \
         quantmind-data-gateway:latest quantmind-dashboard:latest \
         postgres:15-alpine redis:7-alpine \
-        lcomplete/huntly:latest diygod/rsshub:latest agentscope/qwenpaw:latest \
+        lcomplete/huntly:latest agentscope/qwenpaw:latest \
         ghcr.io/gnzsnz/ib-gateway:latest \
         python:3.10-slim-bookworm; do
         if ! docker image inspect "$image" >/dev/null 2>&1; then
@@ -179,7 +179,7 @@ import_images() {
         quantmind-oss:latest \
         quantmind-data-gateway:latest quantmind-dashboard:latest \
         postgres:15-alpine redis:7-alpine \
-        lcomplete/huntly:latest diygod/rsshub:latest agentscope/qwenpaw:latest \
+        lcomplete/huntly:latest agentscope/qwenpaw:latest \
         ghcr.io/gnzsnz/ib-gateway:latest \
         python:3.10-slim-bookworm; do
         docker image inspect "$image" >/dev/null 2>&1 \
@@ -364,6 +364,14 @@ configure_qwenpaw_runtime() {
 build_and_start() {
     log '步骤 8/8：基于最新代码重新构建并启动服务'
     cd "$PROJECT_DIR"
+    # rsshub 不在离线包内（避免历史损坏镜像），此处在线拉取健康镜像。
+    # 仅拉 rsshub，绝不触碰离线包内 qwenpaw 定制镜像。
+    if ! docker image inspect diygod/rsshub:latest >/dev/null 2>&1; then
+        log 'rsshub 镜像不可用，在线拉取（不影响离线包内其他镜像）...'
+        docker compose pull rsshub \
+            || docker pull diygod/rsshub:latest \
+            || log '警告：rsshub 拉取失败（不影响核心服务，RSS 源功能将不可用）'
+    fi
     # 核心镜像按最新代码重建。web/data-gateway/dashboard 已在离线包中提供
     # 成品镜像，直接复用可避免为可选服务拉取额外构建基础镜像。
     docker compose build --pull=false quantmind

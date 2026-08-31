@@ -72,11 +72,11 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
         setLoading(true);
         try {
             const resp = await dataPlatformService.getQuantDBCatalog();
-            setGroups(resp.groups);
-            setDatasets(resp.datasets);
-            setDataDir(resp.data_dir);
+            setGroups(resp.groups ?? []);
+            setDatasets(resp.datasets ?? []);
+            setDataDir(resp.data_dir ?? '');
             if (!hasAppliedDefaultSelection.current) {
-                setSelected(resp.datasets
+                setSelected((resp.datasets ?? [])
                     .filter((dataset) => DEFAULT_SYSTEM_DATASETS.has(dataset.dataset))
                     .map((dataset) => dataset.dataset));
                 hasAppliedDefaultSelection.current = true;
@@ -244,9 +244,10 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
             dataIndex: 'layout',
             width: 100,
             align: 'center',
-            render: (layout: QuantDBDataset['layout']) => (
-                <Tag color={LAYOUT_LABELS[layout].color}>{LAYOUT_LABELS[layout].text}</Tag>
-            ),
+            render: (layout: QuantDBDataset['layout']) => {
+                const cfg = LAYOUT_LABELS[layout] || { text: '未知', color: 'default' };
+                return <Tag color={cfg.color}>{cfg.text}</Tag>;
+            },
         },
         {
             title: '本地状态',
@@ -267,7 +268,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
             dataIndex: 'files',
             width: 90,
             align: 'center',
-            render: (files: number) => files.toLocaleString(),
+            render: (files: number) => (files || 0).toLocaleString(),
         },
         {
             title: '大小',
@@ -443,9 +444,10 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
 }
 
 function SyncJobProgress({ job }: { job: QuantDBSyncJob }) {
+    const results = job.results ?? [];
     const percent = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
-    const failed = job.results.filter((r) => r.status === 'failed');
-    const downloaded = job.results.reduce((sum, r) => sum + r.downloaded, 0);
+    const failed = results.filter((r) => r.status === 'failed');
+    const downloaded = results.reduce((sum, r) => sum + (r.downloaded || 0), 0);
 
     const statusLabel = job.status === 'running'
         ? `进行中 · ${job.stage}`
@@ -494,11 +496,11 @@ function SyncJobProgress({ job }: { job: QuantDBSyncJob }) {
                     )}
                 </Space>
                 {/* Per-dataset results */}
-                {job.results.length > 0 && (
+                {results.length > 0 && (
                     <div className="mt-1">
                         <Text type="secondary" className="text-xs">数据集进度：</Text>
                         <div className="flex flex-wrap gap-1 mt-1">
-                            {job.results.map((r) => (
+                            {results.map((r) => (
                                 <Tag
                                     key={r.dataset}
                                     color={r.status === 'synced' ? 'green' : r.status === 'up_to_date' ? 'blue' : 'red'}

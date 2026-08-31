@@ -186,15 +186,18 @@ function createWindow() {
     minimizable: true,
     closable: true,
     frame: false, // 全平台使用无边框，Windows 依赖自定义 TitleBar
-    // 桌面端开启 BrowserWindow 透明以支持自定义窗口圆角裁剪，内部由 .app-root 承载整体浅色背景
-    // roundedCorners: true 仍由系统/Chromium 负责圆角裁剪
-    transparent: true,
+    // 圆角渲染策略：Win11 走原生渲染（系统 DWM/Chromium 负责窗口圆角，窗口保持不透明）；
+    // Win10 无边框下该选项被系统忽略，圆角由「透明窗口 + CSS border-radius」承载。
     roundedCorners: true,
+    // Win11 使用系统原生窗口样式，无需 BrowserWindow 透明；
+    // Win10/旧版依赖「透明窗口 + CSS 圆角裁剪」，必须保留透明。
+    transparent: !windowsVersion.isWin11,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', // macOS 保持 hiddenInset，其他平台使用 hidden
     // trafficLightPosition 仅在 macOS 生效，其他平台设置会产生警告
     ...(process.platform === 'darwin' && { trafficLightPosition: { x: 14, y: 14 } }),
-    // 背景色：由 .app-root 统一承载应用背景
-    backgroundColor: undefined,
+    // 背景色兜底：绝不允许 undefined。否则 React 首帧绘制前 / 合成失败时窗口显示为白屏。
+    // Win11（不透明窗口）用与应用底色一致的实色；透明窗口用全透明黑以正确保留 alpha。
+    backgroundColor: windowsVersion.isWin11 ? '#f1f5f9' : '#00000000',
     // macOS 使用 .icns，Windows 使用 .ico，Linux 使用 .png
     icon: process.platform === 'darwin'
       ? path.join(__dirname, 'logo.icns')
@@ -249,7 +252,7 @@ function createWindow() {
       return;
     }
 
-    // 开发版允许直接切换 DevTools；生产版继续禁用。
+    // 开发版允许直接切换 DevTools；生产版禁用。
     if ((isControlOrMeta && input.shift && (input.key.toLowerCase() === 'i' || input.key.toLowerCase() === 'j' || input.key.toLowerCase() === 'c')) || input.key === 'F12') {
       if (isDev) {
         event.preventDefault();

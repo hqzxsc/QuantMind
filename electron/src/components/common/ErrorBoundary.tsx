@@ -70,11 +70,11 @@ export class ErrorBoundary extends Component<Props, State> {
                 </button>
               </div>
 
-              {/* 开发模式下显示错误详情 */}
-              {import.meta.env.DEV && this.state.error && (
+              {/* 错误详情：生产环境同样展示，便于定位具体报错（真实堆栈） */}
+              {this.state.error && (
                 <details className="mt-6 text-left">
                   <summary className="cursor-pointer text-sm text-gray-500 hover:text-gray-700">
-                    错误详情（开发模式）
+                    错误详情
                   </summary>
                   <div className="mt-2 p-3 bg-gray-100 rounded text-xs text-gray-700 overflow-auto">
                     <pre>{this.state.error.toString()}</pre>

@@ -9,6 +9,7 @@ export function formatPartitionDate(raw?: string): string {
 }
 
 export function formatSize(sizeMb: number): string {
+    if (typeof sizeMb !== 'number' || !Number.isFinite(sizeMb)) return '0 MB';
     if (sizeMb >= 1024) return `${(sizeMb / 1024).toFixed(2)} GB`;
     return `${sizeMb.toFixed(1)} MB`;
 }

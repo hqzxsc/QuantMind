@@ -44,9 +44,6 @@ dashscope==1.14.0
 # LLM 支持
 openai>=1.12.0
 
-# ============ Payment ============
-python-alipay-sdk==3.4.0
-
 # ============ Data Processing (核心) ============
 numpy==1.26.4
 pandas>=2.0.0

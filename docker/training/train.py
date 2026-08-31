@@ -166,15 +166,35 @@ _SHAP_SAMPLE_RANDOM_STATE = 42
 
 
 def _sanitize_nan_inf(obj):
-    """递归替换 NaN/Inf 为 None，确保 JSON 可序列化。"""
+    """递归清洗为 JSON 可序列化结构：NaN/Inf→None，numpy 标量→原生类型，
+    其余不可序列化对象（如误入的模型对象）→None，保证训练不因 metadata 序列化而失败。"""
     import math
+
+    import numpy as np
+
     if isinstance(obj, dict):
         return {k: _sanitize_nan_inf(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_sanitize_nan_inf(v) for v in obj]
-    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+    if isinstance(obj, (bool, str, int)) or obj is None:
+        return obj
+    if isinstance(obj, np.generic):
+        obj = obj.item()
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        return obj
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, (pd.Timestamp, datetime, Path)):
+        return str(obj)
+    try:
+        import json as _json
+
+        _json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        logger.warning("metadata 中发现不可序列化对象 %s，已置空", type(obj).__name__)
         return None
-    return obj
 
 
 def _load_local_parquet(
@@ -4289,10 +4309,17 @@ def main() -> int:
             # train_model 返回 11-tuple (分位 LightGBM) / 10-tuple (树模型含 optuna)
             # / 9-tuple (DL 含 dl_metadata) / 8-tuple。
             quantile_result = None
+            # 注意：train_model 各分支的元组尾部语义不同——
+            #   11/10 元组: ..., dl_metadata, optuna_result, quantile_result（树模型）
+            #   9 元组:     ..., model_type, dl_metadata（DL 模型）
+            # 历史上 10 元组曾按 (..., dl_metadata, optuna_result) 解包，
+            # 把含 LightGBM Booster 的 quantile_result 误当 optuna 结果，
+            # 导致 metadata.json 序列化崩溃、训练被误判失败。
             if len(train_result) == 11:
                 model, fill_values, train_m, val_m, test_m, pred_df, split_frames, actual_model_type, dl_metadata, optuna_result, quantile_result = train_result
             elif len(train_result) == 10:
-                model, fill_values, train_m, val_m, test_m, pred_df, split_frames, actual_model_type, dl_metadata, optuna_result = train_result
+                model, fill_values, train_m, val_m, test_m, pred_df, split_frames, actual_model_type, optuna_result, quantile_result = train_result
+                dl_metadata = None
             elif len(train_result) == 9:
                 model, fill_values, train_m, val_m, test_m, pred_df, split_frames, actual_model_type, dl_metadata = train_result
                 optuna_result = None

@@ -156,7 +156,7 @@ show_completion_tips() {
     echo "    或在终端执行: docker exec quantmind python backend/scripts/quantdb_daily_sync.py"
     echo " 2. 百度网盘离线数据包（备选）："
     echo "    链接: https://pan.baidu.com/s/5IT4p5nFlglZ7zu_0H_fA8Q"
-    echo "    下载后解压覆盖到 $PROJECT_DIR/data 与 $PROJECT_DIR/db/qlib_data"
+    echo "    内含 QuantDB 数据，解压到 $PROJECT_DIR/data/quantdb（容器内 /data/quantdb）"
     echo "========================================================================="
     echo ""
 }

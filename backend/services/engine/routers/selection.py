@@ -918,7 +918,11 @@ async def _run_score_calibration(
         from pathlib import Path as _Path
         from backend.services.engine.inference.inference_backtest_service import _load_price_panel
 
-        data_dir = _Path(__import__("os").getenv("QLIB_DIR", "/app/db/qlib_data/cn_data"))
+        from backend.shared.qlib_paths import resolve_qlib_provider_uri
+
+        data_dir = _Path(
+            __import__("os").getenv("QLIB_DIR") or resolve_qlib_provider_uri("CN")
+        )
         panel = await asyncio.to_thread(_load_price_panel, data_dir, all_dates)
         if panel.empty:
             _calib_update(task_id, status="failed")

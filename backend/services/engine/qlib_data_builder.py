@@ -22,10 +22,17 @@ import numpy as np
 import pandas as pd
 
 from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
+from backend.shared.qlib_multiplicative_factor import (
+    EventBook,
+    board_limit,
+    build_multiplicative_factor,
+    covered_dates,
+    unexplained_ex_dates,
+)
 
 logger = logging.getLogger(__name__)
 
-# Qlib 期望的字段列表
+# Qlib 期望的字段列表（A 股额外补 change，CnExchange 靠它判定涨跌停）
 QLIB_FIELDS = ["open", "high", "low", "close", "volume", "amount", "factor"]
 
 # QuantDB parquet 列名 -> Qlib 字段名映射
@@ -83,6 +90,7 @@ class QlibDataBuilder:
         self._qlib_dir = Path(qlib_dir)
         self._market = market.upper()
         self._qlib_prefix = _MARKET_QLIB_PREFIX.get(self._market, "")
+        self._events: EventBook | None = None  # 除权事件表（仅 CN 需要）
 
     @classmethod
     def for_market(
@@ -423,11 +431,62 @@ class QlibDataBuilder:
 
         return result
 
+    def _factor_book(self) -> EventBook:
+        if self._events is None:
+            self._events = EventBook()
+        return self._events
+
+    def _multiplicative_factor(
+        self, qlib_sym: str, dates, raw_close, hfq_close
+    ) -> np.ndarray | None:
+        """A 股的 ``$factor`` 必须是阶梯型乘法因子：qlib 拿它换算真实股数
+        （``real_shares = adjusted_amount * factor``）。上游的
+        ``hfq_close/unadjusted_close`` 是加法口径、逐日漂移，会让整仓卖出的
+        股数偏离买入股数（实测买 3300 卖 3305）。
+
+        返回 None 表示不采信乘法因子（事件表缺失 / 可用行太少 / 事件表漏行），
+        调用方回退到上游比值：与离线重建工具对这些标的「拒写、保持原样」的
+        口径一致，总比写进一个缺阶跃的因子、把复权价砸出一个假跳空要好。
+        """
+        events = self._factor_book().for_symbol(qlib_sym)
+        if events is None or events.empty:
+            return None
+        idx = pd.DatetimeIndex(pd.to_datetime(np.asarray(dates)))
+        if bool(idx.has_duplicates):
+            logger.warning("Qlib[%s] %s 日期重复，跳过乘法因子", self._market, qlib_sym)
+            return None
+        raw = pd.Series(np.asarray(raw_close, dtype=np.float64), index=idx)
+        raw = raw.where(np.isfinite(raw) & (raw > 0)).ffill()
+        if int(raw.notna().sum()) < 30:
+            return None
+        limit = board_limit(qlib_sym)
+        f, _applied, problems, _notes, steps = build_multiplicative_factor(
+            raw, events, limit
+        )
+        # 反向闸门：裸价跌穿涨停、后复权价却明显抗跌的日子，事件表里查无此日。
+        # 说明除权日期错位或漏行，此时整标的不改写（与离线工具拒写一致）。
+        hfq = pd.Series(np.asarray(hfq_close, dtype=np.float64), index=idx)
+        hfq = hfq.where(np.isfinite(hfq) & (hfq > 0)).ffill()
+        missing = unexplained_ex_dates(raw, hfq, covered_dates(events, steps), limit)
+        if missing:
+            logger.warning(
+                "Qlib[%s] %s 事件表缺行(%d)，$factor 保持上游口径: %s",
+                self._market,
+                qlib_sym,
+                len(missing),
+                "; ".join(missing[:2]),
+            )
+            return None
+        for msg in problems[:5]:
+            logger.warning("Qlib[%s] %s 除权事件异常: %s", self._market, qlib_sym, msg)
+        return f.to_numpy(dtype=np.float64)
+
     def build_features_bulk(self, symbols: list[str] | None = None) -> dict:
         """一次扫描全市场 parquet，按标的分组写 bin。
 
-        - CN: 读 daily_backward（后复权 hfq）为 OHLCV，join daily_unadjusted 求
-          factor = hfq_close / unadjusted_close（与原有全量/增量口径完全一致）。
+        - CN: ``close_bin = 未复权价 x 乘法因子``，因子由 dividend_factors 除权
+          事件累乘 ``PROD(p0/ref)`` 得到（阶梯型、单调不降）。daily_backward 只
+          提供 volume/amount 与事件表缺失时的回退因子。
         - 非 CN（US/HK/CRYPTO/FUTURES）: 只有 daily_forward，factor 恒为 1.0。
 
         整体读入再 groupby，避免逐标的全库扫描导致 OOM / 数小时耗时。
@@ -449,13 +508,15 @@ class QlibDataBuilder:
         con = duckdb.connect(config={"memory_limit": "8GB", "threads": "4"})
         try:
             if is_cn:
-                # 后复权 + 不复权 → factor = hfq_close/unadjusted_close（保留原口径）
+                # 未复权价单独取回：close_bin 要写成 raw x 乘法因子，不能再拿 hfq 当价格
                 unadj_glob = str(self._hub.data_dir / "1_kline_data/daily_unadjusted/dt=*/data.parquet")
                 df = con.execute(
                     f"""
                     SELECT k.symbol,
                            CAST(k.time AS DATE) AS d,
                            k.open, k.high, k.low, k.close, k.volume, k.amount,
+                           u.open AS raw_open, u.high AS raw_high, u.low AS raw_low,
+                           u.close AS raw_close,
                            k.close / NULLIF(u.close, 0.0) AS factor
                     FROM read_parquet('{kline_glob}', hive_partitioning=1) k
                     LEFT JOIN read_parquet('{unadj_glob}', hive_partitioning=1) u
@@ -496,6 +557,7 @@ class QlibDataBuilder:
                 df = df[df["symbol"].map(self._to_qlib_symbol).isin(qlib_wanted)]
 
         updated = skipped = 0
+        factor_fallback = 0
         for qdb_sym, group in df.groupby("symbol", sort=False):
             qlib_sym = self._to_qlib_symbol(qdb_sym)
             positions = group["ci"].values
@@ -509,21 +571,55 @@ class QlibDataBuilder:
             feat_dir.mkdir(parents=True, exist_ok=True)
 
             try:
-                for field in ("open", "high", "low", "close", "volume", "amount"):
-                    aligned = np.full(span, np.nan, dtype=np.float32)
-                    aligned[offsets] = group[field].values.astype(np.float32)
-                    self._write_bin_file(feat_dir / f"{field}.day.bin", start_idx, aligned)
+                cols = {
+                    field: group[field].values
+                    for field in ("open", "high", "low", "close", "volume", "amount")
+                }
+                factor = group["factor"].values if is_cn else np.ones(len(group))
                 if is_cn:
-                    f_aligned = np.full(span, 1.0, dtype=np.float32)
-                    f_aligned[offsets] = group["factor"].values.astype(np.float32)
-                else:
-                    f_aligned = np.ones(span, dtype=np.float32)
-                self._write_bin_file(feat_dir / "factor.day.bin", start_idx, f_aligned)
+                    f_mult = self._multiplicative_factor(
+                        qlib_sym, group["d"].values, group["raw_close"].values,
+                        group["close"].values,
+                    )
+                    if f_mult is not None:
+                        # 价格序列整体换成 未复权价 x 乘法因子，保证 close/factor == raw
+                        for field in ("open", "high", "low", "close"):
+                            raw = group[f"raw_{field}"].values.astype(np.float64)
+                            cols[field] = np.where(
+                                np.isfinite(raw) & (raw > 0), raw * f_mult, np.nan
+                            )
+                        factor = f_mult
+                    else:
+                        factor_fallback += 1
+                aligned: dict[str, np.ndarray] = {}
+                for field, values in cols.items():
+                    arr = np.full(span, np.nan, dtype=np.float32)
+                    arr[offsets] = np.asarray(values, dtype=np.float32)
+                    aligned[field] = arr
+                f_aligned = np.full(span, 1.0, dtype=np.float32)
+                f_aligned[offsets] = np.asarray(factor, dtype=np.float32)
+                aligned["factor"] = f_aligned
+                for field, arr in aligned.items():
+                    self._write_bin_file(feat_dir / f"{field}.day.bin", start_idx, arr)
+                if is_cn:
+                    # $change = pct_change(close)：除权日分母自然换成参考价，
+                    # CnExchange.check_stock_limit 读的就是这一列
+                    close_arr = aligned["close"]
+                    chg = np.full(span, np.nan, dtype=np.float32)
+                    with np.errstate(invalid="ignore", divide="ignore"):
+                        chg[1:] = close_arr[1:] / close_arr[:-1] - 1.0
+                    self._write_bin_file(feat_dir / "change.day.bin", start_idx, chg)
                 updated += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning("构建 %s features 失败: %s", qlib_sym, exc)
                 skipped += 1
 
+        if is_cn and factor_fallback:
+            logger.warning(
+                "Qlib[CN] %d 个标的查无除权事件表，$factor 回退为 hfq/raw 比值"
+                "（该口径会逐日漂移）",
+                factor_fallback,
+            )
         logger.info("Qlib[%s] features (bulk): updated=%d, skipped=%d", self._market, updated, skipped)
         return {"updated": updated, "skipped": skipped}
 
@@ -547,28 +643,6 @@ class QlibDataBuilder:
                 if parts:
                     symbols.append(parts[0])
         return symbols
-
-    def _build_symbol_features(
-        self,
-        qlib_sym: str,
-        qdb_sym: str,
-        cal_dates: list[str],
-        cal_index: dict[str, int],
-        *,
-        incremental: bool = True,
-    ) -> bool:
-        """构建单个 symbol 的 Qlib features。"""
-        # qlib FileFeatureStorage 强制 instrument.lower()，目录必须小写
-        feat_dir = self._qlib_dir / "features" / self._feat_dir_name(qlib_sym)
-        feat_dir.mkdir(parents=True, exist_ok=True)
-
-        if self._is_index_symbol(qlib_sym):
-            return self._build_index_features(qlib_sym, qdb_sym, feat_dir, cal_dates, cal_index)
-
-        if incremental:
-            return self._incremental_build(qlib_sym, qdb_sym, feat_dir, cal_dates, cal_index)
-        else:
-            return self._full_build(qlib_sym, qdb_sym, feat_dir, cal_dates, cal_index)
 
     def _build_index_features(
         self,
@@ -601,145 +675,6 @@ class QlibDataBuilder:
                 continue
             bin_path = feat_dir / f"{field_name}.day.bin"
             self._write_bin_file(bin_path, start_idx, values.astype(np.float32))
-
-        return True
-
-    def _full_build(
-        self,
-        qlib_sym: str,
-        qdb_sym: str,
-        feat_dir: Path,
-        cal_dates: list[str],
-        cal_index: dict[str, int],
-    ) -> bool:
-        """从 parquet 全量构建 symbol 的 features。"""
-        start_dt = self._market_start_date()
-        df_qfq = self._hub.fetch_daily_kline(qdb_sym, start_dt, date(2026, 12, 31), adjust="hfq")
-        if df_qfq.empty:
-            return False
-
-        df_unadj = self._hub.fetch_daily_kline(qdb_sym, start_dt, date(2026, 12, 31), adjust="none")
-
-        if not df_unadj.empty and len(df_unadj) == len(df_qfq):
-            factor = np.where(
-                df_unadj["close"].values > 0,
-                df_qfq["close"].values / df_unadj["close"].values,
-                1.0,
-            )
-        else:
-            factor = np.ones(len(df_qfq))
-
-        field_data = {
-            "open": df_qfq["open"].values if "open" in df_qfq.columns else None,
-            "high": df_qfq["high"].values if "high" in df_qfq.columns else None,
-            "low": df_qfq["low"].values if "low" in df_qfq.columns else None,
-            "close": df_qfq["close"].values if "close" in df_qfq.columns else None,
-            "volume": df_qfq["volume"].values if "volume" in df_qfq.columns else None,
-            "amount": df_qfq["amount"].values if "amount" in df_qfq.columns else None,
-            "factor": factor,
-        }
-
-        # 按日历索引逐条落位，缺失日填 NaN
-        trade_col = "trade_date" if "trade_date" in df_qfq.columns else "time"
-        row_positions = []
-        for raw_date in df_qfq[trade_col].values:
-            idx = cal_index.get(str(raw_date)[:10])
-            row_positions.append(-1 if idx is None else idx)
-        row_positions = np.asarray(row_positions, dtype=np.int64)
-
-        valid = row_positions >= 0
-        if not valid.any():
-            return False
-
-        start_idx = int(row_positions[valid].min())
-        span = int(row_positions[valid].max()) - start_idx + 1
-        offsets = row_positions[valid] - start_idx
-
-        for field_name, values in field_data.items():
-            if values is None:
-                continue
-            aligned = np.full(span, np.nan, dtype=np.float32)
-            aligned[offsets] = np.asarray(values, dtype=np.float32)[valid]
-            bin_path = feat_dir / f"{field_name}.day.bin"
-            self._write_bin_file(bin_path, start_idx, aligned)
-
-        return True
-
-    def _market_start_date(self) -> date:
-        """各市场历史起始日期。"""
-        if self._market == "CN":
-            return date(2016, 1, 4)
-        return date(1990, 1, 1)
-
-    def _incremental_build(
-        self,
-        qlib_sym: str,
-        qdb_sym: str,
-        feat_dir: Path,
-        cal_dates: list[str],
-        cal_index: dict[str, int],
-    ) -> bool:
-        """增量构建：追加新数据到现有 bin 文件。"""
-        close_bin = feat_dir / "close.day.bin"
-        if not close_bin.exists():
-            return self._full_build(qlib_sym, qdb_sym, feat_dir, cal_dates, cal_index)
-
-        try:
-            existing_start_idx, existing_close = self._read_bin_file(close_bin)
-        except Exception:
-            return self._full_build(qlib_sym, qdb_sym, feat_dir, cal_dates, cal_index)
-
-        if len(existing_close) == 0:
-            return self._full_build(qlib_sym, qdb_sym, feat_dir, cal_dates, cal_index)
-
-        existing_end_idx = existing_start_idx + len(existing_close) - 1
-        if existing_end_idx >= len(cal_dates) - 1:
-            return False
-
-        next_cal_date = cal_dates[existing_end_idx + 1]
-        end_cal_date = cal_dates[-1]
-
-        try:
-            start_dt = date.fromisoformat(next_cal_date)
-            end_dt = date.fromisoformat(end_cal_date)
-        except ValueError:
-            return False
-
-        df_qfq = self._hub.fetch_daily_kline(qdb_sym, start_dt, end_dt, adjust="hfq")
-        if df_qfq.empty:
-            return False
-
-        df_unadj = self._hub.fetch_daily_kline(qdb_sym, start_dt, end_dt, adjust="none")
-
-        if not df_unadj.empty and len(df_unadj) == len(df_qfq):
-            new_factor = np.where(
-                df_unadj["close"].values > 0,
-                df_qfq["close"].values / df_unadj["close"].values,
-                1.0,
-            )
-        else:
-            new_factor = np.ones(len(df_qfq))
-
-        new_field_data = {
-            "open": df_qfq["open"].values if "open" in df_qfq.columns else None,
-            "high": df_qfq["high"].values if "high" in df_qfq.columns else None,
-            "low": df_qfq["low"].values if "low" in df_qfq.columns else None,
-            "close": df_qfq["close"].values if "close" in df_qfq.columns else None,
-            "volume": df_qfq["volume"].values if "volume" in df_qfq.columns else None,
-            "amount": df_qfq["amount"].values if "amount" in df_qfq.columns else None,
-            "factor": new_factor,
-        }
-
-        for field_name, new_values in new_field_data.items():
-            if new_values is None:
-                continue
-            bin_path = feat_dir / f"{field_name}.day.bin"
-            if bin_path.exists():
-                _, existing = self._read_bin_file(bin_path)
-                combined = np.concatenate([existing, new_values.astype(np.float32)])
-                self._write_bin_file(bin_path, existing_start_idx, combined)
-            else:
-                self._write_bin_file(bin_path, existing_start_idx, new_values.astype(np.float32))
 
         return True
 
@@ -795,16 +730,6 @@ class QlibDataBuilder:
             return s[len(prefix):]
         # 可能已经是原生格式
         return s
-
-    @staticmethod
-    def _is_index_symbol(qlib_symbol: str) -> bool:
-        """判断 Qlib 格式 symbol 是否为指数（仅 A 股）。"""
-        s = qlib_symbol.strip()
-        if s.startswith("sh") and s[2:].startswith("000"):
-            return True
-        if s.startswith("sz") and s[2:].startswith("399"):
-            return True
-        return False
 
     # ------------------------------------------------------------------
     # 通用工具
@@ -904,7 +829,7 @@ def ensure_qlib_cache(
         market: 市场名 CN/US/HK/CRYPTO/FUTURES，或兼容旧调用的数据目录路径。
                 当第一个位置参数是存在的目录时视为 quantdb_dir（A 股）。
         quantdb_dir: 数据目录（默认按市场解析）
-        qlib_dir: Qlib 输出目录（默认 {data_dir}/.qlib_cache/{market}_data）
+        qlib_dir: Qlib 输出目录（默认按 resolve_qlib_provider_uri 解析）
     """
     # 向后兼容：旧调用 ensure_qlib_cache("/data/quantdb") 把路径当 market
     if isinstance(market, (str, Path)) and str(market).startswith(("/", "~", ".")):
@@ -912,6 +837,13 @@ def ensure_qlib_cache(
         if p.is_dir() or "/quantdb" in str(market):
             quantdb_dir = quantdb_dir or p
             market = "CN"
+
+    if qlib_dir is None:
+        # 写回系统实际读取的那份缓存：否则会在 for_market 默认目录再建一份
+        # 影子缓存，而 resolve_qlib_provider_uri 优先返回它，静默遮蔽已有数据。
+        from backend.shared.qlib_paths import resolve_qlib_provider_uri
+
+        qlib_dir = resolve_qlib_provider_uri(market)
 
     builder = QlibDataBuilder.for_market(market, data_dir=quantdb_dir, qlib_dir=qlib_dir)
 

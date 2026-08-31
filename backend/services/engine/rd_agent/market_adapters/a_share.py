@@ -21,7 +21,7 @@ class AShareAdapter(MarketAdapter):
     def get_data_config(self) -> DataConfig:
         return DataConfig(
             provider_uri=self.get_qlib_provider_uri(),
-            data_dir=self._get_quantdb_dir() or "/app/db/qlib_data/cn_data",
+            data_dir=self._get_quantdb_dir() or "/data/qlib/cn_data",
             calendar="day",
             market="csi300",
         )
@@ -41,13 +41,13 @@ class AShareAdapter(MarketAdapter):
                 os.path.join(qlib_cache, "calendars", "day.txt")
             ):
                 return qlib_cache
-        # Fallback to original qlib binary path
-        container_path = "/app/db/qlib_data/cn_data"
+        # Fallback to the canonical fixed qlib directory
+        container_path = "/data/qlib/cn_data"
         if os.path.isdir(container_path):
             return container_path
         host_path = os.path.join(
             os.getenv("PROJECT_ROOT", "/opt/quantmind"),
-            "db", "qlib_data", "cn_data",
+            "data", "qlib", "cn_data",
         )
         return host_path
 

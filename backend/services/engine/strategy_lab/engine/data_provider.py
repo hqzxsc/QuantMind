@@ -17,7 +17,18 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_QLIB_DATA = "/app/db/qlib_data/cn_data"
+
+def _default_qlib_data() -> str:
+    """缺省 Qlib 目录统一由 qlib_paths 解析（固定目录 /data/qlib/cn_data 优先）。"""
+    try:
+        from backend.shared.qlib_paths import resolve_qlib_provider_uri
+
+        return resolve_qlib_provider_uri("CN")
+    except Exception:  # noqa: BLE001 - 独立导入场景下不能因为路径库报错而中断
+        return "/data/qlib/cn_data"
+
+
+DEFAULT_QLIB_DATA = _default_qlib_data()
 
 
 # ---------------------------------------------------------------------------

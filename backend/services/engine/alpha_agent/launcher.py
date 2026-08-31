@@ -103,7 +103,7 @@ class AlphaAgentLauncher:
                 adapter = get_adapter(market)
                 provider_uri = adapter.get_qlib_provider_uri()
             except Exception:
-                provider_uri = os.getenv("QLIB_PROVIDER_URI", "/app/db/qlib_data/cn_data")
+                provider_uri = os.getenv("QLIB_PROVIDER_URI", "/data/qlib/cn_data")
 
         # Override provider URI based on data_source
         if data_source:

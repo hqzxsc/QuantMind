@@ -88,7 +88,17 @@ def _build_runner_environment(
         provider_uri = "/app/db/qlib_data"
 
     # Compute market-specific default pred path
+    # （pred 仍按调用方给定的旧容器约定解析，不随缓存归一改位置）
     default_pred = os.path.join(provider_uri, "predictions", "pred.pkl")
+
+    # 用户策略里的 qlib.init 必须与引擎读同一份缓存：旧前端传的是历史容器路径
+    # /app/db/qlib_data，而系统实际解析/维护的是 /data/qlib/{market}_data。
+    try:
+        from backend.shared.qlib_paths import normalize_qlib_provider_uri
+
+        provider_uri = normalize_qlib_provider_uri(provider_uri)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("AI-IDE provider_uri 归一失败，沿用原路径: %s", exc)
     env = {
         "PYTHONPATH": "/app",
         "PYTHONUNBUFFERED": "1",
@@ -112,6 +122,10 @@ def _build_runner_environment(
         value = str(request_meta.get(meta_key) or "").strip()
         if value:
             env[env_key] = value
+    # runner 脚本优先读 AI_IDE_BACKTEST_PROVIDER_URI，这里必须用归一后的值，
+    # 否则子容器里的用户代码又会去读那份没人同步的旧缓存
+    if env.get("AI_IDE_BACKTEST_PROVIDER_URI"):
+        env["AI_IDE_BACKTEST_PROVIDER_URI"] = provider_uri
     passthrough_keys = [
         "APP_ENV",
         "DB_DRIVER",

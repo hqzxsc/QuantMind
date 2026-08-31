@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--loop-n", type=int, default=int(os.getenv("RD_AGENT_LOOP_N", "3")))
     p.add_argument("--task-id", default=os.getenv("RD_AGENT_TASK_ID") or f"task_{uuid.uuid4().hex[:12]}")
     p.add_argument("--user-id", default=os.getenv("RD_AGENT_USER_ID", "system"))
-    p.add_argument("--provider-uri", default=os.getenv("QLIB_PROVIDER_URI", "/app/db/qlib_data/cn_data"))
+    p.add_argument("--provider-uri", default=os.getenv("QLIB_PROVIDER_URI", "/data/qlib/cn_data"))
     p.add_argument("--log-dir", default=os.getenv("RD_AGENT_LOG_DIR", "/tmp/rdagent_logs"))
     p.add_argument("--dry-run", action="store_true", help="只校验环境，不真正调用 rdagent")
     return p.parse_args()

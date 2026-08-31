@@ -65,6 +65,21 @@ PROJECT_ROOT = _find_project_root()
 task_logger.info("project_root_resolved", "Project root resolved", root=str(PROJECT_ROOT))
 
 
+def _infer_market_from_uri(provider_uri: str, region: str | None = None) -> str:
+    """从 provider_uri 路径与 region 推断市场（沿用原有的关键字判定规则）。"""
+    low = str(provider_uri or "").lower()
+    reg = str(region or "").lower()
+    if "hk_data" in low or reg == "hk":
+        return "HK"
+    if "us_data" in low or reg == "us":
+        return "US"
+    if "bc_data" in low or reg == "crypto":
+        return "CRYPTO"
+    if "futures_data" in low:
+        return "FUTURES"
+    return "CN"
+
+
 class QlibBacktestService(QlibBacktestServiceRuntimeMixin):
     """Qlib 回测服务"""
 
@@ -77,9 +92,15 @@ class QlibBacktestService(QlibBacktestServiceRuntimeMixin):
             env_val = os.getenv("QLIB_DATA_PATH", "").strip()
             if env_val:
                 provider_uri = env_val
-            else:
-                from backend.shared.qlib_paths import resolve_qlib_provider_uri
-                provider_uri = resolve_qlib_provider_uri()
+        if provider_uri is not None:
+            # 旧客户端/旧环境变量里钉死的 /app/db/qlib_data 归一到 qlib_paths 解析结果，
+            # 否则夜间同步写一份缓存、回测读另一份
+            from backend.shared.qlib_paths import normalize_qlib_provider_uri
+
+            provider_uri = normalize_qlib_provider_uri(provider_uri)
+        else:
+            from backend.shared.qlib_paths import resolve_qlib_provider_uri
+            provider_uri = resolve_qlib_provider_uri()
 
         if not provider_uri.startswith("~") and not os.path.isabs(provider_uri):
             try:
@@ -226,23 +247,30 @@ class QlibBacktestService(QlibBacktestServiceRuntimeMixin):
         if provider_uri:
             from backend.shared.qlib_paths import (
                 is_qlib_provider_ready,
+                normalize_qlib_provider_uri,
                 resolve_qlib_provider_uri,
             )
 
+            # 先按市场归一到 qlib_paths 解析出的缓存目录，再做完整性判定：
+            # 否则旧客户端钉死的 /app/db/qlib_data 会让回测读到一份夜间同步
+            # 根本没在写的缓存（写入与读取分裂，数据修复静默失效）。
+            normalized = normalize_qlib_provider_uri(
+                provider_uri, _infer_market_from_uri(provider_uri, region)
+            )
+            if normalized != provider_uri:
+                task_logger.info(
+                    "provider_uri_normalized",
+                    "Caller-pinned Qlib provider normalized to the resolved cache",
+                    requested_uri=provider_uri,
+                    normalized_uri=normalized,
+                )
+            provider_uri = normalized
+
             requested_uri = provider_uri
             if not is_qlib_provider_ready(requested_uri):
-                requested_lower = requested_uri.lower()
-                market = "CN"
-                if "hk_data" in requested_lower or str(region).lower() == "hk":
-                    market = "HK"
-                elif "us_data" in requested_lower or str(region).lower() == "us":
-                    market = "US"
-                elif "bc_data" in requested_lower or str(region).lower() == "crypto":
-                    market = "CRYPTO"
-                elif "futures_data" in requested_lower:
-                    market = "FUTURES"
-
-                fallback_uri = resolve_qlib_provider_uri(market)
+                fallback_uri = resolve_qlib_provider_uri(
+                    _infer_market_from_uri(requested_uri, region)
+                )
                 if is_qlib_provider_ready(fallback_uri):
                     provider_uri = fallback_uri
                     task_logger.warning(
@@ -250,7 +278,7 @@ class QlibBacktestService(QlibBacktestServiceRuntimeMixin):
                         "Requested Qlib provider is incomplete; using ready provider",
                         requested_uri=requested_uri,
                         fallback_uri=fallback_uri,
-                        market=market,
+                        market=_infer_market_from_uri(requested_uri, region),
                     )
 
         # 如果请求的 provider_uri/region 与当前不同，需要重新初始化

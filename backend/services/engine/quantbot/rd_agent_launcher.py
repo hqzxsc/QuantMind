@@ -147,7 +147,7 @@ class RDAgentLauncher:
     DOCKER_IMAGE = os.getenv("RD_AGENT_DOCKER_IMAGE", "quantmind-rdagent:latest")
     DOCKER_NETWORK = os.getenv("RD_AGENT_DOCKER_NETWORK", "quantmind_quantmind-net")
     HOST_PROJECT_PATH = os.getenv("HOST_PROJECT_PATH", "/opt/quantmind")
-    QLIB_PROVIDER_URI = os.getenv("QLIB_PROVIDER_URI", "/app/db/qlib_data/cn_data")
+    QLIB_PROVIDER_URI = os.getenv("QLIB_PROVIDER_URI", "/data/qlib/cn_data")
 
     # RD-Agent 因子数据模板路径（daily_pv_all.h5 / daily_pv_debug.h5 所在目录）
     _FACTOR_DATA_TEMPLATE_DIR = (

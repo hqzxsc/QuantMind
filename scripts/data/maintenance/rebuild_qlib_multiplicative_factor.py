@@ -73,29 +73,42 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# 核心算法住 backend/shared（与 QlibDataBuilder 共用一份），本文件只负责 bin IO 与调度
+_ROOT = Path(__file__).resolve().parents[3]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from backend.shared.qlib_multiplicative_factor import (  # noqa: E402
+    DEFAULT_EVENTS,
+    STEP_EPS,
+    board_limit,
+    build_multiplicative_factor,
+    covered_dates,
+    load_events,
+    to_code,
+    unexplained_ex_dates,
+)
+
 PRICE_BINS = ("open", "high", "low")
 REWRITE_BINS = ("open", "high", "low", "close", "factor")
 # volume / amount are already unadjusted -> left byte-identical on purpose
-DEFAULT_EVENTS = "/data/quantdb/3_financial_data/dividend_factors"
 
 RAW_VWAP_TOL = (
     0.12  # amount/volume 与 raw 的比值离散度上限（两者量纲固定，只看相对波动）
 )
-DROP_RATIO = 1.1  # “必然是除权日”的判定：裸价跌幅超过 1.1x 涨停幅度
-RESILIENCE = (
-    0.05  # 后复权价比裸价抗跌多少个百分点才算真的除权（加法阻尼本身能吃掉 ~2%）
-)
-EVENT_TOL = 0.02  # 事件预测的除权跌幅与实际裸价跌幅的允许偏离
-PRICE_MOVE_EPS = 1e-4  # 除权日后价格“真正动了”的最小相对变化
-MAX_VERIFY_STEPS = 40  # 除权日停牌时，最多向后找多少个交易日去校验
-STEP_EPS = 1e-7
 
 
 def default_qlib_dir() -> str:
-    """Locate qlib_data without assuming where this script is copied to."""
+    """以系统自己的 provider 解析为准，其次环境变量，最后仓内回退。"""
     env = os.getenv("QLIB_DATA_DIR")
     if env:
         return env
+    try:
+        from backend.shared.qlib_paths import resolve_qlib_provider_uri
+
+        return str(resolve_qlib_provider_uri("CN"))
+    except Exception:  # noqa: BLE001 - 单文件拷到 /tmp 跑时没有包环境
+        pass
     here = Path(__file__).resolve()
     for anc in [here.parent, *here.parents]:
         cand = anc / "db" / "qlib_data"
@@ -174,131 +187,6 @@ def write_bin(path: Path, start_idx: int, values: np.ndarray) -> None:
     os.replace(tmp, path)
 
 
-def board_limit(symbol: str) -> float:
-    """涨跌停幅度：科创板/创业板 20%，北交所 30%，主板 10%（ST 更严，只会让判定更保守）。"""
-    num = symbol[2:] if symbol[:2].lower() in ("sh", "sz", "bj") else symbol
-    if num.startswith(("68", "30")):
-        return 0.20
-    if num.startswith(("8", "4", "92")):
-        return 0.30
-    return 0.10
-
-
-def to_code(symbol: str) -> str:
-    if len(symbol) > 2 and symbol[:2].lower() in ("sh", "sz", "bj"):
-        return f"{symbol[2:]}.{symbol[:2].upper()}"
-    return symbol
-
-
-# ----------------------------------------------------------------------------- core
-
-
-def load_events(events_dir: Path, code: str) -> pd.DataFrame | None:
-    path = events_dir / f"{code}.parquet"
-    if not path.exists():
-        return None
-    df = pd.read_parquet(path)
-    if "time" not in df.columns:
-        return None
-    df["time"] = pd.to_datetime(df["time"])
-    return df.sort_values("time").reset_index(drop=True)
-
-
-def build_multiplicative_factor(
-    raw: pd.Series, events: pd.DataFrame, limit: float
-) -> tuple[pd.Series, list[dict], list[str], list[str], set[pd.Timestamp]]:
-    """factor[t] = PROD(p0 / ex_reference) over ex-dates; validates each event ex post.
-
-    返回的 ``steps`` 是实际生效的因子阶跃日（除权日停牌时 = 复牌首日），供反向闸门去重。
-    """
-    f = pd.Series(1.0, index=raw.index)
-    cum = 1.0
-    applied: list[dict] = []
-    problems: list[str] = []
-    notes: list[str] = []
-    steps: set[pd.Timestamp] = set()
-    for row in events.itertuples(index=False):
-        ex = pd.Timestamp(row.time).normalize()
-        prev = raw.index[raw.index < ex]
-        if len(prev) == 0:
-            # 上市/挂牌前的分红送配（常见于北交所承接新三板），对本段因子无影响，不算异常
-            notes.append(f"event_before_listed {ex.date()}")
-            continue
-        p0 = float(raw.loc[prev[-1]])
-        bonus = float(getattr(row, "stockBonus", 0) or 0) / 10.0
-        allot = float(getattr(row, "allotment", 0) or 0) / 10.0
-        cash = float(getattr(row, "interest", 0) or 0) / 10.0
-        # allotPrice 是「每股」配股价（实测 94.7% 的配股事件以此口径拟合除权跌幅）
-        aprice = float(getattr(row, "allotPrice", 0) or 0)
-        ref = (p0 - cash + aprice * allot) / (1.0 + bonus + allot)
-        if not np.isfinite(ref) or ref <= 0:
-            problems.append(f"nonpositive_ref {ex.date()}")
-            continue
-        ratio = p0 / ref
-        nxt = raw.index[raw.index >= ex]
-        if len(nxt) == 0:
-            # 除权日晚于该标的最后一条数据，对已写入的因子段无影响
-            notes.append(f"event_after_last_bar {ex.date()}")
-            continue
-        # 除权日可能停牌（长停牌期间除权），裸价要等到复牌第一天才反映参考价：
-        # 因子阶跃必须下在“价格真正变动的第一天”，并以该日做 ex post 校验。
-        step_date, p1 = nxt[0], None
-        for d in nxt[:MAX_VERIFY_STEPS]:
-            v = float(raw.loc[d])
-            if abs(v / p0 - 1.0) > PRICE_MOVE_EPS:
-                step_date, p1 = d, v
-                break
-        if p1 is None:
-            notes.append(f"event_unverifiable_suspended {ex.date()}")
-        else:
-            lo, hi = (
-                ref / p0 * (1 - limit) - EVENT_TOL,
-                ref / p0 * (1 + limit) + EVENT_TOL,
-            )
-            if not (lo <= p1 / p0 <= hi):
-                # 事件行本身不可信（实测全为 type=15 预案行，除权尚未实施）：丢弃该事件。
-                # 若它是“日期错位”的真除权，缺口会落在别处，由反向闸门 missing_event 兜住。
-                notes.append(
-                    f"event_mismatch {ex.date()} pred_ref/p0={ref / p0:.4f} "
-                    f"actual={p1 / p0:.4f} on {step_date.date()}"
-                )
-                continue
-        cum *= ratio
-        f.loc[f.index >= step_date] = cum
-        steps.add(step_date.normalize())
-        applied.append(
-            {
-                "ex_date": str(ex.date()),
-                "step_date": str(step_date.date()),
-                "jump": ratio - 1.0,
-                "cash_per_share": cash,
-                "bonus_per_share": bonus,
-                "allot_per_share": allot,
-                "allot_price": aprice,
-            }
-        )
-    return f, applied, problems, notes, steps
-
-
-def find_unexplained_ex_dates(
-    raw: pd.Series, hfq: pd.Series, covered: set[pd.Timestamp], limit: float
-) -> list[str]:
-    """反向闸门：裸价跌穿涨停，而后复权价明显抗跌 -> 必然是除权日，事件表却查无此日。"""
-    idx = raw.index
-    r_raw = raw.pct_change(fill_method=None)
-    r_hfq = hfq.reindex(idx).ffill().pct_change(fill_method=None)
-    out: list[str] = []
-    hits = r_raw[r_raw < -(limit * DROP_RATIO + 0.005)]
-    for dt, rr in hits.items():
-        if dt.normalize() in covered:
-            continue
-        rb = r_hfq.get(dt, np.nan)
-        if not np.isfinite(rb) or (1.0 + rb) / (1.0 + rr) - 1.0 <= RESILIENCE:
-            continue  # 两列同步下跌 = 行情毛刺/异常交易，不是除权
-        out.append(f"missing_event {dt.date()} raw={rr:.2%} hfq={rb:.2%}")
-    return out
-
-
 def process_symbol(
     qlib_dir: Path,
     events_dir: Path,
@@ -349,10 +237,10 @@ def process_symbol(
     )
     result["problems"].extend(ev_problems)
     result["notes"] = ev_notes
-    covered = set(pd.DatetimeIndex(pd.to_datetime(events["time"])).normalize())
-    covered |= ev_steps
     result["problems"].extend(
-        find_unexplained_ex_dates(raw, pd.Series(close, index=idx), covered, limit)
+        unexplained_ex_dates(
+            raw, pd.Series(close, index=idx), covered_dates(events, ev_steps), limit
+        )
     )
 
     fv = f_new.to_numpy()

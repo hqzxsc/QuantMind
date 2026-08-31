@@ -301,7 +301,7 @@ class RDLoopWrapper:
         market_cfg = market_data_map.get(self.market, {
             "source_all": "/app/alphaagent/scenarios/qlib/experiment/factor_data_template/daily_pv_all.h5",
             "source_debug": "/app/alphaagent/scenarios/qlib/experiment/factor_data_template/daily_pv_debug.h5",
-            "qlib_source": "/app/db/qlib_data/cn_data",
+            "qlib_source": "/data/qlib/cn_data",
             "qlib_target_name": "cn_data",
         })
 

@@ -45,7 +45,7 @@ try:
     from backend.shared.qlib_paths import resolve_qlib_provider_uri
     QLIB_PROVIDER_URI = resolve_qlib_provider_uri("CN")
 except Exception:
-    QLIB_PROVIDER_URI = "/app/db/qlib_data/cn_data"
+    QLIB_PROVIDER_URI = "/data/qlib/cn_data"
 
 
 class PromoteRequest(BaseModel):

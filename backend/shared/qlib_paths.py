@@ -4,10 +4,14 @@ Qlib 数据路径统一解析
 所有需要 Qlib provider_uri 的地方应通过本模块获取，避免硬编码 db/qlib_data。
 
 优先级：
-1. 环境变量 QLIB_PROVIDER_URI（显式覆盖）
-2. /data/quantdb/.qlib_cache/cn_data（QuantDB 单源迁移后的标准路径）
-3. /app/db/qlib_data（旧路径，兼容回退）
+1. 环境变量 QLIB_PROVIDER_URI（显式覆盖，对全部市场生效，单容器部署建议只在调试时用）
+2. /data/qlib/{market}_data（统一固定目录，QlibDataBuilder 的默认写入目标）
+3. 各市场 .qlib_cache、/data/qlib_data/*、/app/db/qlib_data*（旧路径，兼容回退）
 4. 项目相对路径 db/qlib_data（开发环境回退）
+
+所有从请求/配置/常量拿到 provider_uri 的调用方，都应再经
+``normalize_qlib_provider_uri`` 走一遍：客户端与旧配置里钉死的 ``/app/db/qlib_data``
+是历史容器路径，若不归一化，会出现「夜间任务写 A 目录、回测读 B 目录」的分裂缓存。
 """
 
 from __future__ import annotations
@@ -24,6 +28,11 @@ _MARKET_DATA_DIR: dict[str, str] = {
     "CRYPTO": os.getenv("QM_QUANTBC_DATA_DIR", "/data/quantbc"),
     "FUTURES": os.getenv("QM_QUANTFUTURES_DATA_DIR", "/data/quantfutures"),
 }
+
+
+# 历史遗留的 A 股容器路径：容器把仓库 ./db 挂在 /app/db，早期版本的默认值把
+# 它当成了唯一缓存目录，并在其后拼上 /cn_data（该子目录其实从未存在）。
+_LEGACY_CN_PREFIXES = ("/app/db/qlib_data", "db/qlib_data")
 
 
 def is_qlib_provider_ready(provider_uri: str | Path) -> bool:
@@ -102,6 +111,39 @@ def resolve_qlib_provider_uri(market: str = "CN") -> str:
             return str(candidate)
 
     return str(_PROJECT_ROOT / "db" / "qlib_data")
+
+
+def normalize_qlib_provider_uri(provider_uri: str | None, market: str = "CN") -> str:
+    """把调用方给的 provider_uri 归一到系统实际解析出的缓存目录。
+
+    - 空值：直接返回 resolve_qlib_provider_uri(market)。
+    - 旧容器路径（/app/db/qlib_data 及其 /cn_data 变体）：只要系统解析出的目录
+      已就绪就改指它，避免同一份数据存在两套缓存、写入与读取分裂。
+    - 其它显式路径（例如用户自带的 ~/.qlib 数据包）：原样保留，只做相对路径展开。
+    """
+    raw = str(provider_uri or "").strip()
+    if not raw:
+        return resolve_qlib_provider_uri(market)
+
+    expanded = str(Path(raw).expanduser())
+    if not raw.startswith(("/", "~", ".")):
+        expanded = str(_PROJECT_ROOT / raw)
+
+    norm = expanded.replace("\\", "/").rstrip("/")
+    if not norm.startswith("/"):
+        return expanded
+    legacy = {p.rstrip("/") for p in _LEGACY_CN_PREFIXES}
+    legacy |= {f"{p}/cn_data" for p in _LEGACY_CN_PREFIXES}
+    if norm not in legacy:
+        return expanded
+
+    canonical = resolve_qlib_provider_uri(market)
+    if Path(canonical) == Path(expanded):
+        return expanded
+    if is_qlib_provider_ready(canonical):
+        return canonical
+    # 系统解析出的目录还没建好（新装/迁移中），继续沿用旧路径别把回测打断
+    return expanded
 
 
 def resolve_qlib_data_dir(market: str = "CN") -> str:

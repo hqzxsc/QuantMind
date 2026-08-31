@@ -31,8 +31,8 @@ export const MARKET_CONFIGS: Record<AppMarket, MarketConfig> = {
   CN: {
     label: 'A股',
     qlibRegion: 'cn',
-    // 独立 Qlib 数据包的标准容器目录；后端会在 QuantDB 缓存可用时自动切换。
-    qlibProviderUri: '/app/db/qlib_data',
+    // 统一固定缓存目录（与后端 qlib_paths 解析一致）；后端对历史值会做归一化。
+    qlibProviderUri: '/data/qlib/cn_data',
     defaultUniverse: 'csi300',
     benchmark: 'SH000300',
     benchmarkName: '沪深300',

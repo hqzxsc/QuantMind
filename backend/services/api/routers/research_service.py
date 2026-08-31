@@ -2380,6 +2380,7 @@ async def predict_single_stock(
                 f"SELECT sdl.stock_name, sdl.close, sdl.trade_date, "
                 f"       sdl.vol_std_20, sdl.vol_atr_14, "
                 f"       sdl.ma_gap_5, sdl.ma_gap_20, sdl.main_flow, "
+                f"       sdl.adj_factor, "
                 f"       (SELECT st.name FROM stocks st "
                 f"        WHERE {_norm_symbol_sql('st.symbol')} = {_norm_symbol_sql('sdl.symbol')} "
                 f"        LIMIT 1) AS name_fallback "
@@ -2391,8 +2392,10 @@ async def predict_single_stock(
         )
         row = res.first()
         if row:
-            stock_name = (row[0] or row[8] or stock_name).strip() or stock_name
-            latest_close = float(row[1] or 0.0)
+            stock_name = (row[0] or row[9] or stock_name).strip() or stock_name
+            # K 线与行情一致还原为真实不复权价：DB close 为前复权价(adj_factor<1)，
+            # 与 get_stock_kline 的 _to_nominal_price(close, adj_factor) 保持同口径。
+            latest_close = _to_nominal_price(row[1], row[8])
             if not target_date and row[2]:
                 latest_date = str(row[2])
             # vol_std_20 在 stock_daily_latest 为百分数口径(2.78=2.78%)；

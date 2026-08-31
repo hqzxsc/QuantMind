@@ -277,15 +277,23 @@ restore_database() {
     log '步骤 7/8：恢复 PostgreSQL 业务数据'
     cd "$PROJECT_DIR"
     docker compose up -d db
-    local attempt
-    for attempt in {1..30}; do
-        if docker exec quantmind-db sh -lc 'pg_isready -U "$POSTGRES_USER"' >/dev/null 2>&1; then
+    # 就绪检测（放宽窗口以覆盖首次 initdb / 冷启动还原大库，最多 60×3s=180s）。
+    # pg_isready 早于 PG 可接受连接即返回非 0；用 -h localhost 规避 socket 路径差异。
+    local attempt=0 ready=0
+    while (( attempt < 60 )); do
+        if docker exec quantmind-db sh -lc \
+            'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h localhost' >/dev/null 2>&1; then
+            ready=1
             break
         fi
-        sleep 2
+        attempt=$((attempt + 1))
+        sleep 3
     done
-    docker exec quantmind-db sh -lc 'pg_isready -U "$POSTGRES_USER"' >/dev/null \
-        || die 'PostgreSQL 未在规定时间内就绪'
+    if [[ "$ready" != 1 ]]; then
+        log "PostgreSQL 在 ${attempt}s 内未就绪，输出容器日志以定位根因："
+        docker logs --tail 100 quantmind-db 2>&1 || true
+        die 'PostgreSQL 未在规定时间内就绪（详见上方容器日志）'
+    fi
 
     local table_count
     table_count="$(docker exec quantmind-db sh -lc \

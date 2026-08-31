@@ -83,7 +83,6 @@ services:
       - SERVICE_MODE=all
       - TZ=Asia/Shanghai
       - PYTHONPATH=/app
-      - HOST_PROJECT_PATH=${HOST_PROJECT_PATH:-/opt/quantmind}
 
       # 安全配置
       - SECRET_KEY=${SECRET_KEY:-changeme-generate-a-random-secret}
@@ -208,9 +207,7 @@ services:
       - AI_IDE_LLM_BASE_URL=${AI_IDE_LLM_BASE_URL:-https://token-plan-cn.xiaomimimo.com/v1}
 
       # AI-IDE Chat LLM 配置（OpenAI 兼容；默认 MiMo）
-      - AI_IDE_LLM_BASE_URL=${AI_IDE_LLM_BASE_URL:-https://token-plan-cn.xiaomimimo.com/v1}
       - AI_IDE_LLM_MODEL=${AI_IDE_LLM_MODEL:-mimo-v2.5-pro}
-      - AI_IDE_LLM_API_KEY=${AI_IDE_LLM_API_KEY:-mock-api-key-not-configured}
 
       # RD-Agent / AlphaAgent 使用 OpenAI 兼容 API（复用 AI_IDE 配置）
       # 模型名称由 .env 的 AI_IDE_LLM_MODEL 决定；默认 mimo-v2.5-pro

@@ -156,10 +156,11 @@ import_images() {
     local image
     local images_ready=true
     for image in \
-        quantmind-oss:latest quantmind-web:latest \
+        quantmind-oss:latest \
         quantmind-data-gateway:latest quantmind-dashboard:latest \
         postgres:15-alpine redis:7-alpine \
         lcomplete/huntly:latest diygod/rsshub:latest agentscope/qwenpaw:latest \
+        ghcr.io/gnzsnz/ib-gateway:latest \
         python:3.10-slim-bookworm; do
         if ! docker image inspect "$image" >/dev/null 2>&1; then
             images_ready=false
@@ -175,10 +176,11 @@ import_images() {
     zstd --decompress --stdout "$archive" | docker load
 
     for image in \
-        quantmind-oss:latest quantmind-web:latest \
+        quantmind-oss:latest \
         quantmind-data-gateway:latest quantmind-dashboard:latest \
         postgres:15-alpine redis:7-alpine \
         lcomplete/huntly:latest diygod/rsshub:latest agentscope/qwenpaw:latest \
+        ghcr.io/gnzsnz/ib-gateway:latest \
         python:3.10-slim-bookworm; do
         docker image inspect "$image" >/dev/null 2>&1 \
             || die "离线镜像包未包含必需镜像: $image"

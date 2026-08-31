@@ -178,15 +178,47 @@ def _rebuild_universe(asof: str | None) -> tuple[pd.DataFrame, str]:
     keep = [c for c in detail_cols if c in raw.columns]
     df = raw[keep].copy()
 
-    # 收盘/涨跌幅（technical_indicators 分区：最新或 asof 当日/之前最近日，全市场一次读三列）
-    ti_file = _partition_on(d / "5_technical_derived" / "technical_indicators", asof) if asof else _latest_partition(d / "5_technical_derived" / "technical_indicators")
+    # 收盘/涨跌幅（daily_unadjusted 不复权价，与 TDX 现价口径一致）：
+    # technical_indicators 的 close 实为后复权价，直接用作“市价”会与前端默认
+    # 前复权 K 线及实时行情相差数倍，故改用不复权日线。pct_change 由当日 vs
+    # 前一个交易日的复权前 close 计算（两分区各读一次）。
+    def _partition_files(base: Path, asof: str | None):
+        if asof:
+            cur = _partition_on(base, asof)
+        else:
+            cur = _latest_partition(base)
+        if cur is None:
+            return None, None
+        cur_dir = cur.parent
+        prev = None
+        parts = sorted(p for p in base.glob("dt=*") if (p / "data.parquet").exists())
+        idx = parts.index(cur_dir) if cur_dir in parts else -1
+        if idx > 0:
+            prev = parts[idx - 1] / "data.parquet"
+        return cur, prev
+
     trade_date = ""
-    if ti_file is not None:
-        ti = pd.read_parquet(ti_file, columns=["symbol", "close", "pct_change"])
-        trade_date = ti_file.parent.name.replace("dt=", "")
-        df = df.merge(ti, left_on="Symbol", right_on="symbol", how="left").drop(
-            columns=["symbol"], errors="ignore"
+    for sub in ("daily_unadjusted",):
+        k_cur, k_prev = _partition_files(
+            d / "1_kline_data" / sub, asof
         )
+        if k_cur is not None:
+            trade_date = k_cur.parent.name.replace("dt=", "")
+            close_df = pd.read_parquet(k_cur, columns=["symbol", "close"])
+            df = df.merge(
+                close_df, left_on="Symbol", right_on="symbol", how="left"
+            ).drop(columns=["symbol"], errors="ignore")
+            # 前复权/不复权口径下 pct_change = 当日/前日复权前 close 涨跌幅
+            if k_prev is not None:
+                prev_df = pd.read_parquet(k_prev, columns=["symbol", "close"])
+                prev_df = prev_df.rename(columns={"close": "prev_close"})
+                df = df.merge(
+                    prev_df, left_on="Symbol", right_on="symbol", how="left"
+                ).drop(columns=["symbol"], errors="ignore")
+                df["pct_change"] = (df["close"] / df["prev_close"] - 1.0) * 100.0
+            else:
+                df["pct_change"] = float("nan")
+            break
     for col in ("close", "pct_change"):
         if col not in df.columns:
             df[col] = float("nan")

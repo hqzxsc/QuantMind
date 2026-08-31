@@ -45,8 +45,10 @@ sync_code() {
     log "1/5 同步代码：$REF"
     if ! git -C "$PROJECT_DIR" diff --quiet || ! git -C "$PROJECT_DIR" diff --cached --quiet; then
         $FORCE || die '检测到未提交代码改动；确认覆盖请加 --force'
+        # 仅重置被跟踪文件的改动；不做 git clean，避免误删未跟踪的运行资产
+        # （.env、logs/、user_pools_local/、data/ 业务数据 等）。
         git -C "$PROJECT_DIR" reset --hard
-        git -C "$PROJECT_DIR" clean -fd -e data -e models -e db
+        git -C "$PROJECT_DIR" clean -fd -e data -e models -e db -e logs -e user_pools_local -e .env
     fi
     git -C "$PROJECT_DIR" fetch origin "$REF"
     git -C "$PROJECT_DIR" checkout -B "$REF" "origin/$REF"
@@ -59,7 +61,7 @@ prepare_models() {
         python3 "$PROJECT_DIR/backend/scripts/download_finbert.py" && return 0
         log '宿主机 python3 下载失败，改用容器内 python 重试'
     fi
-    docker run --rm         -v "$PROJECT_DIR/models:/app/models"         -v "$PROJECT_DIR/backend:/app/backend:ro"         "$(docker compose -f "$PROJECT_DIR/docker-compose.yml" config --image quantmind)"         python /app/backend/scripts/download_finbert.py         || log '⚠️ FinBERT 模型下载失败（网络原因），新闻情感将暂用词典法，可重跑 update.sh 补齐'
+    docker run --rm         -v "$PROJECT_DIR/models:/app/models"         -v "$PROJECT_DIR/backend:/app/backend:ro"         quantmind-oss:latest         python /app/backend/scripts/download_finbert.py         || log '⚠️ FinBERT 模型下载失败（网络原因），新闻情感将暂用词典法，可重跑 update.sh 补齐'
 }
 
 build_core() {

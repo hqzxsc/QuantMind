@@ -536,7 +536,7 @@ async def preflight_check(
     # 11) 模拟盘专用：沙箱进程池与关键表可用性
     simulation_required = mode == "SIMULATION"
     if simulation_required:
-        # 11.0 默认模型检测（模拟盘不阻断，自动尝试分配）
+        # 11.0 默认模型检测：单模型/多模型均必须有默认模型（阻断项），未设置时自动尝试分配
         try:
             from backend.shared.model_registry import model_registry_service
 
@@ -564,12 +564,12 @@ async def preflight_check(
             add_check(
                 "default_model_configured",
                 "默认模型已配置",
+                model_configured,
                 True,
-                False,
                 (
                     f"默认模型已配置 (model_id={default_model.get('model_id')})"
                     if model_configured
-                    else "[WARNING] 未配置默认模型，已尝试自动分配仍无可用模型，请在模型管理中创建或设置默认模型（不阻断模拟盘）"
+                    else "未配置默认模型（单模型/多模型均需设置默认模型），请先在模型管理中设置默认模型后再启动模拟盘"
                 ),
                 {
                     "model_id": default_model.get("model_id") if model_configured else None,
@@ -580,9 +580,9 @@ async def preflight_check(
             add_check(
                 "default_model_configured",
                 "默认模型已配置",
-                True,
                 False,
-                f"[WARNING] 默认模型检测失败: {e}（不阻断模拟盘）",
+                True,
+                f"默认模型检测失败: {e}",
             )
 
         # 11.1 推理模型就绪度（检查生产模型目录是否有模型文件）

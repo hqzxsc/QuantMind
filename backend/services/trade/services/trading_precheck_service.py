@@ -394,8 +394,8 @@ async def run_trading_readiness_precheck(
     )
 
     if normalized_mode == "SIMULATION":
-        # 默认模型检测（检查用户是否配置了默认模型）
-        # 模拟盘不因未设置默认模型而阻断：自动尝试分配最新可用模型，仍无则仅警告
+        # 默认模型检测：单模型/多模型均必须有默认模型（阻断项）
+        # 未设置时自动尝试分配最新可用模型，仍无则阻断并提示去模型管理设置
         try:
             from backend.shared.model_registry import model_registry_service
 
@@ -409,7 +409,6 @@ async def run_trading_readiness_precheck(
                     candidates = await model_registry_service.list_models(
                         tenant_id=tenant_id, user_id=user_id, include_archived=False
                     )
-                    # 仅保留可用状态
                     avail = [m for m in candidates if str(m.get("status") or "").lower() in {"ready", "active"}]
                     chosen = (avail or candidates[:1] or [None])[0]
                     if chosen and chosen.get("model_id"):
@@ -418,21 +417,19 @@ async def run_trading_readiness_precheck(
                                 tenant_id=tenant_id, user_id=user_id, model_id=str(chosen.get("model_id"))
                             )
                         except Exception:
-                            # set 失败不阻断，保留原 chosen 仅用于提示
                             default_model = chosen
                 except Exception:
                     pass
             model_configured = bool(default_model)
-            # 模拟盘该项仅警告，不阻断启动；未配置时提示已自动尝试分配
             checks.append(
                 _build_check(
                     "default_model_configured",
                     "默认模型已配置",
-                    True,
+                    model_configured,
                     (
                         f"默认模型已配置 (model_id={default_model.get('model_id')})"
                         if model_configured
-                        else "[WARNING] 未配置默认模型，已尝试自动分配仍无可用模型，请在模型管理中创建或设置默认模型（不阻断模拟盘启动）"
+                        else "未配置默认模型（单模型/多模型均需设置默认模型），请先在模型管理中设置默认模型后再启动模拟盘"
                     ),
                 )
             )
@@ -441,8 +438,8 @@ async def run_trading_readiness_precheck(
                 _build_check(
                     "default_model_configured",
                     "默认模型已配置",
-                    True,
-                    f"[WARNING] default_model_check_error={exc}（不阻断模拟盘）",
+                    False,
+                    f"default_model_check_error={exc}",
                 )
             )
 

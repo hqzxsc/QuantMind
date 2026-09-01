@@ -269,7 +269,9 @@ services:
       - HUNTLY_PASSWORD=${HUNTLY_PASSWORD:-changeme}
 
       # 资讯情绪识别 (FinBERT 中文金融模型, 本地离线权重)
-      - NEWS_USE_FINBERT=true
+      # 仅 GPU 环境启用：留空时代码默认按 FINBERT_DEVICE>=0 判定
+      - NEWS_USE_FINBERT=${NEWS_USE_FINBERT:-}
+      - FINBERT_DEVICE=${FINBERT_DEVICE:--1}
       - FINBERT_ZH_MODEL=/app/models/finbert-zh-base
 
       # 数据平台 - 第三方离线数据源根目录
@@ -425,7 +427,9 @@ services:
       - POSTGRES_DB=${DB_NAME:-quantmind}
 
       # 资讯情绪识别 (FinBERT 中文金融模型, 本地离线权重)
-      - NEWS_USE_FINBERT=true
+      # 仅 GPU 环境启用：留空时代码默认按 FINBERT_DEVICE>=0 判定
+      - NEWS_USE_FINBERT=${NEWS_USE_FINBERT:-}
+      - FINBERT_DEVICE=${FINBERT_DEVICE:--1}
       - FINBERT_ZH_MODEL=/app/models/finbert-zh-base
 
       # 数据同步定时任务

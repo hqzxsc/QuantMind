@@ -562,12 +562,11 @@ def run_full_rebuild(force: bool = False) -> int:
             # FinBERT 批量推理窗口：标题攒一批一次前向，比逐篇快数倍
             _BATCH = int(os.getenv("FINBERT_BATCH", "96"))
             # 预同步加载模型，避免首批 chunk 在懒加载窗口内整批降级 None
-            if os.getenv("NEWS_USE_FINBERT", "true").lower() == "true":
+            if sentiment_mod.USE_FINBERT:
                 t_load = time.time()
-                from . import sentiment as _sent
-                _sent._try_load()
+                sentiment_mod._try_load()
                 logger.info("rebuild: FinBERT 预加载 is_available=%s (%.1fs)",
-                            _sent.is_available(), time.time() - t_load)
+                            sentiment_mod.is_available(), time.time() - t_load)
 
             def _flush_pg_error(cur_conn, pid: int, e: Exception, title: str | None):
                 logger.warning("rebuild page=%d 失败: %s", pid, e)

@@ -26,9 +26,12 @@ DEFAULT_MODEL = os.getenv(
     "FINBERT_ZH_MODEL",
     "bardsai/finance-sentiment-zh-base",
 )
-USE_FINBERT = os.getenv("NEWS_USE_FINBERT", "true").lower() == "true"
 # 推理设备：-1=CPU。镜像内 torch 换成 CUDA 构建后，设 FINBERT_DEVICE=0 即走 GPU
 DEVICE = int(os.getenv("FINBERT_DEVICE", "-1"))
+# 仅 GPU 环境默认启用 FinBERT；CPU 环境默认关闭，避免 CPU 推理打满。
+# 显式设置 NEWS_USE_FINBERT=true/false 可覆盖默认行为。
+_USE_FINBERT_ENV = os.getenv("NEWS_USE_FINBERT", "").strip().lower()
+USE_FINBERT = _USE_FINBERT_ENV == "true" if _USE_FINBERT_ENV else DEVICE >= 0
 # 加载失败后的重试冷却（秒）：transformers 依赖补齐 / 网络恢复后能自动生效，
 # 而不是一次失败永久锁死到下次进程重启
 _RETRY_AFTER = float(os.getenv("FINBERT_RETRY_AFTER", "300"))

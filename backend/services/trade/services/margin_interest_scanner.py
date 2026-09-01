@@ -14,8 +14,8 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from backend.services.trade.redis_client import redis_client
-from backend.services.trade.trade_config import settings
+from backend.services.trade_shared.redis_client import redis_client
+from backend.services.trade_shared.trade_config import settings
 from backend.shared.trade_account_cache import read_json_cache, write_json_cache
 
 logger = logging.getLogger(__name__)

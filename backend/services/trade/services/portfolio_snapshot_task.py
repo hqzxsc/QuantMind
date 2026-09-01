@@ -8,8 +8,8 @@ from datetime import datetime
 
 from sqlalchemy import select
 from backend.shared.database_manager_v2 import get_db_manager
-from backend.services.trade.portfolio.models import Portfolio
-from backend.services.trade.portfolio.services.portfolio_service import PortfolioService
+from backend.services.trade_shared.portfolio.models import Portfolio
+from backend.services.trade_shared.portfolio.services.portfolio_service import PortfolioService
 
 logger = logging.getLogger(__name__)
 

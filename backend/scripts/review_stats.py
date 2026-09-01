@@ -25,7 +25,7 @@ try:
 
     if str(_REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(_REPO_ROOT))
-    from backend.services.trade.simulation.services.local_market_data import (
+    from backend.services.simulation.services.local_market_data import (
         compute_limits,
         limit_pct,
     )

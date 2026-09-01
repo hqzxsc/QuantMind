@@ -13,8 +13,8 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade.models.qmt_agent_binding import QMTAgentBinding
-from backend.services.trade.models.qmt_agent_session import QMTAgentSession
+from backend.services.trade_shared.models.qmt_agent_binding import QMTAgentBinding
+from backend.services.trade_shared.models.qmt_agent_session import QMTAgentSession
 
 SESSION_TTL_SECONDS = 3600
 SESSION_REFRESH_THRESHOLD_SECONDS = 300

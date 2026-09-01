@@ -48,7 +48,7 @@ def _batch_quantdb_last_close(symbols: list[str]) -> dict[str, float]:
         return {}
     result: dict[str, float] = {}
     try:
-        from backend.services.trade.simulation.services.local_market_data import (
+        from backend.services.simulation.services.local_market_data import (
             LocalMarketData,
         )
         from backend.shared.stock_utils import StockCodeUtil
@@ -285,7 +285,7 @@ class TdxPushService:
 
         from sqlalchemy import insert
 
-        from backend.services.trade.models.real_account_snapshot import (
+        from backend.services.trade_shared.models.real_account_snapshot import (
             RealAccountSnapshot,
         )
 
@@ -357,13 +357,13 @@ class TdxPushService:
         try:
             from sqlalchemy import select, text
 
-            from backend.services.trade.models.enums import (
+            from backend.services.trade_shared.models.enums import (
                 OrderSide,
                 OrderStatus,
                 OrderType,
                 TradingMode,
             )
-            from backend.services.trade.models.order import Order
+            from backend.services.trade_shared.models.order import Order
 
             orders = await self.pull_orders()
             if not orders:

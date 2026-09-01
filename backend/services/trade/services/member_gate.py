@@ -25,7 +25,7 @@ MEMBER_RETRY_SECONDS = 60  # 非会员时的重试间隔
 async def is_paid_member(tenant_id: str, user_id: str) -> bool:
     """账户是否为 QuantDB 付费会员在期（Redis 缓存 60s，失败按非会员处理）。"""
     try:
-        from backend.services.trade.redis_client import get_redis
+        from backend.services.trade_shared.redis_client import get_redis
 
         key = MEMBER_CACHE_KEY.format(tenant_id=tenant_id, user_id=user_id)
         cached = get_redis().get(key)

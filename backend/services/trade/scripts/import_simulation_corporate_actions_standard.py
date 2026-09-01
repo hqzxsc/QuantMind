@@ -33,10 +33,10 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 os.environ["PYTHONPATH"] = BASE_DIR
 
-from backend.services.trade.simulation.models.corporate_action import (  # noqa: E402
+from backend.services.simulation.models.corporate_action import (  # noqa: E402
     SimulationCorporateAction,
 )
-from backend.services.trade.simulation.services.corporate_action_importer import (  # noqa: E402
+from backend.services.simulation.services.corporate_action_importer import (  # noqa: E402
     load_standard_corp_action_csv,
 )
 from backend.shared.database_manager_v2 import (  # noqa: E402

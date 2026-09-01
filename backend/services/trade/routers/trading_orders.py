@@ -10,18 +10,18 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade.deps import AuthContext, get_auth_context, get_db, get_redis
-from backend.services.trade.models.order import OrderStatus, TradingMode
-from backend.services.trade.redis_client import RedisClient
-from backend.services.trade.schemas.order import (
+from backend.services.trade_shared.deps import AuthContext, get_auth_context, get_db, get_redis
+from backend.services.trade_shared.models.order import OrderStatus, TradingMode
+from backend.services.trade_shared.redis_client import RedisClient
+from backend.services.trade_shared.schemas.order import (
     OrderCancelRequest,
     OrderCreate,
     OrderListQuery,
     OrderResponse,
     OrderUpdate,
 )
-from backend.services.trade.services.order_service import OrderService
-from backend.services.trade.services.trading_engine import TradingEngine
+from backend.services.trade_shared.services.order_service import OrderService
+from backend.services.live_trading.services.trading_engine import TradingEngine
 
 logger = logging.getLogger(__name__)
 

@@ -10,12 +10,12 @@ from datetime import date
 
 import pytest
 
-from backend.services.trade.simulation.services.ashare_matcher import (
+from backend.services.simulation.services.ashare_matcher import (
     MatchConfig,
     compute_fees,
     match_order,
 )
-from backend.services.trade.simulation.services.local_market_data import DailyBar
+from backend.services.simulation.services.local_market_data import DailyBar
 
 
 def _bar(

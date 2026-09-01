@@ -34,7 +34,7 @@ import httpx
 from pathlib import Path
 import json
 
-from backend.services.trade.services.broker_client import BaseBroker, BrokerResult
+from backend.services.live_trading.services.broker_client import BaseBroker, BrokerResult
 
 logger = logging.getLogger(__name__)
 

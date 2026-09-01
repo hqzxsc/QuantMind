@@ -13,8 +13,8 @@ from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade.models.real_account_ledger import RealAccountLedgerDailySnapshot
-from backend.services.trade.models.real_account_snapshot import RealAccountSnapshot
+from backend.services.trade_shared.models.real_account_ledger import RealAccountLedgerDailySnapshot
+from backend.services.trade_shared.models.real_account_snapshot import RealAccountSnapshot
 
 logger = logging.getLogger(__name__)
 _SH_TZ = ZoneInfo("Asia/Shanghai")

@@ -14,14 +14,14 @@ from unittest import mock
 
 import pytest
 
-from backend.services.trade.models.order import TradingMode
+from backend.services.trade_shared.models.order import TradingMode
 from backend.services.trade.services.overseas_brokers import (
     IBBroker,
     TigerBroker,
     _ib_contract_params,
     _tiger_contract,
 )
-from backend.services.trade.services.trading_engine import (
+from backend.services.live_trading.services.trading_engine import (
     TradingEngine,
     _infer_broker_market,
     _selected_broker_type,

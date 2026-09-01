@@ -9,13 +9,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.services.trade.deps import AuthContext, get_auth_context
-from backend.services.trade.redis_client import redis_client as trade_redis
-from backend.services.trade.services.tdx_l2_capture_task import (
+from backend.services.trade_shared.deps import AuthContext, get_auth_context
+from backend.services.trade_shared.redis_client import redis_client as trade_redis
+from backend.services.live_trading.services.tdx_l2_capture_task import (
     FACTOR_ICIR,
     l2_status as capture_status,
 )
-from backend.services.trade.services.tdx_l2_realtime import (
+from backend.services.live_trading.services.tdx_l2_realtime import (
     _SCORE_KEY,
     load_l2_config,
     realtime_status,
@@ -51,7 +51,7 @@ async def update_l2_config(
 ):
     """保存 L2 实时推理配置。开启执行前校验付费会员（与滚动买卖同规则）。"""
     from backend.services.trade.services.member_gate import is_paid_member
-    from backend.services.trade.services.tdx_rolling_trade_service import (
+    from backend.services.live_trading.services.tdx_rolling_trade_service import (
         DEFAULT_EXECUTE_MODE,
         load_rolling_config,
     )
@@ -136,10 +136,10 @@ async def get_tdx_orders(auth: AuthContext = Depends(get_auth_context)):
     order_quotes: {order_id: 决策时点行情 + 成交后并入的实际成交价}
     quotes: {symbol: 每只最近一次委托行情}
     """
-    from backend.services.trade.services.tdx_rolling_trade_service import (
+    from backend.services.live_trading.services.tdx_rolling_trade_service import (
         TdxRollingTradeService,
     )
-    from backend.services.trade.services.tdx_l2_realtime import (
+    from backend.services.live_trading.services.tdx_l2_realtime import (
         _FILLED_STATUSES,
         list_inflight,
         load_order_quotes,
@@ -179,7 +179,7 @@ async def cancel_tdx_order(
     撤单成功后复核一次当日委托, 返回该委托的最终状态
     （撤单可能失败或"撤销前已成交"）。
     """
-    from backend.services.trade.services.tdx_rolling_trade_service import (
+    from backend.services.live_trading.services.tdx_rolling_trade_service import (
         TdxRollingTradeService,
     )
 
@@ -208,6 +208,6 @@ async def cancel_tdx_order(
 @router.get("/tdx/inflight")
 async def get_tdx_inflight(auth: AuthContext = Depends(get_auth_context)):
     """读取未成交在途单（本系统重挂逻辑接管中的订单）。"""
-    from backend.services.trade.services.tdx_l2_realtime import list_inflight
+    from backend.services.live_trading.services.tdx_l2_realtime import list_inflight
 
     return {"success": True, "inflight": list_inflight()}

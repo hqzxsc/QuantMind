@@ -1,4 +1,1 @@
-"""
-Portfolio sub-package adapter for trade service.
-Re-exports portfolio models, schemas, and services locally.
-"""
+from backend.services.trade_shared.portfolio import *

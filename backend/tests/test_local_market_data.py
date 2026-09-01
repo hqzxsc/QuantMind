@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from backend.services.trade.simulation.services.local_market_data import (
+from backend.services.simulation.services.local_market_data import (
     DailyBar,
     LocalMarketData,
     _SCALE_CURRENT,

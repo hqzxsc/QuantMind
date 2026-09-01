@@ -9,7 +9,7 @@ from datetime import date
 
 import pandas as pd
 
-from backend.services.trade.simulation.services.local_market_data import (
+from backend.services.simulation.services.local_market_data import (
     compute_limits,
     limit_pct,
 )

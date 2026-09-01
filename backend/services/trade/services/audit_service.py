@@ -5,9 +5,9 @@ from typing import Any, Dict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade.portfolio.models import Portfolio, Position
-from backend.services.trade.redis_client import redis_client
-from backend.services.trade.routers.real_trading_utils import _fetch_latest_real_account_snapshot
+from backend.services.trade_shared.portfolio.models import Portfolio, Position
+from backend.services.trade_shared.redis_client import redis_client
+from backend.services.live_trading.routers.real_trading_utils import _fetch_latest_real_account_snapshot
 
 logger = logging.getLogger("quantmind.trade.audit")
 

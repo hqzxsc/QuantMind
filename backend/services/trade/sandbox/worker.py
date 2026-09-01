@@ -5,7 +5,7 @@ import time
 import traceback
 from multiprocessing import Queue
 
-from backend.services.trade.redis_client import RedisClient, get_redis
+from backend.services.trade_shared.redis_client import RedisClient, get_redis
 from backend.services.trade.sandbox.context import create_sandbox_context
 
 # 模拟策略运行频率（秒/Tick），这里为了简单演示，设为10秒一个Tick

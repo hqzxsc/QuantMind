@@ -46,21 +46,21 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 os.environ["PYTHONPATH"] = BASE_DIR
 
-from backend.services.trade.redis_client import redis_client  # noqa: E402
-from backend.services.trade.simulation.models.account import SimulationAccount  # noqa: E402
-from backend.services.trade.simulation.models.corporate_action import (  # noqa: E402
+from backend.services.trade_shared.redis_client import redis_client  # noqa: E402
+from backend.services.simulation.models.account import SimulationAccount  # noqa: E402
+from backend.services.simulation.models.corporate_action import (  # noqa: E402
     SimulationCorporateAction,
 )
-from backend.services.trade.simulation.models.position_lot import (  # noqa: E402
+from backend.services.simulation.models.position_lot import (  # noqa: E402
     SimulationPositionLot,
 )
-from backend.services.trade.simulation.services.corporate_action_importer import (  # noqa: E402
+from backend.services.simulation.services.corporate_action_importer import (  # noqa: E402
     load_standard_corp_action_csv,
 )
-from backend.services.trade.simulation.services.corporate_action_service import (  # noqa: E402
+from backend.services.simulation.services.corporate_action_service import (  # noqa: E402
     SimulationCorporateActionService,
 )
-from backend.services.trade.simulation.services.projection_service import (  # noqa: E402
+from backend.services.simulation.services.projection_service import (  # noqa: E402
     SimulationProjectionService,
 )
 from backend.shared.database_manager_v2 import (  # noqa: E402
@@ -279,7 +279,7 @@ async def _refresh_redis(args: argparse.Namespace, affected_accounts: set[str]) 
     print("[3/4] 刷新 Redis 账户缓存")
 
     if not redis_client.client:
-        from backend.services.trade.redis_client import get_redis
+        from backend.services.trade_shared.redis_client import get_redis
 
         get_redis()
         if not redis_client.client:

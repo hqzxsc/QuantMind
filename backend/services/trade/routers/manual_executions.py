@@ -5,8 +5,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from backend.services.trade.deps import AuthContext, get_auth_context
-from backend.services.trade.services.manual_execution_service import manual_execution_service
+from backend.services.trade_shared.deps import AuthContext, get_auth_context
+from backend.services.live_trading.services.manual_execution_service import manual_execution_service
 
 router = APIRouter(prefix="/manual-executions", tags=["Manual Executions"])
 

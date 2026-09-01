@@ -14,16 +14,16 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade.redis_client import redis_client
-from backend.services.trade.simulation.models.order import OrderSide, OrderType
-from backend.services.trade.simulation.schemas.order import SimOrderCreate
-from backend.services.trade.simulation.services.execution_engine import (
+from backend.services.trade_shared.redis_client import redis_client
+from backend.services.simulation.models.order import OrderSide, OrderType
+from backend.services.simulation.schemas.order import SimOrderCreate
+from backend.services.simulation.services.execution_engine import (
     ExecutionResult,
     SimulationExecutionEngine,
 )
-from backend.services.trade.simulation.services.order_service import SimOrderService
-from backend.services.trade.simulation.services.simulation_manager import SimulationAccountManager
-from backend.services.trade.trade_config import settings
+from backend.services.simulation.services.order_service import SimOrderService
+from backend.services.simulation.services.simulation_manager import SimulationAccountManager
+from backend.services.trade_shared.trade_config import settings
 from backend.shared.database_manager_v2 import get_db_manager
 
 logger = logging.getLogger(__name__)
@@ -312,7 +312,7 @@ class SandboxSignalConsumer:
             logger.info("[SandboxSignalConsumer] 订单创建: order_id=%s", order.order_id)
 
             # 提交订单
-            from backend.services.trade.simulation.models.order import OrderStatus
+            from backend.services.simulation.models.order import OrderStatus
             order.status = OrderStatus.SUBMITTED
             order.submitted_at = datetime.now()
             await db.commit()

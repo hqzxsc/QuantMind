@@ -11,19 +11,17 @@ except RuntimeError:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.services.live_trading.routers import real_trading
+from backend.services.simulation.routers import simulation, simulation_history, simulation_orders
 from backend.services.trade.routers import (
     internal_strategy,
     portfolios,
     positions,
-    real_trading,
-    simulation,
     simulation_batch,
-    simulation_history,
-    simulation_orders,
     trading_history,
     trading_orders,
 )
-from backend.services.trade.simulation.replay.router import router as replay_router
+from backend.services.simulation.replay.router import router as replay_router
 from backend.shared.config_manager import init_unified_config
 from backend.shared.cors import resolve_cors_origins
 from backend.shared.error_contract import install_error_contract_handlers
@@ -75,7 +73,7 @@ async def lifespan(app: FastAPI):
             get_db_manager()._master_engine,
             schema_keys=("trade.core", "trade.portfolio", "trade.simulation"),
         )
-        from backend.services.trade.services.manual_execution_persistence import manual_execution_persistence
+        from backend.services.live_trading.services.manual_execution_persistence import manual_execution_persistence
 
         await manual_execution_persistence.ensure_tables()
         app.state.db_connected = True
@@ -83,7 +81,7 @@ async def lifespan(app: FastAPI):
         app.state.startup_healthy = False
         logger.error("trade database init failed: %s", e, exc_info=True)
 
-    from backend.services.trade.redis_client import redis_client
+    from backend.services.trade_shared.redis_client import redis_client
 
     try:
         redis_client.connect()
@@ -101,7 +99,7 @@ async def lifespan(app: FastAPI):
         logger.warning("trade tdx runtime config apply failed: %s", e)
 
     try:
-        from backend.services.trade.utils.stock_lookup import warmup_stock_cache
+        from backend.services.trade_shared.utils.stock_lookup import warmup_stock_cache
 
         warmup_stock_cache()
     except Exception as e:
@@ -125,8 +123,8 @@ async def lifespan(app: FastAPI):
         from backend.services.trade.services.real_account_ledger_settlement_task import (
             run_real_account_ledger_settlement_task,
         )
-        from backend.services.trade.services.manual_execution_worker import run_manual_execution_worker
-        from backend.services.trade.services.tdx_account_sync_task import run_tdx_account_sync_task
+        from backend.services.live_trading.services.manual_execution_worker import run_manual_execution_worker
+        from backend.services.live_trading.services.tdx_account_sync_task import run_tdx_account_sync_task
 
         scanner_task = asyncio.create_task(run_order_timeout_scanner())
         margin_task = asyncio.create_task(run_margin_interest_scanner())
@@ -137,13 +135,13 @@ async def lifespan(app: FastAPI):
             run_tdx_account_sync_task(interval_seconds=30),
             name="tdx-account-sync",
         )
-        from backend.services.trade.services.tdx_quote_feed import run_tdx_quote_feed_task
+        from backend.services.live_trading.services.tdx_quote_feed import run_tdx_quote_feed_task
 
         tdx_quote_feed_task = asyncio.create_task(
             run_tdx_quote_feed_task(),
             name="tdx-quote-feed",
         )
-        from backend.services.trade.services.simulation_t1_unlock_task import (
+        from backend.services.simulation.services.simulation_t1_unlock_task import (
             run_simulation_t1_unlock_task,
         )
 
@@ -151,7 +149,7 @@ async def lifespan(app: FastAPI):
             run_simulation_t1_unlock_task(),
             name="simulation-t1-unlock",
         )
-        from backend.services.trade.services.simulation_corporate_action_task import (
+        from backend.services.simulation.services.simulation_corporate_action_task import (
             run_simulation_corporate_action_task,
         )
 
@@ -160,8 +158,8 @@ async def lifespan(app: FastAPI):
             name="simulation-corporate-action",
         )
         # simulation_fund_snapshot_task 已删除（自动重置导致手动任务后金额被重置为 0）
-        from backend.services.trade.services.tdx_l2_capture_task import run_tdx_l2_capture_task
-        from backend.services.trade.services.tdx_l2_realtime import run_tdx_l2_realtime_task
+        from backend.services.live_trading.services.tdx_l2_capture_task import run_tdx_l2_capture_task
+        from backend.services.live_trading.services.tdx_l2_realtime import run_tdx_l2_realtime_task
 
         tdx_l2_capture_task = asyncio.create_task(
             run_tdx_l2_capture_task(), name="tdx-l2-capture"
@@ -187,7 +185,7 @@ async def lifespan(app: FastAPI):
 
     # 恢复容器重启前的模拟盘沙箱运行状态（trade:active_strategy:* 标记）
     try:
-        from backend.services.trade.services.simulation_runtime_restorer import (
+        from backend.services.simulation.services.simulation_runtime_restorer import (
             SimulationRuntimeRestorer,
         )
 
@@ -213,7 +211,7 @@ async def lifespan(app: FastAPI):
     try:
         enabled = os.getenv("ENABLE_SIMULATION_SCHEDULER", "false").lower() in {"1", "true", "yes", "on"}
         if enabled:
-            from backend.services.trade.simulation.scheduler import simulation_scheduler
+            from backend.services.simulation.scheduler import simulation_scheduler
 
             await simulation_scheduler.start()
             app.state.simulation_scheduler = simulation_scheduler
@@ -225,7 +223,7 @@ async def lifespan(app: FastAPI):
     try:
         hosted_enabled = os.getenv("ENABLE_SIMULATION_HOSTED_SCHEDULER", "true").lower() in {"1", "true", "yes", "on"}
         if hosted_enabled:
-            from backend.services.trade.services.simulation_hosted_scheduler import (
+            from backend.services.simulation.services.simulation_hosted_scheduler import (
                 SimulationHostedScheduler,
             )
 

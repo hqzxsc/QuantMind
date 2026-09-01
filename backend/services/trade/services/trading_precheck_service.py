@@ -9,8 +9,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis as redis_lib
-from backend.services.trade.services.k8s_manager import k8s_manager
-from backend.services.trade.services.signal_readiness_service import (
+from backend.services.live_trading.services.k8s_manager import k8s_manager
+from backend.services.live_trading.services.signal_readiness_service import (
     signal_readiness_service,
 )
 from backend.shared.trade_redis_keys import (
@@ -266,7 +266,7 @@ def _parse_snapshot_at(snapshot: dict[str, Any]) -> float | None:
 async def _check_qmt_agent_online(
     db: AsyncSession, redis_client, tenant_id: str, user_id: str
 ) -> tuple[bool, str]:
-    from backend.services.trade.routers.real_trading_utils import (
+    from backend.services.live_trading.routers.real_trading_utils import (
         _fetch_latest_real_account_snapshot,
     )
 
@@ -494,7 +494,7 @@ async def run_trading_readiness_precheck(
             )
 
         try:
-            from backend.services.trade.routers.real_trading_utils import check_stream_series_freshness
+            from backend.services.live_trading.routers.real_trading_utils import check_stream_series_freshness
             res = check_stream_series_freshness(
                 redis_client=redis_client,
                 allow_quantdb_fallback=(normalized_mode == "SIMULATION"),
@@ -575,7 +575,7 @@ async def run_trading_readiness_precheck(
         )
     )
 
-    from backend.services.trade.routers.real_trading_utils import check_stream_series_freshness
+    from backend.services.live_trading.routers.real_trading_utils import check_stream_series_freshness
     # REAL 模式同样回退 QuantDB 日线兜底：TDX 通道无实时行情流时仍可交易
     res = check_stream_series_freshness(
         redis_client=redis_client, allow_quantdb_fallback=True, market=market
@@ -595,7 +595,7 @@ async def run_trading_readiness_precheck(
         )
         if not qmt_ok:
             # QMT Agent 未就绪时回退通达信桥（用户使用 TDX 通道）
-            from backend.services.trade.routers.real_trading_utils import (
+            from backend.services.live_trading.routers.real_trading_utils import (
                 check_tdx_bridge_online,
             )
 

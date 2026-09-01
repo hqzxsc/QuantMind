@@ -8,7 +8,7 @@ from backend.shared.trade_account_cache import (
     write_trade_agent_heartbeat_cache,
 )
 from backend.shared.trade_redis_keys import build_trade_account_key, build_trade_agent_heartbeat_key
-from backend.services.trade.models.qmt_agent_session import QMTAgentSession
+from backend.services.trade_shared.models.qmt_agent_session import QMTAgentSession
 
 router = APIRouter(tags=["Internal Strategy Gateway"])
 logger = logging.getLogger(__name__)

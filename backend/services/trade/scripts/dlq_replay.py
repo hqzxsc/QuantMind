@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.services.trade.redis_client import get_redis
+from backend.services.trade_shared.redis_client import get_redis
 
 
 def _load_event(fields: Dict[str, Any]) -> Dict[str, Any]:

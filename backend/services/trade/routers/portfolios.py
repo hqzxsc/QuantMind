@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade.deps import AuthContext, get_auth_context, get_db
-from backend.services.trade.portfolio.schemas import (
+from backend.services.trade_shared.deps import AuthContext, get_auth_context, get_db
+from backend.services.trade_shared.portfolio.schemas import (
     BindStrategyRequest,
     MessageResponse,
     PortfolioCreate,
@@ -20,8 +20,8 @@ from backend.services.trade.portfolio.schemas import (
     RealTradingResponse,
     SnapshotResponse,
 )
-from backend.services.trade.portfolio.services import PortfolioService
-from backend.services.trade.portfolio.utils.limiter import limiter
+from backend.services.trade_shared.portfolio.services import PortfolioService
+from backend.services.trade_shared.portfolio.utils.limiter import limiter
 
 
 async def get_current_user_id(auth: AuthContext = Depends(get_auth_context)) -> str:
@@ -98,7 +98,7 @@ async def list_portfolios(
     try:
         from sqlalchemy import and_, func, select
 
-        from backend.services.trade.portfolio.models import Portfolio, Position
+        from backend.services.trade_shared.portfolio.models import Portfolio, Position
 
         # 使用外连接和聚合一次性查询组合及其持仓数
         count_subquery = (
@@ -162,7 +162,7 @@ async def get_all_portfolios_distribution(
     try:
         from sqlalchemy import and_, select
 
-        from backend.services.trade.portfolio.models import Portfolio, Position
+        from backend.services.trade_shared.portfolio.models import Portfolio, Position
 
         # 查询该用户所有持仓
         stmt = (
@@ -246,7 +246,7 @@ async def get_all_portfolios_performance(
     try:
         from sqlalchemy import select
 
-        from backend.services.trade.portfolio.models import Portfolio, PortfolioSnapshot
+        from backend.services.trade_shared.portfolio.models import Portfolio, PortfolioSnapshot
 
         # 查询该用户下所有组合的快照
         stmt = (
@@ -467,7 +467,7 @@ async def list_portfolio_snapshots(
     try:
         from sqlalchemy import select
 
-        from backend.services.trade.portfolio.models import PortfolioSnapshot
+        from backend.services.trade_shared.portfolio.models import PortfolioSnapshot
 
         portfolio = await PortfolioService.get_portfolio(db, portfolio_id, user_id, tenant_id=tenant_id)
         if not portfolio:
@@ -641,8 +641,8 @@ async def get_performance_metrics(
     """获取投资组合风险指标（夏普比率、波动率、最大回撤等）"""
     from sqlalchemy import select
 
-    from backend.services.trade.portfolio.models import PortfolioSnapshot
-    from backend.services.trade.portfolio.utils.risk_metrics import compute_risk_metrics
+    from backend.services.trade_shared.portfolio.models import PortfolioSnapshot
+    from backend.services.trade_shared.portfolio.utils.risk_metrics import compute_risk_metrics
 
     portfolio = await PortfolioService.get_portfolio(db, portfolio_id, user_id, tenant_id=tenant_id)
     if not portfolio:
@@ -691,7 +691,7 @@ async def get_attribution(
     """获取投资组合绩效归因分析"""
     import dataclasses
 
-    from backend.services.trade.portfolio.services.attribution_service import (
+    from backend.services.trade_shared.portfolio.services.attribution_service import (
         AttributionService,
     )
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.services.trade.simulation.services.market_rules import (
+from backend.services.simulation.services.market_rules import (
     Market,
     infer_market,
     infer_market_from_symbols,
@@ -50,7 +50,7 @@ def test_trading_rules_per_market():
 
 def test_local_market_data_multi_market():
     """按市场读取行情：HK/US 无涨跌停，CN 保留涨跌停计算。"""
-    from backend.services.trade.simulation.services.local_market_data import (
+    from backend.services.simulation.services.local_market_data import (
         get_local_market_data,
     )
 

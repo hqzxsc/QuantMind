@@ -12,9 +12,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from backend.services.trade.deps import AuthContext, get_auth_context
+from backend.services.trade_shared.deps import AuthContext, get_auth_context
 from backend.services.trade.services.member_gate import is_paid_member
-from backend.services.trade.services.tdx_quote_feed import (
+from backend.services.live_trading.services.tdx_quote_feed import (
     feed_status,
     is_trading_time,
     load_sltp_config,

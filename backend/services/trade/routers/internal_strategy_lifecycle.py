@@ -6,11 +6,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 
-from backend.services.trade.deps import get_db, get_redis
-from backend.services.trade.portfolio.models import Portfolio, Position
-from backend.services.trade.redis_client import RedisClient
-from backend.services.trade.services.internal_strategy_dispatcher import dispatch_internal_strategy_order
-from backend.services.trade.services.manual_execution_service import manual_execution_service
+from backend.services.trade_shared.deps import get_db, get_redis
+from backend.services.trade_shared.portfolio.models import Portfolio, Position
+from backend.services.trade_shared.redis_client import RedisClient
+from backend.services.live_trading.services.internal_strategy_dispatcher import dispatch_internal_strategy_order
+from backend.services.live_trading.services.manual_execution_service import manual_execution_service
 from .internal_strategy_utils import verify_internal_call
 
 router = APIRouter(tags=["Internal Strategy Gateway"])

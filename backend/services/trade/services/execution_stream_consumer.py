@@ -12,9 +12,9 @@ from uuid import UUID
 import redis
 from sqlalchemy import and_, select
 
-from backend.services.trade.models.enums import OrderStatus
-from backend.services.trade.models.order import Order
-from backend.services.trade.models.trade import Trade
+from backend.services.trade_shared.models.enums import OrderStatus
+from backend.services.trade_shared.models.order import Order
+from backend.services.trade_shared.models.trade import Trade
 from backend.shared.database_manager_v2 import get_session
 from backend.shared.notification_publisher import publish_notification_async
 
@@ -509,8 +509,8 @@ class ExecutionStreamConsumer:
                     # 尝试异步触发下一只股票买入 (Fire and forget from this context)
                     async def _rotate_task():
                         async with get_session() as rotate_session:
-                            from backend.services.trade.redis_client import get_redis
-                            from backend.services.trade.services.trading_engine import TradingEngine
+                            from backend.services.trade_shared.redis_client import get_redis
+                            from backend.services.live_trading.services.trading_engine import TradingEngine
 
                             redis_client = get_redis()
                             engine = TradingEngine(rotate_session, redis_client)

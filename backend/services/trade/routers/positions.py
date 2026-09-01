@@ -9,20 +9,20 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade.portfolio.middleware.auth import (
+from backend.services.trade_shared.portfolio.middleware.auth import (
     get_current_tenant_id,
     get_current_user_id,
 )
-from backend.services.trade.portfolio.schemas import (
+from backend.services.trade_shared.portfolio.schemas import (
     PositionAdjust,
     PositionCreate,
     PositionHistoryResponse,
     PositionResponse,
     TradeSync,
 )
-from backend.services.trade.portfolio.services import PortfolioService, PositionService
-from backend.services.trade.portfolio.utils import get_db
-from backend.services.trade.portfolio.utils.limiter import limiter
+from backend.services.trade_shared.portfolio.services import PortfolioService, PositionService
+from backend.services.trade_shared.portfolio.utils import get_db
+from backend.services.trade_shared.portfolio.utils.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Positions"])

@@ -13,8 +13,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.services.trade.deps import AuthContext, get_auth_context, get_redis
-from backend.services.trade.redis_client import RedisClient
+from backend.services.trade_shared.deps import AuthContext, get_auth_context, get_redis
+from backend.services.trade_shared.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -74,7 +74,7 @@ def _write_config(redis: RedisClient, broker: str, values: dict[str, str]) -> No
 
 def get_broker_setting(broker: str, field: str, default: str = "") -> str:
     """供 overseas_brokers 运行时读取（Redis 优先，回退环境变量由调用方处理）。"""
-    from backend.services.trade.redis_client import RedisClient
+    from backend.services.trade_shared.redis_client import RedisClient
 
     try:
         rc = RedisClient()

@@ -2,8 +2,8 @@ import logging
 
 import httpx
 
-from backend.services.trade.models.trade import Trade
-from backend.services.trade.trade_config import settings
+from backend.services.trade_shared.models.trade import Trade
+from backend.services.trade_shared.trade_config import settings
 from backend.shared.auth import get_internal_call_secret
 
 logger = logging.getLogger(__name__)

@@ -12,8 +12,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.services.trade.deps import AuthContext, get_auth_context
-from backend.services.trade.trade_config import settings
+from backend.services.trade_shared.deps import AuthContext, get_auth_context
+from backend.services.trade_shared.trade_config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -67,7 +67,7 @@ RUNTIME_CONFIG_KEY = "trade:tdx_config:runtime"
 def load_runtime_config() -> dict:
     """读取运行时桥配置（Redis 持久化，跨子进程 respawn 生效）。"""
     try:
-        from backend.services.trade.redis_client import get_redis
+        from backend.services.trade_shared.redis_client import get_redis
 
         saved = get_redis().get(RUNTIME_CONFIG_KEY)
         return saved if isinstance(saved, dict) else {}
@@ -92,7 +92,7 @@ def apply_runtime_config() -> None:
     if bridge_token:
         settings.TDX_BRIDGE_TOKEN = bridge_token
         os.environ["TDX_BRIDGE_TOKEN"] = bridge_token
-    from backend.services.trade.services.tdx_push_service import tdx_pusher
+    from backend.services.live_trading.services.tdx_push_service import tdx_pusher
 
     tdx_pusher.bridge_url = str(getattr(settings, "TDX_BRIDGE_URL", "") or "").strip()
     tdx_pusher.bridge_token = str(getattr(settings, "TDX_BRIDGE_TOKEN", "") or "").strip()
@@ -146,13 +146,13 @@ async def update_tdx_config(
         settings.TDX_BRIDGE_TOKEN = str(data.bridge_token).strip()
         os.environ["TDX_BRIDGE_TOKEN"] = str(data.bridge_token).strip()
     if data.bridge_url is not None or data.bridge_token is not None:
-        from backend.services.trade.services.tdx_push_service import tdx_pusher
+        from backend.services.live_trading.services.tdx_push_service import tdx_pusher
 
         tdx_pusher.bridge_url = str(getattr(settings, "TDX_BRIDGE_URL", "")).strip()
         tdx_pusher.bridge_token = str(getattr(settings, "TDX_BRIDGE_TOKEN", "")).strip()
         # 持久化到 Redis，跨子进程 respawn 生效
         try:
-            from backend.services.trade.redis_client import get_redis
+            from backend.services.trade_shared.redis_client import get_redis
 
             get_redis().set(
                 RUNTIME_CONFIG_KEY,
@@ -174,7 +174,7 @@ async def get_tdx_overview(auth: AuthContext = Depends(get_auth_context)):
     返回: 桥基本信息(stats) + 账户资产 + 持仓 + 当日委托 + 缓存/安全状态。
     桥不可达时返回 available=false 与错误信息，不阻断前端渲染。
     """
-    from backend.services.trade.services.tdx_push_service import tdx_pusher
+    from backend.services.live_trading.services.tdx_push_service import tdx_pusher
 
     bridge_url = str(getattr(settings, "TDX_BRIDGE_URL", "") or "").strip()
     bridge_token = str(getattr(settings, "TDX_BRIDGE_TOKEN", "") or "").strip()
@@ -274,7 +274,7 @@ async def push_signals_to_tdx(
 
     手动重推入口，与推理完成后的自动推送共用 TdxSignalPushService。
     """
-    from backend.services.trade.services.tdx_signal_push_service import (
+    from backend.services.live_trading.services.tdx_signal_push_service import (
         tdx_signal_pusher,
     )
 
@@ -303,7 +303,7 @@ async def push_rolling_signals_to_tdx(
     拉取通达信持仓对比推理分数（可指定 trade_date 推历史分数），推送买卖预警
     （半自动，双击闪电下单确认）。
     """
-    from backend.services.trade.services.tdx_rolling_trade_service import (
+    from backend.services.live_trading.services.tdx_rolling_trade_service import (
         tdx_rolling_trader,
     )
 
@@ -329,7 +329,7 @@ async def push_rolling_signals_to_tdx(
 @router.get("/tdx/rolling-config")
 async def get_rolling_config(auth: AuthContext = Depends(get_auth_context)):
     """读取滚动买卖配置（分数阈值 + 每只固定金额 + 执行模式）。"""
-    from backend.services.trade.services.tdx_rolling_trade_service import (
+    from backend.services.live_trading.services.tdx_rolling_trade_service import (
         DEFAULT_EXECUTE_MODE,
         load_rolling_config,
     )
@@ -356,7 +356,7 @@ async def update_rolling_config(
     直接下单（tdx 通达信实盘 / paper 模拟盘免确认）为 QuantDB 付费会员专属。
     """
     from backend.services.trade.services.member_gate import is_paid_member
-    from backend.services.trade.services.tdx_rolling_trade_service import (
+    from backend.services.live_trading.services.tdx_rolling_trade_service import (
         DEFAULT_EXECUTE_MODE,
         save_rolling_config,
     )

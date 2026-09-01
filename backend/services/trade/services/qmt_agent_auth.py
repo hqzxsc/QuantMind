@@ -15,7 +15,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.api.user_app.models.api_key import ApiKey
-from backend.services.trade.models.qmt_agent_binding import QMTAgentBinding
+from backend.services.trade_shared.models.qmt_agent_binding import QMTAgentBinding
 from backend.shared.qmt_bridge_auth import (
     BridgeSessionContext,
     SESSION_REFRESH_THRESHOLD_SECONDS,

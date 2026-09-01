@@ -3,8 +3,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from backend.services.trade.deps import get_db
-from backend.services.trade.services.simulation_settler import settler
+from backend.services.trade_shared.deps import get_db
+from backend.services.simulation.services.simulation_settler import settler
 
 router = APIRouter(prefix="/api/v1/simulation/batch", tags=["Simulation Batch Operations"])
 

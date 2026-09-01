@@ -18,8 +18,8 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import and_, or_, select
 
-from backend.services.trade.models.enums import OrderStatus
-from backend.services.trade.models.order import Order, TradingMode
+from backend.services.trade_shared.models.enums import OrderStatus
+from backend.services.trade_shared.models.order import Order, TradingMode
 from backend.shared.database_manager_v2 import get_session
 from backend.shared.notification_publisher import publish_notification_async
 

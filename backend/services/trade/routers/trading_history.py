@@ -9,11 +9,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade.deps import AuthContext, get_auth_context, get_db, get_redis
-from backend.services.trade.models.order import TradingMode
-from backend.services.trade.redis_client import RedisClient
-from backend.services.trade.schemas.trade import TradeListQuery, TradeResponse
-from backend.services.trade.services.trade_service import TradeService
+from backend.services.trade_shared.deps import AuthContext, get_auth_context, get_db, get_redis
+from backend.services.trade_shared.models.order import TradingMode
+from backend.services.trade_shared.redis_client import RedisClient
+from backend.services.trade_shared.schemas.trade import TradeListQuery, TradeResponse
+from backend.services.trade_shared.services.trade_service import TradeService
 
 logger = logging.getLogger(__name__)
 

@@ -176,7 +176,7 @@ class SimTradeService:
         }
         if self.redis and getattr(self.redis, "client", None):
             try:
-                self.redis.set(cache_key, result, ttl=60)
+                self.redis.set(cache_key, result, ttl=300)
             except Exception:
                 pass
         return result
@@ -186,6 +186,9 @@ class SimTradeService:
 
         口径：买入费用计入成本基底，卖出盈亏 = 卖出净额(扣费) - 平均成本×数量，
         每笔卖出计一次平仓；手续费全程计入盈亏。
+
+        为避免超长历史全量回放拖慢统计接口，限制回放最近 N 笔成交
+        （默认 5000；剩余开盘仓位不纳入已实现盈亏统计）。
         """
         stmt = (
             select(
@@ -196,9 +199,11 @@ class SimTradeService:
                 SimTrade.total_fee,
             )
             .where(and_(*conditions))
-            .order_by(SimTrade.executed_at.asc(), SimTrade.id.asc())
+            .order_by(SimTrade.executed_at.desc(), SimTrade.id.desc())
+            .limit(5000)
         )
         rows = (await self.db.execute(stmt)).all()
+        rows = list(reversed(rows))
 
         holdings: dict[str, dict[str, float]] = {}
         win_trades = 0

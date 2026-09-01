@@ -65,20 +65,16 @@ class TradeService:
                 cached_data = await self.redis.get(cache_key)
                 if cached_data:
                     logger.info(f"Cache hit for trade list: {cache_key}")
-                    # cached_data is already json string -> need to deserialize to Trade objects? Return as is for now
-                    # For compatibility, if cached is list of dicts, convert back via Trade(**d) would lose, so just return raw and let caller handle
-                    # To keep types, we store as json and return deserialized dicts via TradeService's caller expects Trade objects;
-                    # but we can return the cached dicts as Trade-like by reconstructing
-                    # Simple: return cached as is if it's already list of Trade dicts, else fallback to DB
+                    # RedisClient.get 已按 json 反序列化；若为 dict 列表直接返回，避免命中缓存仍查库
+                    if isinstance(cached_data, list):
+                        return cached_data  # type: ignore[return-value]
                     if isinstance(cached_data, str):
                         try:
-                            cached_data = json.loads(cached_data)
+                            data = json.loads(cached_data)
                         except Exception:
-                            pass
-                    # If cached is list of dicts, we need to return Trade objects; for now, bypass and hit DB if type mismatch
-                    # To avoid type issues, only return if it's already Trade objects (unlikely), otherwise continue to DB
-                    # So we keep cache for statistics but not for object return; just log hit
-                    pass
+                            data = None
+                        if isinstance(data, list):
+                            return data  # type: ignore[return-value]
             except Exception:
                 pass
 

@@ -156,6 +156,7 @@ tools/bridge-windows/execution_reports/
 
 # 运行时代码版本（deploy/update.sh 每次更新后生成，避免污染工作区）
 backend/shared/version.txt
+backend/shared/version.json
 electron/public/data/stocks.json
 electron/public/data/stocks/
 electron/public/fonts/AlibabaPuHuiTi-Bold.ttf

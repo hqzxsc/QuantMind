@@ -26,6 +26,8 @@ interface CapitalFlowHorizontalBarChartProps {
   onItemClick?: (item: FlowItem) => void;
   /** 排序口径：absolute=按净流入(亿)，relative=按涨跌幅(%) */
   sortMode?: 'absolute' | 'relative';
+  /** true 时跳过快照，强制实时计算最新数据 */
+  realtime?: boolean;
 }
 
 export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarChartProps> = ({
@@ -35,6 +37,7 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
   height = 540,
   onItemClick,
   sortMode = 'absolute',
+  realtime = false,
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
@@ -44,14 +47,14 @@ export const CapitalFlowHorizontalBarChart: React.FC<CapitalFlowHorizontalBarCha
   // 1. 数据请求
   useEffect(() => {
     fetchData();
-  }, [period, dimension, categoryMode]);
+  }, [period, dimension, categoryMode, realtime]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('access_token') || '';
       const res = await fetch(
-        `${MARKET_ANALYSIS_API}/money-flow/period?period=${period}&dimension=${dimension}&category=${categoryMode}&limit=80`,
+        `${MARKET_ANALYSIS_API}/money-flow/period?period=${period}&dimension=${dimension}&category=${categoryMode}&limit=80${realtime ? '&realtime=1' : ''}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.ok) {

@@ -61,6 +61,25 @@ sync_code() {
     git -C "$PROJECT_DIR" describe --tags --always \
         > "$PROJECT_DIR/backend/shared/version.txt" 2>/dev/null \
         || rm -f "$PROJECT_DIR/backend/shared/version.txt"
+
+    # 同时写入 version.json：含完整 HEAD SHA 与部署分支，供后端运行时查上游更新
+    # （compare API 需完整 SHA；describe 只在恰为 tag 时可能缺短 SHA，故这里必须取 rev-parse）。
+    # 同样在 .gitignore 内、随 build_core 的 COPY backend 一并拷入镜像。
+    local head_sha head_describe
+    head_sha="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || true)"
+    head_describe="$(git -C "$PROJECT_DIR" describe --tags --always 2>/dev/null || echo dev)"
+    if [[ -n "$head_sha" ]]; then
+        cat > "$PROJECT_DIR/backend/shared/version.json" <<EOF
+{
+  "version": "$head_describe",
+  "commit": "$head_sha",
+  "branch": "$REF",
+  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+    else
+        rm -f "$PROJECT_DIR/backend/shared/version.json"
+    fi
 }
 
 build_core() {

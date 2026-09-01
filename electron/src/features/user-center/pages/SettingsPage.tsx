@@ -6,21 +6,35 @@ import React, { useEffect, useState } from 'react';
 import { useUserConfig, useNotificationSettings, usePrivacySettings } from '../hooks';
 import { Form, Switch, message, Spin, Alert } from 'antd';
 import { Bell, ShieldCheck, Mail, Smartphone, Zap, Globe, MessageCircle, BarChart3, Users, RefreshCw, Info } from 'lucide-react';
-import { systemService } from '../../../services/systemService';
+import { systemService, type SystemVersion } from '../../../services/systemService';
 
 interface SettingsPageProps {
   userId: string;
 }
 
 const SettingsPage: React.FC<SettingsPageProps> = ({ userId }) => {
-  const [versionInfo, setVersionInfo] = useState<{ version: string; edition: string } | null>(null);
+  const [versionInfo, setVersionInfo] = useState<SystemVersion | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
-  useEffect(() => {
+  const loadVersion = (force = false) => {
     systemService
-      .getVersion()
+      .getVersion(force)
       .then((v) => setVersionInfo(v))
       .catch(() => setVersionInfo(null));
+  };
+
+  useEffect(() => {
+    loadVersion();
   }, []);
+
+  // 主动刷新「落后上游」检查（绕过缓存实时请求上游平台）
+  const refreshUpdateCheck = () => {
+    setCheckingUpdate(true);
+    systemService
+      .getVersion(true)
+      .then((v) => setVersionInfo(v))
+      .finally(() => setCheckingUpdate(false));
+  };
   const { config, isLoading, error } = useUserConfig(userId);
   const {
     settings: notificationSettings,
@@ -86,6 +100,29 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ userId }) => {
             <span className="text-slate-400 font-medium">版本类型</span>
             <span className="font-bold text-slate-700">{versionInfo ? versionInfo.edition.toUpperCase() : '—'}</span>
           </div>
+          {versionInfo?.update ? (
+            versionInfo.update.behind > 0 ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 font-medium">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                {`落后上游 ${versionInfo.update.behind}${versionInfo.update.behind_capped ? '+' : ''} 个提交`}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 font-medium">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                已是最新
+              </span>
+            )
+          ) : null}
+          <button
+            type="button"
+            onClick={refreshUpdateCheck}
+            disabled={checkingUpdate}
+            className="ml-auto inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50"
+            title="重新检查上游更新"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${checkingUpdate ? 'animate-spin' : ''}`} />
+            {checkingUpdate ? '检查中…' : '检查更新'}
+          </button>
         </div>
       </div>
 

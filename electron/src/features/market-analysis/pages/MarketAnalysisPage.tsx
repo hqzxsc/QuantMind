@@ -55,6 +55,8 @@ export const MarketAnalysisPage: React.FC = () => {
   // 🎯 快照历史日期（Phase 3 后端 /snapshot/dates）
   const [snapDate, setSnapDate] = useState<string | undefined>();
   const [snapDates, setSnapDates] = useState<string[]>([]);
+  // 🎯 手动分析完成后切换为实时模式（GET 接口跳过快照，展示最新交易日数据）
+  const [realtime, setRealtime] = useState(false);
 
   useEffect(() => {
     fetchMarketData();
@@ -65,11 +67,12 @@ export const MarketAnalysisPage: React.FC = () => {
     if (activeTab !== 'flow-bar' || chartViewMode !== 'treemap') return;
     const token = localStorage.getItem('access_token') || '';
     const dq = snapDate ? `&date=${snapDate}` : '';
-    fetch(`${MARKET_ANALYSIS_API}/heatmap?category=${categoryMode}${dq}`, { headers: { Authorization: `Bearer ${token}` } })
+    const rq = realtime ? '&realtime=1' : '';
+    fetch(`${MARKET_ANALYSIS_API}/heatmap?category=${categoryMode}${dq}${rq}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
       .then((d) => setTreemapData(d?.items && d.items.length > 0 ? d.items : []))
       .catch(() => setTreemapData([]));
-  }, [activeTab, chartViewMode, categoryMode, snapDate]);
+  }, [activeTab, chartViewMode, categoryMode, snapDate, realtime]);
 
   // 加载可用快照日期 + 快照模式；切换日期重取
   useEffect(() => {
@@ -93,19 +96,21 @@ export const MarketAnalysisPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapDate]);
 
-  const fetchMarketData = async () => {
+  const fetchMarketData = async (forceRealtime?: boolean) => {
     setLoading(true);
     const token = localStorage.getItem('access_token') || '';
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const dq = snapDate ? `&date=${snapDate}` : '';
+    const useRealtime = forceRealtime !== undefined ? forceRealtime : realtime;
+    const rq = useRealtime ? '&realtime=1' : '';
 
     try {
       const [resIdx, resStock, resBreadth, resHeatmap, resSankey] = await Promise.all([
-        fetch(`${MARKET_ANALYSIS_API}/indices/overview${snapDate ? `?date=${snapDate}` : ''}`, { headers }),
-        fetch(`${MARKET_ANALYSIS_API}/money-flow/stocks?limit=20${dq}`, { headers }),
-        fetch(`${MARKET_ANALYSIS_API}/breadth${snapDate ? `?date=${snapDate}` : ''}`, { headers }),
-        fetch(`${MARKET_ANALYSIS_API}/heatmap?category=shenwan${dq}`, { headers }),
-        fetch(`${MARKET_ANALYSIS_API}/money-flow/sankey${snapDate ? `?date=${snapDate}` : ''}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/indices/overview${snapDate ? `?date=${snapDate}` : ''}${rq}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/money-flow/stocks?limit=20${dq}${rq}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/breadth${snapDate ? `?date=${snapDate}` : ''}${rq}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/heatmap?category=shenwan${dq}${rq}`, { headers }),
+        fetch(`${MARKET_ANALYSIS_API}/money-flow/sankey${snapDate ? `?date=${snapDate}` : ''}${rq}`, { headers }),
       ]);
 
       if (resIdx.ok) {
@@ -153,14 +158,14 @@ export const MarketAnalysisPage: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     const token = localStorage.getItem('access_token') || '';
-    fetch(`${MARKET_ANALYSIS_API}/money-flow/stocks/full`, {
+    fetch(`${MARKET_ANALYSIS_API}/money-flow/stocks/full${realtime ? '?realtime=1' : ''}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((d) => { if (!cancelled && Array.isArray(d)) setAllStocks(d); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [realtime]);
 
   // 本地过滤搜索结果（名称/代码子串）
   const searchResults = useMemo(() => {
@@ -228,7 +233,7 @@ export const MarketAnalysisPage: React.FC = () => {
 
       if (!res.ok || !res.body) {
         message.info('已触发市场分析');
-        await fetchMarketData();
+        await fetchMarketData(true);
         return;
       }
 
@@ -301,6 +306,10 @@ export const MarketAnalysisPage: React.FC = () => {
         }
       }
       message.success('市场分析完成，已同步 QuantDB 最新数据');
+      // 手动分析后强制实时重拉所有面板（跳过快照），确保各 tab 展示最新交易日数据
+      setSnapDate(undefined);
+      setRealtime(true);
+      await fetchMarketData(true);
     } catch (e) {
       console.error('市场分析触发失败:', e);
       message.error('触发市场分析失败，请检查后端服务状态');
@@ -607,6 +616,7 @@ export const MarketAnalysisPage: React.FC = () => {
                   height={940}
                   onItemClick={(item) => setSelectedFlowItem(item)}
                   sortMode={sortMode}
+                  realtime={realtime}
                 />
               ) : (
                 <ShenwanHeatmapChart data={treemapData} height={780} />

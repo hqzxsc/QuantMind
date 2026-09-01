@@ -193,19 +193,22 @@ async def get_metrics_history(
 @router.get("/breadth", response_model=MarketBreadthResponse)
 async def get_market_breadth(
     date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    realtime: bool = Query(default=False, description="true 时跳过快照，强制实时计算最新数据"),
     current_user: dict = Depends(get_current_user),
 ) -> MarketBreadthResponse:
     """获取大盘情绪温度计与赚钱效应指标（优先快照，缺失回退实时聚合；显式历史日期无快照则空）。"""
     _ = current_user
-    data = _snap.breadth(date)
-    if not data:
-        if not date:
-            data = quantdb_feed.get_market_breadth()
-        else:
-            data = {"trade_date": date, "advance_count": 0, "decline_count": 0, "flat_count": 0,
-                    "limit_up_count": 0, "limit_down_count": 0, "total_turnover_yi": 0.0,
-                    "exploded_ratio": 0.0, "profit_effect_score": 0.0, "profit_effect": 0.0,
-                    "limit_up_broken_ratio": 0.0}
+    if not realtime:
+        data = _snap.breadth(date)
+        if data:
+            return MarketBreadthResponse(**data)
+    if not date:
+        data = quantdb_feed.get_market_breadth()
+    else:
+        data = {"trade_date": date, "advance_count": 0, "decline_count": 0, "flat_count": 0,
+                "limit_up_count": 0, "limit_down_count": 0, "total_turnover_yi": 0.0,
+                "exploded_ratio": 0.0, "profit_effect_score": 0.0, "profit_effect": 0.0,
+                "limit_up_broken_ratio": 0.0}
     return MarketBreadthResponse(**data)
 
 
@@ -214,13 +217,15 @@ async def get_heatmap(
     trade_date: date | None = Query(default=None, description="PPT 交易日（回退用）"),
     category: str = Query(default="shenwan", description="分类: shenwan 或 concept"),
     date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    realtime: bool = Query(default=False, description="true 时跳过快照，强制实时计算最新数据"),
     current_user: dict = Depends(get_current_user),
 ):
     """获取申万一级行业或热门概念热力矩形图（优先快照/SQLite）。"""
     _ = current_user
-    snap = _snap.heatmap(category=category, date=date)
-    if snap and snap["items"]:
-        return snap
+    if not realtime:
+        snap = _snap.heatmap(category=category, date=date)
+        if snap and snap["items"]:
+            return snap
     if date:
         # 显式历史日期无快照 → 返回空，不回落实时/今日，避免日期错配
         return {"trade_date": date, "category": category, "items": []}
@@ -294,13 +299,15 @@ async def get_snapshot_dates(
 @router.get("/indices/overview")
 async def get_indices_overview(
     date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    realtime: bool = Query(default=False, description="true 时跳过快照，强制实时计算最新数据"),
     current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
     """获取大盘核心指数快照（优先读快照，缺失回退实时聚合；显式历史日期无快照则空）。"""
     _ = current_user
-    data = _snap.indices(date)
-    if data:
-        return data
+    if not realtime:
+        data = _snap.indices(date)
+        if data:
+            return data
     if date:
         return []
     data = quantdb_feed.get_indices_overview()
@@ -313,13 +320,15 @@ async def get_indices_overview(
 async def get_stock_money_flow(
     limit: int = Query(default=20, ge=1, le=100),
     date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    realtime: bool = Query(default=False, description="true 时跳过快照，强制实时计算最新数据"),
     current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
     """个股资金流向排行榜（优先快照，缺失回退实时 L2 资金流）"""
     _ = current_user
-    data = _snap.stock_flow(limit=limit, date=date)
-    if data:
-        return data
+    if not realtime:
+        data = _snap.stock_flow(limit=limit, date=date)
+        if data:
+            return data
     if date:
         return []
     data = quantdb_feed.get_stock_money_flow(limit=limit)
@@ -331,13 +340,15 @@ async def get_stock_money_flow(
 @router.get("/money-flow/stocks/full")
 async def get_stock_money_flow_full(
     date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    realtime: bool = Query(default=False, description="true 时跳过快照，强制实时计算最新数据"),
     current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
     """全市场个股资金流（供前端本地搜索）；优先快照，无快照时回退实时单日全市场。"""
     _ = current_user
-    data = _snap.stock_flow_full(date)
-    if data:
-        return data
+    if not realtime:
+        data = _snap.stock_flow_full(date)
+        if data:
+            return data
     if date:
         # 显式历史日期无快照 → 返回空，不回落实时，避免日期错配
         return []
@@ -347,13 +358,15 @@ async def get_stock_money_flow_full(
 @router.get("/money-flow/sankey")
 async def get_money_flow_sankey(
     date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    realtime: bool = Query(default=False, description="true 时跳过快照，强制实时计算最新数据"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """获取主力资金流向桑基图数据 (Nodes & Links)（优先快照）"""
     _ = current_user
-    data = _snap.sankey(date)
-    if data:
-        return data
+    if not realtime:
+        data = _snap.sankey(date)
+        if data:
+            return data
     if date:
         return {"nodes": [], "links": []}
     data = quantdb_feed.get_money_flow_sankey()
@@ -440,13 +453,16 @@ async def get_money_flow_by_period(
     category: str = Query("shenwan", description="分类: shenwan 或 concept"),
     limit: int = Query(31, ge=1, le=100),
     date: str | None = Query(default=None, description="快照日期 YYYY-MM-DD，默认最新"),
+    realtime: bool = Query(default=False, description="true 时跳过快照，强制实时计算最新数据"),
     current_user: dict = Depends(get_current_user),
 ) -> MoneyFlowPeriodResponse:
     """获取指定交易日周期 (1D/3D/5D/10D/20D) 的资金净流向排行榜（优先快照）。"""
     _ = current_user
     today_str = datetime.now().strftime("%Y-%m-%d")
-    raw_items = _snap.money_flow_period(period=period, dimension=dimension,
-                                        category=category, limit=limit, date=date)
+    raw_items = None
+    if not realtime:
+        raw_items = _snap.money_flow_period(period=period, dimension=dimension,
+                                            category=category, limit=limit, date=date)
     if raw_items is None:
         if date:
             raw_items = []

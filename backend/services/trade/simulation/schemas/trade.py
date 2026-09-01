@@ -20,6 +20,7 @@ class SimTradeResponse(BaseModel):
     user_id: int
     portfolio_id: int
     symbol: str
+    symbol_name: str | None = None
     side: OrderSide
     trading_mode: TradingMode
     quantity: float

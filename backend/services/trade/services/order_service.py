@@ -104,7 +104,8 @@ class OrderService:
         key_parts.append(f"limit:{query.limit}")
         key_parts.append(f"offset:{query.offset}")
         key_str = ":".join(key_parts)
-        return f"order:list:{hashlib.md5(key_str.encode()).hexdigest()}"
+        # 前缀带 user，便于 delete_pattern("order:list:user:{user_id}:*") 命中，避免永不失效
+        return f"order:list:user:{query.user_id}:{hashlib.md5(key_str.encode()).hexdigest()}"
 
     async def _invalidate_order_cache(self, user_id: int, portfolio_id: int | None = None):
         """Invalidate order list caches"""

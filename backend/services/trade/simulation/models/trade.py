@@ -70,4 +70,6 @@ class SimTrade(Base, TimestampMixin):
         Index("idx_sim_trade_tenant_user_symbol",
               "tenant_id", "user_id", "symbol"),
         Index("idx_sim_trade_order", "order_id"),
+        Index("idx_sim_trade_user_executed",
+              "tenant_id", "user_id", "executed_at"),
     )

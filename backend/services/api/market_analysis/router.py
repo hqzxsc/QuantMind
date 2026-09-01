@@ -540,32 +540,17 @@ async def trigger_market_analysis_stream(
     indices -> breadth -> heatmap -> sankey -> stock_flow -> done。
     前端边收边渲染，无需等全部分析完成。
     客户端断连时立即停止后续步骤（当前线程跑完后自然结束，不浪费资源）。
+
+    注意：手动触发强制绕过离线快照，始终从 QuantDB 实时计算最新交易日数据，
+    避免快照存在时秒回旧数据导致前端无法刷新。
     """
     _ = current_user
 
     async def event_stream():
         yield _sse("start", {"message": "开始读取市场分析数据…"})
         try:
-            # 快照模式：存在离线快照则直接分段推送（服务器零计算）
-            snap = await asyncio.to_thread(_snap.full)
-            if snap:
-                yield _sse("indices", {"indices": snap.get("indices") or []})
-                await asyncio.sleep(0.05)
-                yield _sse("breadth", {"breadth": snap.get("breadth") or {}})
-                await asyncio.sleep(0.05)
-                yield _sse("heatmap", {"heatmap": (snap.get("heatmap") or {}).get("shenwan") or []})
-                await asyncio.sleep(0.05)
-                yield _sse("sankey", {"sankey": snap.get("sankey") or {"nodes": [], "links": []}})
-                await asyncio.sleep(0.05)
-                yield _sse("stock_flow", {"stock_flow": snap.get("stock_flow") or []})
-                await asyncio.sleep(0.05)
-                yield _sse("done", {
-                    "trade_date": snap.get("trade_date"),
-                    "message": "已从快照读取最新数据并完成市场分析",
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                })
-                return
-
+            # 手动触发必须绕过离线快照，强制清缓存并实时从 QuantDB 计算最新数据，
+            # 否则快照存在时秒回旧快照，前端数据无法刷新。
             await asyncio.to_thread(quantdb_feed.clear_cache)
             latest_dt = await _run_step("trade_date", quantdb_feed._latest_trade_date)
             if await request.is_disconnected():

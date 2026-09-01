@@ -70,7 +70,7 @@ feed_status: dict = {
     "active_sessions": 0,
     "last_error": None,
     "rate_limited": False,       # 桥限流避让中（60次/分钟）
-    "member_gate": {"enabled": True, "allowed": None, "checked_at": None},
+    "member_gate": {"enabled": True, "allowed": True, "checked_at": None},
 }
 
 
@@ -769,33 +769,16 @@ async def run_tdx_quote_feed_task(interval: float = POLL_INTERVAL):
     feed_status["running"] = True
     feed_status["active_sessions"] = len(_tick_sessions)
 
-    # 会员门控：账户非 QuantDB 付费会员在期时整链路停用（不拉行情/不写 Redis/不写 tick/不提醒）
-    from backend.services.trade.services.member_gate import (
-        MEMBER_RECHECK_SECONDS,
-        MEMBER_RETRY_SECONDS,
-        is_paid_member,
-    )
-
-    async def _refresh_member_gate() -> bool:
-        allowed = await is_paid_member(tenant_id, user_id)
-        feed_status["member_gate"] = {
-            "enabled": True,
-            "allowed": allowed,
-            "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        return allowed
-
-    member_ok = await _refresh_member_gate()
-    if not member_ok:
-        logger.warning(
-            "[TdxFeed] 账户 %s/%s 非 QuantDB 付费会员在期，持仓实时行情停用（每 %ds 重试）",
-            tenant_id, user_id, MEMBER_RETRY_SECONDS,
-        )
-    last_member_check_at = time.monotonic()
+    # 会员门控已移除：持仓实时行情对所有已配置 TDX 桥的账户开放。
+    feed_status["member_gate"] = {
+        "enabled": True,
+        "allowed": True,
+        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
     logger.info(
-        "[TdxFeed] TDX 实时行情 Feed 启动: bridge=%s interval=%ss member_ok=%s",
-        tdx_pusher.bridge_url, interval, member_ok,
+        "[TdxFeed] TDX 实时行情 Feed 启动: bridge=%s interval=%ss",
+        tdx_pusher.bridge_url, interval,
     )
 
     positions: list[dict] = []
@@ -805,14 +788,6 @@ async def run_tdx_quote_feed_task(interval: float = POLL_INTERVAL):
     cycle = 0.0
     while True:
         try:
-            # 会员状态周期性重核验（过期立即停喂，续费后 1 分钟内恢复）
-            if time.monotonic() - last_member_check_at >= MEMBER_RECHECK_SECONDS:
-                member_ok = await _refresh_member_gate()
-                last_member_check_at = time.monotonic()
-            if not member_ok:
-                await asyncio.sleep(MEMBER_RETRY_SECONDS)
-                continue
-
             now = _now_sh()
             if not is_trading_time(now):
                 await asyncio.sleep(OFF_HOURS_SLEEP)

@@ -352,10 +352,7 @@ async def update_rolling_config(
     auth: AuthContext = Depends(get_auth_context),
 ):
     """保存滚动买卖配置（阈值 + 金额 + 执行模式），推理自动推送即时生效。
-
-    直接下单（tdx 通达信实盘 / paper 模拟盘免确认）为 QuantDB 付费会员专属。
     """
-    from backend.services.trade.services.member_gate import is_paid_member
     from backend.services.live_trading.services.tdx_rolling_trade_service import (
         DEFAULT_EXECUTE_MODE,
         save_rolling_config,
@@ -366,15 +363,6 @@ async def update_rolling_config(
         execute_mode = "tdx" if data.auto_place else "off"
     if execute_mode is None:
         raise HTTPException(status_code=400, detail="execute_mode 或 auto_place 必填")
-
-    if execute_mode != DEFAULT_EXECUTE_MODE and not await is_paid_member(
-        (auth.tenant_id or "default").strip() or "default",
-        str(auth.user_id or "00000001").strip() or "00000001",
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="直接下单为 QuantDB 付费会员专属功能，请保持会员在期后使用",
-        )
 
     save_rolling_config(
         (auth.tenant_id or "default").strip() or "default",

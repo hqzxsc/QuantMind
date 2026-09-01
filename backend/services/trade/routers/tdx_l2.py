@@ -49,30 +49,10 @@ async def update_l2_config(
     data: L2ConfigUpdate,
     auth: AuthContext = Depends(get_auth_context),
 ):
-    """保存 L2 实时推理配置。开启执行前校验付费会员（与滚动买卖同规则）。"""
-    from backend.services.trade.services.member_gate import is_paid_member
-    from backend.services.live_trading.services.tdx_rolling_trade_service import (
-        DEFAULT_EXECUTE_MODE,
-        load_rolling_config,
-    )
-
-    tenant_id = (auth.tenant_id or "default").strip() or "default"
-    user_id = str(auth.user_id or "00000001").strip() or "00000001"
-
+    """保存 L2 实时推理配置。"""
     updates = data.model_dump(exclude_none=True)
     if not updates:
         return {"success": True, "config": load_l2_config()}
-
-    # 开启执行前校验会员（execute_mode=off 时仅计分，不强制）
-    if updates.get("enabled"):
-        _, _, execute_mode = load_rolling_config(tenant_id, user_id)
-        if execute_mode != DEFAULT_EXECUTE_MODE and not await is_paid_member(
-            tenant_id, user_id
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail="直接下单为 QuantDB 付费会员专属功能，请保持会员在期后使用",
-            )
 
     cfg = save_l2_config(updates)
     return {

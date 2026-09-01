@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.services.trade_shared.deps import AuthContext, get_auth_context
-from backend.services.trade.services.member_gate import is_paid_member
 from backend.services.live_trading.services.tdx_quote_feed import (
     feed_status,
     is_trading_time,
@@ -25,18 +24,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def require_paid_member(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
-    """持仓实时行情会员门控：QuantDB 付费会员在期可用，否则 403。"""
-    tenant_id = (auth.tenant_id or "default").strip() or "default"
-    user_id = str(auth.user_id or "00000001").strip() or "00000001"
-    if not await is_paid_member(tenant_id, user_id):
-        raise HTTPException(
-            status_code=403,
-            detail="实时行情为 QuantDB 付费会员专属功能，请保持会员在期后使用",
-        )
-    return auth
-
-
 class SltpConfigUpdate(BaseModel):
     stop_loss_pct: float = Field(0.08, ge=0.0, le=0.5, description="止损幅度 0.08=跌8%提醒")
     take_profit_pct: float | None = Field(None, ge=0.0, le=1.0, description="止盈幅度，空=不启用")
@@ -45,7 +32,7 @@ class SltpConfigUpdate(BaseModel):
 
 
 @router.get("/tdx/quote-feed/status")
-async def get_quote_feed_status(auth: AuthContext = Depends(require_paid_member)):
+async def get_quote_feed_status(auth: AuthContext = Depends(get_auth_context)):
     """实时行情 Feed 状态：是否运行、桥连通性、最后喂价时间、监控持仓。"""
     status = dict(feed_status)
     status["is_trading_time"] = is_trading_time()
@@ -61,7 +48,7 @@ async def get_quote_feed_status(auth: AuthContext = Depends(require_paid_member)
 
 
 @router.get("/tdx/sltp-config")
-async def get_sltp_config(auth: AuthContext = Depends(require_paid_member)):
+async def get_sltp_config(auth: AuthContext = Depends(get_auth_context)):
     """读取持仓股止损止盈提醒配置。"""
     return load_sltp_config(
         (auth.tenant_id or "default").strip() or "default",
@@ -72,7 +59,7 @@ async def get_sltp_config(auth: AuthContext = Depends(require_paid_member)):
 @router.put("/tdx/sltp-config")
 async def update_sltp_config(
     data: SltpConfigUpdate,
-    auth: AuthContext = Depends(require_paid_member),
+    auth: AuthContext = Depends(get_auth_context),
 ):
     """保存止损止盈提醒配置（仅提醒不下单，通达信桥守护进程仍负责真实止损单）。"""
     if not data.enabled and not data.take_profit_pct and not data.trailing_stop_pct and data.stop_loss_pct <= 0:
@@ -89,7 +76,7 @@ async def get_quote_tick_sessions(
     symbol: str | None = Query(None, description="过滤股票（SH600036），留空返回全部"),
     status: str | None = Query(None, pattern="^(OPEN|CLOSED)$", description="OPEN=持仓中 CLOSED=已清仓"),
     limit: int = Query(50, ge=1, le=200),
-    auth: AuthContext = Depends(require_paid_member),
+    auth: AuthContext = Depends(get_auth_context),
 ):
     """持仓 tick 会话列表：开盘会话=开始记录 tick，闭会话=该持仓已清掉。
 
@@ -128,7 +115,7 @@ async def get_quote_ticks(
     end: str | None = Query(None, description="结束时间 ISO（含）"),
     limit: int = Query(5000, ge=1, le=50000, description="最大行数"),
     direction: str = Query("asc", pattern="^(asc|desc)$"),
-    auth: AuthContext = Depends(require_paid_member),
+    auth: AuthContext = Depends(get_auth_context),
 ):
     """查询持仓实时 tick 明细（3s 间隔快照），供后期 tick 计算。
 

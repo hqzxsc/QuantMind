@@ -648,22 +648,7 @@ class TdxRollingTradeService:
         if fixed_buy_amount is None:
             fixed_buy_amount = saved_amount
 
-        # 直接下单（通达信实盘或模拟盘）为 QuantDB 付费会员专属
-        if execute_mode != DEFAULT_EXECUTE_MODE:
-            from backend.services.trade.services.member_gate import is_paid_member
-
-            try:
-                member_ok = await is_paid_member(tenant_id, user_id)
-            except Exception:
-                member_ok = False
-            if not member_ok:
-                return {
-                    "success": False,
-                    "error": "直接下单为 QuantDB 付费会员专属功能，请保持会员在期后使用",
-                    "buys": [],
-                    "sells": [],
-                }
-
+        # 直接下单（通达信实盘或模拟盘）已对全部登录用户开放（会员门控移除）
         # 通达信实盘下单需要桥；模拟盘直接下单不依赖桥（预警推送尽力而为）
         bridge_ok = tdx_pusher.enabled
         if execute_mode == "tdx" and not bridge_ok:

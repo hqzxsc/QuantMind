@@ -555,7 +555,6 @@ async def _execute_signals(
 
 async def run_tdx_l2_realtime_task(interval_sec: int = 0) -> None:
     """L2 实时推理主循环：读采集因子 → 截面标准化 → 合成 → 触发买卖。"""
-    from backend.services.trade.services.member_gate import is_paid_member
     from backend.services.live_trading.services.tdx_rolling_trade_service import (
         TdxRollingTradeService,
         load_rolling_config,
@@ -654,16 +653,8 @@ async def run_tdx_l2_realtime_task(interval_sec: int = 0) -> None:
                 scored += 1
             realtime_status["scored"] = scored
 
-            # 5. 三档模式 + 会员门控（与 run_rolling_push 同规则）
+            # 5. 三档模式（会员门控已移除，全部登录用户可执行）
             _, fixed_buy_amount, execute_mode = load_rolling_config(tenant_id, user_id)
-            if execute_mode != "off":
-                try:
-                    member_ok = await is_paid_member(tenant_id, user_id)
-                except Exception:
-                    member_ok = False
-                if not member_ok:
-                    await asyncio.sleep(interval)
-                    continue
 
             # 6. 持仓（tdx/off 读桥, paper 读模拟盘）。
             #    桥断只跳过触发执行——评分已在上一步落盘, 推理不停

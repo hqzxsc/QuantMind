@@ -117,11 +117,44 @@ class EngineSignalStreamPublisher:
     def mark_latest_run(self, *, tenant_id: str, user_id: str, run_id: str, ttl_seconds: int = 86400) -> None:
         if not tenant_id or not user_id or not run_id:
             return
-        client = self._get_stream_client()
         latest_key = f"{self.latest_key_prefix}:{tenant_id or 'default'}:{str(user_id)}"
-        client.set(latest_key, str(run_id), ex=max(60, int(ttl_seconds)))
+        ttl = max(60, int(ttl_seconds))
+        # 双写：独立 stream Redis + 哨兵 Redis，保证 api/trade 任意读端都能命中。
+        # 单 Redis 环境两者是同一实例，按 id 去重后实际只写一次，幂等。
+        candidates: list[Any] = []
+        try:
+            candidates.append(self._get_stream_client())
+        except Exception as exc:
+            logger.warning("获取 stream Redis 失败，跳过: %s", exc)
+        try:
+            candidates.append(get_redis_sentinel_client())
+        except Exception as exc:
+            logger.warning("获取 sentinel Redis 失败，跳过: %s", exc)
+
+        # 按 id 去重
+        seen: set[int] = set()
+        clients: list[Any] = []
+        for c in candidates:
+            if c is None:
+                continue
+            cid = id(c)
+            if cid not in seen:
+                seen.add(cid)
+                clients.append(c)
+
+        if not clients:
+            logger.warning("无可用 Redis 客户端，latest 标记写入跳过: key=%s", latest_key)
+            return
+
+        for client in clients:
+            try:
+                client.set(latest_key, str(run_id), ex=ttl)
+            except Exception as exc:
+                logger.warning("写入 latest 标记失败 client=%s key=%s: %s", type(client).__name__, latest_key, exc)
+                continue
         logger.info(
-            "Marked latest signal run: key=%s run_id=%s",
+            "Marked latest signal run: key=%s run_id=%s clients=%d",
             latest_key,
             run_id,
+            len(clients),
         )

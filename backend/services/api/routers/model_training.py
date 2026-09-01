@@ -4247,6 +4247,93 @@ async def get_model_inference_settings(
     return settings
 
 
+def _read_latest_run_id_from_redis(latest_key: str) -> str:
+    """双读最新推理 run_id：哨兵 Redis + 独立 stream Redis，任意命中即返回。
+
+    与 EngineSignalStreamPublisher.mark_latest_run() 双写对应，避免
+    SIGNAL_STREAM_REDIS_HOST 分裂导致的调度台空白。
+    """
+    # 1) 哨兵 Redis（api 默认）
+    try:
+        sentinel = get_redis_sentinel_client()
+        val = sentinel.get(latest_key)
+        if val:
+            decoded = val.decode("utf-8") if isinstance(val, (bytes, bytearray)) else str(val)
+            if decoded.strip():
+                return decoded.strip()
+    except Exception as exc:
+        logger.debug("读取哨兵 Redis latest 失败: %s", exc)
+
+    # 2) 独立 stream Redis（与 engine 写入侧一致）
+    stream_host = str(os.getenv("SIGNAL_STREAM_REDIS_HOST", "")).strip()
+    if stream_host:
+        try:
+            from redis import Redis as _Redis  # noqa: PLC0415
+
+            stream_client = _Redis(
+                host=stream_host,
+                port=int(os.getenv("SIGNAL_STREAM_REDIS_PORT", "6379")),
+                db=int(os.getenv("SIGNAL_STREAM_REDIS_DB", "0")),
+                password=os.getenv("SIGNAL_STREAM_REDIS_PASSWORD") or None,
+                decode_responses=False,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+            )
+            val2 = stream_client.get(latest_key)
+            if val2:
+                decoded2 = val2.decode("utf-8") if isinstance(val2, (bytes, bytearray)) else str(val2)
+                if decoded2.strip():
+                    return decoded2.strip()
+        except Exception as exc:
+            logger.debug("读取 stream Redis latest 失败: %s", exc)
+    return ""
+
+
+async def _fallback_latest_run_from_db(tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    """Redis 缺失/TTL 过期时，从 DB 回退最新 completed 推理批次。
+
+    模拟交易调度台必须始终能回显“最新可用推理”，不能因 Redis 丢失就空白。
+    """
+    try:
+        # 复用 list_runs 的 per-date 去重口径，取最新一天且 signals_count 最大的批次
+        res = await model_inference_persistence.list_runs(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            status="completed",
+            page=1,
+            page_size=1,
+        )
+        items = res.get("items") or []
+        if items:
+            return items[0]
+    except Exception as exc:
+        logger.warning("DB 回退查询最新推理失败: %s", exc)
+    # 兜底：直接查 qm_model_inference_runs 最近一条 completed（不按去重）
+    try:
+        async with get_session(read_only=True) as session:
+            row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT * FROM qm_model_inference_runs
+                        WHERE tenant_id = :tenant_id AND user_id = :user_id AND status = 'completed'
+                        ORDER BY prediction_trade_date DESC, created_at DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "user_id": user_id},
+                )
+            ).mappings().first()
+            if row:
+                # 复用 persistence 的行转换，避免时区/日期格式漂移
+                from backend.services.engine.services.model_inference_persistence import model_inference_persistence as _p
+
+                return _p._row_to_run(dict(row))
+    except Exception as exc:
+        logger.warning("DB 直查最新推理回退失败: %s", exc)
+    return None
+
+
 @router.get("/inference/latest", summary="获取当前生效推理批次（用户态）")
 async def get_model_inference_latest(
     model_id: str | None = Query(
@@ -4255,35 +4342,57 @@ async def get_model_inference_latest(
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     tenant_id, user_id = _owner_scope(current_user)
-    redis_client = get_redis_sentinel_client()
     latest_key = f"qm:signal:latest:{tenant_id}:{user_id}"
-    try:
-        val = redis_client.get(latest_key)
-        latest_run_id = val.decode("utf-8") if val else ""
-    except Exception as exc:
-        logger.warning("读取最新推理版本失败: %s", exc)
+    latest_run_id = _read_latest_run_id_from_redis(latest_key)
 
-    if not latest_run_id:
-        return {
-            "latest_key": latest_key,
-            "run_id": "",
-            "model_id": "",
-            "prediction_trade_date": "",
-            "target_date": "",
-            "status": "",
-            "updated_at": "",
-            "matched_model": False if model_id else None,
-        }
+    run: dict[str, Any] | None = None
+    if latest_run_id:
+        run = await model_inference_persistence.get_run(
+            run_id=latest_run_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        # Redis 指向的 run 可能已被清理/过期，自动回退 DB
+        if not run:
+            logger.warning("Redis 指向的 run_id 不存在，已自动回退 DB: key=%s run_id=%s", latest_key, latest_run_id)
+            run = await _fallback_latest_run_from_db(tenant_id, user_id)
+            if run:
+                latest_run_id = str(run.get("run_id") or "")
+                # 顺手回补 Redis，避免下次仍 miss
+                try:
+                    get_redis_sentinel_client().set(latest_key, latest_run_id, ex=86400)
+                except Exception:
+                    pass
+    else:
+        # Redis 完全缺失/TTL 过期 -> DB 回退，保证调度台不空白
+        run = await _fallback_latest_run_from_db(tenant_id, user_id)
+        if run:
+            latest_run_id = str(run.get("run_id") or "")
+            try:
+                get_redis_sentinel_client().set(latest_key, latest_run_id, ex=86400)
+            except Exception:
+                pass
+            # 同步到独立 stream Redis（如有）
+            stream_host = str(os.getenv("SIGNAL_STREAM_REDIS_HOST", "")).strip()
+            if stream_host:
+                try:
+                    from redis import Redis as _Redis  # noqa: PLC0415
 
-    run = await model_inference_persistence.get_run(
-        run_id=latest_run_id,
-        tenant_id=tenant_id,
-        user_id=user_id,
-    )
+                    _rc = _Redis(
+                        host=stream_host,
+                        port=int(os.getenv("SIGNAL_STREAM_REDIS_PORT", "6379")),
+                        db=int(os.getenv("SIGNAL_STREAM_REDIS_DB", "0")),
+                        password=os.getenv("SIGNAL_STREAM_REDIS_PASSWORD") or None,
+                        decode_responses=False,
+                    )
+                    _rc.set(latest_key, latest_run_id, ex=86400)
+                except Exception:
+                    pass
+
     if not run:
         return {
             "latest_key": latest_key,
-            "run_id": latest_run_id,
+            "run_id": latest_run_id or "",
             "model_id": "",
             "prediction_trade_date": "",
             "target_date": "",
@@ -4297,7 +4406,7 @@ async def get_model_inference_latest(
     matched_model = None if not model_id else (str(model_id) == latest_model_id)
     return {
         "latest_key": latest_key,
-        "run_id": latest_run_id,
+        "run_id": str(run.get("run_id") or latest_run_id),
         "model_id": latest_model_id,
         "prediction_trade_date": target_date,
         "target_date": target_date,

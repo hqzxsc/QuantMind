@@ -431,6 +431,13 @@ class SimulationExecutionEngine:
         await self.db.refresh(order)
         await self.db.refresh(trade)
         await self._sync_trade_account(order.tenant_id, order.user_id)
+        # 交易时即失效 Redis，下次 GET 立即回源 DB 并回填缓存，实现秒级可见
+        try:
+            if self.manager.redis and self.manager.redis.client:
+                self.manager.redis.delete_pattern(f"sim_trade:list:{order.tenant_id}:{order.user_id}:*")
+                self.manager.redis.delete_pattern(f"sim_trade:stats:{order.tenant_id}:{order.user_id}:*")
+        except Exception:
+            pass
         return trade
 
     async def mark_rejected(self, order: SimOrder, message: str):

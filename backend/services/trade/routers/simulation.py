@@ -292,6 +292,36 @@ async def reset_simulation_account(
         await manager.set_initial_cash(uid, initial_cash, tenant_id=auth.tenant_id)
 
     market = str(request.market or "CN").upper()
+    # 清空数据库中的历史交易/订单/快照，避免重置后前端仍拉到旧数据
+    try:
+        from sqlalchemy import text as _text
+        from backend.shared.database_manager_v2 import get_session as _get_session
+        async with _get_session() as _session:
+            await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND user_id=:uid"), {"tid": auth.tenant_id, "uid": uid})
+            await _session.execute(_text("DELETE FROM sim_orders WHERE tenant_id=:tid AND user_id=:uid"), {"tid": auth.tenant_id, "uid": uid})
+            # 兼容部分旧库用 varchar user_id
+            try:
+                await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": str(uid)})
+            except Exception:
+                pass
+            await _session.execute(_text("DELETE FROM simulation_fund_snapshots WHERE tenant_id=:tid AND user_id=:uid_str"), {"tid": auth.tenant_id, "uid_str": str(uid)})
+            await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": auth.user_id})
+            await _session.execute(_text("DELETE FROM simulation_fund_snapshots WHERE tenant_id=:tid AND user_id=:uid2"), {"tid": auth.tenant_id, "uid2": auth.user_id})
+    except Exception as _e:
+        logger.warning(f"Reset DB cleanup failed for {auth.tenant_id}:{uid}: {_e}")
+
+    # 清空 Redis 缓存（交易列表/统计），避免重置后仍命中旧缓存秒级延迟
+    try:
+        if redis.client:
+            redis.delete_pattern(f"sim_trade:list:{auth.tenant_id}:{uid}:*")
+            redis.delete_pattern(f"sim_trade:stats:{auth.tenant_id}:{uid}:*")
+            redis.delete_pattern(f"sim_trade:list:{auth.tenant_id}:{auth.user_id}:*")
+            redis.delete_pattern(f"sim_trade:stats:{auth.tenant_id}:{auth.user_id}:*")
+            # 订单缓存
+            redis.delete_pattern(f"order:list:user:{uid}:*")
+    except Exception:
+        pass
+
     account = await manager.init_account(
         uid, initial_cash, tenant_id=auth.tenant_id, market=market
     )

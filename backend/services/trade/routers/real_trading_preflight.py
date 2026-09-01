@@ -315,25 +315,27 @@ async def preflight_check(
         try:
             pool = get_margin_stock_pool_service(settings.MARGIN_STOCK_POOL_PATH)
             snapshot = pool.snapshot()
+            is_sim_margin = mode == "SIMULATION"
             add_check(
                 "margin_stock_pool_loaded",
                 "融资融券股票池",
-                snapshot.record_count > 0,
-                True,
+                True if is_sim_margin else snapshot.record_count > 0,
+                False if is_sim_margin else True,
                 (
                     f"融资融券股票池已加载，共 {snapshot.record_count} 只股票"
                     if snapshot.record_count > 0
-                    else "融资融券股票池为空"
+                    else ("[WARNING] 融资融券股票池为空（模拟盘不阻断）" if is_sim_margin else "融资融券股票池为空")
                 ),
                 {"source_path": snapshot.source_path, "record_count": snapshot.record_count},
             )
         except Exception as e:
+            is_sim_margin2 = mode == "SIMULATION"
             add_check(
                 "margin_stock_pool_loaded",
                 "融资融券股票池",
-                False,
-                True,
-                f"融资融券股票池加载失败: {e}",
+                True if is_sim_margin2 else False,
+                False if is_sim_margin2 else True,
+                f"[WARNING] 融资融券股票池加载失败: {e}（模拟盘不阻断）" if is_sim_margin2 else f"融资融券股票池加载失败: {e}",
             )
 
         real_short_required = mode == "REAL"

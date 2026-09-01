@@ -236,6 +236,8 @@ def _normalize_identity(
 ) -> tuple[str, str]:
     """
     统一身份来源：JWT 为准；兼容传参时必须与 JWT 一致。
+    数字 user_id 按 8 位补零（兼容历史整数 ID），非数字（如 admin）保持原样，
+    避免与 qm_user_models 中存储的原始 user_id 不一致导致默认模型查询失败。
     """
     token_user_id = str(auth.user_id).strip()
     token_tenant_id = str(auth.tenant_id or "default").strip() or "default"
@@ -251,7 +253,8 @@ def _normalize_identity(
             detail="Forbidden tenant_id override",
         )
 
-    return str(token_user_id).zfill(8), token_tenant_id
+    normalized_user = token_user_id.zfill(8) if token_user_id.isdigit() else token_user_id
+    return normalized_user, token_tenant_id
 
 
 async def _fetch_active_portfolio_snapshot(

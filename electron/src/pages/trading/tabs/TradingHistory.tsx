@@ -83,7 +83,7 @@ function inferMarketOfSymbol(symbol: string): string {
 
 const TradingHistory: React.FC<TradingHistoryProps> = ({ userId, isActive, tradingMode }) => {
     const currentMarket = useAppSelector(selectCurrentMarket);
-    const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'all'>('today');
+    const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'all'>('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<string>('all');
     const [directionFilter, setDirectionFilter] = useState<string>('all');

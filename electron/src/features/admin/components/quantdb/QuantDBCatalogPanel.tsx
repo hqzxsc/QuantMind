@@ -57,8 +57,6 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
     const [dataDir, setDataDir] = useState('');
     const [loading, setLoading] = useState(false);
     const [selected, setSelected] = useState<string[]>([]);
-    const [withPg, setWithPg] = useState(false);
-    const [withQlib, setWithQlib] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [activeJob, setActiveJob] = useState<QuantDBSyncJob | null>(null);
     const [cancelling, setCancelling] = useState(false);
@@ -154,8 +152,6 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
         try {
             const resp = await dataPlatformService.syncQuantDBDatasets({
                 datasets,
-                with_pg: withPg,
-                with_qlib: withQlib,
             });
             setActiveJob(resp.job);
             message.success(`已启动同步任务 ${resp.job.job_id}（后台执行）`);
@@ -164,7 +160,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
         } finally {
             setSubmitting(false);
         }
-    }, [withPg, withQlib]);
+    }, []);
 
     const handleCancelSync = useCallback(async () => {
         if (!activeJob || activeJob.status !== 'running') return;
@@ -214,8 +210,6 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
         try {
             const resp = await dataPlatformService.syncQuantDBDatasets({
                 datasets: selected,
-                with_pg: withPg,
-                with_qlib: withQlib,
             });
             setActiveJob(resp.job);
             message.success(`已启动同步任务 ${resp.job.job_id}（后台执行）`);
@@ -396,14 +390,6 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
 
             <div className="mt-4">
                 <Space direction="vertical" className="w-full" size="small">
-                    <Space wrap>
-                        <Checkbox checked={withPg} onChange={(e) => setWithPg(e.target.checked)}>
-                            同步后填充 PG（stock_daily_latest）
-                        </Checkbox>
-                        <Checkbox checked={withQlib} onChange={(e) => setWithQlib(e.target.checked)}>
-                            同步后重建 Qlib 缓存
-                        </Checkbox>
-                    </Space>
                     <Space className="w-full">
                         <Button
                             type="primary"

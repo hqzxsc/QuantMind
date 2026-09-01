@@ -361,7 +361,7 @@ class AdminService {
         time: string;
         days: number;
         datasets: string[];
-        with_qlib: boolean;
+        with_qlib?: boolean;
     }): Promise<any> {
         const resp = await this.axiosInstance.post(`/admin/data-platform/sync-schedule/${market}`, cfg);
         return resp.data;

@@ -50,7 +50,6 @@ export function AdminQuantMarketPanel({ market, marketLabel, color }: AdminQuant
     const [selected, setSelected] = useState<string[]>([]);
     const [days, setDays] = useState(market === 'quantbc' ? 365 : 5);
     const [submitting, setSubmitting] = useState(false);
-    const [withQlib, setWithQlib] = useState(false);
     const [activeJob, setActiveJob] = useState<QuantDBSyncJob | null>(null);
     const [cancelling, setCancelling] = useState(false);
     const [detailDataset, setDetailDataset] = useState<QuantDBDataset | null>(null);
@@ -155,7 +154,6 @@ export function AdminQuantMarketPanel({ market, marketLabel, color }: AdminQuant
             const resp = await dataPlatformService.syncMarketDatasets(market, {
                 datasets: selected,
                 days,
-                with_qlib: withQlib,
             });
             setActiveJob(resp.job);
             message.success(`已启动同步任务 ${resp.job.job_id}（后台执行）`);
@@ -295,7 +293,6 @@ export function AdminQuantMarketPanel({ market, marketLabel, color }: AdminQuant
             const resp = await dataPlatformService.syncMarketDatasets(market, {
                 datasets: [ds.dataset],
                 days,
-                with_qlib: withQlib,
             });
             setActiveJob(resp.job);
             message.success(`已启动 ${ds.name} 同步（后台执行）`);
@@ -416,12 +413,6 @@ export function AdminQuantMarketPanel({ market, marketLabel, color }: AdminQuant
                         style={{ width: 80 }}
                     />
                     <Text type="secondary" className="text-xs">{market === 'quantbc' ? '个自然日' : '个交易日'}</Text>
-                    <Checkbox
-                        checked={withQlib}
-                        onChange={(e) => setWithQlib(e.target.checked)}
-                    >
-                        <Text className="text-xs">同步后重建 Qlib 缓存</Text>
-                    </Checkbox>
                     <Button
                         type="primary"
                         icon={<CloudSyncOutlined />}

@@ -526,10 +526,11 @@ export const AdminModelManagement: React.FC = () => {
             {/* 模型列表 */}
             <Spin spinning={scanning} tip="正在扫描模型目录…">
                 <Table
-                    columns={columns}
+                    columns={columns.map(c => ({ ...c, align: 'center' as const }))}
                     dataSource={filteredModels}
                     rowKey="model_id"
                     pagination={{ pageSize: 10 }}
+                    scroll={{ x: 'max-content' }}
                     className="admin-table border-none shadow-sm rounded-3xl overflow-hidden"
                     locale={{ emptyText: scanning ? ' ' : '暂无模型，点击"重新扫描"加载' }}
                 />

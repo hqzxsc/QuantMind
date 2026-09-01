@@ -3,6 +3,7 @@ import {
     Button,
     Card,
     Col,
+    Descriptions,
     Empty,
     Row,
     Space,
@@ -13,13 +14,13 @@ import {
     Progress,
 } from 'antd';
 import {
-    CloudServerOutlined,
     ReloadOutlined,
     SyncOutlined,
     CheckCircleFilled,
     CloseCircleFilled,
     ThunderboltFilled,
     RocketFilled,
+    ClusterOutlined,
 } from '@ant-design/icons';
 import { adminService } from '../services/adminService';
 
@@ -31,6 +32,20 @@ interface NodeInfo {
     name: string;
     host?: string;
     available?: boolean;
+}
+
+/** 节点配置详情（getTrainingNodeDetail 返回，不含明文密码） */
+interface NodeConfigDetail {
+    id: string;
+    name?: string;
+    host?: string;
+    port?: number;
+    user?: string;
+    work_dir?: string;
+    docker_image?: string;
+    gpus?: string;
+    has_password?: boolean;
+    has_key?: boolean;
 }
 
 interface NodeStatus {
@@ -73,6 +88,8 @@ const fmtBytes = (b?: number | null): string =>
 export const AdminAutoDLNodes: React.FC = () => {
     const [nodes, setNodes] = useState<NodeInfo[]>([]);
     const [statusMap, setStatusMap] = useState<Record<string, NodeStatus>>({});
+    // 每个远端节点的配置详情（host/port/user/work_dir 等）
+    const [configMap, setConfigMap] = useState<Record<string, NodeConfigDetail>>({});
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [autoRefresh, setAutoRefresh] = useState(true);
@@ -85,26 +102,37 @@ export const AdminAutoDLNodes: React.FC = () => {
             const nodeList: NodeInfo[] = resp?.nodes || [];
             setNodes(nodeList);
 
-            // 采集每个远端节点状态
             const statuses: Record<string, NodeStatus> = {};
+            const configs: Record<string, NodeConfigDetail> = {};
             const remote = nodeList.filter((n) => n.type === 'remote');
             if (remote.length > 0) {
                 await Promise.all(
                     remote.map(async (n) => {
-                        try {
-                            const st = await adminService.getTrainingNodeStatus(n.id);
-                            statuses[n.id] = st;
-                        } catch {
-                            statuses[n.id] = { id: n.id, name: n.name, host: n.host || '', online: false, error: '采集失败' };
-                        }
+                        // 并行采集状态 + 读取配置详情
+                        await Promise.all([
+                            adminService.getTrainingNodeStatus(n.id)
+                                .then((st) => { statuses[n.id] = st; })
+                                .catch(() => {
+                                    statuses[n.id] = { id: n.id, name: n.name, host: n.host || '', online: false, error: '采集失败' };
+                                }),
+                            adminService.getTrainingNodeDetail(n.id)
+                                .then((d) => {
+                                    if (d?.node) configs[n.id] = d.node;
+                                })
+                                .catch(() => { /* 详情读取失败不阻塞卡片 */ }),
+                        ]);
                     }),
                 );
             }
             setStatusMap(statuses);
+            setConfigMap(configs);
         } finally {
             setRefreshing(false);
         }
     }, []);
+
+    // 仅展示 AutoDL 远端节点（页面专注远端训练节点，隐藏本地 Docker 卡）
+    const remoteNodes = nodes.filter((n) => n.type === 'remote');
 
     // 初次加载
     useEffect(() => {
@@ -145,6 +173,92 @@ export const AdminAutoDLNodes: React.FC = () => {
         );
     };
 
+    const renderRemoteConfig = (cfg?: NodeConfigDetail, host?: string) => {
+        const auth = cfg
+            ? cfg.has_password
+                ? '密码'
+                : cfg.has_key
+                    ? 'SSH Key'
+                    : '未配置'
+            : '—';
+        return (
+            <Descriptions
+                size="small"
+                column={1}
+                bordered
+                labelStyle={{ width: 76, fontSize: 11, color: '#8c8c8c' }}
+                contentStyle={{ fontSize: 11 }}
+                className="mb-2"
+            >
+                <Descriptions.Item label="主机">
+                    <Text code style={{ fontSize: 11 }}>{cfg?.host || host || '—'}:{cfg?.port || 22}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="用户">
+                    <Text style={{ fontSize: 11 }}>{cfg?.user || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="工作目录">
+                    <Tooltip title={cfg?.work_dir}>
+                        <Text style={{ fontSize: 11 }}>{cfg?.work_dir || '—'}</Text>
+                    </Tooltip>
+                </Descriptions.Item>
+                <Descriptions.Item label="镜像">
+                    <Tooltip title={cfg?.docker_image}>
+                        <Text code style={{ fontSize: 11 }}>{cfg?.docker_image || '—'}</Text>
+                    </Tooltip>
+                </Descriptions.Item>
+                <Descriptions.Item label="GPU">
+                    <Text style={{ fontSize: 11 }}>{cfg?.gpus || 'all'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="认证">
+                    <Tag color={cfg?.has_password || cfg?.has_key ? 'green' : 'red'} style={{ fontSize: 10 }}>{auth}</Tag>
+                </Descriptions.Item>
+            </Descriptions>
+        );
+    };
+
+    const renderRemoteStatus = (st?: NodeStatus) => {
+        if (!st) {
+            return <Text type="secondary" style={{ fontSize: 11 }}>状态加载中...</Text>;
+        }
+        if (!st.online) {
+            return (
+                <Space direction="vertical" size={2}>
+                    <Text type="danger" style={{ fontSize: 12 }}><CloseCircleFilled /> 节点不可达</Text>
+                    {st.error && <Text type="secondary" style={{ fontSize: 11 }}>{st.error}</Text>}
+                </Space>
+            );
+        }
+        return (
+            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                <Space wrap>
+                    <Text style={{ fontSize: 11 }}>💻 CPU: {st.cpu_cores ?? '—'}核 · 负载 {st.cpu_load ?? '—'}</Text>
+                    <Text style={{ fontSize: 11 }}>🧠 内存: {fmtMB(st.mem_used_mb)}/{fmtMB(st.mem_total_mb)}</Text>
+                    {st.ping_ms != null && <Text style={{ fontSize: 11 }}>📡 {st.ping_ms}ms</Text>}
+                </Space>
+                <Space wrap>
+                    <Text style={{ fontSize: 11 }}>💾 硬盘: {fmtKB(st.disk_used_kb)}/{fmtKB(st.disk_total_kb)}</Text>
+                    <Text style={{ fontSize: 11 }}>📥 下行: {fmtBytes(st.net_rx_bytes)}</Text>
+                    <Text style={{ fontSize: 11 }}>📤 上行: {fmtBytes(st.net_tx_bytes)}</Text>
+                </Space>
+                <div>{renderGpuInfo(st)}</div>
+                {st.training_active && (
+                    <div>
+                        <Space>
+                            <ThunderboltFilled style={{ color: '#fa8c16' }} />
+                            <Text strong style={{ fontSize: 12 }}>训练中</Text>
+                        </Space>
+                        <Progress percent={50} size="small" status="active" />
+                        {(st.containers || []).map((c, i) => (
+                            <Text key={i} type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                                {c.name}: {c.status}
+                            </Text>
+                        ))}
+                    </div>
+                )}
+            </Space>
+        );
+    };
+
     return (
         <div className="p-4 space-y-4">
             <div className="flex items-center justify-between">
@@ -170,66 +284,39 @@ export const AdminAutoDLNodes: React.FC = () => {
 
             {loading ? (
                 <div className="text-center py-10"><Spin /></div>
-            ) : nodes.length === 0 ? (
+            ) : remoteNodes.length === 0 ? (
                 <Empty description="未配置 AutoDL 节点（在 config/training_nodes.yaml 中添加）" />
             ) : (
                 <Row gutter={[16, 16]}>
-                    {nodes.map((n) => {
+                    {remoteNodes.map((n) => {
                         const st = statusMap[n.id];
-                        const isRemote = n.type === 'remote';
+                        const cfg = configMap[n.id];
+                        const online = !!st?.online;
                         return (
-                            <Col span={12} key={n.id}>
+                            <Col span={12} style={{ display: 'flex' }} key={n.id}>
                                 <Card
                                     size="small"
+                                    style={{ width: '100%', display: 'flex', flexDirection: 'column' }}
                                     title={
                                         <Space>
-                                            <CloudServerOutlined />
+                                            <RocketFilled style={{ color: '#eb2f96' }} />
                                             <Text strong>{n.name}</Text>
-                                            {!isRemote && <Tag>本地</Tag>}
-                                            {isRemote && st?.online && <Tag color="green">在线</Tag>}
-                                            {isRemote && st && !st.online && <Tag color="red">离线</Tag>}
+                                            {st?.training_active && <Tag color="processing">训练中</Tag>}
                                         </Space>
                                     }
-                                    extra={st?.training_active ? <Tag color="processing">训练中</Tag> : isRemote && st?.online ? <Tag>空闲</Tag> : null}
+                                    extra={
+                                        online
+                                            ? <Tag color="green"><CheckCircleFilled /> 在线</Tag>
+                                            : <Tag color="red"><CloseCircleFilled /> 离线</Tag>
+                                    }
                                 >
-                                    {!isRemote ? (
-                                        <Text type="secondary">本地 Docker 训练（Docker-in-Docker）</Text>
-                                    ) : !st ? (
-                                        <Text type="secondary">状态加载中...</Text>
-                                    ) : st.online ? (
-                                        <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                                            <Space wrap>
-                                                <Text style={{ fontSize: 11 }}>💻 CPU: {st.cpu_cores ?? '—'}核 · 负载 {st.cpu_load ?? '—'}</Text>
-                                                <Text style={{ fontSize: 11 }}>🧠 内存: {fmtMB(st.mem_used_mb)}/{fmtMB(st.mem_total_mb)}</Text>
-                                                {st.ping_ms != null && <Text style={{ fontSize: 11 }}>📡 {st.ping_ms}ms</Text>}
-                                            </Space>
-                                            <Space wrap>
-                                                <Text style={{ fontSize: 11 }}>💾 硬盘: {fmtKB(st.disk_used_kb)}/{fmtKB(st.disk_total_kb)}</Text>
-                                                <Text style={{ fontSize: 11 }}>📥 下行: {fmtBytes(st.net_rx_bytes)}</Text>
-                                                <Text style={{ fontSize: 11 }}>📤 上行: {fmtBytes(st.net_tx_bytes)}</Text>
-                                            </Space>
-                                            <div>{renderGpuInfo(st)}</div>
-                                            {st.training_active && (
-                                                <div>
-                                                    <Space>
-                                                        <ThunderboltFilled style={{ color: '#fa8c16' }} />
-                                                        <Text strong style={{ fontSize: 12 }}>训练中</Text>
-                                                    </Space>
-                                                    <Progress percent={50} size="small" status="active" />
-                                                    {(st.containers || []).map((c, i) => (
-                                                        <Text key={i} type="secondary" style={{ fontSize: 11, display: 'block' }}>
-                                                            {c.name}: {c.status}
-                                                        </Text>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </Space>
-                                    ) : (
-                                        <Space direction="vertical" size="small">
-                                            <Text type="danger"><CloseCircleFilled /> 节点不可达</Text>
-                                            {st.error && <Text type="secondary" style={{ fontSize: 11 }}>{st.error}</Text>}
-                                        </Space>
-                                    )}
+                                    <Text type="secondary" style={{ fontSize: 11, marginBottom: 6 }}>
+                                        <ClusterOutlined /> AutoDL 远程 GPU 训练节点
+                                    </Text>
+                                    {/* 节点配置 */}
+                                    {renderRemoteConfig(cfg, n.host)}
+                                    {/* 在线状态 */}
+                                    {renderRemoteStatus(st)}
                                 </Card>
                             </Col>
                         );

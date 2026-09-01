@@ -11,7 +11,6 @@ export interface MarketSyncSchedule {
     time: string;
     days: number;
     datasets: string[];
-    with_qlib: boolean;
 }
 
 interface SyncSchedulePanelProps {
@@ -35,7 +34,6 @@ export const SyncSchedulePanel: React.FC<SyncSchedulePanelProps> = ({
     const [time, setTime] = useState<Dayjs>(dayjs('00:30', 'HH:mm'));
     const [days, setDays] = useState(defaultDays);
     const [datasets, setDatasets] = useState<string[]>([]);
-    const [withQlib, setWithQlib] = useState(false);
 
     useEffect(() => {
         loadSchedule();
@@ -52,7 +50,6 @@ export const SyncSchedulePanel: React.FC<SyncSchedulePanelProps> = ({
                 setTime(dayjs(s.time, 'HH:mm').isValid() ? dayjs(s.time, 'HH:mm') : dayjs('00:30', 'HH:mm'));
                 setDays(s.days ?? defaultDays);
                 setDatasets(s.datasets?.length ? s.datasets : [...selectedDatasets]);
-                setWithQlib(!!s.with_qlib);
             }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : '未知错误';
@@ -70,7 +67,6 @@ export const SyncSchedulePanel: React.FC<SyncSchedulePanelProps> = ({
                 time: time.format('HH:mm'),
                 days,
                 datasets,
-                with_qlib: withQlib,
             });
             message.success('定时同步配置已保存');
         } catch (err: unknown) {
@@ -136,12 +132,6 @@ export const SyncSchedulePanel: React.FC<SyncSchedulePanelProps> = ({
                                 {market === 'BC' ? '个自然日' : '个交易日'}
                             </span>
                         </Space>
-                        <Checkbox
-                            checked={withQlib}
-                            onChange={(e) => setWithQlib(e.target.checked)}
-                        >
-                            <span className="text-xs">同步后重建 Qlib 缓存</span>
-                        </Checkbox>
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                         {datasets.length > 0

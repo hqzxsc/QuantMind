@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services.trade.portfolio.models import Portfolio
-from backend.services.trade.services.manual_execution_service import ManualExecutionService
+from backend.services.trade_shared.portfolio.models import Portfolio
+from backend.services.live_trading.services.manual_execution_service import ManualExecutionService
 
 
 class _ScalarResult:

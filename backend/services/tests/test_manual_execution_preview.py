@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-from backend.services.trade.services.manual_execution_service import (
+from backend.services.live_trading.services.manual_execution_service import (
     ManualExecutionService,
     PreparedManualExecution,
     _build_execution_plan_from_signals,
@@ -20,7 +20,7 @@ from backend.services.trade.services.manual_execution_service import (
     _resolve_board_lot_size,
     _should_request_cancel_for_buy_status,
 )
-from backend.services.trade.services.manual_execution_persistence import manual_execution_persistence
+from backend.services.live_trading.services.manual_execution_persistence import manual_execution_persistence
 
 
 def test_build_execution_plan_from_signals_generates_sell_and_buy_orders():

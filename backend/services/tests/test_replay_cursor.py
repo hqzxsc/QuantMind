@@ -9,7 +9,7 @@ from datetime import date
 
 import pytest
 
-from backend.services.trade.simulation.replay.router import (
+from backend.services.simulation.replay.router import (
     _compute_next_date,
     _count_sessions,
 )

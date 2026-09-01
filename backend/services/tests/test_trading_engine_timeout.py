@@ -4,8 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from backend.services.trade.models.order import OrderStatus, TradingMode
-from backend.services.trade.services.trading_engine import TradingEngine
+from backend.services.trade_shared.models.order import OrderStatus, TradingMode
+from backend.services.live_trading.services.trading_engine import TradingEngine
 
 
 class _FakeRedis:

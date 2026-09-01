@@ -89,7 +89,6 @@ const AXIS_LABEL = { fontSize: 10, color: '#64748b' };
 const AXIS_LINE = { lineStyle: { color: '#e2e8f0' } };
 const SPLIT_LINE = { lineStyle: { color: '#f1f5f9' } };
 const SUB_HEIGHT = 84;  // 每个副图高度 px（VOL/MACD 等）
-const SCORE_SUB_HEIGHT = 132;  // 推理分数副图单独拉高（曲线波动小，需要更高可读性）
 /** 默认黄金线（策略 v2.0 主板黄金买入区间 0.10-0.12 的下沿） */
 const DEFAULT_REF_LINE: RefLine = { id: 'default-golden', value: 0.10, label: '黄金线', color: '#10b981' };
 
@@ -162,10 +161,12 @@ export function KlineChart({
     const SUB_GAP = 24;                // 副图之间间距
     const TOP = 24;                    // 顶部留出图例行
     const hasScoreSubplot = !!(showScoreSubplot && scorePoints?.length);
+    // 分数副图高度按整图高度动态取 ≈1/3（K线主图区约 2/3，随窗口等比缩放）
+    const scoreSubH = hasScoreSubplot ? Math.max(90, Math.round((chartH - TOP - GAP - 26) / 3)) : 0;
     const subCount = config.subplots.length + (hasScoreSubplot ? 1 : 0);
     const subTotal = subCount > 0
       ? (config.subplots.length * SUB_HEIGHT
-          + (hasScoreSubplot ? SCORE_SUB_HEIGHT : 0)
+          + (hasScoreSubplot ? scoreSubH : 0)
           + (subCount - 1) * SUB_GAP)
       : 0;
     const mainH = Math.max(140, chartH - TOP - GAP - subTotal - 26);
@@ -342,7 +343,7 @@ export function KlineChart({
       const gi = grids.length;
       const xi = xAxes.length;
       const yi = yAxes.length;
-      grids.push({ left: GRID_L, right: GRID_R, top: subTop, height: SCORE_SUB_HEIGHT });
+      grids.push({ left: GRID_L, right: GRID_R, top: subTop, height: scoreSubH });
       const showLabel = true;
       xAxes.push({
         type: 'category', gridIndex: gi, data: dates, boundaryGap: true,
@@ -389,7 +390,7 @@ export function KlineChart({
         silent: true, symbol: 'none',
         data: [{ yAxis: 0, lineStyle: { color: '#94a3b8', type: 'dashed', width: 1 }, label: { formatter: '0', fontSize: 9, color: '#94a3b8' } }],
       } as any;
-      subTop += SCORE_SUB_HEIGHT + SUB_GAP;
+      subTop += scoreSubH + SUB_GAP;
     }
 
     // ── 推理分数：叠加到主图，共用主图 x 轴 + 右侧分数轴（scoreYI）──

@@ -148,13 +148,12 @@ export const AdminQuantDBPanel: React.FC = () => {
                     <Col span={6}>
                         <Statistic
                             title="SDK 状态"
-                            value={info?.installed ? '已安装' : '未安装'}
+                            value={info?.installed ? `已安装${info.version ? ` v${info.version}` : ''}` : '未安装'}
                             prefix={info?.installed
                                 ? <CheckCircleFilled style={{ color: '#52c41a' }} />
                                 : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
                             valueStyle={{ fontSize: 16 }}
                         />
-                        {info?.version && <Text type="secondary" className="text-xs">v{info.version}</Text>}
                     </Col>
                     <Col span={6}>
                         <Statistic
@@ -266,7 +265,7 @@ export const AdminQuantDBPanel: React.FC = () => {
                 </Button>
             </div>
 
-            {/* 定时同步调度面板 (默认 24:00 以后如 00:30) */}
+            {/* 定时同步调度面板（建议次日 00:00 以后按需错峰，具体时间以前端设置为准） */}
             <SyncSchedulePanel market="A" defaultDays={5} />
 
             {/* QuantDB 数据集目录与详情 */}

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from datetime import date
 
-from backend.services.trade.simulation.services.rebalance_calculator import (
+from backend.services.simulation.services.rebalance_calculator import (
     Quote,
     RebalanceCalculator,
     SimulationAccount,
     StrategyConfig,
 )
-from backend.services.trade.simulation.services.signal_loader import SignalScore
+from backend.services.simulation.services.signal_loader import SignalScore
 
 TD = date(2026, 3, 4)
 
@@ -144,7 +144,7 @@ class TestTopkDropout:
 class TestRebalanceCycle:
     def test_resolve_n_drop_from_ratio(self):
         """n_drop_ratio 优先：topk=50 × 20% = 10 只，至少 1 只。"""
-        from backend.services.trade.simulation.replay.day_runner import _resolve_n_drop
+        from backend.services.simulation.replay.day_runner import _resolve_n_drop
 
         assert _resolve_n_drop({"topk": 50, "n_drop_ratio": 0.2}) == 10
         assert _resolve_n_drop({"topk": 30, "n_drop_ratio": 0.2}) == 6

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from backend.services.trade.services.simulation_manager import SimulationAccountManager
+from backend.services.trade_shared.simulation_manager import SimulationAccountManager
 
 
 class _FakeRedisClient:

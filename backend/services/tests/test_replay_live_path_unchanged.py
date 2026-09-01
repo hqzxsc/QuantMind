@@ -42,7 +42,7 @@ class TestReplaySignalLoaderMinScore:
     @pytest.mark.asyncio
     async def test_min_score_none_no_filter(self):
         """min_score=None 时 SQL 不含 score >= 条件。"""
-        from backend.services.trade.simulation.replay.signal_generator import (
+        from backend.services.simulation.replay.signal_generator import (
             ReplaySignalLoader,
         )
 
@@ -73,7 +73,7 @@ class TestReplaySignalLoaderMinScore:
     @pytest.mark.asyncio
     async def test_min_score_zero_adds_filter(self):
         """min_score=0.0 时 SQL 包含 score >= 条件。"""
-        from backend.services.trade.simulation.replay.signal_generator import (
+        from backend.services.simulation.replay.signal_generator import (
             ReplaySignalLoader,
         )
 
@@ -103,7 +103,7 @@ class TestReplayEquitySnapshotUniqueness:
 
     def test_unique_constraint_exists_in_model(self):
         """ReplayEquitySnapshot 有 (session_id, trade_date) 唯一约束。"""
-        from backend.services.trade.simulation.models.replay import (
+        from backend.services.simulation.models.replay import (
             ReplayEquitySnapshot,
         )
 
@@ -113,7 +113,7 @@ class TestReplayEquitySnapshotUniqueness:
 
     def test_replay_signal_unique_constraint(self):
         """ReplaySignal 有 (session_id, trade_date, symbol) 唯一约束。"""
-        from backend.services.trade.simulation.models.replay import ReplaySignal
+        from backend.services.simulation.models.replay import ReplaySignal
 
         table = ReplaySignal.__table__
         constraint_names = [c.name for c in table.constraints if hasattr(c, "name")]

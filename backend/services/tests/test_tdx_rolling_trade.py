@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.trade.services.tdx_rolling_trade_service import (
+from backend.services.live_trading.services.tdx_rolling_trade_service import (
     DEFAULT_EXECUTE_MODE,
     DEFAULT_SCORE_THRESHOLD,
     TdxRollingTradeService,

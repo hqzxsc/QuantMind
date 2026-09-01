@@ -5,13 +5,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from zoneinfo import ZoneInfo
 
-from backend.services.trade.simulation.services.corporate_action_service import (
+from backend.services.simulation.services.corporate_action_service import (
     SimulationCorporateActionService,
 )
-from backend.services.trade.simulation.services.eod_service import (
+from backend.services.simulation.services.eod_service import (
     _resolve_target_trade_date,
 )
-from backend.services.trade.simulation.services.eod_service import _load_close_price
+from backend.services.simulation.services.eod_service import _load_close_price
 from backend.services.trade.routers.simulation import (
     _should_prefer_redis_account_snapshot,
 )

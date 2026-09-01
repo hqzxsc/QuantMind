@@ -5,14 +5,14 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.services.trade.simulation.models.account import SimulationAccount
-from backend.services.trade.simulation.models.cash_ledger import SimulationCashLedger
-from backend.services.trade.simulation.models.corporate_action import (
+from backend.services.simulation.models.account import SimulationAccount
+from backend.services.simulation.models.cash_ledger import SimulationCashLedger
+from backend.services.simulation.models.corporate_action import (
     SimulationCorporateAction,
 )
-from backend.services.trade.simulation.models.position_lot import SimulationPositionLot
-from backend.services.trade.simulation.services import corporate_action_service
-from backend.services.trade.simulation.services.corporate_action_service import (
+from backend.services.simulation.models.position_lot import SimulationPositionLot
+from backend.services.simulation.services import corporate_action_service
+from backend.services.simulation.services.corporate_action_service import (
     SimulationCorporateActionService,
 )
 from backend.shared.trade_redis_keys import normalize_trade_user_id

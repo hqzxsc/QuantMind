@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.trade.redis_client import RedisClient
-from backend.services.trade.services.tdx_l2_capture_task import FACTOR_ICIR
-from backend.services.trade.services.tdx_l2_realtime import (
+from backend.services.trade_shared.redis_client import RedisClient
+from backend.services.live_trading.services.tdx_l2_capture_task import FACTOR_ICIR
+from backend.services.live_trading.services.tdx_l2_realtime import (
     _z_score,
     compute_realtime_score,
     compute_signal_scores,
@@ -238,7 +238,7 @@ class TestOrderQuotePersistence:
         rc = _patched_redis()
         # Act
         with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
-            from backend.services.trade.services.tdx_l2_realtime import (
+            from backend.services.live_trading.services.tdx_l2_realtime import (
                 load_order_quotes,
                 load_symbol_quotes,
                 save_order_quote,
@@ -265,7 +265,7 @@ class TestOrderQuotePersistence:
         # Arrange
         rc = _patched_redis()
         with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
-            from backend.services.trade.services.tdx_l2_realtime import (
+            from backend.services.live_trading.services.tdx_l2_realtime import (
                 load_order_quotes,
                 merge_order_states,
                 save_order_quote,
@@ -290,7 +290,7 @@ class TestOrderQuotePersistence:
         # Arrange
         rc = _patched_redis()
         with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
-            from backend.services.trade.services.tdx_l2_realtime import merge_order_states
+            from backend.services.live_trading.services.tdx_l2_realtime import merge_order_states
 
             merge_order_states([{"order_id": "9999", "status": "filled"}])
         # Assert: 无异常且无写入
@@ -303,7 +303,7 @@ class TestInflightRegistry:
     def test_save_load_clear_roundtrip(self):
         # Arrange
         rc = _patched_redis()
-        from backend.services.trade.services.tdx_l2_realtime import (
+        from backend.services.live_trading.services.tdx_l2_realtime import (
             clear_inflight,
             list_inflight,
             load_inflight,
@@ -325,7 +325,7 @@ class TestInflightRegistry:
     def test_list_inflight_returns_all_symbols(self):
         # Arrange
         rc = _patched_redis()
-        from backend.services.trade.services.tdx_l2_realtime import (
+        from backend.services.live_trading.services.tdx_l2_realtime import (
             list_inflight,
             save_inflight,
         )
@@ -343,7 +343,7 @@ class TestInflightRegistry:
 
 class TestRetryInflightOrders:
     def _svc_and_orders(self, orders: list[dict]):
-        from backend.services.trade.services.tdx_rolling_trade_service import (
+        from backend.services.live_trading.services.tdx_rolling_trade_service import (
             TdxRollingTradeService,
         )
 
@@ -353,7 +353,7 @@ class TestRetryInflightOrders:
         return svc
 
     def _run_retry(self, rc, svc, *, inflight, signal_scores=None, pool=None, today_orders=None):
-        from backend.services.trade.services.tdx_l2_realtime import (
+        from backend.services.live_trading.services.tdx_l2_realtime import (
             _retry_inflight_orders,
             save_inflight,
         )
@@ -485,7 +485,7 @@ def run_retry_sync(coro, pusher):
 
 class TestLoopStability:
     def _seed_pool(self, rc, n: int = 6):
-        from backend.services.trade.services.tdx_l2_realtime import _REALTIME_KEY
+        from backend.services.live_trading.services.tdx_l2_realtime import _REALTIME_KEY
 
         for i in range(n):
             sym = f"SH60000{i}"
@@ -503,7 +503,7 @@ class TestLoopStability:
         from datetime import datetime
 
         from backend.services.trade.services import tdx_l2_capture_task as cap
-        from backend.services.trade.services.tdx_l2_realtime import save_l2_config
+        from backend.services.live_trading.services.tdx_l2_realtime import save_l2_config
 
         with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
             save_l2_config({
@@ -526,7 +526,7 @@ class TestLoopStability:
         import asyncio
 
         from backend.services.trade.services import tdx_l2_capture_task as cap
-        from backend.services.trade.services.tdx_l2_realtime import (
+        from backend.services.live_trading.services.tdx_l2_realtime import (
             realtime_status,
             run_tdx_l2_realtime_task,
         )

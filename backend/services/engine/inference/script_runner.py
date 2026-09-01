@@ -1645,7 +1645,7 @@ class InferenceScriptRunner:
                 try:
                     import asyncio
 
-                    from backend.services.trade.services.tdx_signal_push_service import (
+                    from backend.services.live_trading.services.tdx_signal_push_service import (
                         tdx_signal_pusher,
                     )
 
@@ -1676,7 +1676,7 @@ class InferenceScriptRunner:
                         asyncio.create_task(_push_to_tdx())
 
                     # === 滚动买卖检查 (分数>2.2买/掉下2.2卖/大盘MA20过滤) ===
-                    from backend.services.trade.services.tdx_rolling_trade_service import (
+                    from backend.services.live_trading.services.tdx_rolling_trade_service import (
                         tdx_rolling_trader,
                     )
 

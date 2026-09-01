@@ -48,6 +48,9 @@ export const AdminQlibDataPanel: React.FC = () => {
     try {
       setStatus(await dataPlatformService.getQlibStatus());
     } catch (e: any) {
+      const code = e?.code || e?.response?.status;
+      // 网络瞬断（容器重启）静默退避，不刷 error toast
+      if (code === 'ERR_NETWORK' || !e?.response) return;
       message.error(e?.response?.data?.detail || '加载 Qlib 状态失败');
     }
   }, []);
@@ -56,7 +59,11 @@ export const AdminQlibDataPanel: React.FC = () => {
     try {
       const res = await dataPlatformService.listQlibJobs();
       setJobs(res.jobs || []);
-    } catch { /* 静默 */ }
+    } catch (e: any) {
+      const code = e?.code || e?.response?.status;
+      if (code === 'ERR_NETWORK' || !e?.response) return;
+      // 非网络错误才静默，避免 500 刷屏也忽略
+    }
   }, []);
 
   const refresh = useCallback(() => {
@@ -69,11 +76,27 @@ export const AdminQlibDataPanel: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 有运行中任务时轮询进度
+  // 有运行中任务时轮询进度（指数退避 + 页面不可见暂停）
   useEffect(() => {
     if (!hasRunning) return;
-    const timer = setInterval(() => { loadStatus(); loadJobs(); }, 3000);
-    return () => clearInterval(timer);
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        timer = setTimeout(poll, 5000);
+        return;
+      }
+      try {
+        await Promise.all([loadStatus(), loadJobs()]);
+        attempt = 0;
+      } catch {
+        attempt += 1;
+      }
+      const delay = Math.min(3000 * Math.pow(1.5, attempt), 15000) + Math.random() * 500;
+      timer = setTimeout(poll, delay);
+    };
+    poll();
+    return () => { if (timer) clearTimeout(timer); };
   }, [hasRunning, loadStatus, loadJobs]);
 
   const doUpdate = () => {

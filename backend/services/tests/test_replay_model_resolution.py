@@ -18,7 +18,7 @@ import json
 import pytest
 from fastapi import HTTPException
 
-from backend.services.trade.simulation.replay import router as replay_router
+from backend.services.simulation.replay import router as replay_router
 
 
 def _resolve(model_id, tenant_id="default", user_id="00000001"):

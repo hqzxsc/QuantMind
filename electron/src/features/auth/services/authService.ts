@@ -233,6 +233,15 @@ class AuthService {
     const config = error.config;
     if (!config) return Promise.reject(this.handleError(error));
 
+    // 后台轮询（QLIB/WS 重连期）网络瞬断静默，不刷全局 Auth Error
+    const isBackgroundPoll = typeof config.url === 'string' && (
+      config.url.includes('/qlib/') || config.url.includes('/ws/')
+    );
+    const isTransientNetwork = error?.code === 'ERR_NETWORK' || !error?.response;
+    if (isBackgroundPoll && isTransientNetwork) {
+      return Promise.reject(error);
+    }
+
     const status = error.response?.status;
     const shouldSuppressErrorLog = !!config._suppressAuthErrorLog && status === 401;
     if (!shouldSuppressErrorLog) {

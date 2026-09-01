@@ -7,11 +7,13 @@ import { modelTrainingService } from '../../../services/modelTrainingService';
 
 interface Props {
   symbol: string; // suffix 600519.SH
-  /** @deprecated 曲线固定跟随用户默认模型，不再按 modelId 查询；仅为兼容旧调用方保留 */
+  /** 推理分数所属模型；不传或 'default' 时跟随用户默认模型 */
   modelId?: string;
   selectedDate?: string | null; // 当前联动日期（高亮）
   onPointClick?: (date: string) => void;
   onScoresLoaded?: (points: Point[]) => void; // 分数点回传，供 K 线副图使用
+  /** 模型列表 + 当前选中模型名回传（供页面顶部模型下拉使用） */
+  onModelsLoaded?: (models: Array<{ model_id: string; display_name?: string }>, modelName: string) => void;
   refreshKey?: number;
   height?: number;
   /** 分数回溯窗口（自然日）。默认 180；个股终端需传更大值以覆盖「当前日期向前 2 年」的 K 线全区间，
@@ -25,7 +27,7 @@ export interface Point {
   side: string | null;
 }
 
-export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScoresLoaded, refreshKey = 0, height = 220, days = 180 }: Props) {
+export function InferenceScoreChart({ symbol, modelId, selectedDate, onPointClick, onScoresLoaded, onModelsLoaded, refreshKey = 0, height = 220, days = 180 }: Props) {
   const [points, setPoints] = useState<Point[]>([]);
   const [loading, setLoading] = useState(false);
   const [modelName, setModelName] = useState<string>('');
@@ -38,10 +40,10 @@ export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScor
     let cancelled = false;
     setLoading(true);
     const code = symbol.split('.')[0];
-    // 不传 model_id：后端锁定用户默认模型的 pred.parquet，响应 models 恒为默认模型一个；
+    // 传 model_id（如有）：后端按指定模型返回 pred 分数；否则锁定用户默认模型。
     // days 由调用方控制窗口（个股终端传 750 保证覆盖最长 2 年的 K 线）
     modelTrainingService
-      .getStockInferenceHistory(code, days)
+      .getStockInferenceHistory(code, days, modelId || undefined)
       .then((resp) => {
         if (cancelled) return;
         const pts: Point[] = (resp.items ?? [])
@@ -54,11 +56,13 @@ export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScor
           .sort((a, b) => a.date.localeCompare(b.date));
         setPoints(pts);
         onScoresLoaded?.(pts);
-        if (resp.models?.[0]) {
-          setModelName(resp.models[0].display_name || resp.models[0].model_id || '');
-        } else {
-          setModelName('');
-        }
+        const models = resp.models ?? [];
+        const chosen = modelId
+          ? models.find((m) => m.model_id === modelId)
+          : models[0];
+        const name = chosen ? (chosen.display_name || chosen.model_id || '') : '';
+        setModelName(name);
+        onModelsLoaded?.(models, name);
       })
       .catch(() => {
         if (!cancelled) {
@@ -72,7 +76,7 @@ export function InferenceScoreChart({ symbol, selectedDate, onPointClick, onScor
     return () => {
       cancelled = true;
     };
-  }, [symbol, refreshKey, days]);
+  }, [symbol, modelId, refreshKey, days]);
 
   const option = useMemo(() => {
     if (!points.length) return null;

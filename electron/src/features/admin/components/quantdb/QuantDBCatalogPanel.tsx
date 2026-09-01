@@ -19,16 +19,14 @@ const { Text } = Typography;
 
 const JOB_POLL_INTERVAL_MS = 3000;
 
-// 首次打开数据下载面板时，选择模型训练与系统基础运行所需的最小数据集。
-// 其他数据（分钟/Tick、财务、技术衍生等）均由管理员按需勾选。
-const DEFAULT_SYSTEM_DATASETS = new Set([
-    'daily_forward',
-    'daily_backward',
-    'daily_unadjusted',
-    'features_daily',
-    'l1_factors',
-    'l2_factors',
-    'instrument_detail',
+// 默认勾选：除 1分/5分/Tick/债券ETF/L1+L2合并 外，其余数据集默认勾选（便于开箱即用）。
+const EXCLUDED_BY_DEFAULT = new Set([
+    'min1_kline',
+    'min5_kline',
+    'tick_data',
+    'etf_pcf',
+    'convertible_bond',
+    'l1_l2_factors',
 ]);
 
 const LAYOUT_LABELS: Record<QuantDBDataset['layout'], { text: string; color: string }> = {
@@ -75,7 +73,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0 }:
             setDataDir(resp.data_dir ?? '');
             if (!hasAppliedDefaultSelection.current) {
                 setSelected((resp.datasets ?? [])
-                    .filter((dataset) => DEFAULT_SYSTEM_DATASETS.has(dataset.dataset))
+                    .filter((dataset) => !EXCLUDED_BY_DEFAULT.has(dataset.dataset))
                     .map((dataset) => dataset.dataset));
                 hasAppliedDefaultSelection.current = true;
             }

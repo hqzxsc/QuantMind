@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.sql.elements import TextClause
 from sqlalchemy.sql.selectable import Select
 
-from backend.services.trade.services.tdx_push_service import (
+from backend.services.live_trading.services.tdx_push_service import (
     TdxPushService,
     estimate_order_fee,
 )

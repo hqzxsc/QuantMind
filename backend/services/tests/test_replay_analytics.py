@@ -10,7 +10,7 @@
 from datetime import date
 from typing import Any
 
-from backend.services.trade.simulation.replay.analytics import (
+from backend.services.simulation.replay.analytics import (
     compute_attribution,
     compute_core_metrics,
     compute_nav_curve,

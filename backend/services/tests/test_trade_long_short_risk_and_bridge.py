@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from backend.services.trade.services.broker_client import QMTBridgeBroker, RedisBroker
-from backend.services.trade.services.risk_service import RiskService
+from backend.services.live_trading.services.broker_client import QMTBridgeBroker, RedisBroker
+from backend.services.live_trading.services.risk_service import RiskService
 from tools.qmt_agent.config import _QMT_ORDER_STATUS_MAP
 
 

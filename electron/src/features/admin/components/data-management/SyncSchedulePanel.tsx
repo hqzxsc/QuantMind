@@ -21,7 +21,7 @@ interface SyncSchedulePanelProps {
     defaultDays?: number;
 }
 
-/** 每市场定时同步配置面板 — 每天 HH:MM 定时同步上游数据（精确到分钟）。 */
+/** 每市场定时同步配置面板 — 每天 HH:MM 定时同步上游数据（精确到分钟，建议次日 00:00 以后按需错峰）。 */
 export const SyncSchedulePanel: React.FC<SyncSchedulePanelProps> = ({
     market,
     selectedDatasets = [],
@@ -95,7 +95,7 @@ export const SyncSchedulePanel: React.FC<SyncSchedulePanelProps> = ({
             <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-amber-700 flex items-center">
                     <ClockCircleOutlined className="mr-1" />
-                    定时同步（每天自动同步上游数据）
+                    定时同步（每天自动同步上游数据，建议设置到次日 00:00 以后）
                 </span>
                 <Switch
                     size="small"
@@ -144,7 +144,7 @@ export const SyncSchedulePanel: React.FC<SyncSchedulePanelProps> = ({
                         showIcon
                         message={
                             <span className="text-xs">
-                                同步在后台执行（Celery），到点自动触发；时区 Asia/Shanghai。
+                                按需错峰触发，避免集中请求；同步在后台执行（Celery），到点自动触发，时区 Asia/Shanghai。
                             </span>
                         }
                     />

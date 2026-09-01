@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from backend.services.trade.services.risk_service import RiskService
+from backend.services.live_trading.services.risk_service import RiskService
 
 
 class _FakeRedisClient:

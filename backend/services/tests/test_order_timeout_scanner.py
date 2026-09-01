@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from backend.services.trade.models.enums import OrderSide, OrderStatus, TradingMode
+from backend.services.trade_shared.models.enums import OrderSide, OrderStatus, TradingMode
 from backend.services.trade.services import order_timeout_scanner
 
 

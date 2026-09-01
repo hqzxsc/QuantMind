@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.trade.services.simulation_t1_unlock_task import (
+from backend.services.simulation.services.simulation_t1_unlock_task import (
     _unlock_all_accounts,
 )
 

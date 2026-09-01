@@ -1,4 +1,4 @@
-from backend.services.trade.routers.real_trading_utils import (
+from backend.services.live_trading.routers.real_trading_utils import (
     _default_execution_config,
     _default_live_trade_config,
     _normalize_execution_config,

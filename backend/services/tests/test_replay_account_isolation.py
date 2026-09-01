@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.trade.simulation.replay.account import ReplayAccountManager
+from backend.services.simulation.replay.account import ReplayAccountManager
 
 
 class TestReplayAccountKeyIsolation:

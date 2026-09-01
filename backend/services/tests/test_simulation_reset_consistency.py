@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from backend.services.trade.deps import AuthContext
+from backend.services.trade_shared.deps import AuthContext
 from backend.services.trade.routers import simulation as simulation_router
-from backend.services.trade.services.simulation_manager import SimulationAccountManager
+from backend.services.trade_shared.simulation_manager import SimulationAccountManager
 
 
 class _FakeRedisClient:

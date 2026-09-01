@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services.trade.simulation.services.trade_service import SimTradeService
+from backend.services.simulation.services.trade_service import SimTradeService
 
 
 class _FakeResult:

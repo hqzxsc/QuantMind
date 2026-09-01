@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from backend.services.trade.simulation.services.corporate_action_importer import (
+from backend.services.simulation.services.corporate_action_importer import (
     load_standard_corp_action_csv,
     map_standard_corp_action_row,
 )

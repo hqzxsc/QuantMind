@@ -5,10 +5,10 @@ import pandas as pd
 import pytest
 
 from backend.services.engine.services.pipeline_service import PipelineRunRequest, PipelineService
-from backend.services.trade.models.enums import OrderSide, OrderType, PositionSide, TradeAction
-from backend.services.trade.schemas.order import OrderCreate
-from backend.services.trade.services.order_service import OrderService
-from backend.services.trade.services.simulation_manager import SimulationAccountManager
+from backend.services.trade_shared.models.enums import OrderSide, OrderType, PositionSide, TradeAction
+from backend.services.trade_shared.schemas.order import OrderCreate
+from backend.services.trade_shared.services.order_service import OrderService
+from backend.services.trade_shared.simulation_manager import SimulationAccountManager
 from backend.shared.margin_stock_pool import MarginStockPoolService, normalize_symbol
 
 

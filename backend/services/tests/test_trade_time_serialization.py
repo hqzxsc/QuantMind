@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from backend.services.trade.models.order import OrderSide, OrderStatus, OrderType, PositionSide, TradeAction, TradingMode
-from backend.services.trade.schemas.order import OrderResponse
-from backend.services.trade.schemas.trade import TradeResponse
+from backend.services.trade_shared.models.order import OrderSide, OrderStatus, OrderType, PositionSide, TradeAction, TradingMode
+from backend.services.trade_shared.schemas.order import OrderResponse
+from backend.services.trade_shared.schemas.trade import TradeResponse
 
 
 def test_trade_response_serializes_naive_datetimes_as_utc_iso():

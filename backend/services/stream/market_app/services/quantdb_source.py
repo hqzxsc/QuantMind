@@ -28,7 +28,7 @@ class QuantDBDataSource(DataSourceAdapter):
     def _get_market_data(self):
         """懒初始化 LocalMarketData（进程内共享 QuantDBDataHub 实例）。"""
         if self._market_data is None:
-            from backend.services.trade.simulation.services.local_market_data import (
+            from backend.services.simulation.services.local_market_data import (
                 LocalMarketData,
             )
 

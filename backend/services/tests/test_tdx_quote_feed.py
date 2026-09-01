@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.services.trade.services.tdx_quote_feed import (
+from backend.services.live_trading.services.tdx_quote_feed import (
     TZ,
     build_tick_row,
     check_sltp_trigger,

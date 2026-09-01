@@ -1,5 +1,5 @@
-from backend.services.trade.simulation.models.order import TradingMode
-from backend.services.trade.simulation.schemas.order import SimOrderCreate
+from backend.services.simulation.models.order import TradingMode
+from backend.services.simulation.schemas.order import SimOrderCreate
 
 
 def test_simulation_order_accepts_lowercase_trading_mode():

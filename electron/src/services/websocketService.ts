@@ -172,7 +172,13 @@ class WebSocketService {
         };
 
         this.ws.onerror = (error) => {
-          console.error('WebSocket错误:', error);
+          // 连接拒绝等网络瞬断降为 debug，避免前端不停弹 error
+          const msg = String((error as any)?.message || '');
+          if (msg.includes('ERR_CONNECTION_REFUSED') || this.reconnectAttempts > 2) {
+            console.debug('WebSocket错误(退避):', error);
+          } else {
+            console.error('WebSocket错误:', error);
+          }
           this.setStatus(WebSocketStatus.ERROR);
           this.connectPromise = null;
           reject(error);
@@ -359,7 +365,7 @@ class WebSocketService {
     }
   }
 
-  // 私有方法：重连
+  // 私有方法：重连（指数退避 + 抖动，避免刷屏）
   private attemptReconnect(): void {
     const disableWebSocket =
       String((import.meta as any).env?.VITE_DISABLE_WEBSOCKET || '').toLowerCase() === 'true';
@@ -370,16 +376,33 @@ class WebSocketService {
     if (this.manualDisconnect || this.reconnectTimer) {
       return;
     }
+    // 页面不可见时暂停重连，恢复可见时再试
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.setStatus(WebSocketStatus.DISCONNECTED);
+      return;
+    }
     this.reconnectAttempts++;
     this.setStatus(WebSocketStatus.RECONNECTING);
 
-    const delay = this.reconnectDelay;
-    console.log(`WebSocket断链，将在 ${delay}ms 后第 ${this.reconnectAttempts} 次重试`);
+    const base = this.reconnectDelay;
+    const exp = Math.min(base * Math.pow(1.8, this.reconnectAttempts - 1), 30000);
+    const jitter = Math.random() * 1000;
+    const delay = Math.round(exp + jitter);
+    if (this.reconnectAttempts <= 3) {
+      console.log(`WebSocket断链，将在 ${delay}ms 后第 ${this.reconnectAttempts} 次重试`);
+    } else {
+      console.debug(`WebSocket重连退避 ${delay}ms (第${this.reconnectAttempts}次)`);
+    }
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect().catch(error => {
-        console.error('重连失败:', error);
+        // 网络瞬断时降为 debug，避免控制台刷屏
+        if (String(error?.message || '').includes('ERR_CONNECTION_REFUSED') || this.reconnectAttempts > 3) {
+          console.debug('重连失败(退避中):', error?.message || error);
+        } else {
+          console.error('重连失败:', error);
+        }
       });
     }, delay);
   }

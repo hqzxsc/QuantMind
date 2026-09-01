@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from backend.services.trade.deps import AuthContext
+from backend.services.trade_shared.deps import AuthContext
 from backend.services.trade.routers import (
     internal_strategy_bridge as bridge_router,
     real_trading_lifecycle as real_lifecycle,

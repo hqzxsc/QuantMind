@@ -208,7 +208,7 @@ class TestTradeDependencies:
 
     def test_auth_context_dataclass(self):
         """验证 AuthContext 数据类结构"""
-        from backend.services.trade.deps import AuthContext
+        from backend.services.trade_shared.deps import AuthContext
 
         ctx = AuthContext(user_id="u123", tenant_id="t1", raw_sub="u123", roles=[])
         assert ctx.user_id == "u123"
@@ -222,9 +222,9 @@ class TestTradeTenantIsolation:
     async def test_get_order_scoped_by_tenant_user_returns_404_when_not_found(self, monkeypatch):
         from uuid import uuid4
 
-        from backend.services.trade.deps import AuthContext
+        from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import trading_orders
-        from backend.services.trade.services.order_service import OrderService
+        from backend.services.trade_shared.services.order_service import OrderService
 
         captured = {}
 
@@ -256,9 +256,9 @@ class TestTradeTenantIsolation:
     async def test_get_trade_scoped_by_tenant_user_returns_404_when_not_found(self, monkeypatch):
         from uuid import uuid4
 
-        from backend.services.trade.deps import AuthContext
+        from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import trading_history
-        from backend.services.trade.services.trade_service import TradeService
+        from backend.services.trade_shared.services.trade_service import TradeService
 
         captured = {}
 
@@ -290,7 +290,7 @@ class TestTradeTenantIsolation:
     async def test_orders_get_rejects_invalid_user_id_in_token(self):
         from uuid import uuid4
 
-        from backend.services.trade.deps import AuthContext
+        from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import trading_orders
 
         auth = AuthContext(user_id="invalid-user", tenant_id="tenant-a", raw_sub="invalid-user", roles=[])
@@ -309,7 +309,7 @@ class TestTradeTenantIsolation:
     async def test_trades_get_rejects_invalid_user_id_in_token(self):
         from uuid import uuid4
 
-        from backend.services.trade.deps import AuthContext
+        from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import trading_history
 
         auth = AuthContext(user_id="invalid-user", tenant_id="tenant-b", raw_sub="invalid-user", roles=[])
@@ -354,9 +354,9 @@ class TestTradeTenantIsolation:
 
     @pytest.mark.asyncio
     async def test_trading_orders_list_orders_forwards_date_range(self, monkeypatch):
-        from backend.services.trade.deps import AuthContext
+        from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import trading_orders
-        from backend.services.trade.services.order_service import OrderService
+        from backend.services.trade_shared.services.order_service import OrderService
 
         captured = {}
 
@@ -398,9 +398,9 @@ class TestTradeTenantIsolation:
 
     @pytest.mark.asyncio
     async def test_simulation_orders_list_orders_forwards_date_range(self, monkeypatch):
-        from backend.services.trade.deps import AuthContext
+        from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import simulation_orders
-        from backend.services.trade.simulation.services.order_service import SimOrderService
+        from backend.services.simulation.services.order_service import SimOrderService
 
         captured = {}
 
@@ -521,10 +521,10 @@ class TestTradeTenantIsolation:
 
     @pytest.mark.asyncio
     async def test_trades_list_accepts_lowercase_trading_mode(self, monkeypatch):
-        from backend.services.trade.deps import AuthContext
-        from backend.services.trade.models.order import TradingMode
+        from backend.services.trade_shared.deps import AuthContext
+        from backend.services.trade_shared.models.order import TradingMode
         from backend.services.trade.routers import trading_history
-        from backend.services.trade.services.trade_service import TradeService
+        from backend.services.trade_shared.services.trade_service import TradeService
 
         captured = {}
 
@@ -545,7 +545,7 @@ class TestTradeTenantIsolation:
 
     @pytest.mark.asyncio
     async def test_trades_list_rejects_invalid_trading_mode(self):
-        from backend.services.trade.deps import AuthContext
+        from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import trading_history
 
         auth = AuthContext(user_id=1001, tenant_id="tenant-a", raw_sub="1001", roles=[])

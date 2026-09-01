@@ -8,7 +8,7 @@
 - 止损笔强制执行，用户剔除也加回
 """
 
-from backend.services.trade.simulation.replay.proposal import validate_confirmed
+from backend.services.simulation.replay.proposal import validate_confirmed
 
 
 def _account(cash=100_000.0, positions=None):

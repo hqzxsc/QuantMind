@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from backend.services.trade.services.simulation_hosted_scheduler import (
+from backend.services.simulation.services.simulation_hosted_scheduler import (
     _next_scheduled_trigger,
     _normalize_live_trade_config,
     _should_trigger,

@@ -1,15 +1,15 @@
 /** 个股终端 — 搜索驱动展示：顶部搜索 + 左右布局（左上K线/左下推理分 + 右详情） */
 import { useCallback, useEffect, useState } from 'react';
-import { CandlestickChart, Search, Layers, Building2, Database } from 'lucide-react';
-import { message } from 'antd';
+import { CandlestickChart, Search, Layers, Building2, Database, TrendingUp, TrendingDown } from 'lucide-react';
+import { message, Select } from 'antd';
 import { PAGE_LAYOUT } from '../../../config/pageLayout';
 import { StockListItem, StockProfile, KlineBar } from '../types';
 import { stockTerminalService, type KlineAdjust } from '../services/stockTerminalService';
+import { modelTrainingService } from '../../../services/modelTrainingService';
 import { StockSearchBar } from '../components/StockSearchBar';
-import { InferenceScoreChart, type Point as ScorePoint } from '../components/InferenceScoreChart';
+import { type Point as ScorePoint } from '../components/InferenceScoreChart';
 import { KlineChart } from '../components/kline/KlineChart';
 import { OverviewTab } from '../components/OverviewTab';
-import { TagStrip } from '../components/TagStrip';
 import { FinancialsTab, ValuationTab, ChipFlowTab, MarginTab, SentimentTab, HoldersTab } from '../components/tabs/P2Tabs';
 import { NewsTab } from '../components/tabs/NewsTab';
 import { L2FeatureCard } from '../components/L2FeatureCard';
@@ -76,6 +76,55 @@ export default function StockTerminalPage() {
   const [detailTab, setDetailTab] = useState<DetailTab>('overview');
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
   const [scorePoints, setScorePoints] = useState<ScorePoint[]>([]);
+  // 多模型切换：当前选中模型（undefined=默认模型）+ 下拉模型列表
+  const [modelId, setModelId] = useState<string | undefined>(undefined);
+  const [scoreModels, setScoreModels] = useState<Array<{ model_id: string; display_name?: string }>>([]);
+  const [modelName, setModelName] = useState<string>('');
+  const [scoreLast, setScoreLast] = useState<{ value: number; date: string; up: boolean } | null>(null);
+
+  // 拉起推理分数：喂给 K 线分数副图 + 顶部最近分数 + 模型下拉列表。
+  // 不渲染独立折线图组件，分数统一由 K 线副图承载（与主图同轴缩放）。
+  useEffect(() => {
+    if (!selected) {
+      setScorePoints([]);
+      setScoreLast(null);
+      setScoreModels([]);
+      return;
+    }
+    let cancelled = false;
+    const code = selected.symbol.split('.')[0];
+    modelTrainingService
+      .getStockInferenceHistory(code, 750, modelId || undefined)
+      .then((resp) => {
+        if (cancelled) return;
+        const pts: ScorePoint[] = (resp.items ?? [])
+          .filter((it) => it.fusion_score != null)
+          .map((it) => ({
+            date: String(it.trade_date).slice(0, 10),
+            value: Number(it.fusion_score),
+            side: it.signal_side ? String(it.signal_side) : null,
+          }))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        setScorePoints(pts);
+        const last = pts[pts.length - 1];
+        setScoreLast(last && typeof last.value === 'number'
+          ? { value: Number(last.value), date: last.date, up: Number(last.value) >= 0 }
+          : null);
+        const models = resp.models ?? [];
+        setScoreModels(models);
+        const chosen = modelId ? models.find((m) => m.model_id === modelId) : models[0];
+        setModelName(chosen ? (chosen.display_name || chosen.model_id || '') : '');
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setScorePoints([]);
+          setScoreLast(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, modelId]);
 
   // watchlist 仅为搜索下拉星标
   useEffect(() => {
@@ -176,6 +225,19 @@ export default function StockTerminalPage() {
               <span className={`font-mono font-bold ${up ? 'text-rose-500' : 'text-emerald-500'}`}>
                 {profile?.close?.toFixed(3) ?? selected.close?.toFixed(3) ?? '--'}
               </span>
+              <span className="text-slate-300">·</span>
+              <Select
+                size="small"
+                style={{ width: 130 }}
+                placeholder="默认模型"
+                value={modelId}
+                onChange={setModelId}
+                popupMatchSelectWidth={false}
+                options={[
+                  { value: 'default', label: '默认模型' },
+                  ...scoreModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id })),
+                ]}
+              />
             </div>
           )}
         </header>
@@ -203,8 +265,8 @@ export default function StockTerminalPage() {
           </div>
         ) : (
           <div className="flex flex-1 min-h-0 overflow-hidden bg-gray-50/50 p-4 gap-4">
-            {/* 左侧：K线 + 推理分 */}
-            <div className="flex-1 min-w-0 flex flex-col gap-4 overflow-hidden">
+            {/* 左侧：K线（含推理分数副图） */}
+            <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
               {/* K线卡 */}
               <div className="flex-1 min-h-0 flex flex-col rounded-3xl bg-white border border-purple-100/80 shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 bg-slate-50/60 shrink-0">
@@ -217,6 +279,19 @@ export default function StockTerminalPage() {
                         {profile.close?.toFixed(3) ?? '--'} {up ? '+' : ''}{(profile.pct_change ?? 0).toFixed(3)}%
                       </span>
                     )}
+                    {scoreLast && (
+                      <span className="flex items-center gap-1 shrink-0 text-[11px]">
+                        <span className="text-slate-300">·</span>
+                        <span className="flex items-center gap-0.5 text-slate-500">
+                          {scoreLast.up
+                            ? <TrendingUp className="w-3 h-3 text-rose-500" />
+                            : <TrendingDown className="w-3 h-3 text-emerald-500" />}
+                          <span className="font-mono font-bold text-slate-700">{scoreLast.value.toFixed(4)}</span>
+                        </span>
+                        <span className="text-slate-400">{scoreLast.date}</span>
+                      </span>
+                    )}
+                    {modelName && <span className="hidden xl:inline text-[10px] font-mono text-indigo-500 truncate max-w-[120px]">· {modelName}</span>}
                   </div>
                   <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-full shrink-0">
                     {KLINE_PERIODS.map((p) => (
@@ -252,18 +327,12 @@ export default function StockTerminalPage() {
                   )}
                 </div>
               </div>
-
-              {/* 推理分折线卡 */}
-              <div className="h-[280px] shrink-0 rounded-3xl bg-white border border-purple-100/80 shadow-sm overflow-hidden flex flex-col p-3">
-                {/* days=750：K线锁定当前日期向前 2 年（≈730 自然日），分数窗口留余量保证副图覆盖整段 K 线；切换股票时随 symbol 重新拉取 */}
-                <InferenceScoreChart symbol={selected.symbol} selectedDate={signalDate} onPointClick={setSignalDate} onScoresLoaded={(pts) => setScorePoints(pts as any)} height={250} days={750} />
-              </div>
             </div>
 
             {/* 右侧：详情 — 400px 定宽，上 2/5 下 3/5，概念标签横向排列、超 400 换行 */}
             <div className="w-[400px] max-w-[400px] shrink-0 flex flex-col rounded-3xl bg-white border border-slate-200/80 shadow-sm overflow-hidden">
-              {/* 上方 2/5：头部 + 概念标签（横向排列、超宽换行） */}
-              <div className="basis-2/5 min-h-0 shrink-0 flex flex-col overflow-hidden border-b border-slate-100">
+              {/* 上方：头部 + 概念标签（纯内容高度，横向排列、超宽换行） */}
+              <div className="shrink-0 flex flex-col overflow-hidden border-b border-slate-100">
                 <div className="px-4 py-3 bg-slate-50/60 shrink-0">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -327,15 +396,10 @@ export default function StockTerminalPage() {
                     </div>
                   )}
                 </div>
-                {selected && (
-                  <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-white border-t border-slate-100">
-                    <TagStrip symbol={selected.symbol} onSelectStock={setSelected} vertical />
-                  </div>
-                )}
-              </div>
+                </div>
 
-              {/* 下方 3/5：Tab + 详情体 */}
-              <div className="basis-3/5 min-h-0 flex flex-col overflow-hidden">
+              {/* 下方：Tab + 详情体（占剩余全部高度） */}
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 <div className="px-3 py-2 border-b border-slate-100 bg-white shrink-0">
                   <div className="grid grid-cols-5 gap-1.5">
                     {DETAIL_TABS.map((t) => (

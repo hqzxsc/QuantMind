@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from backend.services.trade.simulation.models.order import OrderSide, OrderType, SimOrder
-from backend.services.trade.simulation.services.execution_engine import (
+from backend.services.simulation.models.order import OrderSide, OrderType, SimOrder
+from backend.services.simulation.services.execution_engine import (
     MarketSnapshot,
     SimulationExecutionEngine,
 )

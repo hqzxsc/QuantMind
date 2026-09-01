@@ -6,7 +6,7 @@
 - build_signal_score: ICIR 加权原始分
 - _resolve_watchlist: 候选池 + 持仓去重
 """
-from backend.services.trade.services.tdx_l2_capture_task import (
+from backend.services.live_trading.services.tdx_l2_capture_task import (
     FACTOR_ICIR,
     L2SeriesState,
     _resolve_watchlist,

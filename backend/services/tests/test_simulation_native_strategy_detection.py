@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from backend.services.trade.routers.real_trading_lifecycle import (
+from backend.services.live_trading.routers.real_trading_lifecycle import (
     _build_next_scheduled_execution,
     _is_native_strategy_config_without_on_tick,
     _prepare_native_simulation_bootstrap,

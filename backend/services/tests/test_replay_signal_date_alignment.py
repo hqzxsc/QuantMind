@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from backend.services.trade.simulation.replay.signal_generator import (
+from backend.services.simulation.replay.signal_generator import (
     ReplaySignalLoader,
     _dt_int_to_date,
     _PRED_FRAME_CACHE,
@@ -47,7 +47,7 @@ class TestSignalDateAlignment:
 
     def test_loader_reads_prev_session_scores(self, tmp_path):
         """load_signals_for_date(T) 读的是 prev_session(T) 数据日的分数。"""
-        from backend.services.trade.simulation.models.replay import ReplaySession
+        from backend.services.simulation.models.replay import ReplaySession
 
         # 模型目录 + pred.parquet（两日分数区分明显）
         model_dir = tmp_path / "model"

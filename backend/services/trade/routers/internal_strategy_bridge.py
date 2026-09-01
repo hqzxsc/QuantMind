@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select, update
 from .internal_strategy_utils import *
 from .internal_strategy_utils import _bridge_ws_url, _agent_template_root, _qmt_agent_release_manifest_key, _qmt_agent_release_asset_ttl, _qmt_agent_release_local_manifest_path, _load_qmt_agent_release_manifest, _build_qmt_agent_release_asset, _iso_or_none, _to_float, _compute_account_metrics, _get_bridge_session_context
-from .real_trading_utils import _fetch_latest_real_account_snapshot
+from backend.services.live_trading.routers.real_trading_utils import _fetch_latest_real_account_snapshot
 from backend.shared.trade_account_cache import (
     write_trade_account_cache,
     write_trade_agent_heartbeat_cache,

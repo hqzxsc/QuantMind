@@ -204,7 +204,7 @@ export const AdminQlibDataPanel: React.FC = () => {
           </Button>
           <Text type="secondary" className="text-xs">从本地 quantdb parquet 增量重建，无需额外 SDK 下载。</Text>
         </Space>
-        {activeJobId && <Alert className="mt-4" type="info" showIcon message="有任务正在执行，请勿重复提交" description="任务完成后自动刷新状态。" />}
+        {activeJobId && <Alert className="mt-4" type="info" showIcon message="有任务正在执行，请勿重复提交（预估耗时 10-20分钟）" description="任务完成后自动刷新状态。" />}
       </Card>
 
       <Card

@@ -21,8 +21,12 @@ from backend.shared import quantdb_sync_jobs
 
 logger = logging.getLogger(__name__)
 
-# Qlib 增量数据依赖的 parquet 数据集（后复权 K 线 + 不复权用于 factor + 指数）
-QLIB_FEED_DATASETS = ["daily_forward", "daily_unadjusted", "index_daily"]
+# Qlib 增量数据依赖的 parquet 数据集（与实际构建源对齐：
+#   - daily_backward    后复权 K 线，build_features_bulk 主数据源（OHLCV）
+#   - daily_unadjusted  不复权价，乘上乘法复权因子后作为 close_bin
+#   - index_daily       指数，build_features 里单独补建
+#   - daily_forward     股票池/日历推导的行情分区（保持兼容展示）
+QLIB_FEED_DATASETS = ["daily_backward", "daily_unadjusted", "index_daily", "daily_forward"]
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 

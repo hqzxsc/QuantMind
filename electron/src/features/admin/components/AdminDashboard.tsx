@@ -21,6 +21,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
+import { EChartsChart } from '../../../components/common/EChartsChart';
 import { adminService } from '../services/adminService';
 import { authService } from '../../auth/services/authService';
 import { useAppDispatch } from '../../../store';
@@ -37,6 +38,8 @@ export const AdminDashboard: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [authError, setAuthError] = useState<{ status: number; message: string } | null>(null);
     const [updating, setUpdating] = useState(false);
+    const [perfHistory, setPerfHistory] = useState<Array<{ ts: number; cpu: number; mem: number; disk: number }>>([]);
+    const [perfLoading, setPerfLoading] = useState(true);
 
     useEffect(() => {
         loadMetrics();
@@ -103,6 +106,27 @@ export const AdminDashboard: React.FC = () => {
             },
         });
     };
+
+    // 节点性能历史：挂载时拉取一次，此后每 30s 轮询（采样器 1min 一个点）
+    useEffect(() => {
+        let cancelled = false;
+        const loadPerf = async () => {
+            try {
+                const pts = await adminService.getNodeHistory(180);
+                if (!cancelled) setPerfHistory(pts);
+            } catch (e) {
+                // 静默，保留上次数据
+            } finally {
+                if (!cancelled) setPerfLoading(false);
+            }
+        };
+        loadPerf();
+        const timer = setInterval(loadPerf, 30000);
+        return () => {
+            cancelled = true;
+            clearInterval(timer);
+        };
+    }, []);
 
     if (authError) {
         return (
@@ -178,6 +202,67 @@ export const AdminDashboard: React.FC = () => {
         engine: '8001',
         trade: '8002',
         stream: '8003',
+    };
+
+    const perfOption = {
+        backgroundColor: 'transparent',
+        grid: { left: 34, right: 12, top: 24, bottom: 24 },
+        tooltip: {
+            trigger: 'axis',
+            formatter: (params: any) => {
+                const ts = params?.[0]?.value?.[0];
+                const head = ts ? new Date(ts * 1000).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+                const rows = (params || []).map((p: any) => `${p.marker}${p.seriesName}: <b>${p.value[1]}%</b>`).join('<br/>');
+                return `<div class="text-xs"><b>${head}</b><br/>${rows}</div>`;
+            },
+        },
+        legend: { bottom: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 10, color: '#94a3b8' } },
+        xAxis: {
+            type: 'category',
+            data: perfHistory.map((p) => new Date(p.ts * 1000).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })),
+            axisLabel: { fontSize: 9, color: '#94a3b8', interval: perfHistory.length > 40 ? Math.ceil(perfHistory.length / 10) : 0 },
+            axisLine: { lineStyle: { color: '#e2e8f0' } },
+            axisTick: { show: false },
+        },
+        yAxis: {
+            type: 'value',
+            min: 0,
+            max: 100,
+            axisLabel: { fontSize: 9, color: '#94a3b8', formatter: '{value}%' },
+            splitLine: { lineStyle: { type: 'dashed', color: '#f1f5f9' } },
+        },
+        series: [
+            {
+                name: 'CPU',
+                type: 'line',
+                smooth: true,
+                showSymbol: false,
+                data: perfHistory.map((p) => [p.ts, p.cpu]),
+                lineStyle: { width: 1.5, color: '#6366f1' },
+                areaStyle: { color: 'rgba(99,102,241,0.12)' },
+                itemStyle: { color: '#6366f1' },
+            },
+            {
+                name: '内存',
+                type: 'line',
+                smooth: true,
+                showSymbol: false,
+                data: perfHistory.map((p) => [p.ts, p.mem]),
+                lineStyle: { width: 1.5, color: '#10b981' },
+                areaStyle: { color: 'rgba(16,185,129,0.12)' },
+                itemStyle: { color: '#10b981' },
+            },
+            {
+                name: '磁盘',
+                type: 'line',
+                smooth: true,
+                showSymbol: false,
+                data: perfHistory.map((p) => [p.ts, p.disk]),
+                lineStyle: { width: 1.5, color: '#f59e0b' },
+                areaStyle: { color: 'rgba(245,158,11,0.10)' },
+                itemStyle: { color: '#f59e0b' },
+            },
+        ],
     };
 
     return (
@@ -286,11 +371,22 @@ export const AdminDashboard: React.FC = () => {
                             ))}
                         </Row>
                         
-                        <Card className="rounded-2xl border-slate-100 shadow-sm" title={<span className="text-xs font-black text-slate-500">节点性能历史</span>}>
-                            <div className="py-12 flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                                <AreaChartOutlined className="text-slate-300 text-3xl mb-3" />
-                                <Text className="text-slate-400 font-bold text-xs">实时吞吐量数据收集中...</Text>
-                            </div>
+                        <Card className="rounded-2xl border-slate-100 shadow-sm" title={<span className="text-xs font-black text-slate-500">节点性能历史</span>} extra={<Text className="text-[10px] font-mono text-slate-400">CPU / 内存 / 磁盘 %</Text>}>
+                            {perfLoading && perfHistory.length === 0 ? (
+                                <div className="py-16 flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                                    <AreaChartOutlined className="text-slate-300 text-3xl mb-3" />
+                                    <Text className="text-slate-400 font-bold text-xs">实时吞吐量数据收集中...</Text>
+                                </div>
+                            ) : perfHistory.length >= 2 ? (
+                                <div className="h-56 w-full">
+                                    <EChartsChart option={perfOption} />
+                                </div>
+                            ) : (
+                                <div className="py-16 flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                                    <AreaChartOutlined className="text-slate-300 text-3xl mb-3" />
+                                    <Text className="text-slate-400 font-bold text-xs">数据采集中，稍后展示曲线…</Text>
+                                </div>
+                            )}
                         </Card>
                     </div>
                 </Col>

@@ -95,8 +95,23 @@ async def lifespan(app: FastAPI):
         app.state.startup_healthy = False
         logger.error(f"❌ API initialization failed: {e}", exc_info=True)
 
+    # 节点性能历史采样器（1min 滚动写 Redis；独立于启动健康，采样失败不致命）
+    try:
+        from backend.services.api.routers.admin.node_history import (
+            start_node_history_sampler,
+            stop_node_history_sampler,
+        )
+
+        start_node_history_sampler()
+    except Exception as e:
+        logger.error(f"❌ node-history sampler start failed: {e}", exc_info=True)
+
     set_service_health("quantmind-api", bool(app.state.startup_healthy))
     yield
+    try:
+        await stop_node_history_sampler()
+    except Exception:  # noqa: BLE001
+        pass
     logger.info("🔚 QuantMind API shutdown complete")
 
 

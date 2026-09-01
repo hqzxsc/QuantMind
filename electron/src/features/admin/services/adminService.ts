@@ -109,6 +109,19 @@ class AdminService {
         return this.unwrap(resp.data);
     }
 
+    /**
+     * 节点性能历史序列（ts, cpu, mem, disk, %），供控制台「节点性能历史」面积图。
+     */
+    async getNodeHistory(limit = 180): Promise<Array<{ ts: number; cpu: number; mem: number; disk: number }>> {
+        type NodePerfPoint = { ts: number; cpu: number; mem: number; disk: number };
+        const resp = await this.axiosInstance.get<ApiResponse<NodePerfPoint[]>>(
+            '/admin/dashboard/node-history',
+            { params: { limit } }
+        );
+        const payload = this.unwrap<{ series: NodePerfPoint[] } | null>(resp.data);
+        return payload?.series ?? [];
+    }
+
     markMetricsUnauthorized(): void {
         this.metrics401Locked = true;
     }

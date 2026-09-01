@@ -215,10 +215,14 @@ class QuantDBDataHub:
             self._views_mounted_per_conn.add(id(self._local.duck_conn))
         return self._local.duck_conn
 
-    def _mount_views(self, conn) -> None:
-        """为分区数据创建 DuckDB 视图（懒加载，首次查询时才读文件）。"""
+    def _mount_views(self, conn, force: bool = False) -> None:
+        """为分区数据创建 DuckDB 视图（懒加载，首次查询时才读文件）。
+
+        force=True 时忽略已挂载标记强制重建，用于“连接创建后数据目录才补齐”
+        导致视图未挂载的场景（否则该连接会一直报 Table does not exist）。
+        """
         conn_id = id(conn)
-        if conn_id in self._views_mounted_per_conn:
+        if not force and conn_id in self._views_mounted_per_conn:
             return
         dd = self._data_dir
 
@@ -295,9 +299,23 @@ class QuantDBDataHub:
     # 通用查询
     # ------------------------------------------------------------------
     def query(self, sql: str) -> pd.DataFrame:
-        """直接执行 DuckDB SQL 查询（高级用法）。"""
+        """直接执行 DuckDB SQL 查询（高级用法）。
+
+        若本线程连接创建时数据目录尚为空、视图未挂载（后续数据补齐），
+        遇到 Catalog “Table/View ... does not exist” 时强制重建视图并重试一次。
+        防止长驻进程在数据补齐后一直报不存在。
+        """
         conn = self._get_duck_conn()
-        return conn.execute(sql).fetchdf()
+        try:
+            return conn.execute(sql).fetchdf()
+        except Exception as exc:
+            msg = str(exc)
+            if "does not exist" in msg and (
+                "catalog" in msg.lower() or "table with name" in msg.lower()
+            ):
+                self._mount_views(conn, force=True)
+                return conn.execute(sql).fetchdf()
+            raise
 
     # ------------------------------------------------------------------
     # K线数据

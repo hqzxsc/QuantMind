@@ -341,8 +341,10 @@ class LocalMarketData:
             )
             sessions = [int(v) for v in df["dt"].tolist()]
         except Exception as exc:
+            # 失败时不写缓存：避免把空的 session 列表永久钉住，
+            # 后续数据补齐（如 quantdb 恢复）后下次调用能自动重试。
             logger.error("读取本地行情交易日失败: %s", exc)
-            sessions = []
+            return []
         with self._lock:
             self._session_dates = sessions
         return sessions

@@ -163,7 +163,7 @@ class SimulationExecutionEngine:
         except Exception as e:
             logger.warning("Failed to fetch market quote for %s: %s", symbol, e)
 
-        # Level 2: 数据库兜底 (L2 Fallback)
+        # Level 2: 数据库兜底 (L2 Fallback) — stock_daily_latest
         try:
             from sqlalchemy import text
             from backend.shared.stock_utils import StockCodeUtil
@@ -215,6 +215,29 @@ class SimulationExecutionEngine:
                     return MarketSnapshot(price=price, price_source="db_fallback")
         except Exception as e:
             logger.error("Database fallback failed for %s: %s", symbol, e)
+
+        # Level 2.5: 本地日线兜底（QuantDB parquet）— Redis 不可用时以开盘价撮合
+        # 模拟盘核心兜底：直读本地不复权日线，用开盘价作为撮合价，不依赖实时流
+        try:
+            from backend.services.trade.simulation.services.local_market_data import get_local_market_data
+            from backend.services.trade.simulation.services.market_rules import infer_market
+            from datetime import date as _date
+
+            mkt = infer_market(symbol).value if symbol else "CN"
+            lmd = get_local_market_data(market=mkt)
+            # 优先当日，其次最近交易日
+            for d in [ _date.today(), lmd.latest_trade_date() ]:
+                if d is None:
+                    continue
+                bar = lmd.get_bar(symbol, d)
+                if bar and bar.open > 0:
+                    logger.info("Fallback to LocalMarketData open for %s %s: open=%s", symbol, d, bar.open)
+                    return MarketSnapshot(price=float(bar.open), price_source="local_daily_open")
+                if bar and bar.close > 0:
+                    logger.info("Fallback to LocalMarketData close for %s %s: close=%s", symbol, d, bar.close)
+                    return MarketSnapshot(price=float(bar.close), price_source="local_daily_close")
+        except Exception as e:
+            logger.warning("LocalMarketData fallback failed for %s: %s", symbol, e)
 
         # Level 3: 无法获取行情 —— 不伪造随机价格，交由 execute_order 拒单，
         # 避免以虚假价格成交污染模拟盘资产/持仓。

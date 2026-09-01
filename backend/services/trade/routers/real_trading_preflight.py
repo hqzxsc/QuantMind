@@ -438,50 +438,52 @@ async def preflight_check(
 
     # 8~10) Stream 探针：REAL/SHADOW/SIMULATION 均检测行情质量
     if mode in {"REAL", "SHADOW", "SIMULATION"}:
-        # 1. Stream时序序列 (始终阻断；SIMULATION/REAL 可回退 QuantDB 日线——TDX 通道无实时行情流)
+        # 1. Stream时序序列 (SIMULATION 可回退日线开盘价撮合，不阻断)
         try:
             res = check_stream_series_freshness(
                 redis_client=redis.client,
                 allow_quantdb_fallback=(mode in {"SIMULATION", "REAL"}),
             )
+            is_sim = mode == "SIMULATION"
             add_check(
                 "stream_series_freshness",
                 "Stream时序序列",
-                res["ok"],
-                True,
-                res["message"],
+                True if is_sim else res["ok"],
+                False if is_sim else True,
+                res["message"] if res["ok"] else (f"[WARNING] {res['message']}（已回退日线开盘价撮合，不阻断模拟盘）" if is_sim else res["message"]),
                 res["details"],
             )
         except Exception as e:
             add_check(
                 "stream_series_freshness",
                 "Stream时序序列",
-                False,
-                True,
-                f"行情检测异常: {e}",
+                mode == "SIMULATION",
+                mode != "SIMULATION",
+                f"[WARNING] 行情检测异常: {e}（已回退日线开盘价撮合）" if mode == "SIMULATION" else f"行情检测异常: {e}",
             )
 
-        # 2. Stream行情落库 (始终阻断；SIMULATION/REAL 可回退 QuantDB 日线)
+        # 2. Stream行情落库 (SIMULATION 回退日线，不阻断)
         try:
             res = check_stream_quote_persist_rate(
                 redis_client=redis.client,
                 allow_quantdb_fallback=(mode in {"SIMULATION", "REAL"}),
             )
+            is_sim2 = mode == "SIMULATION"
             add_check(
                 "stream_quote_persist_rate",
                 "Stream行情落库",
-                res["ok"],
-                True,
-                res["message"],
+                True if is_sim2 else res["ok"],
+                False if is_sim2 else True,
+                res["message"] if res["ok"] else (f"[WARNING] {res['message']}（已回退日线，不阻断模拟盘）" if is_sim2 else res["message"]),
                 res["details"],
             )
         except Exception as e:
             add_check(
                 "stream_quote_persist_rate",
                 "Stream行情落库",
-                False,
-                True,
-                f"行情落库检测失败: {e}",
+                mode == "SIMULATION",
+                mode != "SIMULATION",
+                f"[WARNING] 行情落库检测失败: {e}（已回退日线）" if mode == "SIMULATION" else f"行情落库检测失败: {e}",
             )
             await db.rollback()
 
@@ -534,7 +536,7 @@ async def preflight_check(
     # 11) 模拟盘专用：沙箱进程池与关键表可用性
     simulation_required = mode == "SIMULATION"
     if simulation_required:
-        # 11.0 默认模型检测（检查用户是否配置了默认模型）
+        # 11.0 默认模型检测（模拟盘不阻断，自动尝试分配）
         try:
             from backend.shared.model_registry import model_registry_service
 
@@ -542,16 +544,32 @@ async def preflight_check(
                 tenant_id=resolved_tenant_id,
                 user_id=resolved_user_id,
             )
+            if not default_model:
+                try:
+                    candidates = await model_registry_service.list_models(
+                        tenant_id=resolved_tenant_id, user_id=resolved_user_id, include_archived=False
+                    )
+                    avail = [m for m in candidates if str(m.get("status") or "").lower() in {"ready", "active"}]
+                    chosen = (avail or candidates[:1] or [None])[0]
+                    if chosen and chosen.get("model_id"):
+                        try:
+                            default_model = await model_registry_service.set_default_model(
+                                tenant_id=resolved_tenant_id, user_id=resolved_user_id, model_id=str(chosen.get("model_id"))
+                            )
+                        except Exception:
+                            default_model = chosen
+                except Exception:
+                    pass
             model_configured = bool(default_model)
             add_check(
                 "default_model_configured",
                 "默认模型已配置",
-                model_configured,
                 True,
+                False,
                 (
                     f"默认模型已配置 (model_id={default_model.get('model_id')})"
                     if model_configured
-                    else "未配置默认模型，请先在模型管理中设置默认模型"
+                    else "[WARNING] 未配置默认模型，已尝试自动分配仍无可用模型，请在模型管理中创建或设置默认模型（不阻断模拟盘）"
                 ),
                 {
                     "model_id": default_model.get("model_id") if model_configured else None,
@@ -562,9 +580,9 @@ async def preflight_check(
             add_check(
                 "default_model_configured",
                 "默认模型已配置",
-                False,
                 True,
-                f"默认模型检测失败: {e}",
+                False,
+                f"[WARNING] 默认模型检测失败: {e}（不阻断模拟盘）",
             )
 
         # 11.1 推理模型就绪度（检查生产模型目录是否有模型文件）
@@ -690,32 +708,38 @@ async def preflight_check(
 
         try:
             # SIMULATION/REAL(TDX通道) 均回退 QuantDB 日线兜底：
-            # 无实时行情流时，撮合/交易直读 QuantDB 日线
+            # 无实时行情流时，模拟盘以开盘价撮合，不阻断
             res = check_stream_series_freshness(
                 redis_client=redis.client,
                 allow_quantdb_fallback=(mode in {"SIMULATION", "REAL"}),
             )
             stream_ok = bool(res["ok"])
-            is_trading_hours = _is_cn_trading_hours()
-            stream_required = is_trading_hours
+            # 模拟盘该项仅警告，不阻断
+            if mode == "SIMULATION":
+                stream_ok = True
+                stream_required = False
+                res_msg = res["message"] if res.get("ok") else f"[WARNING] {res['message']}（已回退日线开盘价撮合，不阻断模拟盘）"
+            else:
+                is_trading_hours = _is_cn_trading_hours()
+                stream_required = is_trading_hours
+                res_msg = res["message"]
             details = dict(res.get("details") or {})
-            details["is_trading_hours"] = is_trading_hours
+            details["is_trading_hours"] = _is_cn_trading_hours() if mode != "SIMULATION" else False
             add_check(
                 "stream_series_freshness",
                 "实时行情服务",
                 stream_ok,
                 stream_required,
-                res["message"],
+                res_msg,
                 details,
             )
         except Exception as e:
-            is_trading_hours = _is_cn_trading_hours()
             add_check(
                 "stream_series_freshness",
                 "实时行情服务",
-                not is_trading_hours,
-                is_trading_hours,
-                f"行情检测失败: {e}",
+                True,
+                False,
+                f"[WARNING] 行情检测失败: {e}（已回退日线开盘价撮合，不阻断模拟盘）",
             )
 
     check_order: list[str] = []

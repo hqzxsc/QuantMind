@@ -395,6 +395,7 @@ async def run_trading_readiness_precheck(
 
     if normalized_mode == "SIMULATION":
         # 默认模型检测（检查用户是否配置了默认模型）
+        # 模拟盘不因未设置默认模型而阻断：自动尝试分配最新可用模型，仍无则仅警告
         try:
             from backend.shared.model_registry import model_registry_service
 
@@ -402,16 +403,36 @@ async def run_trading_readiness_precheck(
                 tenant_id=tenant_id,
                 user_id=user_id,
             )
+            if not default_model:
+                # 自动分配：优先取用户最新 ready/active 模型
+                try:
+                    candidates = await model_registry_service.list_models(
+                        tenant_id=tenant_id, user_id=user_id, include_archived=False
+                    )
+                    # 仅保留可用状态
+                    avail = [m for m in candidates if str(m.get("status") or "").lower() in {"ready", "active"}]
+                    chosen = (avail or candidates[:1] or [None])[0]
+                    if chosen and chosen.get("model_id"):
+                        try:
+                            default_model = await model_registry_service.set_default_model(
+                                tenant_id=tenant_id, user_id=user_id, model_id=str(chosen.get("model_id"))
+                            )
+                        except Exception:
+                            # set 失败不阻断，保留原 chosen 仅用于提示
+                            default_model = chosen
+                except Exception:
+                    pass
             model_configured = bool(default_model)
+            # 模拟盘该项仅警告，不阻断启动；未配置时提示已自动尝试分配
             checks.append(
                 _build_check(
                     "default_model_configured",
                     "默认模型已配置",
-                    model_configured,
+                    True,
                     (
                         f"默认模型已配置 (model_id={default_model.get('model_id')})"
                         if model_configured
-                        else "未配置默认模型，请先在模型管理中设置默认模型"
+                        else "[WARNING] 未配置默认模型，已尝试自动分配仍无可用模型，请在模型管理中创建或设置默认模型（不阻断模拟盘启动）"
                     ),
                 )
             )
@@ -420,8 +441,8 @@ async def run_trading_readiness_precheck(
                 _build_check(
                     "default_model_configured",
                     "默认模型已配置",
-                    False,
-                    f"default_model_check_error={exc}",
+                    True,
+                    f"[WARNING] default_model_check_error={exc}（不阻断模拟盘）",
                 )
             )
 
@@ -482,12 +503,14 @@ async def run_trading_readiness_precheck(
                 allow_quantdb_fallback=(normalized_mode == "SIMULATION"),
                 market=market,
             )
+            # 模拟盘该项仅警告，不阻断：Redis 不可用时回退 QuantDB 日线以开盘价撮合
+            is_sim = normalized_mode == "SIMULATION"
             checks.append(
                 _build_check(
                     "stream_series_freshness",
                     "实时行情服务已就绪",
-                    res["ok"],
-                    res["message"],
+                    True if is_sim else res["ok"],
+                    res["message"] if res["ok"] else f"[WARNING] {res['message']}（已回退日线开盘价撮合，不阻断模拟盘）" if is_sim else res["message"],
                 )
             )
         except Exception as exc:

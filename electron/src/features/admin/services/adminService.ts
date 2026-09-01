@@ -555,6 +555,27 @@ class AdminService {
         }
         throw new Error(res.message || 'API 请求失败');
     }
+
+    /**
+     * 一键更新系统：触发宿主机 deploy/update.sh（git pull + 重建 + 重启服务）。
+     * 需要后端开启 QUANTMIND_ENABLE_WEB_UPDATE 并挂载 docker socket，否则后端返回 403。
+     */
+    public async updateSystem(): Promise<{ started: boolean; task_id?: string }> {
+        const resp = await this.axiosInstance.post('/admin/system/update', {}, { params: { confirm: 1 } });
+        return this.unwrap(resp.data);
+    }
+
+    /**
+     * 查询系统更新任务状态（读取 update.log）。
+     */
+    public async getUpdateStatus(): Promise<{
+        state: 'idle' | 'running' | 'done' | 'failed';
+        message?: string;
+        log_tail?: string;
+    }> {
+        const resp = await this.axiosInstance.get('/admin/system/update/status', { timeout: 15000 });
+        return this.unwrap(resp.data);
+    }
 }
 
 export const adminService = new AdminService();

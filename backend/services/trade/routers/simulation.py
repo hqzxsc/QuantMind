@@ -312,17 +312,26 @@ async def get_simulation_account(
 ):
     """
     Get current simulation account state.
-    原先返回空账户导致前端显示 0，需在个人中心手动重置；现自动以 100 万初始化
-    保证新用户首次进入个人中心/模拟盘即为 100 万，与 settings 默认一致。
+    如果账户不存在，返回空账户（total_asset=0），不自动初始化。
+    需用户在个人中心显式重置为 100 万，避免自动重置覆盖手动任务后的持仓。
     """
     manager = SimulationAccountManager(redis)
     uid = _require_user_id(auth.user_id)
     market = market.upper()
     account = await manager.get_account(uid, tenant_id=auth.tenant_id, market=market)
     if not account:
-        # 自动初始化 100 万，避免前端被“更正为 0”误导；settings 已为 1M，保持口径一致
-        account = await manager.init_account(uid, DEFAULT_INITIAL_CASH, tenant_id=auth.tenant_id, market=market)
-        await _capture_simulation_snapshot(redis)
+        # 不自动初始化，返回空账户标记，由前端引导用户去个人中心重置
+        return {
+            "success": True,
+            "data": {
+                "cash": 0.0,
+                "total_asset": 0.0,
+                "market_value": 0.0,
+                "positions": {},
+                "account_not_initialized": True,
+            },
+            "market": market,
+        }
 
     # 从 settings 中读取 initial_cash 作为 initial_equity
     settings = await manager.get_settings(

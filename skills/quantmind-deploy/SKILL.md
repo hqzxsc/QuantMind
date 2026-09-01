@@ -243,10 +243,14 @@ curl -s -I http://localhost | head -1   # 期望 200 OK
 
 ```bash
 cd /opt/quantmind
-# 一键更新脚本（拉代码 + 写入代码版本 + 数据库升级 + 重建后端容器，不动数据库）
+# 一键更新脚本（同步代码 → 重建核心镜像 → 重启服务 → 导入数据库补丁 → 健康检查，不动数据库数据）
 sudo bash deploy/update.sh
-# 强制覆盖本地修改（谨慎）
-sudo bash deploy/update.sh --force-sync
+# 更新到指定分支或 tag
+sudo bash deploy/update.sh --ref master
+# 覆盖服务器上未提交的代码改动（谨慎，用 --force 而非 --force-sync）
+sudo bash deploy/update.sh --force
+# 纯代码改动，跳过镜像重建
+sudo bash deploy/update.sh --no-build
 
 # 手动更新
 git pull origin master
@@ -258,26 +262,27 @@ docker compose up -d
 
 | 步骤 | 行为 | 数据是否受影响 |
 |---|---|---|
-| 拉代码 | Gitee `git pull --ff-only`（有未提交修改会询问/终止） | 否 |
-| 写版本 | `git describe --tags --always` → `backend/shared/version.txt`（gitignore，不入仓库） | 否 |
-| 数据库升级 | 扫描 `data/upgrade_v*.sql` → 查 `db_upgrade_log` 表去重 → **自动 pg_dump 备份** → 执行 → 记录版本号 | 否（PG 数据在 `postgres-data` 卷） |
-| 重建后端 | `build quantmind` + `--force-recreate quantmind celery-worker celery-beat` | 否 |
-| **重建前端** | **本次提交涉及 `electron/` 或 `scripts/frontend/` 时自动 `build web` + 重启**；否则跳过 build 仅重启 | 否 |
+| 1 拉代码 | `git fetch origin $REF`；分支走 `checkout -B`,tag 走 `checkout --detach`；有未提交改动且未加 `--force` 时终止，`--force` 时 `reset --hard` + `clean`（排除 `data/models/db/logs/user_pools_local/.env`） | 否 |
+| 2 重建后端 | `docker compose build quantmind`（`--no-build` 跳过） | 否 |
+| 3 重启服务 | `up -d --no-deps --force-recreate quantmind [celery-worker celery-beat]` + `up -d --remove-orphans` | 否 |
+| 4 数据库升级 | 扫描并执行 `data/upgrade_*.sql`（经 db 容器 `psql`）；**无去重/版本表/自动备份**，补丁需自身幂等 | 否（PG 数据在 `postgres-data` 卷） |
+| 5 健康检查 | `curl http://127.0.0.1:8000/health`（30 次 × 2s），失败即终止 | 否 |
 
-> ⚠️ **2026-08 修复前缺陷**：旧版 update.sh 从不 `build web`，前端（dist-react）是 bake 进镜像的，前端改动升级后不生效。新版已修复——前端变更自动重建 web 镜像。
+> ⚠️ 数据库补丁为**可重复执行的幂等 SQL**：每次 update 都会重跑一遍所有 `data/upgrade_*.sql`（无去重记录），需用 `IF NOT EXISTS` 等自防重。打新版本补丁时在 `data/` 新增 `upgrade_vX.Y.Z.sql` 即可，不用改脚本。
+
+> ⚠️ update.sh 只重建后端 `quantmind` 镜像，**不** `build web`/data-gateway/dashboard。前端或可选服务代码有改动时，需走离线包成品镜像或手动 `docker compose build` 对应服务。
 
 ### 7.2 版本展示（升级后客户能看到当前版本）
 
-- 后端 `/api/v1/system/version` 返回 `{"version": "v1.9.0-beta-150-g3d32379f", "edition": "oss"}`
-- 前端「用户中心 → 设置」页顶部「系统信息」卡片展示版本号
-- 未部署（本地开发）时 version.txt 不存在，接口回退 `dev`
+- 后端 `/api/v1/system/version` 返回 `{"version": "...", "edition": "oss"}`；前端「用户中心 → 设置」页顶部「系统信息」卡片展示版本号。
+- 版本号由 update.sh 在同步代码后经 `git describe --tags --always` 写入 `backend/shared/version.txt`（`.gitignore` 内，不入仓库）；本地未走 update.sh 时接口回落 `dev`。
 
 ### 7.3 升级后验证
 
 ```bash
 # 容器健康 + 版本号
 curl -s http://localhost:8000/api/v1/system/version
-# 登录（数据库迁移 OK）
+# 登录（数据库补丁执行无碍）
 curl -s -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123","tenant_id":"default"}'

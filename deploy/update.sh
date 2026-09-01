@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # QuantMind 一键更新脚本
+# 流程：同步最新代码 → 重建核心镜像 → 重启服务 → 导入数据库补丁(data/upgrade_*.sql) → 健康检查。
 # 用法：sudo bash deploy/update.sh [--ref master] [--force] [--no-build]
 
 set -Eeuo pipefail
@@ -51,30 +52,28 @@ sync_code() {
         git -C "$PROJECT_DIR" clean -fd -e data -e models -e db -e logs -e user_pools_local -e .env
     fi
     git -C "$PROJECT_DIR" fetch origin "$REF"
-    git -C "$PROJECT_DIR" checkout -B "$REF" "origin/$REF"
-}
+    # 分支走 origin/$REF；tag 无 remote-tracking ref，回退到本地 tag（detached）。
+    git -C "$PROJECT_DIR" checkout -B "$REF" "origin/$REF" 2>/dev/null \
+        || git -C "$PROJECT_DIR" checkout --detach "$REF"
 
-prepare_models() {
-    log '2/5 准备离线模型（FinBERT 新闻情感）'
-    # 缺失时系统会静默降级为纯词典法情感，所以这里尽力下载但不阻断更新
-    if command -v python3 >/dev/null; then
-        python3 "$PROJECT_DIR/backend/scripts/download_finbert.py" && return 0
-        log '宿主机 python3 下载失败，改用容器内 python 重试'
-    fi
-    docker run --rm         -v "$PROJECT_DIR/models:/app/models"         -v "$PROJECT_DIR/backend:/app/backend:ro"         quantmind-oss:latest         python /app/backend/scripts/download_finbert.py         || log '⚠️ FinBERT 模型下载失败（网络原因），新闻情感将暂用词典法，可重跑 update.sh 补齐'
+    # 写入代码版本供 version.py 读取（git describe --tags --always 格式）。
+    # 文件在 .gitignore 内，不入仓库；describe 失败时删掉旧文件，避免回退 dev 时残留过期版本。
+    git -C "$PROJECT_DIR" describe --tags --always \
+        > "$PROJECT_DIR/backend/shared/version.txt" 2>/dev/null \
+        || rm -f "$PROJECT_DIR/backend/shared/version.txt"
 }
 
 build_core() {
     if ! $BUILD; then
-        log '3/5 跳过镜像构建'
+        log '2/5 跳过镜像构建'
         return
     fi
-    log '3/5 重建核心后端镜像'
+    log '2/5 重建核心后端镜像'
     docker compose -f "$PROJECT_DIR/docker-compose.yml" build quantmind
 }
 
 restart_services() {
-    log '4/5 重启核心服务'
+    log '3/5 重启核心服务'
     cd "$PROJECT_DIR"
     local services=(quantmind)
     local service
@@ -85,6 +84,24 @@ restart_services() {
     done
     docker compose up -d --no-deps --force-recreate "${services[@]}"
     docker compose up -d --remove-orphans
+}
+
+update_database() {
+    log '4/5 导入数据库升级补丁'
+    # 应用 data/upgrade_*.sql（v1.0.1、v1.0.2 ……）。复用 offline-deploy 的
+    # 同款 docker exec 方式走 db 容器 psql，SQL 需保持幂等（可重复执行）。
+    local patch applied
+    applied=0
+    for patch in "$PROJECT_DIR"/data/upgrade_*.sql; do
+        [[ -e "$patch" ]] || continue
+        docker exec -i quantmind-db sh -lc 'psql -U "$POSTGRES_USER"' < "$patch" \
+            || die "数据库升级补丁执行失败: $(basename "$patch")"
+        log "已应用数据库补丁: $(basename "$patch")"
+        applied=$((applied + 1))
+    done
+    if (( applied == 0 )); then
+        log '未发现数据库升级补丁，跳过'
+    fi
 }
 
 health_check() {
@@ -106,9 +123,9 @@ main() {
     require_root
     require_project
     sync_code
-    prepare_models
     build_core
     restart_services
+    update_database
     health_check
 }
 

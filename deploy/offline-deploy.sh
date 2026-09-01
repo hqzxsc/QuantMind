@@ -12,6 +12,7 @@
 #   QUANTMIND_REPLACE_QLIB=true       覆盖已有 db/qlib_data（谨慎）
 #   QUANTMIND_REPLACE_DATABASE=true   覆盖已有 PostgreSQL 业务数据（谨慎）
 #   QUANTMIND_REPLACE_QWENPAW_DATA=true 覆盖已有 QwenPaw 持久化数据（谨慎）
+#   QUANTMIND_REBUILD_IMAGE=true 基于最新代码重建 quantmind 镜像（默认复用离线包成品镜像，谨慎）
 #   QUANTMIND_COMPOSE_OVERLAY  已验证 docker-compose.yml 的本地路径（可选）
 #   QUANTMIND_DEPLOY_OVERLAY_DIR  受控 Dockerfile 覆盖目录（可选）
 
@@ -380,9 +381,16 @@ build_and_start() {
             || docker pull diygod/rsshub:latest \
             || log '警告：rsshub 拉取失败（不影响核心服务，RSS 源功能将不可用）'
     fi
-    # 核心镜像按最新代码重建。web/data-gateway/dashboard 已在离线包中提供
-    # 成品镜像，直接复用可避免为可选服务拉取额外构建基础镜像。
-    docker compose build --pull=false quantmind
+    # 核心镜像按需重建：默认直接复用离线包内已导入、校验过的 quantmind-oss 成品镜像，
+    # 避免每次部署重复构建/联网拉取（离线包镜像与最新代码一致时重建纯属浪费）。
+    # 只有 QUANTMIND_REBUILD_IMAGE=true 才基于最新代码重建。web/data-gateway/dashboard
+    # 均已在离线包中提供成品镜像，直接复用可避免为可选服务拉取额外构建基础镜像。
+    if [[ ${QUANTMIND_REBUILD_IMAGE:-false} == true ]]; then
+        log '按 QUANTMIND_REBUILD_IMAGE=true 基于最新代码重建 quantmind 镜像...'
+        docker compose build --pull=false quantmind
+    else
+        log '复用离线包内 quantmind-oss 成品镜像（跳过重建；QUANTMIND_REBUILD_IMAGE=true 可强制重建）'
+    fi
     docker compose up -d --pull never
     configure_qwenpaw_runtime
     docker compose ps
@@ -401,8 +409,8 @@ main() {
     echo "     3. 导入 Docker 镜像         ~3-10 分钟"
     echo "     4. 下载最新代码             ~1-3 分钟"
     echo "     5. 恢复业务数据与数据库     ~2-5 分钟"
-    echo "     6. 构建并启动服务           ~10-30 分钟"
-    echo "     合计                       约 25-75 分钟"
+    echo "     6. 复用成品镜像并启动服务   ~1-5 分钟（QUANTMIND_REBUILD_IMAGE=true 重建则另加构建时间）"
+    echo "     合计                       约 15-50 分钟"
     echo " -------------------------------------------------------------------------"
     echo " 💡 如遇系统组件下载缓慢，请切换至国内加速源以提升速度。"
     echo "========================================================================="

@@ -86,15 +86,6 @@ curl -fsSL https://gitee.com/qusong0627/QuantMind/raw/master/deploy/offline-depl
 
 * **Swagger API 文档**: `http://<服务器 IP>:8000/docs`
 
-```bash
-# 可选：自定义离线包 CDN 源或代码分支
-sudo QUANTMIND_OFFLINE_BASE_URL='https://your-cdn.example.com/downloads' \
-  QUANTMIND_REF='master' \
-  bash deploy/offline-deploy.sh
-```
-
-> 离线包默认 CDN 为 `https://www.quantmindai.cn/downloads`（脚本可覆盖，见 [部署指南](docs/部署指南.md)）。
-
 ### 2. 在线部署与平滑更新
 
 ```bash

@@ -73,7 +73,7 @@ sudo bash deploy/update.sh --force
 sudo bash deploy/update.sh --no-build
 ```
 
-更新脚本只同步代码和核心容器，不会默认删除 PostgreSQL、Redis、`data/`、`models/` 或 `db/qlib_data/`。
+更新脚本只同步代码和核心容器，不会默认删除 PostgreSQL、Redis、`data/`、`models/` 或 `db/qlib_data/`，并会自动导入 `data/upgrade_*.sql` 数据库升级补丁（补丁需保持幂等，可重复执行）。
 
 ## 验证与排障
 

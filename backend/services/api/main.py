@@ -110,11 +110,37 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ node-history sampler start failed: {e}", exc_info=True)
 
+    try:
+        from backend.shared.system_events import record_system_event_async
+
+        ok = bool(app.state.startup_healthy)
+        await record_system_event_async(
+            event_type="service_lifecycle",
+            level="info" if ok else "error",
+            source="quantmind-api",
+            title="API 服务启动完成" if ok else "API 服务启动异常",
+            message="QuantMind API 启动完成" if ok else "API 启动存在初始化失败，请检查日志",
+        )
+    except Exception:  # noqa: BLE001 - 事件记录非关键路径
+        pass
+
     set_service_health("quantmind-api", bool(app.state.startup_healthy))
     yield
     try:
         await stop_node_history_sampler()
     except Exception:  # noqa: BLE001
+        pass
+    try:
+        from backend.shared.system_events import record_system_event
+
+        record_system_event(
+            event_type="service_lifecycle",
+            level="info",
+            source="quantmind-api",
+            title="API 服务关闭",
+            message="QuantMind API 正常关闭",
+        )
+    except Exception:  # noqa: BLE001 - 事件记录非关键路径
         pass
     logger.info("🔚 QuantMind API shutdown complete")
 

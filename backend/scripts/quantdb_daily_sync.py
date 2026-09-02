@@ -1260,6 +1260,25 @@ def main():
     )
 
     log.info("Result: %s", json.dumps(result, indent=2, ensure_ascii=False, default=str))
+
+    # 落一条系统事件（data_sync），失败不阻断主流程
+    try:
+        from backend.shared.system_events import record_system_event
+
+        record_system_event(
+            event_type="data_sync",
+            level="info",
+            source="sync",
+            title="QuantDB 数据同步完成",
+            message=(
+                "parquet 同步完成，PG 填充" + ("完成" if not args.skip_pg else "跳过") +
+                "，Qlib 缓存" + ("完成" if not args.skip_qlib else "跳过")
+            ),
+            meta={"market": "quantdb", "datasets": datasets, "dry_run": args.dry_run},
+        )
+    except Exception as exc:  # noqa: BLE001 - 事件记录非关键路径
+        log.warning("记录数据同步事件失败: %s", exc)
+
     return 0
 
 
@@ -1271,4 +1290,18 @@ if __name__ == "__main__":
         sys.exit(1)
     except Exception as e:
         log.error("FATAL: %s", e, exc_info=True)
+        # 同步异常也要落一条 error 系统事件
+        try:
+            from backend.shared.system_events import record_system_event
+
+            record_system_event(
+                event_type="data_sync",
+                level="error",
+                source="sync",
+                title="QuantDB 数据同步失败",
+                message=str(e),
+                meta={"market": "quantdb", "error": str(e)},
+            )
+        except Exception as exc:  # noqa: BLE001 - 事件记录非关键路径
+            log.warning("记录数据同步失败事件失败: %s", exc)
         sys.exit(1)

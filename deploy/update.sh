@@ -124,11 +124,24 @@ EOF
 }
 
 build_core() {
+    # 智能判断：只有"会改变镜像层"的文件变更才触发 build
+    #   - requirements*.txt：新增/升级 pip 依赖
+    #   - docker/Dockerfile* 或 .build-args：构建参数/基础镜像变更
+    #   - 其他（backend/, config/, scripts/ 等）都是 bind mount，**不**需要重 build
+    # 这样 95% 的纯代码升级从 5min 缩到 30s
     if ! $BUILD; then
-        log '2/4 跳过镜像构建（--no-build）'
+        log '2/4 跳过镜像构建（--no-build 显式指定）'
         return
     fi
-    log '2/4 重建核心后端镜像'
+    local changes
+    changes="$(git -C "$PROJECT_DIR" diff --name-only HEAD@{1} HEAD 2>/dev/null \
+        | grep -E '^(requirements.*\.txt|requirements/.*\.txt|docker/Dockerfile.*|docker/.*\.build-args)$' \
+        || true)"
+    if [[ -z "$changes" ]]; then
+        log "2/4 跳过镜像构建（本次无 requirements/Dockerfile 变更；后端代码 bind mount 已生效）"
+        return
+    fi
+    log "2/4 重建核心后端镜像（检测到依赖/构建参数变更：$(echo "$changes" | tr '\n' ' ' | head -c 200)）"
     docker compose -f "$PROJECT_DIR/docker-compose.yml" build quantmind
 }
 

@@ -183,6 +183,28 @@ class ModelHubService {
   }
 
   /**
+   * 发布本地模型到广场（后端打包 tar.gz → 上传 COS → 激活发布）
+   */
+  async publishLocalModel(payload: {
+    model_id: string;
+    name: string;
+    description?: string;
+    market?: string;
+    algorithm?: string;
+    target_horizon?: string;
+    target_mode?: string;
+    test_ic?: number;
+    rank_ic?: number;
+    sharpe_ratio?: number;
+    annual_return?: number;
+    max_drawdown?: number;
+    calmar_ratio?: number;
+    visibility?: string;
+  }): Promise<{ success: boolean; model_id: string; packaged_size: number; detail: any }> {
+    return this.gatewayWrite('post', '/hub/publish-local', payload);
+  }
+
+  /**
    * 获取下载直链
    */
   async getDownloadTicket(modelId: string): Promise<DownloadTicketResponse> {

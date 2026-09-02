@@ -16,6 +16,8 @@ node_modules/
 __pycache__/
 *.py[cod]
 *$py.class
+# deploy/update.sh 的镜像构建状态目录（记录依赖签名，不入库）
+/.update/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

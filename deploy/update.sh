@@ -61,12 +61,17 @@ backup_database() {
     fi
     local backup_dir="$PROJECT_DIR/data/backups"
     mkdir -p "$backup_dir"
-    local stamp backup_file pg_user pg_db
+    local stamp backup_file pg_user pg_db pg_pass
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     backup_file="$backup_dir/quantmind_pre_update_${stamp}.sql.gz"
+    # 从 .env 读库凭据（脚本自身环境变量里 DB_PASSWORD 几乎必为空，须显式加载 .env）
     pg_user="$(grep -E '^DB_USER=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' || echo quantmind)"
     pg_db="$(grep -E '^DB_NAME=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' || echo quantmind)"
-    if docker exec -e PGPASSWORD="${DB_PASSWORD:-quantmind2026}" quantmind-db \
+    pg_pass="$(grep -E '^(DB_PASSWORD|POSTGRES_PASSWORD)=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' | head -c 200)"
+    if [[ -z "$pg_pass" ]]; then
+        pg_pass="${POSTGRES_PASSWORD:-${DB_PASSWORD:-quantmind2026}}"
+    fi
+    if docker exec -e PGPASSWORD="$pg_pass" quantmind-db \
             pg_dump -U "$pg_user" -d "$pg_db" --no-owner --no-acl --clean --if-exists 2>/dev/null \
             | gzip > "$backup_file"; then
         log "数据库备份完成: $backup_file ($(du -h "$backup_file" | cut -f1))"
@@ -81,7 +86,12 @@ sync_code() {
     if ! git -C "$PROJECT_DIR" diff --quiet || ! git -C "$PROJECT_DIR" diff --cached --quiet; then
         $FORCE || die '检测到未提交代码改动；确认覆盖请加 --force'
         git -C "$PROJECT_DIR" reset --hard
-        git -C "$PROJECT_DIR" clean -fd -e data -e models -e db -e logs -e user_pools_local -e .env
+        # 仅清理"纯源码"区域里仓库未跟踪的残渣；显式豁免所有可能存运维数据/配置的目录。
+        # 注意：-x 不启用（不删 .gitignore 的文件）；白名单与 .gitignore 的 ! 放行保持一致，
+        # 以免误删 data/upgrade_*.sql（已跟踪，本不受 clean 影响）或 servers 上零时脚本。
+        git -C "$PROJECT_DIR" clean -fd \
+            -e data -e models -e db -e logs -e user_pools_local -e .env \
+            -e .update -e .env.bak -e .env.bak.* -e secrets -e certs
     fi
 
     # 拉远端：指定远端不存在时回退 fetch --all（项目实际是 gitee/github）
@@ -144,25 +154,53 @@ build_core() {
         log '2/4 跳过镜像构建（--no-build 显式指定）'
         return
     fi
-    local changes
-    changes="$(git -C "$PROJECT_DIR" diff --name-only HEAD@{1} HEAD 2>/dev/null \
-        | grep -E '^(requirements\.txt|requirements/production\.txt|requirements/ai\.txt|docker/Dockerfile.*|docker/.*\.build-args|docker-compose\.yml)$' \
-        || true)"
-    if [[ -z "$changes" ]]; then
-        log "2/4 跳过镜像构建（本次无 requirements/Dockerfile/compose 变更；后端代码 bind mount 已生效）"
+
+    # 触发源：仅影响镜像层的文件（与 Dockerfile.oss 实际 COPY/ARG 对齐）。
+    # 不依赖 git reflog / HEAD@{1}——首次部署、浅克隆、--force 下都有效。
+    local trigger files
+    trigger=''
+    files=(
+        "$PROJECT_DIR/requirements.txt"
+        "$PROJECT_DIR/requirements/production.txt"
+        "$PROJECT_DIR/requirements/ai.txt"
+        "$PROJECT_DIR/docker-compose.yml"      # 整个文件参与签名（含 build 段）
+        "$PROJECT_DIR/docker/Dockerfile.oss"
+    )
+    # Dockerfile 相关 todo: 需要显式知道 Dockerfile 及 build-args 是否存在
+    for f in "$PROJECT_DIR"/docker/Dockerfile* "$PROJECT_DIR"/docker/*.build-args; do
+        [[ -e "$f" ]] && files+=("$f")
+    done
+    # 计算签名：存在则取 sha256（前 64 位），缺失则记 missing
+    for f in "${files[@]}"; do
+        if [[ -f "$f" ]]; then
+            local h
+            h="$(sha256sum "$f" 2>/dev/null | awk '{print $1}' | head -c 64 || echo missing)"
+            trigger="${trigger}${f}=${h}\n"
+        else
+            trigger="${trigger}${f}=missing\n"
+        fi
+    done
+
+    local marker marker_dir
+    marker_dir="$PROJECT_DIR/.update"
+    marker="$marker_dir/deps.sha256"
+    local prev
+    prev=''
+    [[ -f "$marker" ]] && prev="$(cat "$marker" 2>/dev/null || true)"
+
+    # 逐字节比较：签名无变化 → 跳过 build
+    if [[ -n "$prev" ]] && [[ "$prev" == "$trigger" ]]; then
+        log "2/4 跳过镜像构建（依赖/构建配置无变化；后端代码 bind mount 已生效）"
         return
     fi
-    # 进一步过滤：仅当 docker-compose.yml 的 build 段（quantmind 下）实际变了才重 build
-    if echo "$changes" | grep -qx 'docker-compose.yml'; then
-        if ! git -C "$PROJECT_DIR" diff HEAD@{1} HEAD -- docker-compose.yml 2>/dev/null \
-            | grep -E '^[+-].*(\bbuild:|\bcontext:|\bdockerfile:|\bargs:|\btarget:|\bplatform:|\bcache_from:|\bTORCH_DEVICE\b|\bTORCH_CPU_INDEX_URL\b)' \
-            | grep -q .; then
-            log "2/4 跳过镜像构建（docker-compose.yml 改了，但仅运行时配置变化；restart_services 已覆盖）"
-            return
-        fi
-    fi
-    log "2/4 重建核心后端镜像（检测到依赖/构建参数变更：$(echo "$changes" | tr '\n' ' ' | head -c 200)）"
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" build quantmind
+
+    log "2/4 重建核心后端镜像（检测到依赖/构建配置变更：$prev → 现签名）"
+    docker compose -f "$PROJECT_DIR/docker-compose.yml" build quantmind || {
+        die "镜像构建失败，请检查以上日志"
+    }
+    # build 成功才落盘新签名（失败不记录，下次重试）
+    mkdir -p "$marker_dir"
+    printf '%s' "$trigger" > "$marker"
 }
 
 # 关键步骤：只重启 application 层容器，**不**碰 db/redis/qwenpaw 等基础设施
@@ -211,21 +249,65 @@ update_database() {
         sleep 2
     done
 
-    # 应用 SQL 补丁
+    # 幂等版本追踪表：记录已应用的 migration 文件名，天然防重放，并支撑按版本排序。
+    pg_user="${pg_user:-quantmind}"
+    docker exec -i -e PGUSER="$pg_user" quantmind-db \
+        sh -lc 'psql -U "$PGUSER" -v ON_ERROR_STOP=1' >/dev/null 2>&1 <<EOSQL
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    file_name  TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+EOSQL
+    # 兼容既有布防：首次启用版本追踪（表为空）时，把当前仓库里的 upgrade 文件全部标记为已应用，
+    # 避免此前裸跑已生效的 v1.0.x 被重放。
+    local seed_count names vals
+    seed_count="$(docker exec -e PGUSER="$pg_user" quantmind-db \
+        psql -U "$pg_user" -tAc 'SELECT count(*) FROM schema_migrations' 2>/dev/null | tr -d ' ' || echo 0)"
+    if [[ "$seed_count" == "0" ]]; then
+        names=()
+        for p in "$PROJECT_DIR"/data/upgrade_*.sql; do
+            [[ -e "$p" ]] && names+=("$(basename "$p")")
+        done
+        if [[ ${#names[@]} -gt 0 ]]; then
+            vals=""
+            for n in "${names[@]}"; do
+                vals="${vals:+$vals,}('${n}')"
+            done
+            docker exec -e PGUSER="$pg_user" quantmind-db \
+                psql -U "$pg_user" -v ON_ERROR_STOP=1 -c \
+                "INSERT INTO schema_migrations (file_name) VALUES ${vals} ON CONFLICT (file_name) DO NOTHING" \
+                >/dev/null 2>&1
+            log "  首次启用版本追踪：将现有 ${#names[@]} 个 upgrade 标记为已应用"
+        fi
+    fi
+
+    # 按版本号排序（sort -V 而非字典序），遍历并跳过已应用项
     local patch applied
     applied=0
-    for patch in "$PROJECT_DIR"/data/upgrade_*.sql; do
+    while IFS= read -r patch; do
         [[ -e "$patch" ]] || continue
-        log "  应用 SQL: $(basename "$patch")"
+        local b
+        b="$(basename "$patch")"
+        local already
+        already="$(docker exec -e PGUSER="$pg_user" quantmind-db \
+            psql -U "$pg_user" -tAc "SELECT count(*) FROM schema_migrations WHERE file_name='$b'" 2>/dev/null | tr -d ' ' || echo 0)"
+        if [[ "$already" != "0" ]]; then
+            continue
+        fi
+        log "  应用 SQL: $b"
         if ! docker exec -i -e PGUSER="$pg_user" quantmind-db \
                 sh -lc 'psql -U "$PGUSER" -v ON_ERROR_STOP=1' < "$patch"; then
-            die "SQL 升级失败: $(basename "$patch")"
+            die "SQL 升级失败: $b"
         fi
-        log "  ✓ $(basename "$patch") 已应用"
+        # 成功后标记已应用
+        docker exec -e PGUSER="$pg_user" quantmind-db \
+            psql -U "$pg_user" -c \
+            "INSERT INTO schema_migrations (file_name) VALUES ('$b') ON CONFLICT (file_name) DO NOTHING" >/dev/null 2>&1
+        log "  ✓ $b 已应用"
         applied=$((applied + 1))
-    done
+    done < <(for p in "$PROJECT_DIR"/data/upgrade_*.sql; do printf '%s\n' "$p"; done | sort -V)
     if (( applied == 0 )); then
-        log '  未发现 data/upgrade_*.sql，跳过'
+        log '  无新增 upgrade_*.sql（全部已应用）'
     fi
 }
 
@@ -238,10 +320,21 @@ main() {
     restart_services
     update_database
 
-    # 健康检查：API 起来即视为升级成功
+    # 健康检查：API + celery worker/beat 均就绪才算升级成功。
+    # 仅 curl API 不充分——API 可能 200 而 celery 起崩。
     local attempt
     for attempt in {1..30}; do
-        if curl --fail --silent --max-time 3 http://127.0.0.1:8000/health >/dev/null; then
+        # 容器带 healthcheck 时校验为 healthy；无 healthcheck 的基础设施（db/redis）不校验
+        local hk
+        api_ok=false; celery_ok=false; beat_ok=false
+        curl --fail --silent --max-time 3 http://127.0.0.1:8000/health >/dev/null 2>&1 && api_ok=true
+        for svc in quantmind-celery quantmind-celery-beat; do
+            hk="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$svc" 2>/dev/null)"
+            if [[ "$hk" == "healthy" ]]; then
+                [[ "$svc" == "quantmind-celery" ]] && celery_ok=true || beat_ok=true
+            fi
+        done
+        if $api_ok && $celery_ok && $beat_ok; then
             log "升级完成 ✓ (HEAD: $(git -C "$PROJECT_DIR" rev-parse --short HEAD))"
             return
         fi
@@ -249,10 +342,15 @@ main() {
     done
     log '健康检查失败，尾部日志：' >&2
     docker logs --tail 100 quantmind >&2 || true
+    for svc in quantmind-celery quantmind-celery-beat; do
+        if [[ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$svc" 2>/dev/null)" != "healthy" ]]; then
+            docker logs --tail 50 "$svc" >&2 || true
+        fi
+    done
     if [[ "$(docker inspect --format '{{.State.Health.Status}}' quantmind-db 2>/dev/null)" != "healthy" ]]; then
         docker logs --tail 50 quantmind-db >&2 || true
     fi
-    die 'API 未在 60s 内 ready，请根据上述日志排查'
+    die 'API/celery 未在 60s 内就绪，请根据上述日志排查'
 }
 
 main

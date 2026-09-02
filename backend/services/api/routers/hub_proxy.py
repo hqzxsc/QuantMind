@@ -78,35 +78,8 @@ def _build_model_archive(model_dir: Path) -> bytes:
     return buf.getvalue()
 
 
-@router.api_route("/api/v1/hub/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def proxy_model_hub(path: str, request: Request):
-    api_key = _require_api_key()
-
-    upstream_url = f"{HUB_BASE_URL}/api/v1/hub/{path}"
-    if request.url.query:
-        upstream_url += f"?{request.url.query}"
-
-    method = request.method.upper()
-    headers = _forward_headers(request)
-    headers["X-API-Key"] = api_key
-    body = await request.body()
-
-    timeout = httpx.Timeout(connect=5.0, read=60.0, write=60.0, pool=10.0)
-
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.request(
-                method, upstream_url,
-                content=body if body else None,
-                headers=headers,
-            )
-            return Response(
-                content=resp.content,
-                status_code=resp.status_code,
-                headers={"content-type": resp.headers.get("content-type", "application/json")},
-            )
-    except httpx.HTTPError:
-        return PlainTextResponse("模型广场服务不可达", status_code=502)
+# ── 注意顺序：具体的 /api/v1/hub/publish-local 必须先于下方的 catch-all 注册，
+# ── 否则会被 {path:path} 捕获、误当普通广场接口代理到远端而 404。
 
 
 @router.post("/api/v1/hub/publish-local", summary="打包并发布本地模型到广场")
@@ -211,3 +184,34 @@ async def publish_local_model(
         "packaged_size": len(archive),
         "detail": publish_detail,
     }
+
+
+@router.api_route("/api/v1/hub/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def proxy_model_hub(path: str, request: Request):
+    api_key = _require_api_key()
+
+    upstream_url = f"{HUB_BASE_URL}/api/v1/hub/{path}"
+    if request.url.query:
+        upstream_url += f"?{request.url.query}"
+
+    method = request.method.upper()
+    headers = _forward_headers(request)
+    headers["X-API-Key"] = api_key
+    body = await request.body()
+
+    timeout = httpx.Timeout(connect=5.0, read=60.0, write=60.0, pool=10.0)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.request(
+                method, upstream_url,
+                content=body if body else None,
+                headers=headers,
+            )
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                headers={"content-type": resp.headers.get("content-type", "application/json")},
+            )
+    except httpx.HTTPError:
+        return PlainTextResponse("模型广场服务不可达", status_code=502)

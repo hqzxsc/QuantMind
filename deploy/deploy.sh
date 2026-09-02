@@ -106,6 +106,9 @@ DB_PASSWORD=$(openssl rand -hex 24)
 SECRET_KEY=$(openssl rand -hex 32)
 JWT_SECRET_KEY=$(openssl rand -hex 32)
 STORAGE_MODE=local
+# 系统一键更新（Web 控制台「更新系统」）：docker socket 已挂载，默认开启。
+# 如需关闭，改此行后 `docker compose up -d --force-recreate quantmind` 生效。
+QUANTMIND_ENABLE_WEB_UPDATE=true
 EOF
 }
 

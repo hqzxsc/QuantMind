@@ -30,7 +30,7 @@ class SystemEvent(BaseModel):
     created_at: datetime
 
 
-@router.get("/system-events", response_model=list[SystemEvent])
+@router.get("", response_model=list[SystemEvent])
 async def list_system_events(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -83,7 +83,7 @@ async def list_system_events(
     ]
 
 
-@router.get("/system-events/stats")
+@router.get("/stats")
 async def system_events_stats(
     hours: int = Query(default=24, ge=1, le=24 * 30, description="统计最近 N 小时"),
     group_by: str = Query(default="level", pattern="^(level|event_type)$"),

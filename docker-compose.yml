@@ -293,6 +293,8 @@ services:
       - ./logs:/app/logs
       # 后端代码 (外挂载解决热更新问题)
       - ./backend:/app/backend
+      # 内置文档（供管理后台「打开部署指南」等渲染 /static/docs 使用）
+      - ./docs:/app/docs:ro
       - ./config:/app/config
       - ./scripts:/app/scripts
       # AlphaAgent 包源码（容器内 Python 通过 PYTHONPATH=/app 直接 import）

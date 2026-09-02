@@ -158,7 +158,7 @@ import_images() {
     local images_ready=true
     for image in \
         quantmind-oss:latest \
-        quantmind-data-gateway:latest quantmind-dashboard:latest \
+        quantmind-data-gateway:latest \
         postgres:15-alpine redis:7-alpine \
         lcomplete/huntly:latest agentscope/qwenpaw:latest \
         ghcr.io/gnzsnz/ib-gateway:latest \
@@ -178,7 +178,7 @@ import_images() {
 
     for image in \
         quantmind-oss:latest \
-        quantmind-data-gateway:latest quantmind-dashboard:latest \
+        quantmind-data-gateway:latest \
         postgres:15-alpine redis:7-alpine \
         lcomplete/huntly:latest agentscope/qwenpaw:latest \
         ghcr.io/gnzsnz/ib-gateway:latest \
@@ -236,8 +236,7 @@ checkout_code() {
         for relative_path in \
             docker/Dockerfile.oss \
             docker/Dockerfile.web \
-            docker/Dockerfile.data-gateway \
-            docker/Dockerfile.dashboard; do
+            docker/Dockerfile.data-gateway; do
             if [[ -f "$DEPLOY_OVERLAY_DIR/$relative_path" ]]; then
                 install -D -m 0644 "$DEPLOY_OVERLAY_DIR/$relative_path" \
                     "$PROJECT_DIR/$relative_path"

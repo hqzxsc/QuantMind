@@ -34,7 +34,6 @@ sudo bash deploy/update.sh
 | --- | --- |
 | Web | `http://<伺服器 IP>:3000` |
 | API 文件 | `http://<伺服器 IP>:8000/docs` |
-| Dashboard | `http://<伺服器 IP>:8501` |
 
 離線包還原與進階選項請見 [deploy/README.md](deploy/README.md)。
 

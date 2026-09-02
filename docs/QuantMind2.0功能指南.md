@@ -159,7 +159,7 @@ curl -fsSL https://gitee.com/qusong0627/QuantMind/raw/master/deploy/full-deploy.
 
 **一键更新**：`sudo bash deploy/update.sh`（保留 PostgreSQL、Redis、`data/`、`models/`、`db/qlib_data/`，不丢失数据库与模型资产）。
 
-**服务端口**：api 8000 / engine 8001 / trade 8002 / stream 8003 / data gateway 8004 / dashboard 8501。
+**服务端口**：api 8000 / engine 8001 / trade 8002 / stream 8003 / data gateway 8004。
 
 ---
 

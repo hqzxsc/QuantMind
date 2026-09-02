@@ -89,5 +89,4 @@ curl http://127.0.0.1:8000/health
 | Web | 3000 |
 | API / Engine / Trade / Stream | 8000 / 8001 / 8002 / 8003 |
 | Data Gateway | 8004 |
-| Dashboard | 8501 |
 | Huntly / RSSHub / QwenPaw | 8090 / 1200 / 8088 |

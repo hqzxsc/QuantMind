@@ -34,7 +34,6 @@ sudo bash deploy/update.sh
 | --- | --- |
 | Web | `http://<server-ip>:3000` |
 | API docs | `http://<server-ip>:8000/docs` |
-| Dashboard | `http://<server-ip>:8501` |
 
 See [deploy/README.md](deploy/README.md) for package recovery and deployment options.
 

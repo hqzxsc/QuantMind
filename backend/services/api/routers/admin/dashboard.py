@@ -84,12 +84,6 @@ INFRA_SERVICES = [
         "port": int(os.getenv("ADMIN_DASHBOARD_HUNTLY_PORT", "80")),
         "desc": "Huntly RSS 阅读器 (8090)",
     },
-    {
-        "service": "dashboard",
-        "host": os.getenv("ADMIN_DASHBOARD_DASHBOARD_HOST", "quantmind-dashboard"),
-        "port": int(os.getenv("ADMIN_DASHBOARD_DASHBOARD_PORT", "8501")),
-        "desc": "Streamlit 数据看板 (8501)",
-    },
 ]
 
 

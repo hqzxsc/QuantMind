@@ -554,46 +554,6 @@ services:
     networks:
       - quantmind-net
 
-  # 5c. Dashboard (OpenBB + Streamlit 数据看板)
-  dashboard:
-    image: quantmind-dashboard:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.dashboard
-    container_name: quantmind-dashboard
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "${DASHBOARD_PORT:-8501}:8501"
-    environment:
-      - TZ=Asia/Shanghai
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_NAME=${DB_NAME:-quantmind}
-      - DB_USER=${DB_USER:-quantmind}
-      - DB_PASSWORD=${DB_PASSWORD:-quantmind2026}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - HUNTLY_BASE_URL=http://quantmind-huntly
-      - HUNTLY_USERNAME=${HUNTLY_USERNAME:-changeme}
-      - HUNTLY_PASSWORD=${HUNTLY_PASSWORD:-changeme}
-    volumes:
-      - ./data:/data
-      - ./db:/app/db
-      - ./dashboard:/app/dashboard
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8501/_stcore/health >/dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    restart: unless-stopped
-    networks:
-      - quantmind-net
-
   # 6. Huntly (财经资讯/RSS/Twitter 聚合订阅源)
   # 提供新闻流 + 可结构化的财务事件源
   # 前端通过 QuantMind News 代理访问 (零 401 风险)

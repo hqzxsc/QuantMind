@@ -59,6 +59,7 @@ const AdminRssSources = lazy(() => import('./features/admin/components/AdminRssS
 const AdminRDAgentFactors = lazy(() => import('./features/admin/components/AdminRDAgentFactors').then(m => ({ default: m.AdminRDAgentFactors })));
 const AdminDataPlatform = lazy(() => import('./features/admin/components/AdminDataPlatform').then(m => ({ default: m.AdminDataPlatform })));
 const AdminTagManagement = lazy(() => import('./features/admin/components/AdminTagManagement').then(m => ({ default: m.AdminTagManagement })));
+const AdminFinbertModel = lazy(() => import('./features/admin/components/AdminFinbertModel').then(m => ({ default: m.AdminFinbertModel })));
 const AdminFeatureCatalog = lazy(() => import('./features/admin/components/AdminFeatureCatalog').then(m => ({ default: m.AdminFeatureCatalog })));
 const AdminTrainingDatasets = lazy(() => import('./features/admin/components/AdminTrainingDatasets').then(m => ({ default: m.AdminTrainingDatasets })));
 const AdminAutoDLNodes = lazy(() => import('./features/admin/components/AdminAutoDLNodes').then(m => ({ default: m.AdminAutoDLNodes })));
@@ -706,6 +707,7 @@ export default function App() {
                     <Route path="strategies" element={<Suspense fallback={<Spin size="large" />}><AdminStrategyTemplates /></Suspense>} />
                     <Route path="news" element={<Suspense fallback={<Spin size="large" />}><AdminRssSources /></Suspense>} />
                     <Route path="tags" element={<Suspense fallback={<Spin size="large" />}><AdminTagManagement /></Suspense>} />
+                    <Route path="finbert" element={<Suspense fallback={<Spin size="large" />}><AdminFinbertModel /></Suspense>} />
                     <Route path="rd-agent" element={<Suspense fallback={<Spin size="large" />}><AdminRDAgentFactors /></Suspense>} />
                     <Route path="feature-catalog" element={<Suspense fallback={<Spin size="large" />}><AdminFeatureCatalog /></Suspense>} />
                     <Route path="autodl-nodes" element={<Suspense fallback={<Spin size="large" />}><AdminAutoDLNodes /></Suspense>} />

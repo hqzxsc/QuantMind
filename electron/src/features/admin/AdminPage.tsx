@@ -38,6 +38,7 @@ const AdminPage: React.FC = () => {
                 { key: 'quotes', label: '数据源监控' },
                 { key: 'news', label: 'RSS源管理' },
                 { key: 'tags', label: '标签管理' },
+                { key: 'finbert', label: 'FinBERT模型' },
             ]
         },
         { 

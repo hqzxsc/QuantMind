@@ -13,6 +13,7 @@ import {
   Modal,
   Row,
   Space,
+  Steps,
   Tag,
   Typography,
 } from 'antd';
@@ -189,7 +190,7 @@ export const AdminFinbertModel: React.FC = () => {
           </span>
         }
       >
-        {/* 顶部：模型一句话 + 当前健康状态小条 */}
+        {/* 顶部：模型一句话 */}
         <div
           style={{
             background: 'linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%)',
@@ -212,148 +213,63 @@ export const AdminFinbertModel: React.FC = () => {
           </div>
         </div>
 
-        {/* 一、与词典法的对比 */}
-        <Title level={5} style={{ marginTop: 0, marginBottom: 8 }}>
-          <span style={{ background: '#6366f1', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 12, marginRight: 8 }}>1</span>
-          与「词典法」对比
-        </Title>
-        <Row gutter={12} style={{ marginBottom: 12 }}>
-          <Col span={12}>
-            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: 10 }}>
-              <div style={{ fontWeight: 600, fontSize: 12, color: '#64748b', marginBottom: 6 }}>词典法（默认）</div>
-              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: '#334155' }}>
-                <li>速度：微秒级，几乎零开销</li>
-                <li>准确：依赖词表维护，召回低</li>
-                <li>多义词：易误判（"利好兑现"同时命中）</li>
-                <li>资源：几乎为零</li>
-              </ul>
-            </div>
-          </Col>
-          <Col span={12}>
-            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: 10 }}>
-              <div style={{ fontWeight: 600, fontSize: 12, color: '#16a34a', marginBottom: 6 }}>FinBERT</div>
-              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: '#334155' }}>
-                <li>速度：CPU 单条约 30–80ms / GPU 2–5ms</li>
-                <li>准确：上下文建模，显著优于纯词法</li>
-                <li>多义词：可识别语境（业绩超预期/暴雷）</li>
-                <li>资源：加载约 350MB 内存，CPU 推理可能占满单核</li>
-              </ul>
-            </div>
-          </Col>
-        </Row>
+        {/* 部署步骤（Timeline 式简洁向导） */}
+        <Steps
+          direction="vertical"
+          size="small"
+          current={-1}
+          responsive={false}
+          items={[
+            {
+              title: '安装 PyTorch（CPU）',
+              description: (
+                <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-100 break-all">
+                  sudo bash deploy/install-model-deps.sh
+                </code>
+              ),
+              status: 'wait',
+            },
+            {
+              title: '下载模型权重',
+              description: (
+                <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-100 break-all">
+                  docker exec quantmind python3 /app/backend/scripts/download_finbert.py
+                </code>
+              ),
+              status: 'wait',
+            },
+            {
+              title: '启用开关',
+              description: (
+                <span>
+                  <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-100 break-all">/opt/quantmind/.env</code> 设
+                  <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-100 break-all">NEWS_USE_FINBERT=true</code> 后重建（默认关闭，避免打满 worker）
+                </span>
+              ),
+              status: 'wait',
+            },
+            {
+              title: '触发历史重算',
+              description: (
+                <span>
+                  <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-100 break-all">POST /api/v1/news/enrichment/rebuild-all?force=true</code>
+                  （日常新资讯由 Celery 每分钟自动处理）
+                </span>
+              ),
+              status: 'wait',
+            },
+          ]}
+        />
 
-        {/* 二、部署步骤（针对当前部署链路：宿主机重建镜像补 PyTorch） */}
-        <Title level={5} style={{ marginTop: 16, marginBottom: 8 }}>
-          <span style={{ background: '#6366f1', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 12, marginRight: 8 }}>2</span>
-          部署步骤
-        </Title>
-        <Paragraph style={{ fontSize: 13, color: '#334155', marginBottom: 10 }}>
-          离线/常规镜像默认 <code>TORCH_DEVICE=skip</code>（不含 PyTorch）。在宿主机用
-          <code style={{ background: '#0f172a', color: '#e2e8f0', padding: '1px 6px', borderRadius: 3, margin: '0 4px' }}>
-            deploy/install-model-deps.sh
-          </code>
-          重建镜像补 torch（重启不丢）。
-        </Paragraph>
-
-        {/* 3.1 安装 PyTorch */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <div style={{ width: 22, height: 22, borderRadius: 5, background: '#eef2ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700 }}>1</div>
-          <div style={{ fontSize: 13, color: '#334155', lineHeight: 1.6 }}>
-            <b>安装 PyTorch（CPU）：</b>
-            <code style={{ background: '#0f172a', color: '#e2e8f0', padding: '1px 6px', borderRadius: 3, margin: '0 4px' }}>
-              sudo bash deploy/install-model-deps.sh
-            </code>
-            <div style={{ marginTop: 4, fontSize: 12, color: '#64748b' }}>
-              GPU 环境改用 <code>--gpu</code>（CUDA 版 + 本地训练镜像），需 NVIDIA 驱动 + nvidia-container-toolkit，构建较慢。
-            </div>
+        <div style={{ marginTop: 14, fontSize: 12, color: '#64748b' }}>
+          <div style={{ marginBottom: 6 }}>
+            <b>验证生效：</b>查询近 24h 写入里带 <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-100">+finbert</code> 的占比，占比即真实参与推理。
           </div>
-        </div>
-
-        {/* 3.2 下载权重 */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <div style={{ width: 22, height: 22, borderRadius: 5, background: '#eef2ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700 }}>2</div>
-          <div style={{ fontSize: 13, color: '#334155', lineHeight: 1.6 }}>
-            <b>下载模型权重：</b>
-            <code style={{ background: '#0f172a', color: '#e2e8f0', padding: '1px 6px', borderRadius: 3, margin: '0 4px' }}>
-              docker exec quantmind python3 /app/backend/scripts/download_finbert.py
-            </code>
-            <div style={{ marginTop: 4, fontSize: 12, color: '#64748b' }}>
-              三源回退：魔搭 ModelScope（国内首选）→ hf-mirror → HuggingFace。
-            </div>
-          </div>
-        </div>
-
-        {/* 3.3 启用开关 */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <div style={{ width: 22, height: 22, borderRadius: 5, background: '#eef2ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700 }}>3</div>
-          <div style={{ fontSize: 13, color: '#334155', lineHeight: 1.6 }}>
-            <b>启用（默认关闭，避免打满 celery worker）：</b>
-            在 <code>/opt/quantmind/.env</code> 设 <code>NEWS_USE_FINBERT=true</code> 后重建，或 CPU/GPU 部署时显式开启。
-          </div>
-        </div>
-
-        {/* 3.4 触发重算 */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <div style={{ width: 22, height: 22, borderRadius: 5, background: '#eef2ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700 }}>4</div>
-          <div style={{ fontSize: 13, color: '#334155', lineHeight: 1.6 }}>
-            <b>触发历史重算：</b>
-            <code style={{ background: '#0f172a', color: '#e2e8f0', padding: '1px 6px', borderRadius: 3, margin: '0 4px' }}>
-              POST /api/v1/news/enrichment/rebuild-all?force=true
-            </code>
-            <span style={{ marginLeft: 4, fontSize: 12, color: '#64748b' }}>
-              （日常新资讯由 Celery <code>news_enrich_recent</code> 每分钟自动处理）
-            </span>
-          </div>
-        </div>
-
-        {/* 三、验证是否生效 */}
-        <Title level={5} style={{ marginTop: 16, marginBottom: 8 }}>
-          <span style={{ background: '#6366f1', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 12, marginRight: 8 }}>3</span>
-          验证生效
-        </Title>
-        <div
-          style={{
-            background: '#0f172a',
-            color: '#e2e8f0',
-            padding: 12,
-            borderRadius: 6,
-            fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
-            fontSize: 12,
-            lineHeight: 1.6,
-            marginBottom: 12,
-          }}
-        >
-          <div style={{ color: '#94a3b8' }}># 1. 后端健康探测（本页右上「重新探测」亦同）</div>
-          <div>curl -s http://&lt;api&gt;:8000/api/v1/news/enrichment/finbert-status | jq</div>
-          <div style={{ color: '#94a3b8', marginTop: 4 }}># 2. DB 真实生效占比（model_version 带 +finbert 即代表真正参与推理）</div>
-          <div>docker exec quantmind-db psql -U quantmind -d quantmind -c "SELECT model_version, count(*) FROM news_article_enrichment GROUP BY model_version;"</div>
-        </div>
-
-        <div
-          style={{
-            marginTop: 16,
-            padding: '10px 12px',
-            background: '#fff7ed',
-            border: '1px solid #fed7aa',
-            borderRadius: 6,
-            fontSize: 12,
-            color: '#9a3412',
-          }}
-        >
-          <ThunderboltOutlined style={{ marginRight: 6, color: '#ea580c' }} />
-          <b>提示：</b>若 <code>+finbert</code> 占比为 0，按上方 4 步完成「装 torch → 下权重 → 开开关 → 重算」后，本页状态及 DB 占比即刷新。
-        </div>
-
-        {/* 四、关联文件 */}
-        <Title level={5} style={{ marginTop: 16, marginBottom: 6 }}>
-          <span style={{ background: '#6366f1', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 12, marginRight: 8 }}>4</span>
-          关联文件
-        </Title>
-        <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.9 }}>
-          <div><code>deploy/install-model-deps.sh</code> — 宿主机重建镜像补装 PyTorch（torch CPU/GPU）</div>
-          <div><code>backend/scripts/download_finbert.py</code> — FinBERT 权重下载（三源回退）</div>
-          <div><code>backend/services/api/news/sentiment.py</code> — 模型懒加载与推理</div>
-          <div><code>docs/FinBERT 中文金融情感模型.md</code> — 完整部署指南（仓库内文档）</div>
+          <pre
+            className="font-mono text-xs px-3 py-2 rounded overflow-x-auto"
+            style={{ background: '#0f172a', color: '#e2e8f0', margin: 0 }}
+          >docker exec quantmind-db psql -U quantmind -d quantmind -c "SELECT model_version, count(*) FROM news_article_enrichment GROUP BY model_version;"</pre>
+          <div style={{ marginTop: 6, color: '#9a3412' }}>若 +finbert 占比为 0，按上方 4 步完成「装 torch → 下权重 → 开开关 → 重算」后再查。</div>
         </div>
       </Modal>
     </div>

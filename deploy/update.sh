@@ -125,13 +125,20 @@ EOF
 
 build_core() {
     # 智能判断：只有"会改变镜像层"的文件变更才触发 build。
-    # Dockerfile.oss 实际 COPY 的是这三个文件（见 docker/Dockerfile.oss:54-56）：
-    #   - requirements.txt              （基础 pip 依赖）
-    #   - requirements/production.txt   （生产环境额外依赖）
-    #   - requirements/ai.txt           （AI 训练相关依赖）
-    # 其他子项目（tools/rd-agent/dashboard/...）下的 requirements.txt 各自独立，
-    # 不影响主 quantmind-oss 镜像。
-    # Dockerfile 自身或 docker/ 下 .build-args 变更也要重 build。
+    # 触发条件（与 docker/Dockerfile.oss / docker-compose.yml 实际 COPY + build 段对齐）：
+    #   1) Dockerfile 自身变更
+    #      - docker/Dockerfile*
+    #      - docker/*.build-args (buildkit 缓存标记)
+    #   2) Dockerfile.oss 实际 COPY 的 3 个 requirements 文件
+    #      - requirements.txt / requirements/production.txt / requirements/ai.txt
+    #   3) docker-compose.yml 中 quantmind.build 段变更（影响 build 行为）
+    #      - build.args（如 TORCH_DEVICE skip → cu121）
+    #      - build.context / build.dockerfile
+    #      - build.target / build.platform / build.cache_from
+    # 不触发 build（绝大多数情况）：
+    #   - backend/、config/、scripts/ 等都是 bind mount，**不**需要重 build
+    #   - ports/volumes/environment 改了只影响运行时，重启即可（restart_services 会处理）
+    #   - 子项目 tools/rd-agent/dashboard/... 下的 requirements.txt 各自独立
     # 这样 95% 的纯代码升级从 5min 缩到 30s。
     if ! $BUILD; then
         log '2/4 跳过镜像构建（--no-build 显式指定）'
@@ -139,11 +146,20 @@ build_core() {
     fi
     local changes
     changes="$(git -C "$PROJECT_DIR" diff --name-only HEAD@{1} HEAD 2>/dev/null \
-        | grep -E '^(requirements\.txt|requirements/production\.txt|requirements/ai\.txt|docker/Dockerfile.*|docker/.*\.build-args)$' \
+        | grep -E '^(requirements\.txt|requirements/production\.txt|requirements/ai\.txt|docker/Dockerfile.*|docker/.*\.build-args|docker-compose\.yml)$' \
         || true)"
     if [[ -z "$changes" ]]; then
-        log "2/4 跳过镜像构建（本次无 requirements/Dockerfile 变更；后端代码 bind mount 已生效）"
+        log "2/4 跳过镜像构建（本次无 requirements/Dockerfile/compose 变更；后端代码 bind mount 已生效）"
         return
+    fi
+    # 进一步过滤：仅当 docker-compose.yml 的 build 段（quantmind 下）实际变了才重 build
+    if echo "$changes" | grep -qx 'docker-compose.yml'; then
+        if ! git -C "$PROJECT_DIR" diff HEAD@{1} HEAD -- docker-compose.yml 2>/dev/null \
+            | grep -E '^[+-].*(\bbuild:|\bcontext:|\bdockerfile:|\bargs:|\btarget:|\bplatform:|\bcache_from:|\bTORCH_DEVICE\b|\bTORCH_CPU_INDEX_URL\b)' \
+            | grep -q .; then
+            log "2/4 跳过镜像构建（docker-compose.yml 改了，但仅运行时配置变化；restart_services 已覆盖）"
+            return
+        fi
     fi
     log "2/4 重建核心后端镜像（检测到依赖/构建参数变更：$(echo "$changes" | tr '\n' ' ' | head -c 200)）"
     docker compose -f "$PROJECT_DIR/docker-compose.yml" build quantmind

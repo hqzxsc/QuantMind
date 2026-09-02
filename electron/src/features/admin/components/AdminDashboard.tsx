@@ -206,7 +206,7 @@ export const AdminDashboard: React.FC = () => {
 
     const perfOption = {
         backgroundColor: 'transparent',
-        grid: { left: 34, right: 12, top: 24, bottom: 24 },
+        grid: { left: 34, right: 12, top: 36, bottom: 24 },
         tooltip: {
             trigger: 'axis',
             formatter: (params: any) => {
@@ -216,7 +216,7 @@ export const AdminDashboard: React.FC = () => {
                 return `<div class="text-xs"><b>${head}</b><br/>${rows}</div>`;
             },
         },
-        legend: { bottom: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 10, color: '#94a3b8' } },
+        legend: { top: 4, right: 8, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 10, color: '#94a3b8' } },
         xAxis: {
             type: 'category',
             data: perfHistory.map((p) => new Date(p.ts * 1000).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })),
@@ -346,14 +346,14 @@ export const AdminDashboard: React.FC = () => {
                 <Col span={24} lg={16}>
                     <div className="space-y-6">
                         <Title level={5} className="!m-0 !font-black !text-slate-800 text-xs opacity-50">全局统计</Title>
-                        <Row gutter={[20, 20]}>
+                        <Row gutter={[16, 16]}>
                             {[
                                 { title: "总用户数", value: metrics.users.total, sub: `今日新增 ${metrics.users.new_today} 人`, icon: <UserOutlined /> },
                                 { title: "模拟策略", value: metrics.strategies.live, sub: `共 ${metrics.strategies.total} 个策略`, icon: <LineChartOutlined /> },
-                                { title: "数据记录", value: metrics.content.posts, sub: "社区互动数据", icon: <DatabaseOutlined /> },
+                                { title: "模型数量", value: metrics.models?.total ?? 0, sub: "累计训练产出模型", icon: <DatabaseOutlined /> },
                                 { title: "系统运行", value: metrics.system.uptime_days, suffix: "天", sub: `健康度: ${metrics.system.health_score}%`, icon: <HeartOutlined /> }
                             ].map((item, idx) => (
-                                <Col span={12} key={idx}>
+                                <Col xs={24} sm={12} lg={6} key={idx}>
                                     <Card className="rounded-2xl border-slate-100 bg-white shadow-sm">
                                         <Statistic 
                                             title={<span className="text-[10px] font-black text-slate-400">{item.title}</span>}
@@ -361,8 +361,9 @@ export const AdminDashboard: React.FC = () => {
                                             suffix={item.suffix}
                                             valueStyle={{ fontWeight: 900, color: '#1e293b', fontSize: '24px', letterSpacing: '-0.025em' }}
                                             prefix={<div className="text-slate-300 mr-2">{item.icon}</div>}
+                                            style={{ textAlign: 'center' }}
                                         />
-                                        <div className="mt-2 text-[11px] font-bold text-slate-400 flex items-center gap-1">
+                                        <div className="mt-2 text-[11px] font-bold text-slate-400 flex items-center gap-1 justify-center">
                                             <div className="w-1 h-1 rounded-full bg-slate-200" />
                                             {item.sub}
                                         </div>
@@ -371,14 +372,14 @@ export const AdminDashboard: React.FC = () => {
                             ))}
                         </Row>
                         
-                        <Card className="rounded-2xl border-slate-100 shadow-sm" title={<span className="text-xs font-black text-slate-500">节点性能历史</span>} extra={<Text className="text-[10px] font-mono text-slate-400">CPU / 内存 / 磁盘 %</Text>}>
+                        <Card className="rounded-2xl border-slate-100 shadow-sm" title={<span className="text-xs font-black text-slate-500">节点性能历史</span>}>
                             {perfLoading && perfHistory.length === 0 ? (
                                 <div className="py-16 flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
                                     <AreaChartOutlined className="text-slate-300 text-3xl mb-3" />
                                     <Text className="text-slate-400 font-bold text-xs">实时吞吐量数据收集中...</Text>
                                 </div>
                             ) : perfHistory.length >= 2 ? (
-                                <div className="h-56 w-full">
+                                <div className="h-64 w-full">
                                     <EChartsChart option={perfOption} />
                                 </div>
                             ) : (

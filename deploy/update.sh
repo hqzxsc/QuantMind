@@ -124,18 +124,22 @@ EOF
 }
 
 build_core() {
-    # 智能判断：只有"会改变镜像层"的文件变更才触发 build
-    #   - requirements*.txt：新增/升级 pip 依赖
-    #   - docker/Dockerfile* 或 .build-args：构建参数/基础镜像变更
-    #   - 其他（backend/, config/, scripts/ 等）都是 bind mount，**不**需要重 build
-    # 这样 95% 的纯代码升级从 5min 缩到 30s
+    # 智能判断：只有"会改变镜像层"的文件变更才触发 build。
+    # Dockerfile.oss 实际 COPY 的是这三个文件（见 docker/Dockerfile.oss:54-56）：
+    #   - requirements.txt              （基础 pip 依赖）
+    #   - requirements/production.txt   （生产环境额外依赖）
+    #   - requirements/ai.txt           （AI 训练相关依赖）
+    # 其他子项目（tools/rd-agent/dashboard/...）下的 requirements.txt 各自独立，
+    # 不影响主 quantmind-oss 镜像。
+    # Dockerfile 自身或 docker/ 下 .build-args 变更也要重 build。
+    # 这样 95% 的纯代码升级从 5min 缩到 30s。
     if ! $BUILD; then
         log '2/4 跳过镜像构建（--no-build 显式指定）'
         return
     fi
     local changes
     changes="$(git -C "$PROJECT_DIR" diff --name-only HEAD@{1} HEAD 2>/dev/null \
-        | grep -E '^(requirements.*\.txt|requirements/.*\.txt|docker/Dockerfile.*|docker/.*\.build-args)$' \
+        | grep -E '^(requirements\.txt|requirements/production\.txt|requirements/ai\.txt|docker/Dockerfile.*|docker/.*\.build-args)$' \
         || true)"
     if [[ -z "$changes" ]]; then
         log "2/4 跳过镜像构建（本次无 requirements/Dockerfile 变更；后端代码 bind mount 已生效）"

@@ -181,10 +181,11 @@ restart_services() {
 }
 
 # 跑 data/upgrade_*.sql —— 这是用户最关心的"执行 SQL"主流程。
-# db 健康检查：仅短等待（5×2s=10s 足够初始启动），不健康立即报错而不是傻等。
+# db 健康检查：短等待 15×2s=30s（覆盖 db 首次启动 / restart 窗口），
+# 不健康立即报错而不是傻等。
 update_database() {
     log '4/4 执行数据库升级 SQL (data/upgrade_*.sql)'
-    local max_attempts=5
+    local max_attempts=15
     local attempt
     local pg_user
     pg_user="$(grep -E '^DB_USER=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' || echo quantmind)"
@@ -196,7 +197,7 @@ update_database() {
             || die "启动 quantmind-db 失败"
     fi
 
-    # 短等待 db 接受连接（pg_isready 不阻塞，最多 5×2s=10s）
+    # 短等待 db 接受连接（pg_isready 不阻塞，最多 15×2s=30s）
     for attempt in $(seq 1 "$max_attempts"); do
         if docker exec -e PGUSER="$pg_user" quantmind-db \
                 pg_isready -U "$pg_user" >/dev/null 2>&1; then

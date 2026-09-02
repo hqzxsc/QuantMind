@@ -125,9 +125,10 @@ services:
       # 融资融券股票池文件路径（容器内）
       - MARGIN_STOCK_POOL_PATH=/data/融资融券.json
 
-      # 系统一键更新（web 控制台「更新系统」）。默认关闭；开启表示允许管理后台
-      # 通过 docker socket 执行宿主 deploy/update.sh（≈宿主机 root 能力，见部署说明）。
-      - QUANTMIND_ENABLE_WEB_UPDATE=${QUANTMIND_ENABLE_WEB_UPDATE:-false}
+      # 系统一键更新（web 控制台「更新系统」）。默认开启；如需关闭可设
+      # QUANTMIND_ENABLE_WEB_UPDATE=false。开启表示允许管理后台通过 docker socket
+      # 执行宿主 deploy/update.sh（≈宿主机 root 能力，见部署说明）。
+      - QUANTMIND_ENABLE_WEB_UPDATE=${QUANTMIND_ENABLE_WEB_UPDATE:-true}
 
       # 服务端口
       - API_PORT=8000

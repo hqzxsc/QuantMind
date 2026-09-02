@@ -107,7 +107,7 @@ restart_services() {
 
 update_database() {
     log '4/5 导入数据库升级补丁'
-    # 应用 data/upgrade_*.sql（v1.0.1、v1.0.2 ……）。复用 offline-deploy 的
+    # 应用 data/upgrade_*.sql（v1.0.1、v1.0.2 ……）。复用 full-deploy 的
     # 同款 docker exec 方式走 db 容器 psql，SQL 需保持幂等（可重复执行）。
     local patch applied
     applied=0

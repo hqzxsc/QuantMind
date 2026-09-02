@@ -70,12 +70,12 @@
 
 > 📖 **完整部署指南**（含在线/手动两种部署方式、`.env` 配置、QwenPaw 初始化、数据目录说明与常见问题排查）见 **[docs/部署指南.md](docs/部署指南.md)**。
 
-### 1. 完整离线一键部署（主推 · 生产就绪）
+### 1. 完整在线一键部署（主推 · 生产就绪）
 
 从 CDN 下载**完整预构建镜像 + 业务数据 + 预训练模型 + Qlib 数据 + PostgreSQL 初始化备份**，校验后一次性恢复，部署完即可登录体验：
 
 ```bash
-curl -fsSL https://gitee.com/qusong0627/QuantMind/raw/master/deploy/offline-deploy.sh | sudo bash
+curl -fsSL https://gitee.com/qusong0627/QuantMind/raw/master/deploy/full-deploy.sh | sudo bash
 ```
 
 部署完成后即可访问：
@@ -98,7 +98,7 @@ sudo bash deploy/update.sh
 
 ### 3. 数据准备与 QuantDB 同步
 
-系统正常运行（行情查询、模型训练、因子挖掘、回测）需要底层量化历史数据支持。**离线一键部署已内含基础业务数据**；若使用在线部署（不含数据），请选择以下任一方式准备数据：
+系统正常运行（行情查询、模型训练、因子挖掘、回测）需要底层量化历史数据支持。**完整一键部署已内含基础业务数据**；若使用在线源码部署（不含数据），请选择以下任一方式准备数据：
 
 > **方式一：QuantDB 在线下载及日常增量更新（推荐 · 最便捷）**
 >

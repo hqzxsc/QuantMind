@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# QuantMind 离线镜像一键部署
+# QuantMind 完整在线部署（从 CDN 下载「完整业务数据 + 预训练模型 + 镜像包」并一键部署）
 #
 # 默认 CDN 地址：
 #   https://www.quantmindai.cn/downloads
@@ -31,10 +31,10 @@ MANIFEST_SHA256="${QUANTMIND_MANIFEST_SHA256:-}"
 DOCKER_MIRROR="${QUANTMIND_DOCKER_MIRROR:-https://vmx3wfa8ih592aat3z.xuanyuan.run}"
 PACKAGE_DIR="$DOWNLOAD_DIR/quantmind-offline"
 
-log() { printf '[offline-deploy] %s\n' "$*"; }
+log() { printf '[full-deploy] %s\n' "$*"; }
 die() { log "错误: $*" >&2; exit 1; }
 
-require_root() { [[ ${EUID} -eq 0 ]] || die '请使用 sudo bash deploy/offline-deploy.sh'; }
+require_root() { [[ ${EUID} -eq 0 ]] || die '请使用 sudo bash deploy/full-deploy.sh'; }
 require_ubuntu() {
     . /etc/os-release
     [[ ${ID:-} == ubuntu ]] || die '仅支持 Ubuntu'
@@ -401,7 +401,7 @@ main() {
     require_ubuntu
     require_url "$OFFLINE_BASE_URL" QUANTMIND_OFFLINE_BASE_URL
     echo "========================================================================="
-    echo " 🚀 QuantMind 离线部署即将开始"
+    echo " 🚀 QuantMind 完整部署即将开始"
     echo " -------------------------------------------------------------------------"
     echo " ⏱️  预计耗时（依服务器性能与网络波动）:"
     echo "     1. 安装依赖与 Docker        ~2-5 分钟"
@@ -426,7 +426,7 @@ main() {
     log "完成：代码=$PROJECT_DIR，Qlib 数据=$PROJECT_DIR/db/qlib_data"
     echo ""
     echo "========================================================================="
-    echo " 🎉 QuantMind 离线部署成功！"
+    echo " 🎉 QuantMind 完整部署成功！"
     echo " -------------------------------------------------------------------------"
     echo " 🖥️  桌面客户端: https://oss.quantmindai.cn/desktop-download.html"
     echo " 📖 API 文档    : http://<服务器 IP>:8000/docs"

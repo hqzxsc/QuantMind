@@ -24,6 +24,7 @@ from backend.services.api.routers.ai_ide_proxy import router as ai_ide_proxy_rou
 from backend.services.api.routers.community.router import router as community_router
 from backend.services.api.routers.data_dashboard import router as data_dashboard_router
 from backend.services.api.routers.data_gateway_proxy import router as data_gateway_proxy_router
+from backend.services.api.routers.hub_proxy import router as hub_proxy_router
 from backend.services.api.routers.qwenpaw_proxy import router as qwenpaw_proxy_router
 from backend.services.api.routers.qwenpaw_ui_proxy import router as qwenpaw_ui_proxy_router
 from backend.services.api.routers.engine_proxy import router as engine_proxy_router
@@ -377,6 +378,7 @@ app.include_router(ai_ide_proxy_router)
 app.include_router(qwenpaw_proxy_router)
 app.include_router(news_router)
 app.include_router(data_gateway_proxy_router)
+app.include_router(hub_proxy_router)
 app.include_router(data_dashboard_router)
 
 # CORS

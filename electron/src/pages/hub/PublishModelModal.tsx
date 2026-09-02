@@ -94,7 +94,8 @@ export const PublishModelModal: React.FC<PublishModelModalProps> = ({
       onSuccess?.();
       onClose();
     } catch (err: any) {
-      message.error(`发布失败: ${err?.message || '未知错误'}`);
+      const detail = err?.response?.data?.detail || err?.message;
+      message.error(`发布失败: ${detail || '未知错误'}`);
     } finally {
       setPublishing(false);
     }

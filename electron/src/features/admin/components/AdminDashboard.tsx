@@ -210,9 +210,10 @@ export const AdminDashboard: React.FC = () => {
         tooltip: {
             trigger: 'axis',
             formatter: (params: any) => {
-                const ts = params?.[0]?.value?.[0];
-                const head = ts ? new Date(ts * 1000).toLocaleTimeString('zh-CN', { hour12: false }) : '';
-                const rows = (params || []).map((p: any) => `${p.marker}${p.seriesName}: <b>${p.value[1]}%</b>`).join('<br/>');
+                // 类目轴下 params[i].axisValue 是当前类目(xAxis.data)标签；value 为纯值
+                const axisValue = params?.[0]?.axisValue;
+                const head = axisValue ?? '';
+                const rows = (params || []).map((p: any) => `${p.marker}${p.seriesName}: <b>${p.value}%</b>`).join('<br/>');
                 return `<div class="text-xs"><b>${head}</b><br/>${rows}</div>`;
             },
         },
@@ -237,7 +238,8 @@ export const AdminDashboard: React.FC = () => {
                 type: 'line',
                 smooth: true,
                 showSymbol: false,
-                data: perfHistory.map((p) => [p.ts, p.cpu]),
+                // 类目轴(xAxis.type='category')要求 series 为与 xAxis.data 索引对齐的纯值数组
+                data: perfHistory.map((p) => p.cpu),
                 lineStyle: { width: 1.5, color: '#6366f1' },
                 areaStyle: { color: 'rgba(99,102,241,0.12)' },
                 itemStyle: { color: '#6366f1' },
@@ -247,7 +249,7 @@ export const AdminDashboard: React.FC = () => {
                 type: 'line',
                 smooth: true,
                 showSymbol: false,
-                data: perfHistory.map((p) => [p.ts, p.mem]),
+                data: perfHistory.map((p) => p.mem),
                 lineStyle: { width: 1.5, color: '#10b981' },
                 areaStyle: { color: 'rgba(16,185,129,0.12)' },
                 itemStyle: { color: '#10b981' },
@@ -257,7 +259,7 @@ export const AdminDashboard: React.FC = () => {
                 type: 'line',
                 smooth: true,
                 showSymbol: false,
-                data: perfHistory.map((p) => [p.ts, p.disk]),
+                data: perfHistory.map((p) => p.disk),
                 lineStyle: { width: 1.5, color: '#f59e0b' },
                 areaStyle: { color: 'rgba(245,158,11,0.10)' },
                 itemStyle: { color: '#f59e0b' },

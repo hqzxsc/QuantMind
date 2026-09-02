@@ -157,20 +157,19 @@ build_core() {
 
     # 触发源：仅影响镜像层的文件（与 Dockerfile.oss 实际 COPY/ARG 对齐）。
     # 不依赖 git reflog / HEAD@{1}——首次部署、浅克隆、--force 下都有效。
-    local trigger files
+    local trigger files build_blk
     trigger=''
     files=(
         "$PROJECT_DIR/requirements.txt"
         "$PROJECT_DIR/requirements/production.txt"
         "$PROJECT_DIR/requirements/ai.txt"
-        "$PROJECT_DIR/docker-compose.yml"      # 整个文件参与签名（含 build 段）
         "$PROJECT_DIR/docker/Dockerfile.oss"
     )
-    # Dockerfile 相关 todo: 需要显式知道 Dockerfile 及 build-args 是否存在
+    # Dockerfile + build-args
     for f in "$PROJECT_DIR"/docker/Dockerfile* "$PROJECT_DIR"/docker/*.build-args; do
         [[ -e "$f" ]] && files+=("$f")
     done
-    # 计算签名：存在则取 sha256（前 64 位），缺失则记 missing
+    # 计算文件签名：存在则取 sha256（前 64 位），缺失则记 missing
     for f in "${files[@]}"; do
         if [[ -f "$f" ]]; then
             local h
@@ -180,6 +179,16 @@ build_core() {
             trigger="${trigger}${f}=missing\n"
         fi
     done
+
+    # docker-compose.yml 仅参与"build 段"签名，不再整文件比对：
+    # compose 里端口/环境变量/卷等改动不影响镜像层，改动它们不应触发镜像重建。
+    # 用 grep 摘出 build 段相关的行（build/context/dockerfile/args/target/... 含 key），
+    # 对该子集取 sha256 作为签名；只保留那些真正改变镜像构建的参数。
+    build_blk="$(grep -nE 'build:|context:|dockerfile:|args:|target:|cache_from:|TORCH_DEVICE|TORCH_CPU_INDEX_URL' \
+        "$PROJECT_DIR/docker-compose.yml" 2>/dev/null | sha256sum \
+        | awk '{print $1}' | head -c 64)"
+    build_blk="${build_blk:-missing}"
+    trigger="${trigger}docker-compose-build=${build_blk}\n"
 
     local marker marker_dir
     marker_dir="$PROJECT_DIR/.update"

@@ -188,17 +188,31 @@ build_core() {
     prev=''
     [[ -f "$marker" ]] && prev="$(cat "$marker" 2>/dev/null || true)"
 
-    # 逐字节比较：签名无变化 → 跳过 build
-    if [[ -n "$prev" ]] && [[ "$prev" == "$trigger" ]]; then
+    # 判定是否需要重建
+    local need_build=false need_seed=false
+    if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -qx 'quantmind-oss:latest'; then
+        # 镜像根本不存在 → 必须 build（且本次 build 用于初始化镜像）
+        need_build=true; need_seed=false
+    elif [[ -n "$prev" && "$prev" != "$trigger" ]]; then
+        # 有基线且签名变了 → 依赖/构建配置变更 → 需 build
+        need_build=true
+    elif [[ -z "$prev" ]]; then
+        # 镜像已在用、又无签名基线（首次启用新版脚本）→ 仅建基线，不白 rebuild
+        need_build=false; need_seed=true
+        log "2/4 首次启用构建基线：镜像已存在，仅记录签名，跳过镜像重建"
+    else
+        # 签名未变 → 跳过
         log "2/4 跳过镜像构建（依赖/构建配置无变化；后端代码 bind mount 已生效）"
         return
     fi
 
-    log "2/4 重建核心后端镜像（检测到依赖/构建配置变更：$prev → 现签名）"
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" build quantmind || {
-        die "镜像构建失败，请检查以上日志"
-    }
-    # build 成功才落盘新签名（失败不记录，下次重试）
+    if $need_build; then
+        log "2/4 重建核心后端镜像（检测到依赖/构建配置变更）"
+        docker compose -f "$PROJECT_DIR/docker-compose.yml" build quantmind || {
+            die "镜像构建失败，请检查以上日志"
+        }
+    fi
+    # build 成功（或无需 build）才落盘新签名（失败不记录，下次重试）
     mkdir -p "$marker_dir"
     printf '%s' "$trigger" > "$marker"
 }

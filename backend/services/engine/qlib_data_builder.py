@@ -326,11 +326,14 @@ class QlibDataBuilder:
         return len(qlib_symbols)
 
     def _collect_raw_symbols(self) -> set[str]:
-        """收集原生 symbol 列表：优先 hub.fetch_stock_list，否则从 parquet 推导。
+        """收集原生 symbol 列表：优先 hub.fetch_stock_list，其次从行情 parquet 全量推导。
 
         额外补充 A 股指数（CN_QLIB_INDEX_SYMBOLS），让指数进入 instruments 与 features。
         """
         symbols: set[str] = set()
+
+        # 1) 优先基础股票列表（如 2_base_sector/instrument_detail），记录是否取到真正的股票
+        stock_list_loaded = False
         try:
             df = self._hub.fetch_stock_list()
             if df is not None and not df.empty:
@@ -344,38 +347,42 @@ class QlibDataBuilder:
                         qs = self._to_qlib_symbol(str(sym))
                         if qs:
                             symbols.add(qs)
+                    stock_list_loaded = len(symbols) > 0
         except Exception as exc:  # noqa: BLE001
-            logger.warning("%s fetch_stock_list 失败，回退 parquet 推导: %s", self._market, exc)
+            logger.warning("%s fetch_stock_list 失败，改从行情 parquet 推导: %s", self._market, exc)
 
-        # A 股额外纳入指定指数（index_daily）
+        # 2) 基础列表缺失/为空时，从 daily_forward 行情分区全量推导（依赖 K 线，不受基础表缺失影响）
+        if not stock_list_loaded:
+            fwd = self._hub.data_dir / "1_kline_data" / "daily_forward"
+            if fwd.is_dir():
+                import duckdb
+
+                try:
+                    con = duckdb.connect(config={"memory_limit": "4GB", "threads": "2"})
+                    try:
+                        df = con.execute(
+                            f"SELECT DISTINCT symbol FROM read_parquet('{fwd / 'dt=*' / 'data.parquet'}', hive_partitioning=1)"
+                        ).fetchdf()
+                    finally:
+                        con.close()
+                    for sym in df["symbol"].dropna().unique():
+                        qs = self._to_qlib_symbol(str(sym))
+                        if qs:
+                            symbols.add(qs)
+                    logger.info(
+                        "%s 基础股票列表缺失，已从行情 parquet 推导 %d 个标的",
+                        self._market, len(symbols),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("从 parquet 推导标的失败: %s", exc)
+
+        # 3) A 股额外纳入指定指数（无论走哪条路径都补充）
         if self._market == "CN":
             for idx_code in CN_QLIB_INDEX_SYMBOLS:
                 qs = self._to_qlib_symbol(idx_code)
                 if qs:
                     symbols.add(qs)
 
-        if symbols:
-            return symbols
-
-        # 从 daily_forward parquet 推导
-        fwd = self._hub.data_dir / "1_kline_data" / "daily_forward"
-        if fwd.is_dir():
-            import duckdb
-
-            try:
-                con = duckdb.connect(config={"memory_limit": "4GB", "threads": "2"})
-                try:
-                    df = con.execute(
-                        f"SELECT DISTINCT symbol FROM read_parquet('{fwd / 'dt=*' / 'data.parquet'}', hive_partitioning=1)"
-                    ).fetchdf()
-                finally:
-                    con.close()
-                for sym in df["symbol"].dropna().unique():
-                    qs = self._to_qlib_symbol(str(sym))
-                    if qs:
-                        symbols.add(qs)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("从 parquet 推导标的失败: %s", exc)
         return symbols
 
     def _build_universe_instruments(

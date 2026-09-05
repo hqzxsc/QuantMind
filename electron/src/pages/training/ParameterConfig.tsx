@@ -925,45 +925,6 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
             </div>
           )}
 
-          {/* ── Optuna 自动超参搜索 ── */}
-          <div className="rounded-2xl border border-indigo-100 bg-white px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="space-y-0.5">
-                <div className="text-xs font-semibold text-slate-700">Optuna 自动超参搜索</div>
-                <div className="text-[11px] text-slate-400 leading-relaxed">
-                  自动搜索树模型最优超参（LGB/XGB/CatBoost），以验证集 Rank ICIR 为目标。开启后训练耗时约 ×trial 数
-                </div>
-              </div>
-              <Switch
-                checked={!!params.optunaEnabled}
-                onChange={(checked) => onParamsChange({ ...params, optunaEnabled: checked })}
-              />
-            </div>
-            {params.optunaEnabled && (
-              <div className="mt-3 flex items-center gap-2">
-                <span className="text-xs text-slate-500">搜索次数</span>
-                <InputNumber
-                  value={params.optunaTrials ?? 20}
-                  min={10}
-                  max={100}
-                  step={5}
-                  className="w-28"
-                  onChange={(v) => onParamsChange({ ...params, optunaTrials: Number(v ?? 20) })}
-                />
-                <span className="text-[10px] text-slate-400">默认 20 次，耗时约为普通训练的 20 倍</span>
-              </div>
-            )}
-            {params.optunaEnabled && isMultiHorizon && (
-              <Alert
-                className="mt-2 rounded-lg border-amber-100 bg-amber-50/60"
-                type="warning"
-                showIcon
-                message="Optuna 与多周期训练叠加会显著放大耗时"
-                description={`每次超参搜索 ×{params.optunaTrials ?? 20} 次 × 多周期 {(target.horizonDaysList?.length ?? 0)} 个周期 + 1 个融合模型，总耗时约为普通训练的 {((params.optunaTrials ?? 20) * ((target.horizonDaysList?.length ?? 0) + 1)).toFixed(0)} 倍，可能触发训练超时。建议缩短搜索次数或关闭其一。`}
-              />
-            )}
-          </div>
-
           <Alert
             type="warning"
             showIcon

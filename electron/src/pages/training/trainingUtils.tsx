@@ -126,9 +126,6 @@ export interface TrainingParams {
   /** Stacking 集成参数 */
   n_folds?: number;
   meta_alpha?: number;
-  /** Optuna 自动超参搜索 */
-  optunaEnabled?: boolean;
-  optunaTrials?: number;
   /** 点预测（默认）或 P10/P50/P90 收益率分位推理。 */
   prediction_mode?: 'point' | 'quantile';
 }
@@ -619,9 +616,6 @@ export const DEFAULT_PARAMS: TrainingParams = {
   // Stacking 集成
   n_folds: 3,
   meta_alpha: 1.0,
-  // Optuna
-  optunaEnabled: false,
-  optunaTrials: 20,
 };
 
 /** 各 DL 模型的推荐默认参数，切换模型时自动填充 */
@@ -1154,14 +1148,6 @@ export const buildBackendTrainingPayload = (
     // Stacking 集成参数
     payload.n_folds = request.params.n_folds ?? 3;
     payload.meta_alpha = request.params.meta_alpha ?? 1.0;
-  }
-
-  // Optuna 自动超参搜索
-  if (request.params.optunaEnabled) {
-    payload.optuna = {
-      enabled: true,
-      n_trials: request.params.optunaTrials ?? 20,
-    };
   }
 
   // WFA 稳定性诊断配置

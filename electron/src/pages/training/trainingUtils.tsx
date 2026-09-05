@@ -47,7 +47,7 @@ export const MODEL_TYPE_OPTIONS: ModelTypeOption[] = [
     tooltip: '多层感知机基线：验证 GRU/LSTM/Transformer 的时序建模是否真的带来增益。若 MLP 在扁平特征上 IC 已接近 GRU，说明时序结构不重要，可直接用树模型。默认结构 [64,32]，L2 正则，早停。' },
   // 深度学习模型
   { value: 'gru', label: 'GRU', category: 'deep_learning', description: '门控循环单元，时序建模性价比最高', framework: 'pytorch',
-    tooltip: '默认 20 日滚动窗口（step_len=20），捕捉动量反转模式。对波动率因子（vol_std_*、vol_parkinson_*）时序衰减敏感。GPU 训练约 10-20 分钟，是最推荐的 DL 入门模型。数据量 < 50 万行时慎用，容易过拟合。' },
+    tooltip: '默认 20 日滚动窗口（dl_step_len=20），捕捉动量反转模式。对波动率因子（vol_std_*、vol_parkinson_*）时序衰减敏感。GPU 训练约 10-20 分钟，是最推荐的 DL 入门模型。数据量 < 50 万行时慎用，容易过拟合。' },
   { value: 'lstm', label: 'LSTM', category: 'deep_learning', description: '长短期记忆网络', framework: 'pytorch',
     tooltip: '比 GRU 多一个门控单元，理论记忆更长，但 QuantMind A 股数据实测 IC 提升有限（<5%），训练慢约 40%。适合训练窗口 > 5 年的大数据集。如果 GRU 已经效果好，LSTM 通常不会明显更好。' },
   { value: 'alstm', label: 'ALSTM', category: 'deep_learning', description: '带注意力的LSTM', framework: 'pytorch',
@@ -1141,7 +1141,7 @@ export const buildBackendTrainingPayload = (
       n_epochs: request.params.dl_n_epochs ?? 200,
       batch_size: request.params.dl_batch_size ?? 4000,
       lr: request.params.dl_lr ?? 0.0001,
-      step_len: request.params.dl_step_len ?? 20,
+      dl_step_len: request.params.dl_step_len ?? 20,
       kernel_size: request.params.tcn_kernel_size ?? 5,
       num_heads: request.params.tft_num_heads ?? 4,
       alpha: request.params.linear_alpha ?? 3.0,

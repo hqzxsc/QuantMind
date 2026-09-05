@@ -15,6 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_PY = REPO_ROOT / "docker" / "training" / "train.py"
 REGISTRY_PY = REPO_ROOT / "docker" / "training" / "model_trainers" / "registry.py"
 GBDT_PY = REPO_ROOT / "docker" / "training" / "model_trainers" / "trainers_gbdt.py"
+# P2 拆包：WFA 直调函数已迁入 diagnostics/wfa.py（语义不变，仍直调训练器）
+WFA_PY = REPO_ROOT / "docker" / "training" / "diagnostics" / "wfa.py"
 
 GBDT_SIX = {
     "_train_lgb",
@@ -37,6 +39,10 @@ EXPECTED_REGISTRY = {
 
 def _load_tree() -> ast.Module:
     return ast.parse(TRAIN_PY.read_text(encoding="utf-8"))
+
+
+def _load_wfa_tree() -> ast.Module:
+    return ast.parse(WFA_PY.read_text(encoding="utf-8"))
 
 
 def _load_registry_tree() -> ast.Module:
@@ -117,7 +123,7 @@ def test_dispatch_points_use_registry_not_direct_calls():
 def test_wfa_single_keeps_direct_calls_out_of_scope():
     # WFA 只支持树+linear（其余 warning+None），语义与注册表不同，B2 不碰：
     # 锁定其直调现状，防止顺手“统一”造成行为变更。
-    funcs = _funcs(_load_tree())
+    funcs = _funcs(_load_wfa_tree())
     assert _direct_trainer_calls(funcs["_train_wfa_single"]) == {
         "_train_lgb",
         "_train_xgb",

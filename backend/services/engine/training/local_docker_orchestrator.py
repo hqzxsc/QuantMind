@@ -188,6 +188,8 @@ _PREPROCESSING_HOST_PATH = str(_HOST_PROJECT_PATH / "docker" / "training" / "pre
 _PARALLEL_UTILS_HOST_PATH = str(_HOST_PROJECT_PATH / "docker" / "training" / "parallel_utils.py")
 # 模型训练器包：train.py 顶层 `from model_trainers... import ...`，整目录挂载
 _TRAINERS_HOST_PATH = str(_HOST_PROJECT_PATH / "docker" / "training" / "model_trainers")
+# 训练诊断包：train.py 顶层 `from diagnostics... import ...`，整目录挂载
+_DIAGNOSTICS_HOST_PATH = str(_HOST_PROJECT_PATH / "docker" / "training" / "diagnostics")
 
 def _validate_config_dict(run_id: str, config: dict) -> dict:
     """B1 schema 门：config.yaml 经 TrainingConfig 校验后返回契约字典。
@@ -832,6 +834,12 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
         # 此时训练容器 import 失败 fail-fast，见 train.py 顶层 import）。
         volumes[str(_TRAINERS_HOST_PATH)] = {
             "bind": "/app/model_trainers",
+            "mode": "ro",
+        }
+        # diagnostics/ 包与 train.py 同目录导入（`from diagnostics... import ...`）；
+        # 整目录无条件挂载（与 model_trainers 同理）。
+        volumes[str(_DIAGNOSTICS_HOST_PATH)] = {
+            "bind": "/app/diagnostics",
             "mode": "ro",
         }
         # backend 代码同步挂载：训练镜像内 bake 的 backend 落后于仓库时会缺新模块

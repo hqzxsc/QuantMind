@@ -411,6 +411,11 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
             if trainers_dir:
                 await self._rsync_push(trainers_dir, f"{self.work_dir}/model_trainers/", is_dir=True)
                 self._log(run_id, "[SYNC] model_trainers/ 已同步")
+            # diagnostics/ 包（漂移/SHAP/小工具拆包）与 train.py 同目录顶层 import，需一并推送
+            diagnostics_dir = self._resolve_diagnostics_dir()
+            if diagnostics_dir:
+                await self._rsync_push(diagnostics_dir, f"{self.work_dir}/diagnostics/", is_dir=True)
+                self._log(run_id, "[SYNC] diagnostics/ 已同步")
             if direct_source:
                 for module in (self._resolve_quantdb_factor_reader(), self._resolve_quantdb_hub()):
                     if module:
@@ -756,6 +761,7 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
             f"-v {self.work_dir}/preprocessing.py:/app/preprocessing.py:ro "
             f"-v {self.work_dir}/parallel_utils.py:/app/parallel_utils.py:ro "
             f"-v {self.work_dir}/model_trainers:/app/model_trainers:ro "
+            f"-v {self.work_dir}/diagnostics:/app/diagnostics:ro "
             f"-v {self.work_dir}/templates:/app/backend/services/engine/inference/templates:ro "
             + (f"-v {self.work_dir}/modules/quantdb_factor_reader.py:/app/backend/services/engine/data_platform/quantdb_factor_reader.py:ro " if direct_source else "")
             + (f"-v {self.work_dir}/modules/quantdb_hub.py:/app/backend/services/engine/data_platform/quantdb_hub.py:ro " if direct_source else "")
@@ -818,6 +824,18 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
             str(Path(__file__).resolve().parents[3] / "docker" / "training" / "model_trainers"),
             "/app/docker/training/model_trainers",
             "/app/model_trainers",
+        ]
+        for p in candidates:
+            if Path(p).is_dir():
+                return p
+        return None
+
+    def _resolve_diagnostics_dir(self) -> str | None:
+        """定位本地 diagnostics/ 包目录（train.py 顶层 import）。"""
+        candidates = [
+            str(Path(__file__).resolve().parents[3] / "docker" / "training" / "diagnostics"),
+            "/app/docker/training/diagnostics",
+            "/app/diagnostics",
         ]
         for p in candidates:
             if Path(p).is_dir():

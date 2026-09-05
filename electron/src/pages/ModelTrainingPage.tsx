@@ -95,6 +95,9 @@ function formReducer(state: FormState, action: FormAction): FormState {
       if (!action.payload) return { ...state, draftHydrated: true };
       const p = action.payload;
       const restoredParams = { ...DEFAULT_PARAMS, ...p.params };
+      // 单选模型：历史草稿若存有多选，只保留主模型
+      restoredParams.model_types = [restoredParams.model_type];
+      restoredParams.ensemble_method = 'none';
       if (!p.params?.model_types && p.params?.model_type) {
         restoredParams.model_types = [p.params.model_type];
       }

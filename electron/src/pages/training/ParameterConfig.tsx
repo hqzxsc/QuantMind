@@ -90,7 +90,13 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
   const benchmarkOptions = MARKET_BENCHMARKS[market] || MARKET_BENCHMARKS.CN;
   const isMultiHorizon = (target.horizonDaysList?.length ?? 0) >= 2;
   const isSingleLgb = params.model_types.length === 1 && params.model_type === 'lightgbm';
-  const quantileDisabled = market !== 'CN' || !isSingleLgb || isMultiHorizon;
+  const isReturnTarget = target.mode === 'return';
+  // 分位推理：后端仅支持 A 股单 LightGBM 回归模型（train.py _validate_quantile_config）
+  const quantileDisabled = market !== 'CN' || !isSingleLgb || isMultiHorizon || !isReturnTarget;
+  // WFA 诊断：后端仅支持树模型 + 线性，其余直接 skip（train.py _train_wfa_single）
+  const wfaSupported = ['lightgbm', 'xgboost', 'catboost', 'linear'].includes(params.model_type);
+  // 行业编码：仅 CatBoost 声明 cat_features 做类别处理，其余模型无此口径
+  const isCatboost = params.model_type === 'catboost';
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
       <Card className="rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
@@ -126,6 +132,13 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                     Object.assign(updated, dlDefaults);
                   }
                   onParamsChange(updated);
+                  // 切换到不支持的模型时，自动关闭右侧已开的开关，避免提交无效组合
+                  if (selected !== 'catboost' && context.industry_as_feature) {
+                    onContextChange({ ...context, industry_as_feature: false });
+                  }
+                  if (!['lightgbm', 'xgboost', 'catboost', 'linear'].includes(selected) && wfa?.enabled) {
+                    onWfaChange?.({ ...wfa, enabled: false });
+                  }
                 }}
               >
                 <div className="space-y-3">
@@ -689,13 +702,17 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                   将行业编码作为特征加入模型，CatBoost 原生支持类别特征
                 </div>
               </div>
-              <Tooltip title="将行业编码作为特征加入模型，CatBoost原生支持类别特征">
+              <Tooltip title="将行业编码作为特征加入模型，仅 CatBoost 会按类别特征原生处理">
                 <Switch
                   checked={!!context.industry_as_feature}
+                  disabled={!isCatboost}
                   onChange={(checked) => onContextChange({ ...context, industry_as_feature: checked })}
                 />
               </Tooltip>
             </div>
+            {!isCatboost && (
+              <div className="mt-2 text-[11px] text-amber-600">行业类别特征仅 CatBoost 原生支持，当前模型不可用。</div>
+            )}
           </div>
 
           {/* ── 特征截面预处理 ── */}
@@ -735,7 +752,7 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
             </div>
             {isMultiHorizon ? (
               <div className="mt-2 text-[11px] text-amber-600">多周期训练模式下，后端按周期分别产出模型且融合子任务不生成分位模型，故禁用收益率分位推理。</div>
-            ) : (market !== 'CN' || !isSingleLgb) ? (
+            ) : (market !== 'CN' || !isSingleLgb || !isReturnTarget) ? (
               <div className="mt-2 text-[11px] text-amber-600">首版仅支持 A 股单 LightGBM；目标类型还需选择“回归目标（未来收益率）”。</div>
             ) : null}
           </div>
@@ -816,9 +833,13 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                 </div>
                 <Switch
                   checked={!!wfa?.enabled}
+                  disabled={!wfaSupported}
                   onChange={(checked) => onWfaChange({ ...(wfa || { enabled: false, strategy: 'rolling', nWindows: 4, trainYears: 3, valMonths: 12, stepMonths: 12 }), enabled: checked })}
                 />
               </div>
+              {!wfaSupported && (
+                <div className="mt-2 text-[11px] text-amber-600">WFA 诊断仅支持树模型与线性模型（LightGBM / XGBoost / CatBoost / Ridge），当前模型后端会直接跳过。</div>
+              )}
 
               {wfa?.enabled && (
                 <>

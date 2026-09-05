@@ -1825,23 +1825,34 @@ def select_top_factors(
     ic_threshold: float = 0.01,
     icir_threshold: float = 0.15,
     correlation_threshold: float = 0.9,
+    min_pool: int | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
-    """专业因子筛选：IC/ICIR 初筛 → 相关性去冗余 → 稳定性检验。
+    """专业因子筛选：IC/ICIR 初筛 → 自适应回填 → 相关性去冗余 → 稳定性检验。
+
+    自适应规则（阈值做软地板，排序取优）：
+    - 阈值双过者为优选池，按 |ICIR| 降序排在前（与老行为一致）；
+    - 优选不足 min_pool（默认 max(10, n_top//4)）时，按综合评分
+      score=|IC均值|×|ICIR| 从达标样本天数的落选者中回填到
+      min(n_top, max(len(优选), min(min_pool, 合格数)))，回填者按评分排在后；
+    - 弱窗口下不再出现"全军覆没/只剩 1 个"，强窗口下优选已够数则输出与老行为逐行一致。
 
     返回 (selected, report)：
     - selected: 入选特征列表
     - report: 结构化筛选报告（每特征的 IC/ICIR/覆盖率/入选或淘汰原因），
       写入 result metadata，供前端展示"为什么选/为什么不选"。
+      报告只增键（score/backfilled/min_pool/backfilled_features），
+      老键集合与语义不变，前端无需改动。
 
     report 结构:
         {
           "method": "ic_icir",
-          "thresholds": {"n_top", "ic_threshold", "icir_threshold", "correlation_threshold"},
-          "stage_counts": {"input", "ic_pass", "corr_pass", "stable", "selected"},
+          "thresholds": {"n_top", "ic_threshold", "icir_threshold", "correlation_threshold", "min_pool"},
+          "stage_counts": {"input", "ic_pass", "corr_pass", "stable", "selected", "backfilled"},
           "train_rows": int,
           "features": [
-            {"name", "ic", "icir", "ic_positive_rate", "n_days", "coverage", "status", "reason"}
+            {"name", "ic", "icir", "ic_positive_rate", "n_days", "coverage", "status", "reason", "score", "backfilled"}
           ],
+          "backfilled_features": [str],
         }
     """
     logger.info("=== Factor Selection: IC/ICIR screening ===")
@@ -1924,9 +1935,45 @@ def select_top_factors(
     logger.info("After IC/ICIR threshold: %d candidates (|IC|>=%.2f, |ICIR|>=%.1f)",
                 len(candidates), ic_threshold, icir_threshold)
 
-    # Step 3: ICIR 排序 + 贪心去冗余
-    sorted_features = sorted(candidates.keys(),
+    # Step 2b: 自适应回填（阈值做软地板）。优选不足 min_pool 时，按综合评分
+    # score=|IC|×|ICIR| 从样本天数达标的落选者中回填；优选已够数时零行为变更。
+    resolved_min_pool = min_pool if min_pool is not None else max(10, n_top // 4)
+
+    def _factor_score(r: dict) -> float:
+        try:
+            return abs(float(r.get("ic_mean") or 0.0)) * abs(float(r.get("icir") or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    eligible = [
+        f for f in features
+        if f in ic_results and int(ic_results[f].get("n_days") or 0) >= 20
+    ]
+    pool_target = min(n_top, max(len(candidates), min(resolved_min_pool, len(eligible))))
+    backfilled: list[str] = []
+    if len(candidates) < pool_target:
+        rest = sorted(
+            (f for f in eligible if f not in candidates),
+            key=lambda f: _factor_score(ic_results[f]), reverse=True,
+        )
+        for feat in rest:
+            if len(candidates) + len(backfilled) >= pool_target:
+                break
+            score = _factor_score(ic_results[feat])
+            prev_reason = decisions.get(feat) or "未达阈值"
+            decisions[feat] = f"{prev_reason}；未达阈值，按综合评分回填(score={score:.4f})"
+            backfilled.append(feat)
+    if backfilled:
+        logger.info("Adaptive backfill: %d preferred + %d backfilled (pool_target=%d, min_pool=%d)",
+                    len(candidates), len(backfilled), pool_target, resolved_min_pool)
+
+    # Step 3: 排序 + 贪心去冗余。优选按 |ICIR|（老口径），回填按综合评分缀后；
+    # 优选已够数时 backfilled 为空，输出与老行为一致。
+    preferred_order = sorted(candidates.keys(),
         key=lambda f: abs(candidates[f]["icir"]), reverse=True)
+    backfill_order = sorted(backfilled,
+        key=lambda f: _factor_score(ic_results[f]), reverse=True)
+    sorted_features = preferred_order + backfill_order
 
     selected: list[str] = []
     for feat in sorted_features:
@@ -1978,8 +2025,9 @@ def select_top_factors(
         logger.info("  %2d. %-30s IC=%.4f  ICIR=%.3f  IC>0=%.1f%%",
                     i + 1, feat, r["ic_mean"], r["icir"], r["ic_positive_rate"] * 100)
 
-    # ── 组装结构化筛选报告 ──
+    # ── 组装结构化筛选报告（只增键：score/backfilled/min_pool/backfilled_features）──
     selected_set = set(selected)
+    backfilled_set = set(backfilled)
     report_features = []
     for feat in features:
         r = ic_results.get(feat)
@@ -1988,8 +2036,10 @@ def select_top_factors(
                 "name": feat, "ic": None, "icir": None, "ic_positive_rate": None,
                 "n_days": 0, "coverage": round(coverage_map.get(feat, 1.0), 4),
                 "status": "rejected", "reason": decisions.get(feat, "特征不在训练数据中"),
+                "score": 0.0, "backfilled": False,
             })
             continue
+        feat_score = round(abs(float(r.get("ic_mean") or 0.0)) * abs(float(r.get("icir") or 0.0)), 6)
         report_features.append({
             "name": feat,
             "ic": round(float(r.get("ic_mean", 0.0)), 4),
@@ -1999,6 +2049,8 @@ def select_top_factors(
             "coverage": round(coverage_map.get(feat, 1.0), 4),
             "status": "selected" if feat in selected_set else "rejected",
             "reason": "通过全部筛选" if feat in selected_set else (decisions.get(feat) or "未通过筛选"),
+            "score": feat_score,
+            "backfilled": feat in backfilled_set,
         })
     report_features.sort(key=lambda x: (x["status"] != "selected", -(abs(x["icir"] or 0))))
     report = {
@@ -2008,6 +2060,7 @@ def select_top_factors(
             "ic_threshold": ic_threshold,
             "icir_threshold": icir_threshold,
             "correlation_threshold": correlation_threshold,
+            "min_pool": resolved_min_pool,
         },
         "stage_counts": {
             "input": len(features),
@@ -2015,10 +2068,12 @@ def select_top_factors(
             "corr_pass": len(selected),
             "stable": len(stable) if len(stable) >= 30 else len(selected),
             "selected": len(selected),
+            "backfilled": len(backfilled),
         },
         "train_rows": int(len(df)),
         "features": report_features,
         "selected": selected,
+        "backfilled_features": backfilled,
     }
     return selected, report
 

@@ -90,7 +90,6 @@ export interface TrainingParams {
   // LightGBM specific (optional, falls back to shared learning_rate/max_depth)
   lgb_learning_rate?: number;
   lgb_max_depth?: number;
-  min_child_samples?: number;
   path_smooth?: number;
   bagging_freq?: number;
   // XGBoost specific
@@ -111,6 +110,10 @@ export interface TrainingParams {
   cb_iterations?: number;
   // Linear specific
   linear_alpha?: number;
+  // RandomForest specific（后端从 dl_params 直读 n_estimators/max_depth/max_features）
+  rf_n_estimators?: number;
+  rf_max_depth?: number;
+  rf_max_features?: string;
   // DL specific
   dl_hidden_size?: number;
   dl_num_layers?: number;
@@ -577,7 +580,6 @@ export const DEFAULT_PARAMS: TrainingParams = {
   num_leaves: 31,
   max_depth: -1,
   min_data_in_leaf: 300,
-  min_child_samples: 150,
   path_smooth: 1.0,
   bagging_freq: 5,
   lambda_l1: 0.5,
@@ -603,6 +605,10 @@ export const DEFAULT_PARAMS: TrainingParams = {
   cb_od_wait: 100,
   // Linear
   linear_alpha: 3.0,
+  // RandomForest
+  rf_n_estimators: 300,
+  rf_max_depth: 12,
+  rf_max_features: 'sqrt',
   // DL
   dl_hidden_size: 64,
   dl_num_layers: 2,
@@ -1099,7 +1105,6 @@ export const buildBackendTrainingPayload = (
       num_leaves: request.params.num_leaves,
       max_depth: request.params.lgb_max_depth ?? request.params.max_depth,
       min_data_in_leaf: request.params.min_data_in_leaf,
-      min_child_samples: request.params.min_child_samples,
       path_smooth: request.params.path_smooth,
       bagging_freq: request.params.bagging_freq,
       lambda_l1: request.params.lambda_l1,
@@ -1138,7 +1143,20 @@ export const buildBackendTrainingPayload = (
       dl_step_len: request.params.dl_step_len ?? 20,
       kernel_size: request.params.tcn_kernel_size ?? 5,
       num_heads: request.params.tft_num_heads ?? 4,
-      alpha: request.params.linear_alpha ?? 3.0,
+      // alpha 是 Ridge 线性模型的正则槽位；MLP/RF/DL 各有自己的默认值，
+      // 常驻透传会把 linear 的 3.0 串味过去（如 MLP 本应 1e-3），故仅 linear 发送。
+      ...(modelType === 'linear' ? { alpha: request.params.linear_alpha ?? 3.0 } : {}),
+      // DL 早停：主训练路径读 dl_params.early_stopping_rounds，顶层键树模型用，
+      // 此处透传后 DL 也能响应通用区「早停轮数」（GBDT/线性/RF/MLP 不读此键，无影响）。
+      early_stopping_rounds: request.params.early_stopping_rounds,
+      // 随机森林：后端从 dl_params 直读，无专属容器键（见 per_model.py 注释）。
+      ...(modelType === 'random_forest'
+        ? {
+            n_estimators: request.params.rf_n_estimators ?? 300,
+            max_depth: request.params.rf_max_depth ?? 12,
+            max_features: request.params.rf_max_features ?? 'sqrt',
+          }
+        : {}),
     },
   };
 

@@ -34,7 +34,7 @@ DEFAULT_LGB_PARAMS: dict[str, Any] = {
     "feature_fraction":  0.6,
     "bagging_fraction":  0.7,
     "bagging_freq":      5,
-    "min_child_samples": 150,
+    "min_data_in_leaf":  300,
     "path_smooth":       1.0,
     "lambda_l1":         0.5,
     "lambda_l2":         1.0,

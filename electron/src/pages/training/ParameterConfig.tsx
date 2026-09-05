@@ -274,7 +274,6 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                     {[
                       ['num_leaves', '叶子数', { min: 1, max: 1024, step: 1 }],
                       ['min_data_in_leaf', '叶子最小样本', { min: 1, max: 10000, step: 1 }],
-                      ['min_child_samples', '子节点最小样本', { min: 1, max: 10000, step: 1 }],
                       ['path_smooth', '路径平滑', { min: 0, max: 10, step: 0.1 }],
                       ['bagging_freq', 'Bagging 频率', { min: 0, max: 100, step: 1 }],
                       ['lambda_l1', 'L1 正则', { min: 0, max: 10, step: 0.1 }],
@@ -458,6 +457,55 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                           step={0.1}
                           className="w-full"
                           onChange={(v) => onParamsChange({ ...params, linear_alpha: Number(v ?? 1.0) })}
+                        />
+                      </div>
+                    </Col>
+                  </Row>
+                </>
+              )}
+
+              {/* RandomForest 专属参数 */}
+              {params.model_types.includes('random_forest') && (
+                <>
+                  <div className="text-xs font-medium text-slate-500 border-t pt-3">随机森林超参</div>
+                  <Row gutter={[12, 12]}>
+                    <Col span={12}>
+                      <div className="space-y-1">
+                        <div className="text-xs text-slate-500">树的数量 (n_estimators)</div>
+                        <InputNumber
+                          value={params.rf_n_estimators ?? 300}
+                          min={10}
+                          max={2000}
+                          step={10}
+                          className="w-full"
+                          onChange={(v) => onParamsChange({ ...params, rf_n_estimators: Number(v ?? 300) })}
+                        />
+                      </div>
+                    </Col>
+                    <Col span={12}>
+                      <div className="space-y-1">
+                        <div className="text-xs text-slate-500">最大深度 (max_depth)</div>
+                        <InputNumber
+                          value={params.rf_max_depth ?? 12}
+                          min={1}
+                          max={64}
+                          step={1}
+                          className="w-full"
+                          onChange={(v) => onParamsChange({ ...params, rf_max_depth: Number(v ?? 12) })}
+                        />
+                      </div>
+                    </Col>
+                    <Col span={12}>
+                      <div className="space-y-1">
+                        <div className="text-xs text-slate-500">分裂特征数 (max_features)</div>
+                        <Select
+                          value={params.rf_max_features ?? 'sqrt'}
+                          className="w-full"
+                          onChange={(value) => onParamsChange({ ...params, rf_max_features: value })}
+                          options={[
+                            { label: 'sqrt（默认）', value: 'sqrt' },
+                            { label: 'log2', value: 'log2' },
+                          ]}
                         />
                       </div>
                     </Col>

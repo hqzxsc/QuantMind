@@ -1189,7 +1189,7 @@ export const InferenceCenterPanel: React.FC<{
                             {r.score.toFixed(4)}
                           </Text>
                           <Text className={clsx('text-[8px] font-black', r.signal === 'buy' ? 'text-rose-500' : r.signal === 'sell' ? 'text-emerald-500' : 'text-slate-400')}>
-                            {r.signal === 'buy' ? '买入' : r.signal === 'sell' ? '卖出' : '观望'}
+                            {r.signal === 'buy' ? '↑' : r.signal === 'sell' ? '↓' : '—'}
                           </Text>
                         </div>
                       </div>

@@ -141,24 +141,16 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
     if (result?.summary?.score_buckets?.length) {
       groups.push({
         label: '分数区间',
-        options: result.summary.score_buckets.map(b => ({ value: b.key, label: `${b.label} · ${b.action}` })),
+        options: result.summary.score_buckets.map(b => ({ value: b.key, label: b.label })),
       });
     }
-    const negOptions = [
-      { value: 'neg_extreme', label: '极端负分 ≤-0.20' },
-      { value: 'neg_short', label: '做空候选 · 微盘/小盘≤-0.15' },
-      { value: 'neg_mistake', label: '错杀候选 · 大盘/超大盘负分' },
-      { value: 'neg_resistant', label: '抗跌行业 · 银行/半导体' },
-      { value: 'neg_general', label: '一般负分' },
-    ];
-    groups.push({ label: '负分标注', options: negOptions });
     return groups;
   }, [result]);
 
   const trendOptions = [
-    { value: '先升后降', label: '先升后降 · 最佳买点' },
-    { value: '连续上升', label: '连续上升 · 过热不追' },
-    { value: '连续下降', label: '连续下降 · 信号衰退' },
+    { value: '先升后降', label: '先升后降' },
+    { value: '连续上升', label: '连续上升' },
+    { value: '连续下降', label: '连续下降' },
     { value: '上升', label: '单日上升' },
     { value: '下降', label: '单日下降' },
     { value: '持平', label: '持平' },
@@ -184,12 +176,6 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
       if (trendFilter !== 'all' && r.trend !== trendFilter) return false;
       if (capFilter !== 'all' && r.market_cap_tier !== capFilter) return false;
       if (bucketFilter !== 'all') {
-        // 负分标注筛选（合并进分数下拉）
-        if (bucketFilter === 'neg_extreme') return r.negative_tag === '极端负分';
-        if (bucketFilter === 'neg_short') return r.negative_tag === '做空候选';
-        if (bucketFilter === 'neg_mistake') return r.negative_tag === '错杀候选';
-        if (bucketFilter === 'neg_resistant') return r.negative_tag === '抗跌行业';
-        if (bucketFilter === 'neg_general') return r.negative_tag === '负分';
         const s = r.score;
         if (wideScale) {
           // 用后端返回的分位数桶阈值
@@ -304,10 +290,10 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                       {result.summary.board_top1_avg.toFixed(4)}
                     </span>
                     {result.summary.board_top1_avg >= 0.11
-                      ? <Tag color="red" className="m-0 rounded-full text-[11px] font-black">市场信号偏强</Tag>
+                      ? <Tag color="red" className="m-0 rounded-full text-[11px] font-black">市场广度高</Tag>
                       : result.summary.board_top1_avg >= 0.09
-                        ? <Tag color="orange" className="m-0 rounded-full text-[11px] font-black">震荡偏强</Tag>
-                        : <Tag className="m-0 rounded-full border-0 bg-slate-100 text-slate-500 font-bold text-[11px]">市场偏弱</Tag>}
+                        ? <Tag color="orange" className="m-0 rounded-full text-[11px] font-black">市场广度中</Tag>
+                        : <Tag className="m-0 rounded-full border-0 bg-slate-100 text-slate-500 font-bold text-[11px]">市场广度低</Tag>}
                   </div>
                 )}
               </div>
@@ -538,7 +524,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                 options={[{ value: 'all', label: '全部分数' }, ...bucketOptions]}
                 className="w-52"
                 size="small"
-                placeholder="筛选分数/负分标注"
+                placeholder="筛选分数"
               />
               <Input
                 prefix={<Search size={13} className="text-slate-300" />}
@@ -593,12 +579,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                 onClick: () => openStockModal(record),
                 className: 'cursor-pointer',
               })}
-              rowClassName={(record: any) => clsx(
-                record.negative_tag === '极端负分' ? 'bg-rose-50/70 hover:bg-rose-50!' :
-                record.negative_tag === '做空候选' ? 'bg-rose-50/40 hover:bg-rose-50!' :
-                record.negative_tag === '错杀候选' ? 'bg-blue-50/40 hover:bg-blue-50!' :
-                record.negative_tag === '抗跌行业' ? 'bg-emerald-50/40 hover:bg-emerald-50!' : '',
-              )}
+              rowClassName={(_: any, idx: number) => clsx(idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30')}
               columns={[
                 {
                   title: '排名', dataIndex: 'rank', width: 56,
@@ -704,79 +685,6 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                       <span className={clsx('font-black text-xs font-mono', cls)}>
                         {s >= 0 ? '+' : ''}{s.toFixed(4)}
                       </span>
-                    );
-                  },
-                },
-                {
-                  title: '信号',
-                  dataIndex: 'signal',
-                  width: 110,
-                  render: (sig: string, r: any) => {
-                    // A股习惯：做多红、做空绿
-                    const map: Record<string, { color: string; label: string }> = {
-                      buy: { color: 'red', label: '↑ 做多' },
-                      sell: { color: 'green', label: '↓ 做空' },
-                      hold: { color: 'default', label: '→ 持有' },
-                    };
-                    const c = map[sig] ?? map.hold;
-                    // 策略评级：黄金区间 + 先升后降 = 强烈关注
-                    // 融合模型分数为 [-1,1] 时，用后端 score_buckets 的自适应分位数阈值替代硬编码 0.10/0.12
-                    const s = Number(r.score);
-                    const wideScale = !!(result?.summary?.is_wide_scale || result?.summary?.market_signal?.score_scale === 'wide');
-                    const buckets = result?.summary?.score_buckets || [];
-                    const bucketGte = (key: string): number | null => {
-                      const b = buckets.find(x => x.key === key);
-                      const m = b ? String(b.label).match(/≥\s*(-?[\d.]+)/) : null;
-                      return m ? parseFloat(m[1]) : null;
-                    };
-                    let isGold = false;
-                    let isHigh = false;
-                    let highLabel = '高分区';
-                    if (wideScale) {
-                      // 最高分区(≥80分位)视为首选，中高区间视为可选
-                      const gte = bucketGte('gte_020');
-                      const opt = bucketGte('opt_012_015');
-                      isHigh = gte !== null && s >= gte;
-                      highLabel = '最高分区 · 首选';
-                      isGold = opt !== null && s >= opt && (gte === null || s < gte);
-                    } else {
-                      isGold = s >= 0.10 && s < 0.12;
-                      isHigh = s >= 0.12;
-                    }
-                    const isBestTrend = r.trend === '先升后降';
-                    const isOverheat = r.trend === '连续上升';
-                    let rating: { cls: string; label: string } | null = null;
-                    if (isGold && isBestTrend) rating = { cls: 'text-emerald-600 bg-emerald-50 border-emerald-200', label: wideScale ? '高分+最佳买点' : '黄金+最佳买点' };
-                    else if (isGold) rating = { cls: 'text-emerald-600 bg-emerald-50 border-emerald-200', label: wideScale ? '中高分区' : '黄金区间' };
-                    else if (isHigh && isOverheat) rating = { cls: 'text-rose-600 bg-rose-50 border-rose-200', label: '高分过热' };
-                    else if (isHigh) rating = { cls: 'text-amber-600 bg-amber-50 border-amber-200', label: highLabel };
-                    else rating = { cls: 'text-slate-500 bg-slate-100 border-slate-200', label: '弱信号' };
-                    // 负分标签（含抗跌行业/一般负分）
-                    const negTag = r.negative_tag;
-                    const negCls = negTag === '极端负分' ? 'text-rose-700 bg-rose-100 border-rose-200'
-                      : negTag === '做空候选' ? 'text-rose-600 bg-rose-50 border-rose-200'
-                      : negTag === '错杀候选' ? 'text-blue-600 bg-blue-50 border-blue-200'
-                      : negTag === '抗跌行业' ? 'text-emerald-600 bg-emerald-50 border-emerald-200'
-                      : negTag === '负分' ? 'text-slate-500 bg-slate-100 border-slate-200' : null;
-                    const negTooltip: Record<string, string> = {
-                      '极端负分': '分数≤-0.20，微盘最危险（-0.25 → 下跌77.7%）',
-                      '做空候选': '微盘/小盘 + 分数≤-0.15，下跌概率68-72%，做空首选',
-                      '错杀候选': '大盘/超大盘负分，常被错杀，反而值得关注',
-                      '抗跌行业': '银行/半导体等抗跌行业负分，不跌反涨概率高',
-                      '负分': '一般负分，轻负分(>-0.06)无信息',
-                    };
-                    return (
-                      <div className="flex flex-col items-start gap-1">
-                        <Tag color={c.color} className="text-[11px] font-black m-0">{c.label}</Tag>
-                        {rating && (
-                          <span className={clsx('rounded-md border px-1.5 py-0.5 text-[11px] font-black', rating.cls)}>{rating.label}</span>
-                        )}
-                        {negCls && (
-                          <Tooltip title={negTooltip[negTag] || negTag}>
-                            <span className={clsx('rounded-md border px-1.5 py-0.5 text-[11px] font-black cursor-help', negCls)}>{negTag}</span>
-                          </Tooltip>
-                        )}
-                      </div>
                     );
                   },
                 },

@@ -168,7 +168,7 @@ export const ModelTrainingPage: React.FC = () => {
     target: DEFAULT_TARGET,
     params: DEFAULT_PARAMS,
     context: DEFAULT_CONTEXT,
-    displayName: buildAutoDisplayName(dayjs(), DEFAULT_TARGET, 0),
+    displayName: buildAutoDisplayName(dayjs(), DEFAULT_TARGET, 0, undefined, currentMarket, DEFAULT_PARAMS.model_type),
     displayNameMode: 'auto' as const,
     draftHydrated: false,
   });
@@ -229,8 +229,8 @@ export const ModelTrainingPage: React.FC = () => {
 
   const featureCount = selectedFeatures.length;
   const autoDisplayName = useMemo(
-    () => buildAutoDisplayName(dayjs(), target, featureCount, undefined, currentMarket),
-    [target, featureCount, currentMarket]
+    () => buildAutoDisplayName(dayjs(), target, featureCount, undefined, currentMarket, params.model_type),
+    [target, featureCount, currentMarket, params.model_type]
   );
   const trainDays = useMemo(() => daysBetween(timePeriods.train), [timePeriods.train]);
   const valDays = useMemo(() => daysBetween(timePeriods.val), [timePeriods.val]);

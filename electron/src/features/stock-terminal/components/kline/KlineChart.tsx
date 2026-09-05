@@ -96,8 +96,8 @@ function weekKey(date: string): string {
   d.setDate(d.getDate() - day);
   return d.toISOString().slice(0, 10);
 }
-/** 默认黄金线（策略 v2.0 主板黄金买入区间 0.10-0.12 的下沿） */
-const DEFAULT_REF_LINE: RefLine = { id: 'default-golden', value: 0.10, label: '黄金线', color: '#10b981' };
+/** 默认参考线（标注 0.10 分档下沿） */
+const DEFAULT_REF_LINE: RefLine = { id: 'default-golden', value: 0.10, label: '参考线', color: '#10b981' };
 
 interface Props {
   bars: KlineBar[];

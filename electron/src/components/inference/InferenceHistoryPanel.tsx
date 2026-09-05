@@ -3,6 +3,7 @@ import {
   Button, Tag, Typography, Empty, Spin, Table,
 } from 'antd';
 import { clsx } from 'clsx';
+import type { ColumnsType } from 'antd/es/table';
 import { Trash2 } from 'lucide-react';
 import { modelTrainingService, InferenceRunRecord, InferenceRankingResult } from '../../services/modelTrainingService';
 import { InferenceRunDetailView } from './InferenceRunDetailView';
@@ -111,10 +112,11 @@ export const InferenceHistoryPanel: React.FC<Props> = ({ modelId, onDelete }) =>
     void load();
   };
 
-  const columns = [
+  const columns: ColumnsType<InferenceRunRecord> = [
     {
       title: '推理日期',
       dataIndex: 'inference_date',
+      align: 'center',
       width: 105,
       defaultSortOrder: 'descend' as const,
       sorter: (a: InferenceRunRecord, b: InferenceRunRecord) => (a.inference_date || '').localeCompare(b.inference_date || ''),
@@ -130,6 +132,7 @@ export const InferenceHistoryPanel: React.FC<Props> = ({ modelId, onDelete }) =>
     {
       title: '目标日',
       dataIndex: 'target_date',
+      align: 'center',
       width: 100,
       render: (v: string, r: InferenceRunRecord) => (
         <Text className="text-xs font-mono text-slate-500">{v || r.prediction_trade_date || '—'}</Text>
@@ -138,6 +141,7 @@ export const InferenceHistoryPanel: React.FC<Props> = ({ modelId, onDelete }) =>
     {
       title: '信号数',
       dataIndex: 'signals_count',
+      align: 'center',
       width: 70,
       sorter: (a: InferenceRunRecord, b: InferenceRunRecord) => a.signals_count - b.signals_count,
       render: (v: number) => <Text className="text-xs font-mono font-bold text-slate-700">{v || '—'}</Text>,
@@ -145,12 +149,14 @@ export const InferenceHistoryPanel: React.FC<Props> = ({ modelId, onDelete }) =>
     {
       title: '板块avg',
       dataIndex: 'board_top1_avg',
+      align: 'center',
       width: 80,
       render: (v: number | null) => <MarketScore value={v} />,
     },
     {
       title: '行业avg',
       dataIndex: 'industry_avg_top1',
+      align: 'center',
       width: 80,
       render: (v: number | null, r: InferenceRunRecord) => (
         <MarketScore value={v} threshold={0.09} emptyBelow={0.06} />
@@ -159,6 +165,7 @@ export const InferenceHistoryPanel: React.FC<Props> = ({ modelId, onDelete }) =>
     {
       title: '强行业数',
       dataIndex: 'strong_industry_count',
+      align: 'center',
       width: 84,
       render: (v: number, r: InferenceRunRecord) => {
         if (v === null || v === undefined) return <Text className="text-xs text-slate-300">—</Text>;
@@ -169,28 +176,14 @@ export const InferenceHistoryPanel: React.FC<Props> = ({ modelId, onDelete }) =>
     {
       title: '覆盖行业',
       dataIndex: 'industry_top1_count',
+      align: 'center',
       width: 74,
       render: (v: number) => <Text className="text-xs font-mono text-slate-500">{v || '—'}</Text>,
     },
     {
-      title: '信号',
-      dataIndex: 'market_signal',
-      width: 90,
-      render: (v: any) => {
-        const label = v?.label;
-        if (!label) return <Text className="text-[11px] text-slate-300">—</Text>;
-        const colorMap: Record<string, string> = {
-          '可入场': 'text-emerald-600 bg-emerald-50 border-emerald-200',
-          '谨慎': 'text-amber-600 bg-amber-50 border-amber-200',
-          '空仓观望': 'text-rose-600 bg-rose-50 border-rose-200',
-        };
-        const cls = colorMap[label] || 'text-slate-500 bg-slate-100 border-slate-200';
-        return <span className={clsx('inline-block rounded-lg border px-2 py-0.5 text-[11px] font-black', cls)}>{label}</span>;
-      },
-    },
-    {
       title: '状态',
       dataIndex: 'status',
+      align: 'center',
       width: 70,
       render: (v: string) => {
         const meta = STATUS_META[v] || { color: 'default', label: v };
@@ -199,9 +192,10 @@ export const InferenceHistoryPanel: React.FC<Props> = ({ modelId, onDelete }) =>
     },
     {
       title: '操作',
+      align: 'center',
       width: 60,
       render: (_: unknown, r: InferenceRunRecord) => (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center justify-center">
           <Button size="small" type="text" danger icon={<Trash2 size={13} />} className="rounded-lg p-0 h-6 w-6 flex items-center justify-center opacity-60 hover:opacity-100"
             onClick={(e) => { e.stopPropagation(); void handleDelete(r); }} />
         </div>

@@ -49,6 +49,7 @@ export interface SingleStockPredictionResponse {
   p50_return: number;
   p90_return: number | null;
   forecast_curve: ForecastPoint[];
+  forecast_warning?: string | null;
   drivers: FeatureDriverItem[];
   consensus: ModelConsensusItem[];
   consensus_score: number;

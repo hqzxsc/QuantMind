@@ -233,7 +233,7 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
           <Card className="rounded-2xl border-slate-200" size="small" title="模型命名">
             <div className="space-y-2">
               <div className="text-xs text-slate-500">
-                display_name 用于模型管理页展示和训练结果命名，自动规则为“日期_T+N_模型维度_版本”。
+                display_name 用于模型管理页展示和训练结果命名，自动规则为“模型_日期_T+N_模型维度_版本”。
               </div>
               <div className="flex items-center gap-2">
                 <Input
@@ -581,10 +581,8 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                         </div>
                       </Col>
                     ))}
-                  </Row>
-                  {/* DL 模型专属参数：按主模型动态显示 */}
-                  {params.model_type === 'tcn' && (
-                    <Row gutter={[12, 12]} className="mt-3">
+                    {/* DL 模型专属参数：并进主网格，与序列长度凑成一行 */}
+                    {params.model_type === 'tcn' && (
                       <Col span={12}>
                         <div className="space-y-1">
                           <div className="text-xs text-slate-500">卷积核大小 (kernel_size)</div>
@@ -599,10 +597,8 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                           <div className="text-[10px] text-slate-400">增大到 7+ 捕捉更长期依赖</div>
                         </div>
                       </Col>
-                    </Row>
-                  )}
-                  {params.model_type === 'nativetft' && (
-                    <Row gutter={[12, 12]} className="mt-3">
+                    )}
+                    {params.model_type === 'nativetft' && (
                       <Col span={12}>
                         <div className="space-y-1">
                           <div className="text-xs text-slate-500">注意力头数 (num_heads)</div>
@@ -617,8 +613,8 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                           <div className="text-[10px] text-slate-400">需能被隐藏维度整除</div>
                         </div>
                       </Col>
-                    </Row>
-                  )}
+                    )}
+                  </Row>
                 </>
               )}
             </div>

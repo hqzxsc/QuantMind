@@ -899,13 +899,31 @@ export const buildEffectiveTradeDate = (target: TrainingTarget, referenceDate: D
   return referenceDate.add(target.horizonDays, 'day').format('YYYY-MM-DD');
 };
 
-export const buildAutoDisplayName = (referenceDate: Dayjs, target: TrainingTarget, featureCount: number, version = DEFAULT_MODEL_VERSION, market?: string) => {
+/** 模型短码（自动命名前缀），与后端 MODEL_FRAMEWORK 口径一致，按 model_type 取 */
+export const MODEL_SHORT_NAMES: Record<string, string> = {
+  lightgbm: 'LGB',
+  xgboost: 'XGB',
+  catboost: 'CB',
+  linear: 'Ridge',
+  random_forest: 'RF',
+  mlp: 'MLP',
+  gru: 'GRU',
+  lstm: 'LSTM',
+  alstm: 'ALSTM',
+  transformer: 'TF',
+  tabnet: 'TabNet',
+  tcn: 'TCN',
+  nativetft: 'TFT',
+};
+
+export const buildAutoDisplayName = (referenceDate: Dayjs, target: TrainingTarget, featureCount: number, version = DEFAULT_MODEL_VERSION, market?: string, modelType?: string) => {
   const dateToken = referenceDate.format('DD');
   const horizons = target.horizonDaysList?.filter((h) => h >= 1) ?? [];
   const returnToken = horizons.length >= 2 ? `T${horizons.join('_')}` : `T${target.horizonDays}`;
   const dimensionToken = `Alpha${Math.max(1, featureCount)}`;
   const marketSuffix = market ? `_${market.toUpperCase()}` : '';
-  return `${dateToken}_${returnToken}_${dimensionToken}_${version}${marketSuffix}`;
+  const modelPrefix = modelType ? `${MODEL_SHORT_NAMES[modelType] ?? modelType.toUpperCase()}_` : '';
+  return `${modelPrefix}${dateToken}_${returnToken}_${dimensionToken}_${version}${marketSuffix}`;
 };
 
 export const summarizeFeatureCategories = (features: string[], categories: FeatureCategory[]) => {
@@ -1013,7 +1031,7 @@ export const buildTrainingRequest = (
   const trainingWindow = `${formatRange(timePeriods.train)} | ${formatRange(timePeriods.val)} | ${formatRange(timePeriods.test)}`;
   const resolvedContext = market ? { ...context, market: market as TrainingContext['market'] } : context;
   return {
-    displayName: displayName.trim() || buildAutoDisplayName(dayjs(), target, finalFeatures.length, undefined, market),
+    displayName: displayName.trim() || buildAutoDisplayName(dayjs(), target, finalFeatures.length, undefined, market, params.model_type),
     selectedFeatures: finalFeatures,
     featureCategories: summarizeFeatureCategories(finalFeatures, categories),
     target,

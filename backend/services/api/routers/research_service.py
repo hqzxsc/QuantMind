@@ -1154,8 +1154,10 @@ async def get_available_models(tid: str, uid: str, market: str | None = None) ->
         sql = text("""
             SELECT um.model_id,
                    COALESCE(um.metadata_json->>'display_name', um.metadata_json->>'model_name') AS display_name,
-                   um.metadata_json->>'framework' AS framework,
-                   um.metadata_json->>'model_type' AS model_type,
+                    um.metadata_json->>'framework' AS framework,
+                    um.metadata_json->>'model_type' AS model_type,
+                    um.metadata_json->>'target_mode' AS target_mode,
+                    um.metadata_json->>'prediction_mode' AS prediction_mode,
                    um.metadata_json->'metrics' AS metrics,
                    um.metrics_json AS metrics_json,
                    EXISTS (
@@ -1184,6 +1186,8 @@ async def get_available_models(tid: str, uid: str, market: str | None = None) ->
                     "name": name,
                     "framework": r["framework"] or "",
                     "modelType": r["model_type"] or "",
+                    "targetMode": r["target_mode"] or "",
+                    "predictionMode": r["prediction_mode"] or "",
                     "ic": _extract_ic(r["metrics"], r["metrics_json"]),
                     "hasInference": bool(r["has_inference"]),
                 }
@@ -1214,6 +1218,8 @@ async def get_available_models(tid: str, uid: str, market: str | None = None) ->
                         "name": name,
                         "framework": meta.get("framework") or "lightgbm",
                         "modelType": meta.get("model_type") or meta.get("framework") or "lightgbm",
+                        "targetMode": meta.get("target_mode") or "",
+                        "predictionMode": meta.get("prediction_mode") or "",
                         "ic": _extract_ic(metrics, meta.get("metrics_json")) or 0.128,
                         "hasInference": (p.parent / "inference.py").is_file(),
                     })
@@ -2243,6 +2249,10 @@ _SHAP_TIMEOUT_SEC = 8.0
 _SHAP_MAX_DRIVERS = 6
 _SHAP_MIN_DRIVERS = 3  # 真值特征少于 3 个上榜则放弃 SHAP，降级启发式
 
+# predict-stock 分位扇形宽度门禁：|p90-p10| 超过该值视为训练塌缩或口径错位，
+# 禁止换算成价格扇形（rank 口径边缘分位数约为 ±0.4，远超正常收益区间）。
+_FORECAST_QUANTILE_WIDTH_GATE = 0.30
+
 _SNAPSHOT_MARKET_FILE = {
     "CN": None,  # CN 按年分文件 model_features_{year}.parquet
     "HK": "model_features_hk.parquet",
@@ -2517,6 +2527,9 @@ async def predict_single_stock(
         sel.get("name") or sel.get("modelName") or "LightGBM Alpha-158 增强模型"
     )
     chosen_model_type = sel.get("modelType") or sel.get("model_type") or "lightgbm"
+    # 分位扇形口径：仅 target_mode=return 的分位值才是收益率，可换算成价格；
+    # rank/score 口径未知时留空，由宽度门禁兜底。
+    chosen_target_mode = str(sel.get("targetMode") or sel.get("target_mode") or "").strip().lower()
 
     # “开始预测推理”必须实际执行注册模型，不能用页面侧或服务侧的公式伪造结果。
     # 延迟导入避免 research/model_training 路由在应用启动阶段发生循环导入。
@@ -2686,6 +2699,7 @@ async def predict_single_stock(
     p50_ret = round(fusion_score, 4)
     confidence = 0.0
     forecast_curve: list[dict[str, Any]] = []
+    forecast_warning: str | None = None
     curr_p = latest_close if latest_close > 0 else 100.0
     quantile_prediction: dict[str, Any] | None = None
     if main_row is not None:
@@ -2705,17 +2719,33 @@ async def predict_single_stock(
                         p10_ret, p50_ret, p90_ret = sorted(values)
                         quantile_prediction = candidate
                         confidence = float(candidate.get("calibrated_coverage") or 0.0)
-                        target_day = date.fromisoformat(resolved_date) + timedelta(days=max(1, int(horizon)))
-                        forecast_curve = [{
-                            "step": int(horizon),
-                            "date": target_day.isoformat(),
-                            "p10": round(p10_ret * 100, 4),
-                            "p50": round(p50_ret * 100, 4),
-                            "p90": round(p90_ret * 100, 4),
-                            "predicted_price": round(curr_p * (1 + p50_ret), 4),
-                            "upper_price": round(curr_p * (1 + p90_ret), 4),
-                            "lower_price": round(curr_p * (1 + p10_ret), 4),
-                        }]
+                        # 门禁1：口径分流 —— 非 return 口径的分位值不是收益率，
+                        # 禁止换算成价格扇形（如 rank 口径边缘分位数 ±0.4）。
+                        if chosen_target_mode and chosen_target_mode != "return":
+                            forecast_warning = (
+                                f"该模型目标口径为 {chosen_target_mode}，分位值非收益率，"
+                                "已隐藏价格区间扇形；仅展示信号分数。"
+                            )
+                            quantile_prediction = None
+                        # 门禁2：区间宽度 —— |p90-p10| 超限视为训练塌缩或口径错位。
+                        elif (p90_ret - p10_ret) > _FORECAST_QUANTILE_WIDTH_GATE:
+                            forecast_warning = (
+                                f"分位区间过宽（P90-P10={(p90_ret - p10_ret) * 100:.1f}%），"
+                                "疑似分位训练塌缩或标签口径错位，已隐藏价格区间扇形。"
+                            )
+                            quantile_prediction = None
+                        else:
+                            target_day = date.fromisoformat(resolved_date) + timedelta(days=max(1, int(horizon)))
+                            forecast_curve = [{
+                                "step": int(horizon),
+                                "date": target_day.isoformat(),
+                                "p10": round(p10_ret * 100, 4),
+                                "p50": round(p50_ret * 100, 4),
+                                "p90": round(p90_ret * 100, 4),
+                                "predicted_price": round(curr_p * (1 + p50_ret), 4),
+                                "upper_price": round(curr_p * (1 + p90_ret), 4),
+                                "lower_price": round(curr_p * (1 + p10_ret), 4),
+                            }]
                 except (KeyError, TypeError, ValueError):
                     quantile_prediction = None
 
@@ -2765,6 +2795,7 @@ async def predict_single_stock(
         "p50_return": round(p50_ret * 100, 2),
         "p90_return": round(p90_ret * 100, 2) if quantile_prediction else None,
         "forecast_curve": forecast_curve,
+        "forecast_warning": forecast_warning,
         "drivers": drivers,
         "consensus": consensus,
         "consensus_score": consensus_score,

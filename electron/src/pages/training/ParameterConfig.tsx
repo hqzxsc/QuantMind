@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Divider, Input, Button, Row, Col, InputNumber, Select, Alert, Typography, Radio, Switch, Tooltip } from 'antd';
+import { Card, Divider, Input, Button, Row, Col, InputNumber, Select, Alert, Typography, Tag, Radio, Switch, Tooltip } from 'antd';
 import { Settings2, MonitorPlay, TreePine, Cpu, Ruler } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
@@ -137,12 +137,17 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                       <Radio
                         key={m.value}
                         value={m.value}
-                        className="!inline-flex !items-center [&_.ant-checkbox]:top-0 [&_.ant-checkbox]:self-center"
+                        className="!inline-flex !items-start [&_.ant-radio]:top-1 [&_.ant-radio]:self-start"
                       >
-                        <span className="inline-flex items-center flex-wrap gap-x-1.5 leading-normal">
-                          <Tooltip title={m.tooltip} placement="topLeft" styles={{ root: { maxWidth: 360 } }}>
-                            <span className="text-sm cursor-help border-b border-dashed border-slate-300 font-medium text-slate-700">{m.label}</span>
-                          </Tooltip>
+                        <span className="inline-flex flex-col gap-0.5 leading-normal">
+                          <span className="inline-flex items-center gap-1.5">
+                            <Tooltip title={m.tooltip} placement="topLeft" styles={{ root: { maxWidth: 360 } }}>
+                              <span className="text-sm cursor-help border-b border-dashed border-slate-300 font-medium text-slate-700">{m.label}</span>
+                            </Tooltip>
+                            <Tag color={m.framework === 'pytorch' ? 'orange' : 'blue'} className="!m-0 rounded-md px-1 text-[10px] leading-4">
+                              {m.framework === 'pytorch' ? 'GPU' : 'CPU'}
+                            </Tag>
+                          </span>
                           <span className="text-xs text-slate-400">{m.description}</span>
                         </span>
                       </Radio>
@@ -156,12 +161,17 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                       <Radio
                         key={m.value}
                         value={m.value}
-                        className="!inline-flex !items-center [&_.ant-checkbox]:top-0 [&_.ant-checkbox]:self-center"
+                        className="!inline-flex !items-start [&_.ant-radio]:top-1 [&_.ant-radio]:self-start"
                       >
-                        <span className="inline-flex items-center flex-wrap gap-x-1.5 leading-normal">
-                          <Tooltip title={m.tooltip} placement="topLeft" styles={{ root: { maxWidth: 360 } }}>
-                            <span className="text-sm cursor-help border-b border-dashed border-slate-300 font-medium text-slate-700">{m.label}</span>
-                          </Tooltip>
+                        <span className="inline-flex flex-col gap-0.5 leading-normal">
+                          <span className="inline-flex items-center gap-1.5">
+                            <Tooltip title={m.tooltip} placement="topLeft" styles={{ root: { maxWidth: 360 } }}>
+                              <span className="text-sm cursor-help border-b border-dashed border-slate-300 font-medium text-slate-700">{m.label}</span>
+                            </Tooltip>
+                            <Tag color={m.framework === 'pytorch' ? 'orange' : 'blue'} className="!m-0 rounded-md px-1 text-[10px] leading-4">
+                              {m.framework === 'pytorch' ? 'GPU' : 'CPU'}
+                            </Tag>
+                          </span>
                           <span className="text-xs text-slate-400">{m.description}</span>
                         </span>
                       </Radio>
@@ -175,12 +185,17 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                       <Radio
                         key={m.value}
                         value={m.value}
-                        className="!inline-flex !items-center [&_.ant-checkbox]:top-0 [&_.ant-checkbox]:self-center"
+                        className="!inline-flex !items-start [&_.ant-radio]:top-1 [&_.ant-radio]:self-start"
                       >
-                        <span className="inline-flex items-center flex-wrap gap-x-1.5 leading-normal">
-                          <Tooltip title={m.tooltip} placement="topLeft" styles={{ root: { maxWidth: 360 } }}>
-                            <span className="text-sm cursor-help border-b border-dashed border-slate-300 font-medium text-slate-700">{m.label}</span>
-                          </Tooltip>
+                        <span className="inline-flex flex-col gap-0.5 leading-normal">
+                          <span className="inline-flex items-center gap-1.5">
+                            <Tooltip title={m.tooltip} placement="topLeft" styles={{ root: { maxWidth: 360 } }}>
+                              <span className="text-sm cursor-help border-b border-dashed border-slate-300 font-medium text-slate-700">{m.label}</span>
+                            </Tooltip>
+                            <Tag color={m.framework === 'pytorch' ? 'orange' : 'blue'} className="!m-0 rounded-md px-1 text-[10px] leading-4">
+                              {m.framework === 'pytorch' ? 'GPU' : 'CPU'}
+                            </Tag>
+                          </span>
                           <span className="text-xs text-slate-400">{m.description}</span>
                         </span>
                       </Radio>
@@ -190,7 +205,7 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
               </Radio.Group>
               {params.model_types.some(mt => {
                 const opt = MODEL_TYPE_OPTIONS.find(m => m.value === mt);
-                return opt?.category === 'deep_learning';
+                return opt?.framework === 'pytorch';
               }) && (
                 <Alert
                   type="info"

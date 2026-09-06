@@ -712,9 +712,9 @@ const LoginPage: React.FC = () => {
           <Space split={<span style={{ color: 'rgba(255,255,255,0.4)', margin: '0 8px' }}>|</span>}>
           <a href="https://www.quantmindai.cn/privacy" target="_blank" rel="noopener noreferrer" style={{ color: 'white', cursor: 'pointer', transition: 'all 0.3s ease', textDecoration: 'none' }} onMouseEnter={(e) => e.currentTarget.style.color = '#1890ff'} onMouseLeave={(e) => e.currentTarget.style.color = 'white'}>隐私政策</a>
           <a href="https://www.quantmindai.cn/terms" target="_blank" rel="noopener noreferrer" style={{ color: 'white', cursor: 'pointer', transition: 'all 0.3s ease', textDecoration: 'none' }} onMouseEnter={(e) => e.currentTarget.style.color = '#1890ff'} onMouseLeave={(e) => e.currentTarget.style.color = 'white'}>服务条款</a>
-          {/* 使用统一 HelpCenterLink，保留白色样式 */}
+          {/* 使用统一 HelpCenterLink，登录页指向桌面端下载/帮助页，保留白色样式 */}
           <span>
-            <HelpCenterLink variant="white" showIcon={false} />
+            <HelpCenterLink variant="white" showIcon={false} href="https://oss.quantmindai.cn/desktop-download.html" />
           </span>
           <span>© 2026 QuantMind</span>
         </Space>

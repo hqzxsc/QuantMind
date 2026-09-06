@@ -231,8 +231,7 @@ const getWebSocketUrl = () => {
 };
 
 export const SERVICE_URLS = {
-  get API_GATEWAY() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_API_GATEWAY_URL) || getBaseUrl()); },
-  get MARKET_DATA() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_MARKET_DATA_API_URL) || getBaseUrl()); },
+  get API_GATEWAY() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_API_GATEWAY_URL) || getBaseUrl()); },  get MARKET_DATA() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_MARKET_DATA_API_URL) || getBaseUrl()); },
   get DATA_SERVICE() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_DATA_SERVICE_API_URL) || getBaseUrl()); },
   get USER_SERVICE() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_USER_API_URL) || getBaseUrl()); },
   get AI_STRATEGY() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_AI_STRATEGY_API_URL) || getBaseUrl()); },
@@ -243,11 +242,20 @@ export const SERVICE_URLS = {
   get WEBSOCKET_MARKET() { return getWebSocketUrl(); },
 } as const;
 
+/**
+ * Web 安全的服务 base 解析：Web（非 Electron）一律返回相对路径 fallback（通常是 `/api/v1`），
+ * 忽略构建时固化的 VITE_* 绝对地址与 localStorage 旧缓存，避免外网 IP 下直连 127.0.0.1:8000；
+ * 桌面端保持原逻辑（VITE_* > 共享配置）。
+ */
+export function resolveWebSafeServiceBase(envVal: string | undefined, fallback: string): string {
+  if (!isElectronEnv()) return fallback;
+  return normalizeBaseUrl(envVal || '') || fallback;
+}
+
 // API路径配置
 export const API_PATHS = {
   V1: '/api/v1',
-  HEALTH: '/health',
-  STRATEGIES: '/strategies',
+  HEALTH: '/health',  STRATEGIES: '/strategies',
   MARKET_DATA: '/market-data',
   USER: '/user',
   FILES: '/files',

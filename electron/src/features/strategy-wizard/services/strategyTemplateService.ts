@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { StrategyTemplate } from '../../../data/qlibStrategyTemplates';
 import { QLIB_STRATEGY_TEMPLATES } from '../../../data/qlibStrategyTemplates';
-import { SERVICE_URLS } from '../../../config/services';
+import { SERVICE_URLS, resolveWebSafeServiceBase } from '../../../config/services';
 import { authService } from '../../auth/services/authService';
 
 const CACHE_KEY = 'quantmind_strategy_templates_cache';
@@ -45,7 +45,10 @@ function clearCache(): void {
 
 class StrategyTemplateService {
   private readonly baseURL = normalizeServiceBaseUrl(
-    (import.meta as any).env?.VITE_API_GATEWAY_URL || SERVICE_URLS.API_GATEWAY
+    resolveWebSafeServiceBase(
+      (import.meta as any).env?.VITE_API_GATEWAY_URL,
+      SERVICE_URLS.API_GATEWAY || '/api/v1',
+    )
   );
 
   /**

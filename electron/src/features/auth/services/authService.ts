@@ -15,7 +15,7 @@ import type {
 } from '../types/auth.types';
 import { handleError, handleAuthError, handleNetworkError, handleServerError } from '../utils/errorHandler';
 import { performanceMonitor } from '../utils/performance';
-import { SERVICE_ENDPOINTS } from '../../../config/services';
+import { SERVICE_ENDPOINTS, resolveWebSafeServiceBase } from '../../../config/services';
 
 interface AuthRequestConfig extends AxiosRequestConfig {
   _skipAuthRefresh?: boolean;
@@ -27,7 +27,10 @@ interface AuthRequestConfig extends AxiosRequestConfig {
  */
 class AuthService {
   private axiosInstance: AxiosInstance;
-  private readonly rawBaseURL = (import.meta as any).env?.VITE_USER_API_URL || SERVICE_ENDPOINTS.USER_SERVICE;
+  private readonly rawBaseURL = resolveWebSafeServiceBase(
+    (import.meta as any).env?.VITE_USER_API_URL,
+    SERVICE_ENDPOINTS.USER_SERVICE,
+  );
   private readonly baseURL: string;
   private readonly apiPrefix: string;
   private readonly disableAuth: boolean;
@@ -96,7 +99,10 @@ class AuthService {
   }
 
   private getRuntimeBaseURL(): string {
-    return this.normalizeBaseURL(String((import.meta as any).env?.VITE_USER_API_URL || SERVICE_ENDPOINTS.USER_SERVICE)).baseURL;
+    return this.normalizeBaseURL(resolveWebSafeServiceBase(
+      (import.meta as any).env?.VITE_USER_API_URL,
+      SERVICE_ENDPOINTS.USER_SERVICE,
+    )).baseURL;
   }
 
   private getResolvedRequestUrl(path: string): string {

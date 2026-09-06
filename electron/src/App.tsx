@@ -23,7 +23,7 @@ import { refreshOrchestrator } from './services/refreshOrchestrator';
 import { useTradingModeInitialization } from './hooks/useTradingModeInitialization';
 import { useMarketReset } from './hooks/useMarketReset';
 import { authService } from './features/auth/services/authService';
-import { initDynamicServerUrl } from './config/services';
+import { initDynamicServerUrl, isElectronEnv } from './config/services';
 
 // 认证相关组件
 import AppRoutes from './features/auth/AppRoutes';
@@ -282,7 +282,11 @@ export default function App() {
 
     const bootstrapServerConfig = async () => {
       try {
-        await initDynamicServerUrl();
+        // Web 端走 Nginx 相对路径，跳过桌面端 localStorage 旧地址探测，
+        // 否则会 fetch 已缓存的 http://127.0.0.1:8000/health 并报 ERR_CONNECTION_REFUSED
+        if (isElectronEnv()) {
+          await initDynamicServerUrl();
+        }
       } catch (error) {
         logger.warn('初始化服务器地址失败，将继续使用默认配置:', error);
       } finally {

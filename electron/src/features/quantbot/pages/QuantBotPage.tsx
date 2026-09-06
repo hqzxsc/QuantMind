@@ -17,6 +17,29 @@ const QWENPAW_UI_PATH = '/api/v1/qwenpaw-ui/';
 /** 无任何服务器配置时的兜底地址（QwenPaw 容器宿主映射端口） */
 const QWENPAW_LOCAL_FALLBACK_URL = 'http://127.0.0.1:8088/';
 
+/** QwenPaw 直连 Web UI 端口（服务器上 qwenpaw 容器的宿主映射端口） */
+const QWENPAW_DIRECT_PORT = 8088;
+
+/**
+ * 推导 QwenPaw 直连 Web UI 地址（供“在外部浏览器打开”使用）。
+ * 基于已配置的 API 网关地址（如 http://1.2.3.4:8000）取同名主机、换到 8088 端口，
+ * 直接打开 qwenpaw 容器自身托管的界面；未配置网关时回退本机。
+ */
+export function getQwenPawDirectUrl(): string {
+  const gateway = SERVICE_URLS.API_GATEWAY;
+  if (!gateway) return QWENPAW_LOCAL_FALLBACK_URL;
+  try {
+    const u = new URL(gateway);
+    u.port = String(QWENPAW_DIRECT_PORT);
+    u.pathname = '/';
+    u.search = '';
+    u.hash = '';
+    return u.toString();
+  } catch {
+    return `${gateway.replace(/\/+$/, '')}:${QWENPAW_DIRECT_PORT}/`;
+  }
+}
+
 /** iframe 加载超时时间（毫秒） */
 const IFRAME_LOAD_TIMEOUT_MS = 15_000;
 
@@ -62,8 +85,8 @@ const QuantBotPage: React.FC = () => {
   }, [clearTimer]);
 
   const handleOpenExternal = useCallback(() => {
-    window.open(embedUrl, '_blank');
-  }, [embedUrl]);
+    window.open(getQwenPawDirectUrl(), '_blank');
+  }, []);
 
   const handleIframeLoad = useCallback(() => {
     clearTimer();

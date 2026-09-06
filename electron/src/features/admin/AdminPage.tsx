@@ -77,7 +77,7 @@ const AdminPage: React.FC = () => {
                 { key: 'risk', label: '风险控制（开发中）' },
             ]
         },
-        { key: 'settings', icon: <SettingOutlined />, label: '系统设置（开发中）' },
+        { key: 'settings', icon: <SettingOutlined />, label: '系统设置' },
     ];
 
     const currentKey = location.pathname.split('/').pop() || 'overview';

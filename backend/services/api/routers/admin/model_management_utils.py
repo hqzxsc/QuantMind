@@ -167,6 +167,7 @@ def _load_feature_catalog_from_file(path: str = FEATURE_CATALOG_FALLBACK, market
                     "feature_id": str(feat.get("feature_id") or ""),
                     "key": f_key,
                     "feature_name": str(feat.get("description") or feat.get("feature_name") or f_key),
+                    "explanation": str(feat.get("explanation") or feat.get("detail") or ""),
                     "formula": str(feat.get("formula") or ""),
                     "source_table_fields": str(feat.get("source") or feat.get("source_table_fields") or ""),
                     "enabled": bool(feat.get("enabled", True)),
@@ -220,31 +221,60 @@ async def _load_feature_catalog_from_db(market: str | None = None) -> dict[str, 
         if not version_row:
             return None
 
-        rows = (
-            await session.execute(
-                text(
-                    """
-                    SELECT
-                        c.category_id,
-                        c.category_name,
-                        c.sort_order,
-                        i.order_no,
-                        i.enabled,
-                        d.feature_id,
-                        d.feature_key,
-                        d.feature_name,
-                        d.formula,
-                        d.source_table_fields
-                    FROM qm_feature_set_item i
-                    JOIN qm_feature_definition d ON d.feature_key = i.feature_key
-                    JOIN qm_feature_category c ON c.category_id = i.category_id
-                    WHERE i.version_id = :version_id
-                    ORDER BY c.sort_order ASC, i.order_no ASC
-                    """
-                ),
-                {"version_id": version_row["version_id"]},
-            )
-        ).mappings().all()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT
+                            c.category_id,
+                            c.category_name,
+                            c.sort_order,
+                            i.order_no,
+                            i.enabled,
+                            d.feature_id,
+                            d.feature_key,
+                            d.feature_name,
+                            d.formula,
+                            d.source_table_fields,
+                            d.explanation
+                        FROM qm_feature_set_item i
+                        JOIN qm_feature_definition d ON d.feature_key = i.feature_key
+                        JOIN qm_feature_category c ON c.category_id = i.category_id
+                        WHERE i.version_id = :version_id
+                        ORDER BY c.sort_order ASC, i.order_no ASC
+                        """
+                    ),
+                    {"version_id": version_row["version_id"]},
+                )
+            ).mappings().all()
+        except Exception:
+            # 迁移前老库无 explanation 列，回退到无描述查询
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT
+                            c.category_id,
+                            c.category_name,
+                            c.sort_order,
+                            i.order_no,
+                            i.enabled,
+                            d.feature_id,
+                            d.feature_key,
+                            d.feature_name,
+                            d.formula,
+                            d.source_table_fields
+                        FROM qm_feature_set_item i
+                        JOIN qm_feature_definition d ON d.feature_key = i.feature_key
+                        JOIN qm_feature_category c ON c.category_id = i.category_id
+                        WHERE i.version_id = :version_id
+                        ORDER BY c.sort_order ASC, i.order_no ASC
+                        """
+                    ),
+                    {"version_id": version_row["version_id"]},
+                )
+            ).mappings().all()
 
         if not rows:
             return None
@@ -269,6 +299,7 @@ async def _load_feature_catalog_from_db(market: str | None = None) -> dict[str, 
                     "feature_id": str(r["feature_id"] or ""),
                     "key": f_key,
                     "feature_name": str(r["feature_name"] or f_key or ""),
+                    "explanation": str((r["explanation"] if "explanation" in r else "") or ""),
                     "formula": str(r["formula"] or ""),
                     "source_table_fields": str(r["source_table_fields"] or ""),
                     "enabled": bool(r["enabled"]),

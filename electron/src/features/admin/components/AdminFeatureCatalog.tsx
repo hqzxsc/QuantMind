@@ -15,6 +15,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Switch,
   Table,
@@ -43,7 +44,19 @@ const MARKET_OPTIONS = [
   { value: 'HK', label: '港股', color: 'blue' },
   { value: 'US', label: '美股', color: 'green' },
   { value: 'CRYPTO', label: '加密', color: 'purple' },
+  { value: 'FUTURES', label: '期货', color: 'orange' },
 ];
+
+const ALL_MARKETS = MARKET_OPTIONS.map(m => m.value);
+
+function marketsOf(feat: AdminModelFeatureItem): string[] {
+  return feat.markets && feat.markets.length > 0 ? feat.markets : ALL_MARKETS;
+}
+
+function matchesMarket(feat: AdminModelFeatureItem, market: string): boolean {
+  if (!market || market === 'ALL') return true;
+  return marketsOf(feat).includes(market);
+}
 
 // ─── 辅助函数 ────────────────────────────────────────────────────────────────
 
@@ -60,6 +73,8 @@ export const AdminFeatureCatalog: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
+  const [marketFilter, setMarketFilter] = useState<string>('ALL');
+  const [keyword, setKeyword] = useState('');
 
   // 分类编辑
   const [catModalOpen, setCatModalOpen] = useState(false);
@@ -71,11 +86,14 @@ export const AdminFeatureCatalog: React.FC = () => {
   const [editingFeat, setEditingFeat] = useState<AdminModelFeatureItem | null>(null);
   const [featForm] = Form.useForm();
 
-  const loadCatalog = useCallback(async () => {
+  const loadCatalog = useCallback(async (market?: string) => {
     setLoading(true);
     setLoadError(null);
     try {
-      const data = await adminService.getModelFeatureCatalog();
+      const activeMarket = typeof market === 'string' ? market : marketFilter;
+      const data = await adminService.getModelFeatureCatalog(
+        activeMarket && activeMarket !== 'ALL' ? activeMarket : undefined,
+      );
       setCatalog(data);
       if (!data.categories?.length) {
         setSelectedCatId(null);
@@ -88,9 +106,16 @@ export const AdminFeatureCatalog: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [marketFilter]);
 
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
+
+  const handleMarketChange = (next: string) => {
+    setMarketFilter(next);
+    setSelectedCatId(null);
+    setKeyword('');
+    loadCatalog(next);
+  };
 
   // 首次加载后默认选中第一个分类
   useEffect(() => {
@@ -175,10 +200,35 @@ export const AdminFeatureCatalog: React.FC = () => {
 
   const selectedCat = catalog?.categories.find(c => c.id === selectedCatId) ?? null;
 
+  const marketCounts = React.useMemo(() => {
+    const counts: Record<string, number> = { ALL: 0 };
+    for (const m of ALL_MARKETS) counts[m] = 0;
+    for (const cat of catalog?.categories ?? []) {
+      for (const f of cat.features) {
+        counts.ALL += 1;
+        for (const m of marketsOf(f)) {
+          if (counts[m] !== undefined) counts[m] += 1;
+        }
+      }
+    }
+    return counts;
+  }, [catalog]);
+
+  const visibleFeatures = React.useMemo(() => {
+    const feats = selectedCat?.features ?? [];
+    const term = keyword.trim().toLowerCase();
+    return feats.filter(f => {
+      if (!matchesMarket(f, marketFilter)) return false;
+      if (!term) return true;
+      return [f.key, f.feature_name, f.explanation ?? '', f.formula, f.source_table_fields]
+        .some(v => (v || '').toLowerCase().includes(term));
+    });
+  }, [selectedCat, marketFilter, keyword]);
+
   const openAddFeature = () => {
     setEditingFeat(null);
     featForm.resetFields();
-    featForm.setFieldsValue({ markets: MARKET_OPTIONS.map(m => m.value) });
+    featForm.setFieldsValue({ markets: ALL_MARKETS, explanation: '' });
     setFeatModalOpen(true);
   };
 
@@ -187,9 +237,10 @@ export const AdminFeatureCatalog: React.FC = () => {
     featForm.setFieldsValue({
       key: feat.key,
       feature_name: feat.feature_name,
+      explanation: feat.explanation ?? '',
       formula: feat.formula,
       source_table_fields: feat.source_table_fields,
-      markets: feat.markets && feat.markets.length > 0 ? feat.markets : MARKET_OPTIONS.map(m => m.value),
+      markets: marketsOf(feat),
     });
     setFeatModalOpen(true);
   };
@@ -199,8 +250,8 @@ export const AdminFeatureCatalog: React.FC = () => {
     if (!catalog || !selectedCatId) return;
 
     // 处理 markets：全选时设为空数组（表示适用所有市场）
-    const allMarketValues = MARKET_OPTIONS.map(m => m.value);
-    const markets = values.markets && values.markets.length === allMarketValues.length ? [] : (values.markets || []);
+    const markets = values.markets && values.markets.length === ALL_MARKETS.length ? [] : (values.markets || []);
+    const explanation = (values.explanation ?? '').trim().slice(0, 500);
 
     const cats = catalog.categories.map(cat => {
       if (cat.id !== selectedCatId) return cat;
@@ -208,7 +259,7 @@ export const AdminFeatureCatalog: React.FC = () => {
       if (editingFeat) {
         const idx = features.findIndex(f => f.key === editingFeat.key);
         if (idx >= 0) {
-          features[idx] = { ...features[idx], ...values, markets };
+          features[idx] = { ...features[idx], ...values, explanation, markets };
         }
       } else {
         if (features.some(f => f.key === values.key)) {
@@ -219,6 +270,7 @@ export const AdminFeatureCatalog: React.FC = () => {
           feature_id: generateFeatureId(),
           key: values.key,
           feature_name: values.feature_name,
+          explanation,
           formula: values.formula || '',
           source_table_fields: values.source_table_fields || '',
           enabled: true,
@@ -269,7 +321,7 @@ export const AdminFeatureCatalog: React.FC = () => {
     {
       title: '名称',
       dataIndex: 'feature_name',
-      width: 240,
+      width: 180,
       ellipsis: { showTitle: false },
       render: (name: string) => (
         <Tooltip title={name} placement="topLeft">
@@ -278,9 +330,24 @@ export const AdminFeatureCatalog: React.FC = () => {
       ),
     },
     {
+      title: '描述（可编辑）',
+      dataIndex: 'explanation',
+      width: 260,
+      ellipsis: { showTitle: false },
+      render: (v: string | undefined, record) => v ? (
+        <Tooltip title={v} placement="topLeft">
+          <span className="text-xs text-slate-600">{v}</span>
+        </Tooltip>
+      ) : (
+        <Button type="link" size="small" className="!p-0 !h-auto text-xs" onClick={() => openEditFeature(record)}>
+          + 添加描述
+        </Button>
+      ),
+    },
+    {
       title: '公式',
       dataIndex: 'formula',
-      width: 220,
+      width: 180,
       ellipsis: { showTitle: false },
       render: (v: string) => v ? (
         <Tooltip title={v} placement="topLeft">
@@ -291,7 +358,7 @@ export const AdminFeatureCatalog: React.FC = () => {
     {
       title: '数据来源',
       dataIndex: 'source_table_fields',
-      width: 200,
+      width: 180,
       ellipsis: { showTitle: false },
       render: (v: string) => v ? (
         <Tooltip title={v} placement="topLeft">
@@ -302,9 +369,9 @@ export const AdminFeatureCatalog: React.FC = () => {
     {
       title: '市场',
       dataIndex: 'markets',
-      width: 180,
+      width: 170,
       render: (markets: string[] | undefined) => {
-        const list = markets && markets.length > 0 ? markets : MARKET_OPTIONS.map(m => m.value);
+        const list = markets && markets.length > 0 ? markets : ALL_MARKETS;
         return (
           <Space size={2} wrap>
             {list.map(m => {
@@ -359,7 +426,7 @@ export const AdminFeatureCatalog: React.FC = () => {
             <div className="space-y-2">
               <div className="text-rose-600 font-bold">加载失败</div>
               <div className="text-xs text-slate-500 break-all">{loadError}</div>
-              <Button type="primary" onClick={loadCatalog} className="mt-2" icon={<ReloadOutlined />}>
+              <Button type="primary" onClick={() => loadCatalog()} className="mt-2" icon={<ReloadOutlined />}>
                 重试
               </Button>
             </div>
@@ -375,7 +442,7 @@ export const AdminFeatureCatalog: React.FC = () => {
           description={
             <div className="space-y-2">
               <div className="text-slate-600">特征字典为空</div>
-              <Button onClick={loadCatalog} className="mt-2" icon={<ReloadOutlined />}>
+              <Button onClick={() => loadCatalog()} className="mt-2" icon={<ReloadOutlined />}>
                 重新加载
               </Button>
             </div>
@@ -390,19 +457,36 @@ export const AdminFeatureCatalog: React.FC = () => {
   return (
     <div className="p-6 space-y-4">
       {/* 顶栏 */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <DatabaseOutlined className="text-xl text-blue-500" />
           <div>
             <Title level={4} className="!m-0">特征字典管理</Title>
             <Text type="secondary" className="text-xs">
               {catalog.categories.length} 个分类 · {totalFeatures} 个特征 · 来源: {catalog.source || 'file'}
+              {marketFilter !== 'ALL' ? ` · 当前市场: ${marketFilter}（${marketCounts[marketFilter] ?? 0}）` : ''}
             </Text>
           </div>
         </div>
-        <Space>
+        <Space wrap>
+          <Select
+            value={marketFilter}
+            onChange={handleMarketChange}
+            style={{ width: 130 }}
+            options={[
+              { value: 'ALL', label: `全部市场（${marketCounts.ALL ?? 0}）` },
+              ...MARKET_OPTIONS.map(m => ({ value: m.value, label: `${m.label}（${marketCounts[m.value] ?? 0}）` })),
+            ]}
+          />
+          <Input.Search
+            allowClear
+            placeholder="搜索 Key / 名称 / 描述 / 公式"
+            value={keyword}
+            onChange={e => setKeyword(e.target.value)}
+            style={{ width: 260 }}
+          />
           {dirty && <Tag color="warning">未保存</Tag>}
-          <Button icon={<ReloadOutlined />} onClick={loadCatalog} loading={loading}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => loadCatalog()} loading={loading}>刷新</Button>
           <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={saving} disabled={!dirty}>
             保存
           </Button>
@@ -471,12 +555,13 @@ export const AdminFeatureCatalog: React.FC = () => {
         >
           {selectedCat ? (
             <Table
-              dataSource={selectedCat.features}
+              dataSource={visibleFeatures}
               columns={featureColumns}
               rowKey="key"
               size="small"
               pagination={false}
               scroll={{ y: 'calc(var(--app-h) - 340px)', x: 'max-content' }}
+              locale={{ emptyText: keyword || marketFilter !== 'ALL' ? '当前筛选下无特征' : '暂无特征' }}
             />
           ) : (
             <Empty description="请从左侧选择一个分类" />
@@ -518,7 +603,10 @@ export const AdminFeatureCatalog: React.FC = () => {
             <Input placeholder="例如: mom_ret_1d" disabled={!!editingFeat} />
           </Form.Item>
           <Form.Item name="feature_name" label="特征名称" rules={[{ required: true, message: '请输入特征名称' }]}>
-            <Input placeholder="例如: 1日收益率动量" />
+            <Input placeholder="例如: 1日收益率动量" maxLength={30} showCount />
+          </Form.Item>
+          <Form.Item name="explanation" label="因子描述（用户可编辑）" extra="≤500字，留空则训练页回退显示字典解释">
+            <Input.TextArea placeholder="例如: 收盘价相对1日前收盘价的涨跌幅，衡量短期动量" rows={3} maxLength={500} showCount />
           </Form.Item>
           <Form.Item name="formula" label="公式">
             <Input placeholder="例如: (C_t/C_{t-1})-1" />
@@ -526,7 +614,7 @@ export const AdminFeatureCatalog: React.FC = () => {
           <Form.Item name="source_table_fields" label="数据来源">
             <Input placeholder="例如: stock_daily.ClosePrice" />
           </Form.Item>
-          <Form.Item name="markets" label="适用市场" initialValue={MARKET_OPTIONS.map(m => m.value)}>
+          <Form.Item name="markets" label="适用市场" initialValue={ALL_MARKETS}>
             <Checkbox.Group options={MARKET_OPTIONS.map(m => ({ label: m.label, value: m.value }))} />
           </Form.Item>
         </Form>

@@ -198,8 +198,10 @@ class AdminService {
         return resp.data;
     }
 
-    async getModelFeatureCatalog(): Promise<AdminModelFeatureCatalog> {
-        const resp = await this.axiosInstance.get<AdminModelFeatureCatalog>('/admin/models/feature-catalog');
+    async getModelFeatureCatalog(market?: string): Promise<AdminModelFeatureCatalog> {
+        const resp = await this.axiosInstance.get<AdminModelFeatureCatalog>('/admin/models/feature-catalog', {
+            params: market ? { market } : {},
+        });
         return resp.data;
     }
 

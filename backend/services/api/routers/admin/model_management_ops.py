@@ -241,7 +241,8 @@ async def update_feature_catalog(
     if not isinstance(categories, list):
         raise HTTPException(status_code=400, detail="categories must be a list")
 
-    # 计算总特征数
+    valid_markets = {"CN", "HK", "US", "CRYPTO", "FUTURES"}
+    # 计算总特征数 + 归一化 explanation/markets
     total_features = 0
     for cat in categories:
         features = cat.get("features", [])
@@ -250,6 +251,23 @@ async def update_feature_catalog(
                 status_code=400,
                 detail=f"Category '{cat.get('id')}' features must be a list",
             )
+        for feat in features:
+            if not isinstance(feat, dict):
+                continue
+            expl = str(feat.get("explanation") or feat.get("detail") or "")
+            if len(expl) > 500:
+                raise HTTPException(status_code=400, detail=f"Feature '{feat.get('key')}' explanation 超过500字")
+            feat["explanation"] = expl
+            markets = feat.get("markets")
+            if isinstance(markets, list):
+                cleaned = [str(m).upper() for m in markets if str(m).strip()]
+                unknown = [m for m in cleaned if m not in valid_markets]
+                if unknown:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Feature '{feat.get('key')}' 含非法市场: {','.join(unknown)}",
+                    )
+                feat["markets"] = cleaned
         cat["feature_count"] = len(features)
         total_features += len(features)
     catalog["feature_count"] = total_features

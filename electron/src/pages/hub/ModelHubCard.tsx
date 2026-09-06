@@ -71,8 +71,14 @@ export const ModelHubCard: React.FC<ModelHubCardProps> = ({
     );
   };
 
+  const fmtNum = (v: unknown, digits = 2) =>
+    typeof v === 'number' && Number.isFinite(v) ? (v as number).toFixed(digits) : '—';
+  const fmtPct = (v: unknown, digits = 1) =>
+    typeof v === 'number' && Number.isFinite(v) ? `${((v as number) * 100).toFixed(digits)}%` : '—';
+
   const formattedSize = (bytes?: number) => {
-    if (!bytes || bytes <= 0) return '—';
+    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '—';
+    if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
@@ -93,25 +99,54 @@ export const ModelHubCard: React.FC<ModelHubCardProps> = ({
     }
   };
 
+  const getMarketLabel = (m: string) => {
+    switch ((m || '').toUpperCase()) {
+      case 'CN': return 'A股';
+      case 'HK': return '港股';
+      case 'US': return '美股';
+      case 'CRYPTO': return '加密';
+      case 'FUTURES': return '期货';
+      case 'CUSTOM': return '自定义';
+      default: return m || 'CN';
+    }
+  };
+  const getMarketColor: Record<string, string> = {
+    CN: 'blue', HK: 'volcano', US: 'purple', CRYPTO: 'magenta', FUTURES: 'gold', CUSTOM: 'default',
+  };
+
   return (
     <div className="group relative rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm hover:shadow-md hover:border-blue-400/80 transition-all duration-200 flex flex-col justify-between">
       {/* 顶部标题与创作者 */}
       <div>
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 mb-1">
+            <div className="flex flex-wrap items-center gap-1 mb-1.5">
+              <Tag
+                color={getMarketColor[(model.market || 'CN').toUpperCase()] || 'blue'}
+                className="!text-[10px] !px-1.5 !py-0 !rounded-md font-bold shrink-0"
+              >
+                {getMarketLabel(model.market)}
+              </Tag>
               <Tag color={getAlgoColor(model.algorithm)} className="!text-[10px] !px-1.5 !py-0 !rounded-md font-bold shrink-0">
-                {model.algorithm}
+                {(model.algorithm || '').toLowerCase()}
+              </Tag>
+              <Tag color="default" className="!text-[10px] !px-1.5 !py-0 !rounded-md shrink-0 font-mono">
+                {model.target_horizon || 'T+5'}
               </Tag>
               <Tag color="default" className="!text-[10px] !px-1.5 !py-0 !rounded-md shrink-0">
-                {model.target_horizon || 'T+5'}
+                {model.target_mode || '—'}
               </Tag>
               {model.is_verified && (
                 <Tooltip title="官方已验真策略">
-                  <span className="flex items-center gap-0.5 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.2 rounded font-semibold shrink-0">
+                  <span className="flex items-center gap-0.5 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full font-semibold shrink-0 border border-blue-100">
                     <ShieldCheck size={11} /> 验真
                   </span>
                 </Tooltip>
+              )}
+              {model.factors_summary && (
+                <span className="text-[10px] text-slate-400 font-medium flex items-center gap-0.5">
+                  <Layers size={10} /> {Array.isArray(model.factors_summary) ? model.factors_summary.length : (model.factors_summary as any)?.count ?? (model.factors_summary as any)?.items?.length ?? '—'} 因子
+                </span>
               )}
             </div>
             <h4
@@ -137,34 +172,42 @@ export const ModelHubCard: React.FC<ModelHubCardProps> = ({
           {model.description || '创作者暂未填写详细描述。'}
         </p>
 
-        {/* 核心指标 4 宫格 */}
+        {/* 核心指标 4 宫格（0 值正常展示，仅 null/undefined 显示 —） */}
         <div className="grid grid-cols-2 gap-2 bg-slate-50/80 rounded-xl p-2.5 mb-3 border border-slate-100">
           <div>
             <div className="text-[10px] text-slate-400 font-semibold">夏普比率 (Sharpe)</div>
-            <div className="text-sm font-black text-slate-800">
-              {model.sharpe_ratio ? model.sharpe_ratio.toFixed(2) : '—'}
+            <div className={clsx("text-sm font-black", typeof model.sharpe_ratio === 'number' && model.sharpe_ratio < 0 && "text-emerald-600")}>
+              {fmtNum(model.sharpe_ratio, 2)}
             </div>
           </div>
           <div>
             <div className="text-[10px] text-slate-400 font-semibold">测试集 IC / Rank IC</div>
             <div className="text-sm font-black text-slate-800">
-              {model.test_ic ? model.test_ic.toFixed(3) : '—'} / {model.rank_ic ? model.rank_ic.toFixed(3) : '—'}
+              {fmtNum(model.test_ic, 3)} / {fmtNum(model.rank_ic, 3)}
             </div>
           </div>
           <div>
             <div className="text-[10px] text-slate-400 font-semibold">年化收益率</div>
             <div className={clsx(
               "text-xs font-black",
-              model.annual_return > 0 ? "text-red-600" : model.annual_return < 0 ? "text-emerald-600" : "text-slate-700"
+              typeof model.annual_return === 'number' && model.annual_return > 0 ? "text-red-600" : typeof model.annual_return === 'number' && model.annual_return < 0 ? "text-emerald-600" : "text-slate-700"
             )}>
-              {model.annual_return ? `${(model.annual_return * 100).toFixed(1)}%` : '—'}
+              {fmtPct(model.annual_return, 1)}
             </div>
           </div>
           <div>
             <div className="text-[10px] text-slate-400 font-semibold">最大回撤</div>
             <div className="text-xs font-black text-slate-700">
-              {model.max_drawdown ? `${(model.max_drawdown * 100).toFixed(1)}%` : '—'}
+              {fmtPct(model.max_drawdown, 1)}
             </div>
+          </div>
+          <div>
+            <div className="text-[10px] text-slate-400 font-semibold">卡玛比率 (Calmar)</div>
+            <div className="text-xs font-black text-slate-800">{fmtNum(model.calmar_ratio, 2)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] text-slate-400 font-semibold">PSI 稳定性</div>
+            <div className="text-xs font-black text-slate-800">{fmtNum(model.psi, 3)}</div>
           </div>
         </div>
 
@@ -172,7 +215,7 @@ export const ModelHubCard: React.FC<ModelHubCardProps> = ({
         <div className="mb-3">
           <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold mb-1">
             <span>净值回测走势</span>
-            {model.calmar_ratio ? <span>Calmar: {model.calmar_ratio.toFixed(2)}</span> : null}
+            {typeof model.calmar_ratio === 'number' && Number.isFinite(model.calmar_ratio) ? <span>Calmar: {model.calmar_ratio.toFixed(2)}</span> : null}
           </div>
           {renderSparkline(model.equity_curve)}
         </div>

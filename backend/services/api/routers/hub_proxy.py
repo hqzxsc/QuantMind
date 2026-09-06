@@ -177,8 +177,46 @@ def _normalize_target_mode(raw: str) -> str:
     return "classification"
 
 
-def _build_import_model_id(*, hub_model_id: str, market: str) -> str:
-    """为导入模型生成本地 model_id（hub 来源、避免与训练模型冲突）。"""
+def _slugify_hub_name(raw: str, max_len: int = 32) -> str:
+    """把广场公开名转成可读 slug（保留中英数，空格/-转下划线）。
+
+    中文的 str.isalnum() 为 True，会被保留；其余符号转下划线并压缩。
+    """
+    import re
+
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    s = s.replace("-", "_").replace(" ", "_")
+    s = "".join(c if c.isalnum() or c == "_" else "_" for c in s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s[:max_len].strip("_")
+
+
+def _build_import_model_id(
+    *, hub_model_id: str, market: str, hub_name: str = ""
+) -> str:
+    """为导入模型生成本地 model_id（可读 slug + hub 短尾，避免 UUID 乱名）。
+
+    格式：mdl_{market}_hub_{slug(广场公开名)}_{hub_id末6位}
+    如 mdl_cn_hub_L2_CatBoost_T5_3f9a2c；无公开名时回退旧规则保证幂等。
+    """
+    hub_id = hub_model_id.strip()
+    short = "".join(c for c in hub_id if c.isalnum())[-6:].lower() or "hub"
+    slug = _slugify_hub_name(hub_name)
+    if not slug:
+        # 回退旧规则（兼容存量幂等）：基于 hub_model_id 全量派生
+        return _build_legacy_import_model_id(hub_model_id=hub_id, market=market)
+    digest = hashlib.sha1(f"hub_{hub_id}".encode()).hexdigest()[:4]
+    market_prefix = str(market or "CN").upper().strip()[:8] or "CN"
+    base = f"mdl_{market_prefix.lower()}_hub_{slug}_{short}"
+    # 预留 digest 防同名不同包碰撞，总长控制在 128 内（qm_user_models.model_id）
+    model_id = f"{base}_{digest}"
+    return model_id[:128]
+
+
+def _build_legacy_import_model_id(*, hub_model_id: str, market: str) -> str:
+    """旧版导入 ID 规则（仅用于存量幂等兼容查询）。"""
     raw = f"hub_{hub_model_id.strip()}"
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
     # 复用统一命名规则：mdl_{market}_hub_{sanitized}_{digest}
@@ -203,6 +241,10 @@ async def publish_local_model(
     user_id = str(current_user.get("user_id") or current_user.get("sub") or "")
 
     api_key = _require_api_key()
+
+    # 发布名称即 COS 包内/广场展示的原始命名，必填以保证导入侧可读 slug
+    if not str(req.name or "").strip():
+        raise HTTPException(status_code=400, detail="发布名称不能为空")
 
     model = await model_registry_service.get_model(
         tenant_id=tenant_id, user_id=user_id, model_id=req.model_id
@@ -535,15 +577,59 @@ async def import_remote_model(
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"下载模型包失败: {exc}") from exc
 
-    # 4. 生成本地模型 ID 与目录
+    # 4. 生成本地模型 ID 与目录（可读 slug + hub 短尾，不再直接用 UUID）
     market_str = str(hub_detail.get("market") or "CN").upper().strip() or "CN"
+    hub_public_name = str(hub_detail.get("name") or "").strip()
+    preferred_name = (
+        str(req.local_name or "").strip() or hub_public_name or hub_model_id
+    )
     local_model_id = _build_import_model_id(
-        hub_model_id=hub_model_id, market=market_str
+        hub_model_id=hub_model_id, market=market_str, hub_name=preferred_name
     )
-    # 若用户已导入过同款（同 hub id + 同 tenant/user），直接返回已有记录（幂等）
-    existing = await model_registry_service.get_model(
-        tenant_id=tenant_id, user_id=user_id, model_id=local_model_id
-    )
+    # 幂等：优先按 source_run_id（= hub_model_id）查，其次兼容新/旧派生 ID。
+    # 改为按源查后，重命名导入不会重复落库。
+    existing = None
+    try:
+        async with get_session(read_only=True) as session:
+            row = (
+                (
+                    await session.execute(
+                        text(
+                            """
+                        SELECT model_id, storage_path, model_file, status
+                        FROM qm_user_models
+                        WHERE tenant_id = :tid AND user_id = :uid
+                          AND source_run_id = :hub_id
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """
+                        ),
+                        {"tid": tenant_id, "uid": user_id, "hub_id": hub_model_id},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if row is not None:
+                existing = {
+                    "model_id": str(row.get("model_id") or ""),
+                    "storage_path": str(row.get("storage_path") or ""),
+                    "model_file": str(row.get("model_file") or ""),
+                    "status": str(row.get("status") or ""),
+                }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("幂等 source_run_id 查询跳过 %s: %s", hub_model_id, exc)
+    if existing is None:
+        legacy_id = _build_legacy_import_model_id(
+            hub_model_id=hub_model_id, market=market_str
+        )
+        for _candidate in (local_model_id, legacy_id):
+            _m = await model_registry_service.get_model(
+                tenant_id=tenant_id, user_id=user_id, model_id=_candidate
+            )
+            if _m:
+                existing = _m
+                break
     if existing and str(existing.get("status") or "") in (
         "ready",
         "active",
@@ -551,7 +637,7 @@ async def import_remote_model(
     ):
         return {
             "success": True,
-            "model_id": local_model_id,
+            "model_id": existing.get("model_id") or local_model_id,
             "storage_path": existing.get("storage_path") or "",
             "model_file": existing.get("model_file") or "",
             "message": "模型已存在，直接返回已有记录",
@@ -592,12 +678,21 @@ async def import_remote_model(
         except Exception:
             metadata = {}
 
+    # 展示名优先级：用户重命名 > 广场公开名（COS 原始命名）> 包内自带名 > hub_id
+    package_display = str(
+        metadata.get("display_name") or metadata.get("model_name") or ""
+    ).strip()
+    resolved_display = (
+        str(req.local_name or "").strip()
+        or hub_public_name
+        or package_display
+        or hub_model_id
+    )
     # 若包内无 metadata.json，用广场详情合成一份基础 metadata
     if not metadata:
-        hub_name = str(hub_detail.get("name") or hub_model_id)
         metadata = {
-            "display_name": str(req.local_name or hub_name).strip() or hub_model_id,
-            "model_name": str(req.local_name or hub_name).strip() or hub_model_id,
+            "display_name": resolved_display,
+            "model_name": resolved_display,
             "model_type": str(hub_detail.get("algorithm") or "unknown"),
             "framework": str(hub_detail.get("algorithm") or "unknown"),
             "market": market_str,
@@ -614,12 +709,15 @@ async def import_remote_model(
         # 补齐导入来源标识与市场信息
         if "market" not in metadata or not str(metadata.get("market") or "").strip():
             metadata["market"] = market_str
-        metadata.setdefault("imported_from_hub", True)
-        metadata.setdefault("hub_model_id", hub_model_id)
-        metadata.setdefault("hub_author", hub_detail.get("author_username") or "")
-        # display_name 允许用户重命名
-        if req.local_name and str(req.local_name).strip():
-            metadata["display_name"] = str(req.local_name).strip()
+        metadata["imported_from_hub"] = True
+        metadata["hub_model_id"] = hub_model_id
+        metadata["hub_author"] = hub_detail.get("author_username") or ""
+        metadata["hub_name"] = hub_public_name
+        if package_display and package_display != resolved_display:
+            metadata.setdefault("origin_display_name", package_display)
+        # 展示名统一为 COS/广场原始命名（用户重命名优先）
+        metadata["display_name"] = resolved_display
+        metadata["model_name"] = resolved_display
         # 确保 feature_count
         if metadata.get("feature_count") is None:
             feats = metadata.get("feature_columns") or metadata.get("features") or []
@@ -751,6 +849,7 @@ async def import_remote_model(
     return {
         "success": True,
         "model_id": local_model_id,
+        "display_name": resolved_display,
         "storage_path": str(model_dir.resolve()),
         "model_file": model_file,
         "market": market_str,

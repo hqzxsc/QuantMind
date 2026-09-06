@@ -218,7 +218,7 @@ class ModelHubService {
   async importRemoteModel(
     hubModelId: string,
     localName?: string,
-  ): Promise<{ success: boolean; model_id: string; storage_path: string; model_file: string; already_exists?: boolean }> {
+  ): Promise<{ success: boolean; model_id: string; display_name?: string; storage_path: string; model_file: string; already_exists?: boolean }> {
     return this.gatewayWrite('post', '/hub/import-remote', {
       hub_model_id: hubModelId,
       ...(localName ? { local_name: localName } : {}),

@@ -3,7 +3,7 @@ import {
   Award, BarChart3, Clock3, Compass, Download, Filter, RefreshCw,
   Search, Sparkles, Target, ArrowLeft
 } from 'lucide-react';
-import { Input, Button, Select, Tag, Spin, Empty, Pagination, message } from 'antd';
+import { Input, Button, Select, Tag, Spin, Empty, Pagination, Modal, message } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { modelHubService, HubModelItem } from '../services/modelHubService';
@@ -33,6 +33,9 @@ export const ModelHubPage: React.FC = () => {
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [userModels, setUserModels] = useState<UserModelRecord[]>([]);
   const [importingId, setImportingId] = useState<string | null>(null);
+  // 导入命名确认框：默认填广场公开名（COS 原始命名），允许用户改名
+  const [importTarget, setImportTarget] = useState<HubModelItem | null>(null);
+  const [importName, setImportName] = useState('');
 
   // 加载广场模型列表
   const fetchHubModels = useCallback(async () => {
@@ -78,20 +81,28 @@ export const ModelHubPage: React.FC = () => {
   }, [loadLocalUserModels]);
 
   // 后端一键导入：下载 COS 包 → 解压 → 注册为本地模型，可直接在“我的模型”中推理
-  const handleImportModel = async (model: HubModelItem) => {
+  // 命名优先级：弹窗输入名 > 广场公开名 > 包内自带名（后端最终裁决）
+  const openImportModal = (model: HubModelItem) => {
+    setImportTarget(model);
+    setImportName(model.name || '');
+  };
+
+  const doImportModel = async (model: HubModelItem, localName?: string) => {
     try {
       setImportingId(model.id);
-      message.loading({ content: `正在导入 "${model.name}" 到本地模型库...`, key: 'hub_import' });
+      const showName = (localName || '').trim() || model.name;
+      message.loading({ content: `正在导入 "${showName}" 到本地模型库...`, key: 'hub_import' });
 
-      const result = await modelHubService.importRemoteModel(model.id);
+      const result = await modelHubService.importRemoteModel(model.id, (localName || '').trim() || undefined);
       if (!result?.model_id) {
         throw new Error('导入返回缺少 model_id');
       }
+      const displayName = (result as any)?.display_name || showName;
 
       message.success({
         content: result.already_exists
-          ? `模型 "${model.name}" 已存在于本地（${result.model_id}）`
-          : `已导入为本地模型 ${result.model_id}，可在“模型管理”中查看与推理`,
+          ? `模型 "${displayName}" 已存在于本地（${result.model_id}）`
+          : `已导入为本地模型 ${displayName}（${result.model_id}），可在“模型管理”中查看与推理`,
         key: 'hub_import',
         duration: 5,
       });
@@ -314,7 +325,7 @@ export const ModelHubPage: React.FC = () => {
                     setSelectedModelForDetail(m);
                     setShowDetailDrawer(true);
                   }}
-                  onImport={handleImportModel}
+                  onImport={openImportModal}
                   onLike={handleLike}
                   importing={importingId === model.id}
                 />
@@ -349,9 +360,40 @@ export const ModelHubPage: React.FC = () => {
           setShowDetailDrawer(false);
           setSelectedModelForDetail(null);
         }}
-        onImport={handleImportModel}
+        onImport={openImportModal}
         importing={importingId === selectedModelForDetail?.id}
       />
+
+      {/* ═══ 导入命名确认框 ═══ */}
+      <Modal
+        title={<span className="font-black text-slate-800">导入模型到本地</span>}
+        open={!!importTarget}
+        onCancel={() => setImportTarget(null)}
+        okText="确认导入"
+        cancelText="取消"
+        confirmLoading={!!importTarget && importingId === importTarget.id}
+        onOk={() => {
+          if (importTarget) {
+            const t = importTarget;
+            setImportTarget(null);
+            void doImportModel(t, importName);
+          }
+        }}
+      >
+        <p className="text-xs text-slate-500 mb-2">
+          广场公开名：<span className="font-bold text-slate-700">{importTarget?.name}</span>
+        </p>
+        <Input
+          value={importName}
+          onChange={(e) => setImportName(e.target.value)}
+          placeholder="本地展示名（默认使用广场公开名）"
+          maxLength={64}
+          className="rounded-xl"
+        />
+        <p className="text-[11px] text-slate-400 mt-2 !mb-0">
+          留空则直接使用广场公开名；本地 model_id 将自动生成可读 slug。
+        </p>
+      </Modal>
 
       {/* ═══ 发布模型弹窗 ═══ */}
       <PublishModelModal

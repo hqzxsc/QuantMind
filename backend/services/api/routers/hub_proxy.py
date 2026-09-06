@@ -257,6 +257,92 @@ async def publish_local_model(
             psi_val = float(raw_psi)
     extra_metrics: Any = metrics_json if isinstance(metrics_json, dict) else {}
 
+    # 回测指标回填：训练阶段的 metrics 往往只有 IC，夏普/年化/回撤/Calmar/净值曲线需取最新一次已完成回测
+    # 若本模型无回测，则保留训练指标；若有则用回测覆盖（更贴近用户在“回测”页看到的收益）
+    backtest_equity: Any | None = None
+    try:
+        async with get_session(read_only=True) as session:
+            bt_row = (
+                (
+                    await session.execute(
+                        text(
+                            """
+                        SELECT result_json, result_file_path
+                        FROM qlib_backtest_runs
+                        WHERE user_id = :uid AND tenant_id = :tid
+                          AND config_json->>'model_id' = :mid
+                          AND status = 'completed'
+                        ORDER BY completed_at DESC NULLS LAST, created_at DESC
+                        LIMIT 1
+                        """
+                        ),
+                        {"uid": user_id, "tid": tenant_id, "mid": req.model_id},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if bt_row:
+                bt_summary = bt_row.get("result_json") or {}
+                if isinstance(bt_summary, str):
+                    try:
+                        bt_summary = json.loads(bt_summary)
+                    except Exception:
+                        bt_summary = {}
+                if isinstance(bt_summary, dict):
+                    # 训练指标若为 0/缺失则用回测覆盖，显著提升卡片可读性
+                    if (
+                        isinstance(bt_summary.get("sharpe_ratio"), (int, float))
+                        and not req.sharpe_ratio
+                    ):
+                        req.sharpe_ratio = float(bt_summary["sharpe_ratio"])
+                    if (
+                        isinstance(bt_summary.get("annual_return"), (int, float))
+                        and not req.annual_return
+                    ):
+                        req.annual_return = float(bt_summary["annual_return"])
+                    if (
+                        isinstance(bt_summary.get("max_drawdown"), (int, float))
+                        and not req.max_drawdown
+                    ):
+                        # 库中 max_drawdown 为负（或正），统一取绝对值
+                        req.max_drawdown = abs(float(bt_summary["max_drawdown"]))
+                    if (
+                        isinstance(bt_summary.get("calmar_ratio"), (int, float))
+                        and not req.calmar_ratio
+                    ):
+                        req.calmar_ratio = float(bt_summary["calmar_ratio"])
+                    elif isinstance(
+                        bt_summary.get("annual_return"), (int, float)
+                    ) and isinstance(bt_summary.get("max_drawdown"), (int, float)):
+                        # 无 calmar 时由年化/回撤推导
+                        _dd = abs(float(bt_summary["max_drawdown"])) or 1e-9
+                        _calc = float(bt_summary["annual_return"]) / _dd if _dd else 0
+                        if not req.calmar_ratio and abs(_calc) < 1e6:
+                            req.calmar_ratio = float(_calc)
+                # 净值曲线在本地大字段文件中
+                _bt_path = bt_row.get("result_file_path")
+                if _bt_path:
+                    try:
+                        p = Path(str(_bt_path))
+                        if p.is_file():
+                            _payload = json.loads(p.read_text(encoding="utf-8"))
+                            if isinstance(_payload, dict):
+                                _ec = _payload.get("equity_curve")
+                                if isinstance(_ec, list) and len(_ec) > 1:
+                                    backtest_equity = _ec
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("读取回测净值曲线失败 %s: %s", req.model_id, exc)
+                # summary 中也可能直接含小份 equity_curve
+                if backtest_equity is None and isinstance(bt_summary, dict):
+                    _ec2 = bt_summary.get("equity_curve")
+                    if isinstance(_ec2, list) and len(_ec2) > 1:
+                        backtest_equity = _ec2
+                if backtest_equity is not None:
+                    equity_curve = backtest_equity
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("回测回填跳过 %s: %s", req.model_id, exc)
+
     hub_headers = {"X-API-Key": api_key}
     timeout = httpx.Timeout(connect=5.0, read=120.0, write=180.0, pool=10.0)
 

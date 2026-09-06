@@ -75,8 +75,28 @@ def _read_runtime_toggle() -> bool | None:
         return None
 
 
+def is_model_installed() -> bool:
+    """模型是否已离线安装（目录存在且含权重）。未安装时直接关闭，不做后台扫描。"""
+    try:
+        from pathlib import Path
+
+        p = Path(DEFAULT_MODEL)
+        if not p.is_dir():
+            return False
+        if not (p / "config.json").is_file():
+            return False
+        for name in ("model.safetensors", "pytorch_model.bin", "model.bin", "model.onnx"):
+            if (p / name).is_file():
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def is_finbert_enabled() -> bool:
-    """当前是否启用 FinBERT（含运行时文件开关，优先于环境变量）。"""
+    """当前是否启用 FinBERT（含运行时文件开关，优先于环境变量）。未安装时一律视为关闭。"""
+    if not is_model_installed():
+        return False
     if _RUNTIME_OVERRIDE is not None:
         return _RUNTIME_OVERRIDE
     file_val = _read_runtime_toggle()
@@ -86,8 +106,11 @@ def is_finbert_enabled() -> bool:
 
 
 def set_finbert_enabled(enabled: bool) -> bool:
-    """设置运行时开关并持久化到文件，即时生效，无需重启。"""
+    """设置运行时开关并持久化到文件，即时生效，无需重启。未安装时拒绝开启。"""
     global _RUNTIME_OVERRIDE, _RUNTIME_MTIME
+    if enabled and not is_model_installed():
+        logger.warning("FinBERT 模型未安装（%s 缺失），拒绝开启", DEFAULT_MODEL)
+        return False
     _RUNTIME_OVERRIDE = bool(enabled)
     try:
         from pathlib import Path
@@ -116,6 +139,7 @@ def get_finbert_status() -> dict:
         "env_enabled": USE_FINBERT,
         "device": DEVICE,
         "model": DEFAULT_MODEL,
+        "installed": is_model_installed(),
         "model_ready": _model_ready,
         "model_failed": _model_failed,
         "override": _RUNTIME_OVERRIDE,

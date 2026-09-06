@@ -29,9 +29,17 @@ async def finbert_status():
 
 @router.post("/toggle")
 async def finbert_toggle(req: ToggleRequest):
-    """切换 FinBERT 开关，即时生效，无需重启。"""
+    """切换 FinBERT 开关，即时生效，无需重启。未安装时拒绝开启。"""
+    from fastapi import HTTPException
+
+    # 未安装时直接拒绝开启，避免无效切换
+    st_before = get_finbert_status()
+    if req.enabled and not st_before.get("installed"):
+        raise HTTPException(status_code=400, detail=f"FinBERT 模型未安装（{st_before.get('model')} 缺失），无法开启。请先执行 backend/scripts/download_finbert.py 离线下载。")
     ok = set_finbert_enabled(req.enabled)
     st = get_finbert_status()
+    if req.enabled and not ok:
+        raise HTTPException(status_code=400, detail="FinBERT 开启失败（模型未安装或持久化失败）")
     # 记录系统事件便于审计
     try:
         record_system_event(

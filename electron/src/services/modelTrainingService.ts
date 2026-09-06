@@ -1036,17 +1036,6 @@ class ModelTrainingService {
 
   // ── 批量多日推理 ──
 
-  async runInferenceBacktest(params: {
-    model_id: string;
-    start_date: string;
-    end_date: string;
-    signal_mode: 'realtime' | 'stored';
-    strategy: Record<string, unknown>;
-  }): Promise<Record<string, any>> {
-    const resp = await this.client.post('/admin/models/inference-backtest', params, { timeout: 600000 });
-    return resp.data;
-  }
-
   async submitBatchInference(params: BatchInferenceRequest): Promise<BatchInferenceRecord> {
     const resp = await this.client.post<BatchInferenceRecord>('/models/inference/batch', params);
     return resp.data;

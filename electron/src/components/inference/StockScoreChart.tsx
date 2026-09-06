@@ -12,7 +12,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import * as echarts from 'echarts';
 import ReactECharts from 'echarts-for-react';
-import { Empty, Spin, Tag, Typography, Table, Button, InputNumber, Modal, Slider, Select, Input, Space, Switch } from 'antd';
+import { Empty, Spin, Tag, Typography, Table, Button, InputNumber, Modal, Select, Input, Space, Switch } from 'antd';
 import clsx from 'clsx';
 import axios from 'axios';
 import { modelTrainingService, StockScoreHistoryItem } from '../../services/modelTrainingService';
@@ -327,37 +327,6 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
     return { total: scored.length, staticWarnings };
   }, [visibleScores, stockInfo]);
 
-  /* ---- 收益计算 ---- */
-  // 会计口径：买入记成本，卖出按平均成本实现盈亏，剩余持仓按现价计浮动盈亏。
-  // 总盈亏 = 已实现 + 浮动；总收益% = 总盈亏 / 累计买入投入。
-  const stats = useMemo(() => {
-    let realizedPnl = 0;
-    let cost = 0;
-    let shares = 0;
-    const ordered = [...trades].sort((a, b) => a.date.localeCompare(b.date));
-    for (const t of ordered) {
-      if (t.side === 'buy') {
-        cost += t.price * t.shares;
-        shares += t.shares;
-      } else if (shares > 0) {
-        const avgCost = cost / shares;
-        realizedPnl += (t.price - avgCost) * t.shares;
-        cost -= avgCost * t.shares;
-        shares -= t.shares;
-      }
-    }
-    // 现价：回放时用当前可见的最后收盘价，非回放用最后K线收盘价
-    const lastVisible = visibleKline[visibleKline.length - 1] || klineItems[klineItems.length - 1];
-    const curPrice = lastVisible?.close ?? 0;
-    // 浮动盈亏 = 剩余持仓市值 - 剩余成本（不能把市值当盈利）
-    const holdingValue = curPrice * shares;
-    const unrealizedPnl = holdingValue - cost;
-    const totalInvested = ordered.filter(t => t.side === 'buy').reduce((s, t) => s + t.price * t.shares, 0);
-    const pnl = realizedPnl + unrealizedPnl;
-    const pnlPct = totalInvested > 0 ? (pnl / totalInvested) * 100 : 0;
-    return { realizedPnl, unrealizedPnl, holdingValue, curPrice, remainingShares: shares, pnl, pnlPct, totalInvested };
-  }, [trades, klineItems, visibleKline]);
-
   /* ---- 交易操作 ---- */
   const doBuy = () => {
     if (!tradeModal) return;
@@ -481,7 +450,8 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
       });
     }
 
-    // 分数轴范围：按实际分数动态扩展，避免融合模型高分(如 2.7)被固定 [-1,1] 截断
+    // 分数轴范围：始终按实际分数动态收紧（留 15% 边距），
+    // 让分数波动占满纵向空间；无数据时回退到固定范围
     const allScores = visibleScores
       .map(s => Number(s.fusion_score))
       .filter(v => !Number.isNaN(v) && v !== null && v !== undefined);
@@ -490,11 +460,14 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
     if (allScores.length > 0) {
       const dataMin = Math.min(...allScores);
       const dataMax = Math.max(...allScores);
-      // 融合模型/高分模型：按实际分布扩展（留 10% 边距）
-      if (wideScale || dataMax > 1.0 || dataMin < -1.0) {
-        const pad = Math.max((dataMax - dataMin) * 0.1, 0.05);
-        scoreMin = Math.floor((dataMin - pad) * 2) / 2;
-        scoreMax = Math.ceil((dataMax + pad) * 2) / 2;
+      const pad = Math.max((dataMax - dataMin) * 0.15, 0.005);
+      scoreMin = Math.floor((dataMin - pad) * 100) / 100;
+      scoreMax = Math.ceil((dataMax + pad) * 100) / 100;
+      if (scoreMax - scoreMin < 0.01) {
+        // 全相等兜底：以该值为中心展开
+        const c = (scoreMax + scoreMin) / 2;
+        scoreMin = Math.floor((c - 0.005) * 100) / 100;
+        scoreMax = Math.ceil((c + 0.005) * 100) / 100;
       }
     }
     return {
@@ -538,7 +511,16 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
           // 分数轴范围：按实际分数动态扩展（融合模型高分如 2.7 不被截断）
           min: scoreMin,
           max: scoreMax,
-          axisLabel: { fontSize: 9, color: '#94a3b8', formatter: (v: number) => v.toFixed(1) },
+          axisLabel: {
+            fontSize: 9, color: '#94a3b8',
+            // 轴收紧后刻度自适应小数位，避免 -0.0/0.0 这种无效刻度
+            formatter: (v: number) => {
+              const span = scoreMax - scoreMin;
+              if (span < 0.1) return v.toFixed(3);
+              if (span < 1) return v.toFixed(2);
+              return v.toFixed(1);
+            },
+          },
           splitLine: { show: false },
         },
         // 第三轴：上证指数（右外侧，青色），用于大盘趋势叠加
@@ -591,11 +573,11 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
                 ? [
                     { yAxis: 0.50, lineStyle: { color: '#f43f5e', type: 'dashed', width: 1.5 }, label: { formatter: '高分线 0.50', fontSize: 9, position: 'insideEndTop' } },
                     { yAxis: -0.50, lineStyle: { color: '#10b981', type: 'dashed', width: 1.5 }, label: { formatter: '低分线 -0.50', fontSize: 9, position: 'insideEndBottom' } },
-                  ]
+                  ].filter(l => l.yAxis >= scoreMin && l.yAxis <= scoreMax)
                 : [
                     { yAxis: 0.10, lineStyle: { color: '#10b981', type: 'dashed', width: 1.5 }, label: { formatter: '参考 0.10', fontSize: 9, position: 'insideEndTop' } },
                     { yAxis: -0.15, lineStyle: { color: '#f43f5e', type: 'dashed', width: 1.5 }, label: { formatter: '参考 -0.15', fontSize: 9, position: 'insideEndBottom' } },
-                  ],
+                  ].filter(l => l.yAxis >= scoreMin && l.yAxis <= scoreMax),
           },
         },
         {
@@ -647,35 +629,33 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
   // 打开回放时：点击逻辑绑定到 visibleKline 的索引
   const onEvents = useMemo(() => ({ click: onChartClick }), [clickableDates]);
 
-  const replayDate = clickableDates[Math.min(replayIdx, clickableDates.length - 1)]?.date || '';
-
   return (
     <div className="space-y-3">
       {/* 股票信息卡 */}
       <div className="rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3 grid grid-cols-2 sm:grid-cols-6 gap-3">
-        <div>
+        <div className="text-center">
           <Text className="block text-[11px] text-slate-400 font-black uppercase">股票</Text>
           <Text className="block text-xs font-black text-slate-800">{name || symbol}</Text>
         </div>
-        <div>
+        <div className="text-center">
           <Text className="block text-[11px] text-slate-400 font-black uppercase">板块</Text>
           <Text className="block text-xs font-black text-slate-700">{stockInfo?.board || '—'}</Text>
         </div>
-        <div>
+        <div className="text-center">
           <Text className="block text-[11px] text-slate-400 font-black uppercase">行业</Text>
           <Text className="block text-xs font-black text-slate-700">{stockInfo?.industry || '—'}</Text>
         </div>
-        <div>
+        <div className="text-center">
           <Text className="block text-[11px] text-slate-400 font-black uppercase">市值</Text>
           <Text className="block text-xs font-black text-slate-700">
             {stockInfo?.market_cap_tier ? `${stockInfo.market_cap_tier}${stockInfo.market_cap_yi ? ` ${stockInfo.market_cap_yi}亿` : ''}` : '—'}
           </Text>
         </div>
-        <div>
+        <div className="text-center">
           <Text className="block text-[11px] text-slate-400 font-black uppercase">当前排名</Text>
           <Text className="block text-xs font-black text-slate-700">#{stockInfo?.rank ?? '—'}</Text>
         </div>
-        <div>
+        <div className="text-center">
           <Text className="block text-[11px] text-slate-400 font-black uppercase">当前分数</Text>
           <Text className={clsx('block text-xs font-black', (stockInfo?.score ?? 0) >= 0 ? 'text-rose-600' : 'text-emerald-600')}>
             {stockInfo?.score?.toFixed(4) ?? '—'}
@@ -730,68 +710,6 @@ export const StockScoreChart: React.FC<Props> = ({ symbol, name, stockInfo, mark
             )}
           </div>
         )}
-      </div>
-
-      {/* 回放 + 收益工具条 */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 bg-white px-3 py-2">
-        <Button size="small" type={replayEnabled ? 'default' : 'primary'} onClick={() => {
-          if (replayEnabled) {
-            setReplayEnabled(false);
-          } else {
-            // 开启回放：从开始日期显示，推进到开始日期
-            setReplayIdx(startIdx);
-            setReplayEnabled(true);
-          }
-        }} className="rounded-lg text-xs font-bold h-7 px-3">
-          {replayEnabled ? '退出回放' : '开始回放'}
-        </Button>
-        {replayEnabled && klineItems.length > 0 && (
-          <>
-            {/* 开始日期选择 */}
-            <div className="flex items-center gap-1.5">
-              <Text className="text-[11px] text-slate-400 font-bold flex-shrink-0">开始日期</Text>
-              <input
-                type="date"
-                value={klineItems[Math.min(startIdx, klineItems.length - 1)]?.date || ''}
-                min={klineItems[0]?.date || ''}
-                max={klineItems[klineItems.length - 1]?.date || ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (!v) return;
-                  const idx = klineItems.findIndex(k => k.date === v);
-                  if (idx >= 0) { setStartIdx(idx); setReplayIdx(Math.max(idx, replayIdx)); }
-                }}
-                className="rounded-lg border border-slate-200 text-xs font-mono px-2 py-1 h-7"
-              />
-            </div>
-            {/* 推进控制 */}
-            <div className="flex items-center gap-1.5 flex-1 min-w-[220px]">
-              <Text className="text-[11px] text-slate-400 font-bold flex-shrink-0">当前</Text>
-              <Slider
-                min={Math.min(startIdx, klineItems.length - 1)}
-                max={klineItems.length - 1}
-                value={Math.min(replayIdx, klineItems.length - 1)}
-                onChange={(v) => setReplayIdx(v as number)}
-                className="flex-1"
-                tooltip={{ formatter: (v: any) => klineItems[v]?.date }}
-              />
-              <Text className="text-xs font-mono text-slate-600 flex-shrink-0 w-24">{replayDate}</Text>
-              <Button size="small" onClick={() => setReplayIdx(Math.min(replayIdx + 1, klineItems.length - 1))}
-                className="rounded-lg text-xs font-bold h-7 px-2.5 flex-shrink-0">下一步</Button>
-            </div>
-          </>
-        )}
-        <div className="flex items-center gap-3 text-xs font-mono text-slate-600 flex-shrink-0">
-          <span>持仓 <b className="text-slate-800">{stats.remainingShares}</b> 股</span>
-          {stats.remainingShares > 0 && (
-            <span>市值 <b className="text-slate-800">{stats.holdingValue.toFixed(2)}</b>（现价 {stats.curPrice.toFixed(2)}）</span>
-          )}
-          <span>已实现 <b className={clsx(stats.realizedPnl >= 0 ? 'text-rose-600' : 'text-emerald-600')}>{stats.realizedPnl >= 0 ? '+' : ''}{stats.realizedPnl.toFixed(2)}</b></span>
-          {stats.remainingShares > 0 && (
-            <span>浮动 <b className={clsx(stats.unrealizedPnl >= 0 ? 'text-rose-600' : 'text-emerald-600')}>{stats.unrealizedPnl >= 0 ? '+' : ''}{stats.unrealizedPnl.toFixed(2)}</b></span>
-          )}
-          <span>总收益 <b className={clsx(stats.pnl >= 0 ? 'text-rose-600' : 'text-emerald-600')}>{stats.pnl >= 0 ? '+' : ''}{stats.pnl.toFixed(2)} ({stats.pnlPct >= 0 ? '+' : ''}{stats.pnlPct.toFixed(2)}%)</b></span>
-        </div>
       </div>
 
       {/* K 线图 */}

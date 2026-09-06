@@ -1,15 +1,13 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
 import {
-  Button, Tag, Typography, Empty, Spin, Table, Collapse, Input, Tooltip, Select, Modal, DatePicker,
+  Button, Tag, Typography, Empty, Spin, Collapse, Tooltip, Select, Modal, DatePicker,
 } from 'antd';
 import { clsx } from 'clsx';
 import {
   ArrowLeft, ArrowRight, TrendingUp, Download, Search, CheckCircle2, XCircle,
 } from 'lucide-react';
 import type { InferenceRankingResult, InferenceRankingItem } from '../../services/modelTrainingService';
-import { ScoreDistributionPanel } from './ScoreDistributionPanel';
-import { StrategyDashboard } from './StrategyDashboard';
 import { StockScoreChart } from './StockScoreChart';
 import { splitInferenceLogs, exportRankingCsv } from './inferenceDetailUtils';
 
@@ -25,14 +23,54 @@ interface Props {
   onNavigateDate?: (inferenceDate: string) => void;
 }
 
+/** 4 指标卡 */
+const MetricCell: React.FC<{ label: string; value: string; valueClass?: string; sub?: string }> = ({
+  label, value, valueClass, sub,
+}) => (
+  <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3 text-center">
+    <div className="text-xs font-bold text-slate-500 mb-1">{label}</div>
+    <div className={clsx('font-mono font-black text-lg leading-none', valueClass || 'text-slate-800')}>{value}</div>
+    {sub && <div className="text-[11px] text-slate-400 mt-1">{sub}</div>}
+  </div>
+);
+
+/** 排名行：点击打开 K 线弹窗 */
+const RankRow: React.FC<{ item: InferenceRankingItem; onOpen: (item: InferenceRankingItem) => void }> = ({
+  item, onOpen,
+}) => {
+  const s = Number(item.score);
+  return (
+    <div
+      onClick={() => onOpen(item)}
+      className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-slate-50/70 border border-slate-100/60 hover:bg-blue-50/40 transition-colors cursor-pointer"
+    >
+      <span className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold shrink-0 bg-slate-200 text-slate-600">
+        {item.rank}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <Text className="text-xs font-bold text-slate-800 font-mono truncate">{item.code}</Text>
+          <Text className="text-xs text-slate-500 truncate">{item.name || ''}</Text>
+        </div>
+        {item.industry && (
+          <Text className="text-xs text-slate-400 truncate block">{item.industry}</Text>
+        )}
+      </div>
+      <div className="flex flex-col items-end shrink-0">
+        <Text className={clsx('text-sm font-mono font-bold', s >= 0 ? 'text-rose-600' : 'text-emerald-600')}>
+          {s >= 0 ? '+' : ''}{s.toFixed(4)}
+        </Text>
+        {item.signal === 'buy' ? (
+          <Text className="text-xs font-bold text-rose-500">↑</Text>
+        ) : item.signal === 'sell' ? (
+          <Text className="text-xs font-bold text-emerald-500">↓</Text>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
 export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading, onBack, onRetry, onNavigateDate }) => {
-  const [rankingSearch, setRankingSearch] = useState('');
-  const [boardFilter, setBoardFilter] = useState<string>('all');
-  const [industryFilter, setIndustryFilter] = useState<string>('all');
-  const [bucketFilter, setBucketFilter] = useState<string>('all');
-  const [trendFilter, setTrendFilter] = useState<string>('all');
-  const [capFilter, setCapFilter] = useState<string>('all');
-  const [exporting, setExporting] = useState(false);
   // 日期导航：从 runId（run_YYYYMMDD_xxx）解析当前推理日期
   const [datePickerValue, setDatePickerValue] = useState<dayjs.Dayjs | null>(null);
   const currentInferenceDate = useMemo(() => {
@@ -61,6 +99,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
     market_cap_yi?: number;
     negative_tag?: string;
   } | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const handleExport = () => {
     if (!result) return;
@@ -72,7 +111,38 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
     }
   };
 
-  // K线弹窗内导航：按当前筛选后的排名列表切换上一只/下一只股票
+  // 4 指标 + 左右双列：直接从排名明細计算，与列表展示永远一致
+  const distStats = useMemo(() => {
+    const rankings = result?.rankings ?? [];
+    let pos = 0;
+    let neg = 0;
+    let zero = 0;
+    let sum = 0;
+    let n = 0;
+    for (const r of rankings) {
+      const s = Number(r.score);
+      if (Number.isNaN(s)) continue;
+      n += 1;
+      sum += s;
+      if (s > 0) pos += 1;
+      else if (s < 0) neg += 1;
+      else zero += 1;
+    }
+    return { pos, neg, zero, mean: n > 0 ? sum / n : null as number | null, total: n };
+  }, [result]);
+
+  /** 左列：正分 Top100（分数从高到低） */
+  const positiveTop100 = useMemo(
+    () => (result?.rankings ?? []).filter(r => Number(r.score) > 0).slice(0, 100),
+    [result],
+  );
+  /** 右列：负分 100 只倒序（分数最低优先） */
+  const negativeBottom100 = useMemo(() => {
+    const negs = (result?.rankings ?? []).filter(r => Number(r.score) < 0);
+    return negs.slice(-100).reverse();
+  }, [result]);
+
+  // K线弹窗内导航：按全量排名列表切换上一只/下一只股票
   const openStockModal = (item: InferenceRankingItem) => {
     setStockModal({
       symbol: item.code,
@@ -87,21 +157,22 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
     });
   };
 
+  const allRankings = result?.rankings ?? [];
   const navPrevStock = () => {
     if (!stockModal) return;
-    const idx = filteredRankings.findIndex(r => r.code === stockModal.symbol);
+    const idx = allRankings.findIndex(r => r.code === stockModal.symbol);
     if (idx <= 0) return;
-    openStockModal(filteredRankings[idx - 1]);
+    openStockModal(allRankings[idx - 1]);
   };
 
   const navNextStock = () => {
     if (!stockModal) return;
-    const idx = filteredRankings.findIndex(r => r.code === stockModal.symbol);
-    if (idx < 0 || idx >= filteredRankings.length - 1) return;
-    openStockModal(filteredRankings[idx + 1]);
+    const idx = allRankings.findIndex(r => r.code === stockModal.symbol);
+    if (idx < 0 || idx >= allRankings.length - 1) return;
+    openStockModal(allRankings[idx + 1]);
   };
 
-  // 按代码/名称搜索后跳转（全市场，非筛选后）
+  // 按代码/名称搜索后跳转（全市场）
   const navSearchStock = (value: string) => {
     const kw = value.trim().toLowerCase();
     if (!kw) return;
@@ -110,97 +181,6 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
     );
     if (hit) openStockModal(hit);
   };
-
-  // 可用于筛选的行业列表（按出现次数降序）
-  const industryOptions = useMemo(() => {
-    if (!result) return [];
-    const counts = new Map<string, number>();
-    result.rankings.forEach(r => {
-      if (r.industry) counts.set(r.industry, (counts.get(r.industry) || 0) + 1);
-    });
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([industry, count]) => ({ value: industry, label: `${industry} (${count})` }));
-  }, [result]);
-
-  // 板块选项（5大板块）
-  const boardOptions = useMemo(() => {
-    if (!result) return [];
-    const counts = new Map<string, number>();
-    result.rankings.forEach(r => {
-      if (r.board) counts.set(r.board, (counts.get(r.board) || 0) + 1);
-    });
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([board, count]) => ({ value: board, label: `${board} (${count})` }));
-  }, [result]);
-
-  // 分数区间 + 负分标注选项（合并为一个下拉，分组显示）
-  const bucketOptions = useMemo(() => {
-    const groups: any[] = [];
-    if (result?.summary?.score_buckets?.length) {
-      groups.push({
-        label: '分数区间',
-        options: result.summary.score_buckets.map(b => ({ value: b.key, label: b.label })),
-      });
-    }
-    return groups;
-  }, [result]);
-
-  const trendOptions = [
-    { value: '先升后降', label: '先升后降' },
-    { value: '连续上升', label: '连续上升' },
-    { value: '连续下降', label: '连续下降' },
-    { value: '上升', label: '单日上升' },
-    { value: '下降', label: '单日下降' },
-    { value: '持平', label: '持平' },
-  ];
-
-  // 市值分档选项
-  const capOptions = [
-    { value: '微盘', label: '微盘 <30亿' },
-    { value: '小盘', label: '小盘 30-100亿' },
-    { value: '中盘', label: '中盘 100-300亿' },
-    { value: '大盘', label: '大盘 300-1000亿' },
-    { value: '超大盘', label: '超大盘 >1000亿' },
-  ];
-
-  // 综合筛选（融合模型分数为 [-1,1] 时，桶阈值来自后端 score_buckets 的自适应分位数）
-  const filteredRankings = useMemo(() => {
-    if (!result) return [];
-    // 从后端 score_buckets 提取每个桶的标签做区间解析，用于 wide-scale 时替代硬编码阈值
-    const wideScale = !!result.summary?.is_wide_scale || result.summary?.market_signal?.score_scale === 'wide';
-    return result.rankings.filter(r => {
-      if (boardFilter !== 'all' && r.board !== boardFilter) return false;
-      if (industryFilter !== 'all' && r.industry !== industryFilter) return false;
-      if (trendFilter !== 'all' && r.trend !== trendFilter) return false;
-      if (capFilter !== 'all' && r.market_cap_tier !== capFilter) return false;
-      if (bucketFilter !== 'all') {
-        const s = r.score;
-        if (wideScale) {
-          // 用后端返回的分位数桶阈值
-          const buckets = result.summary?.score_buckets || [];
-          const b = buckets.find(x => x.key === bucketFilter);
-          if (b) {
-            const label = String(b.label || '');
-            const m = label.match(/≥\s*(-?[\d.]+)|(-?[\d.]+)\s*[-~]\s*(-?[\d.]+)/);
-            if (m) {
-              if (m[1] !== undefined) return s >= parseFloat(m[1]);
-              if (m[2] !== undefined && m[3] !== undefined) return s >= parseFloat(m[2]) && s < parseFloat(m[3]);
-            }
-            return true;
-          }
-        }
-        if (bucketFilter === 'lt_010' && !(s < 0.10)) return false;
-        if (bucketFilter === 'gold' && !(s >= 0.10 && s < 0.12)) return false;
-        if (bucketFilter === 'opt_012_015' && !(s >= 0.12 && s < 0.15)) return false;
-        if (bucketFilter === 'warn_015_020' && !(s >= 0.15 && s < 0.20)) return false;
-        if (bucketFilter === 'gte_020' && !(s >= 0.20)) return false;
-      }
-      if (rankingSearch && !r.code.includes(rankingSearch) && !r.name.includes(rankingSearch)) return false;
-      return true;
-    });
-  }, [result, boardFilter, industryFilter, trendFilter, bucketFilter, capFilter, rankingSearch]);
 
   return (
     <div className="space-y-4">
@@ -273,46 +253,62 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
         </div>
       ) : result ? (
         <div className="space-y-3">
-          {/* 策略驾驶舱：BoardCard 自带卡片外壳，不再套 glass-panel 避免双层嵌套显乱 */}
-          {result.summary && <StrategyDashboard summary={result.summary} />}
-          {result.summary?.board_top1 && result.summary.board_top1.length > 0 && (
-            <div className="glass-panel rounded-3xl p-5 border border-slate-100/50">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Text className="text-sm font-black text-slate-800 uppercase tracking-tight leading-none">板块 Top1 统计</Text>
-                  <Text className="text-[11px] text-slate-400 font-medium">5大板块各自最高分取平均，反映市场广度</Text>
-                </div>
-                {result.summary.board_top1_avg !== undefined && result.summary.board_top1_avg !== null && (
-                  <div className="flex items-center gap-2">
-                    <Text className="text-xs text-slate-400 font-black uppercase tracking-wide">avg Top1</Text>
-                    <span className={clsx('font-black text-base font-mono rounded-lg px-2.5 py-1',
-                      result.summary.board_top1_avg >= 0.11 ? 'bg-rose-50 text-rose-600' : result.summary.board_top1_avg >= 0.09 ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500')}>
-                      {result.summary.board_top1_avg.toFixed(4)}
-                    </span>
-                    {result.summary.board_top1_avg >= 0.11
-                      ? <Tag color="red" className="m-0 rounded-full text-[11px] font-black">市场广度高</Tag>
-                      : result.summary.board_top1_avg >= 0.09
-                        ? <Tag color="orange" className="m-0 rounded-full text-[11px] font-black">市场广度中</Tag>
-                        : <Tag className="m-0 rounded-full border-0 bg-slate-100 text-slate-500 font-bold text-[11px]">市场广度低</Tag>}
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-                {result.summary.board_top1.map(b => (
-                  <div key={b.board} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <Text className="text-xs font-black text-slate-400 uppercase tracking-wide">{b.board}</Text>
-                      <Text className="text-[11px] font-mono text-slate-400 truncate max-w-[70px]">{b.top1_symbol}</Text>
-                    </div>
-                    <Text className={clsx('block font-black font-mono text-base', Number(b.top1_score) >= 0.11 ? 'text-rose-600' : 'text-slate-800')}>
-                      {Number(b.top1_score).toFixed(4)}
-                    </Text>
-                    <Text className="text-xs text-slate-500 truncate block mt-0.5">{b.top1_name || '—'}</Text>
-                  </div>
-                ))}
-              </div>
+          {/* 4 指标 */}
+          <div className="glass-panel rounded-3xl p-5 border border-slate-100/50">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <MetricCell label="正分标的" value={String(distStats.pos)} valueClass="text-rose-600" sub={`共 ${distStats.total} 只`} />
+              <MetricCell label="负分标的" value={String(distStats.neg)} valueClass="text-emerald-600" />
+              <MetricCell label="平分标的" value={String(distStats.zero)} />
+              <MetricCell
+                label="平均分"
+                value={distStats.mean === null ? '—' : distStats.mean.toFixed(4)}
+                valueClass={distStats.mean === null ? undefined : distStats.mean >= 0 ? 'text-rose-600' : 'text-emerald-600'}
+              />
             </div>
-          )}
+          </div>
+
+          {/* 双列：左正分 Top100 / 右负分 100 只倒序 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="glass-panel rounded-3xl p-5 border border-slate-100/50 flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between mb-3 shrink-0">
+                <Text className="text-xs font-bold text-slate-500">正分 Top100</Text>
+                <Tag className="m-0 border-0 text-xs font-bold px-2 rounded-md bg-rose-50 text-rose-600">
+                  {distStats.pos} 只 · 显示前 {positiveTop100.length}
+                </Tag>
+              </div>
+              {positiveTop100.length > 0 ? (
+                <div className="overflow-y-auto custom-scrollbar pr-1 overscroll-contain" style={{ maxHeight: 560 }}>
+                  <div className="flex flex-col gap-1">
+                    {positiveTop100.map((r) => (
+                      <RankRow key={r.code} item={r} onOpen={openStockModal} />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center py-10 text-xs text-slate-400">暂无正分标的</div>
+              )}
+            </div>
+            <div className="glass-panel rounded-3xl p-5 border border-slate-100/50 flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between mb-3 shrink-0">
+                <Text className="text-xs font-bold text-slate-500">负分 Bottom100 · 倒序</Text>
+                <Tag className="m-0 border-0 text-xs font-bold px-2 rounded-md bg-emerald-50 text-emerald-600">
+                  {distStats.neg} 只 · 分数最低优先
+                </Tag>
+              </div>
+              {negativeBottom100.length > 0 ? (
+                <div className="overflow-y-auto custom-scrollbar pr-1 overscroll-contain" style={{ maxHeight: 560 }}>
+                  <div className="flex flex-col gap-1">
+                    {negativeBottom100.map((r) => (
+                      <RankRow key={r.code} item={r} onOpen={openStockModal} />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center py-10 text-xs text-slate-400">暂无负分标的</div>
+              )}
+            </div>
+          </div>
+
           {result.summary && (
             <div className="glass-panel rounded-3xl p-5 border border-slate-100/50">
               <Collapse
@@ -505,192 +501,6 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
               />
             </div>
           )}
-          {result.summary?.score_distribution && (
-            <div className="glass-panel rounded-3xl p-5 border border-slate-100/50">
-              <ScoreDistributionPanel
-                dist={result.summary.score_distribution}
-                rankings={result.rankings}
-                activeBucket={bucketFilter}
-                onSelectBucket={(key) => setBucketFilter(key ?? 'all')}
-              />
-            </div>
-          )}
-          <div className="glass-panel rounded-3xl p-5 border border-slate-100/50 space-y-3">
-            {/* 单行筛选：分数(含负分标注) 放最前 */}
-            <div className="flex flex-wrap items-center gap-2">
-              <Select
-                value={bucketFilter}
-                onChange={setBucketFilter}
-                options={[{ value: 'all', label: '全部分数' }, ...bucketOptions]}
-                className="w-52"
-                size="small"
-                placeholder="筛选分数"
-              />
-              <Input
-                prefix={<Search size={13} className="text-slate-300" />}
-                placeholder="搜索股票代码或名称..."
-                value={rankingSearch}
-                onChange={e => setRankingSearch(e.target.value)}
-                allowClear
-                className="rounded-xl h-8 text-xs border-slate-200 w-44"
-              />
-              <Select
-                value={boardFilter}
-                onChange={setBoardFilter}
-                options={[{ value: 'all', label: '全部板块' }, ...boardOptions]}
-                className="w-36"
-                size="small"
-                placeholder="筛选板块"
-              />
-              <Select
-                value={industryFilter}
-                onChange={setIndustryFilter}
-                options={[{ value: 'all', label: '全部行业' }, ...industryOptions]}
-                className="w-44"
-                size="small"
-                showSearch
-                optionFilterProp="label"
-                placeholder="筛选行业"
-              />
-              <Select
-                value={capFilter}
-                onChange={setCapFilter}
-                options={[{ value: 'all', label: '全部市值' }, ...capOptions]}
-                className="w-40"
-                size="small"
-                placeholder="筛选市值"
-              />
-              <Select
-                value={trendFilter}
-                onChange={setTrendFilter}
-                options={[{ value: 'all', label: '全部趋势' }, ...trendOptions]}
-                className="w-44"
-                size="small"
-                placeholder="筛选趋势"
-              />
-              <Text className="text-xs text-slate-400 font-medium">筛选后 {filteredRankings.length} / {result.rankings.length} 支</Text>
-            </div>
-            <Table
-              size="small"
-              rowKey="rank"
-              pagination={{ pageSize: 20, showTotal: t => `共 ${t} 支` }}
-              dataSource={filteredRankings}
-              onRow={(record: any) => ({
-                onClick: () => openStockModal(record),
-                className: 'cursor-pointer',
-              })}
-              rowClassName={(_: any, idx: number) => clsx(idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30')}
-              columns={[
-                {
-                  title: '排名', dataIndex: 'rank', width: 56,
-                  render: (n: number) => (
-                    <span className={clsx('font-black text-xs', n <= 3 ? 'text-amber-500' : 'text-slate-500')}>
-                      {n <= 3 ? ['🥇', '🥈', '🥉'][n - 1] : n}
-                    </span>
-                  ),
-                },
-                {
-                  title: '股票', key: 'stock',
-                  render: (_: any, r: any) => {
-                    const hasName = r.name && r.name !== r.code;
-                    return (
-                      <div>
-                        <div className={clsx('text-xs font-black', hasName ? 'text-slate-800' : 'text-slate-400 italic')}>
-                          {hasName ? r.name : '名称未匹配'}
-                        </div>
-                        <div className="text-xs font-mono text-slate-400">{r.code}</div>
-                      </div>
-                    );
-                  },
-                },
-                {
-                  title: '板块', dataIndex: 'board', width: 76,
-                  render: (b: string) => {
-                    const map: Record<string, { color: string; label: string }> = {
-                      沪主板: { color: 'red', label: '沪主板' },
-                      深主板: { color: 'blue', label: '深主板' },
-                      中小板: { color: 'orange', label: '中小板' },
-                      创业板: { color: 'green', label: '创业板' },
-                      科创板: { color: 'purple', label: '科创板' },
-                      北交所: { color: 'cyan', label: '北交所' },
-                    };
-                    const c = map[b];
-                    if (!c) return <Text className="text-[11px] text-slate-300">—</Text>;
-                    return <Tag color={c.color} className="text-[11px] font-black m-0">{c.label}</Tag>;
-                  },
-                },
-                {
-                  title: '行业', dataIndex: 'industry', width: 96,
-                  render: (ind: string) => (
-                    ind
-                      ? <Tooltip title={ind}><Text className="text-xs text-slate-600 block truncate">{ind}</Text></Tooltip>
-                      : <Text className="text-[11px] text-slate-300">—</Text>
-                  ),
-                },
-                {
-                  title: '市值', dataIndex: 'market_cap_tier', width: 76,
-                  render: (tier: string, r: any) => {
-                    const tmap: Record<string, { cls: string }> = {
-                      微盘: { cls: 'text-rose-600 bg-rose-50 border-rose-100' },
-                      小盘: { cls: 'text-orange-600 bg-orange-50 border-orange-100' },
-                      中盘: { cls: 'text-amber-600 bg-amber-50 border-amber-100' },
-                      大盘: { cls: 'text-blue-600 bg-blue-50 border-blue-100' },
-                      超大盘: { cls: 'text-indigo-600 bg-indigo-50 border-indigo-100' },
-                    };
-                    const c = tmap[tier];
-                    return (
-                      <Tooltip title={r.market_cap_yi ? `${r.market_cap_yi.toFixed(1)} 亿` : '市值未知'}>
-                        {c ? (
-                          <span className={clsx('inline-block rounded-lg border px-2 py-0.5 text-[11px] font-black', c.cls)}>{tier}</span>
-                        ) : (
-                          <Text className="text-[11px] text-slate-300">—</Text>
-                        )}
-                      </Tooltip>
-                    );
-                  },
-                },
-                {
-                  title: '趋势', dataIndex: 'trend', width: 92,
-                  render: (t: string, r: any) => {
-                    const map: Record<string, { cls: string; label: string }> = {
-                      '先升后降': { cls: 'text-emerald-600 bg-emerald-50 border-emerald-100', label: '先升后降' },
-                      '连续上升': { cls: 'text-rose-600 bg-rose-50 border-rose-100', label: '连续上升' },
-                      '连续下降': { cls: 'text-slate-500 bg-slate-100 border-slate-200', label: '连续下降' },
-                      '上升': { cls: 'text-emerald-600 bg-emerald-50 border-emerald-100', label: '↑ 升' },
-                      '下降': { cls: 'text-slate-500 bg-slate-100 border-slate-200', label: '↓ 降' },
-                      '持平': { cls: 'text-slate-400 bg-slate-50 border-slate-100', label: '→ 平' },
-                    };
-                    const c = map[t];
-                    if (!c) return <Text className="text-[11px] text-slate-300">—</Text>;
-                    return (
-                      <Tooltip title={`T-2: ${r.prev2_score?.toFixed?.(4) ?? '—'} → T-1: ${r.prev_score?.toFixed?.(4) ?? '—'} → T: ${Number(r.score).toFixed(4)}`}>
-                        <span className={clsx('inline-block rounded-lg border px-2 py-0.5 text-[11px] font-black', c.cls)}>{c.label}</span>
-                      </Tooltip>
-                    );
-                  },
-                },
-                {
-                  title: '得分', dataIndex: 'score',
-                  render: (s: number) => {
-                    // A股习惯：涨红跌绿；按当前批次分位数分级着色
-                    const dist = result?.summary?.score_distribution as any;
-                    let cls = s >= 0 ? 'text-rose-600' : 'text-emerald-600';
-                    if (dist && typeof dist.p25 === 'number' && typeof dist.p75 === 'number') {
-                      if (s >= dist.p75) cls = 'text-rose-600';
-                      else if (s >= dist.p50) cls = 'text-orange-500';
-                      else if (s >= dist.p25) cls = 'text-sky-600';
-                      else cls = 'text-emerald-600';
-                    }
-                    return (
-                      <span className={clsx('font-black text-xs font-mono', cls)}>
-                        {s >= 0 ? '+' : ''}{s.toFixed(4)}
-                      </span>
-                    );
-                  },
-                },
-              ]}
-            />
-          </div>
         </div>
       ) : (
         <div className="glass-panel rounded-3xl p-10 border border-slate-100/50 flex items-center justify-center">
@@ -712,9 +522,9 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
         }}
       >
         {stockModal && (() => {
-          const curIdx = filteredRankings.findIndex(r => r.code === stockModal.symbol);
+          const curIdx = allRankings.findIndex(r => r.code === stockModal.symbol);
           const hasPrev = curIdx > 0;
-          const hasNext = curIdx >= 0 && curIdx < filteredRankings.length - 1;
+          const hasNext = curIdx >= 0 && curIdx < allRankings.length - 1;
           return (
             <div className="space-y-3">
               {/* 导航工具栏：上一只/下一只 + 搜索 + 当前排名 */}
@@ -758,7 +568,7 @@ export const InferenceRunDetailView: React.FC<Props> = ({ runId, result, loading
                 </div>
                 <div className="text-xs text-slate-400 font-mono flex-shrink-0">
                   {curIdx >= 0
-                    ? `第 ${stockModal.rank ?? curIdx + 1} 名 · ${curIdx + 1}/${filteredRankings.length}`
+                    ? `第 ${stockModal.rank ?? curIdx + 1} 名 · ${curIdx + 1}/${allRankings.length}`
                     : '不在当前筛选'}
                 </div>
               </div>

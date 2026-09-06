@@ -21,13 +21,17 @@ const STATUS_META: Record<string, { color: string; label: string }> = {
   failed: { color: 'error', label: '失败' },
 };
 
-/** 市场分数展示：低于空仓线红、达标绿、中间灰 */
-const MarketScore: React.FC<{ value: number | null | undefined; threshold?: number; emptyBelow?: number }> = ({ value, threshold, emptyBelow }) => {
+/** 分数分布计数展示：null 显示占位 */
+const DistCount: React.FC<{ value: number | null | undefined; className?: string }> = ({ value, className }) => {
+  if (value === null || value === undefined) return <Text className="text-xs text-slate-300">—</Text>;
+  return <Text className={`text-xs font-mono font-bold ${className || 'text-slate-700'}`}>{value}</Text>;
+};
+
+/** 截面分数均值：≥0 红（与排名分数配色一致），<0 绿 */
+const ScoreMean: React.FC<{ value: number | null | undefined }> = ({ value }) => {
   if (value === null || value === undefined) return <Text className="text-xs text-slate-300">—</Text>;
   const v = Number(value);
-  let cls = 'text-slate-500';
-  if (emptyBelow !== undefined && v < emptyBelow) cls = 'text-rose-600';
-  else if (threshold !== undefined && v >= threshold) cls = 'text-emerald-600';
+  const cls = v >= 0 ? 'text-rose-600' : 'text-emerald-600';
   return <Text className={`text-xs font-mono font-bold ${cls}`}>{v.toFixed(4)}</Text>;
 };
 
@@ -147,38 +151,36 @@ export const InferenceHistoryPanel: React.FC<Props> = ({ modelId, onDelete }) =>
       render: (v: number) => <Text className="text-xs font-mono font-bold text-slate-700">{v || '—'}</Text>,
     },
     {
-      title: '板块avg',
-      dataIndex: 'board_top1_avg',
+      title: '正分标的',
       align: 'center',
       width: 80,
-      render: (v: number | null) => <MarketScore value={v} />,
-    },
-    {
-      title: '行业avg',
-      dataIndex: 'industry_avg_top1',
-      align: 'center',
-      width: 80,
-      render: (v: number | null, r: InferenceRunRecord) => (
-        <MarketScore value={v} threshold={0.09} emptyBelow={0.06} />
+      render: (_: unknown, r: InferenceRunRecord) => (
+        <DistCount value={r.score_distribution?.positive_count} className="text-rose-600" />
       ),
     },
     {
-      title: '强行业数',
-      dataIndex: 'strong_industry_count',
+      title: '负分标的',
       align: 'center',
-      width: 84,
-      render: (v: number, r: InferenceRunRecord) => {
-        if (v === null || v === undefined) return <Text className="text-xs text-slate-300">—</Text>;
-        const cls = v >= 3 ? 'text-emerald-600' : v >= 2 ? 'text-amber-600' : 'text-slate-500';
-        return <Text className={`text-xs font-mono font-bold ${cls}`}>{v}</Text>;
-      },
+      width: 80,
+      render: (_: unknown, r: InferenceRunRecord) => (
+        <DistCount value={r.score_distribution?.negative_count} className="text-emerald-600" />
+      ),
     },
     {
-      title: '覆盖行业',
-      dataIndex: 'industry_top1_count',
+      title: '平分标的',
       align: 'center',
-      width: 74,
-      render: (v: number) => <Text className="text-xs font-mono text-slate-500">{v || '—'}</Text>,
+      width: 80,
+      render: (_: unknown, r: InferenceRunRecord) => (
+        <DistCount value={r.score_distribution?.zero_count} />
+      ),
+    },
+    {
+      title: '平均分',
+      align: 'center',
+      width: 84,
+      render: (_: unknown, r: InferenceRunRecord) => (
+        <ScoreMean value={r.score_distribution?.mean} />
+      ),
     },
     {
       title: '状态',

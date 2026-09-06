@@ -3037,6 +3037,20 @@ async def list_model_inference_runs(
                     or ""
                 )
             it.update(compute_market_signals(sigs))
+            # 分数分布（正/负/零分标的数 + 均值，供历史列表直接展示；
+            # 列表场景不需要直方图，去掉以减小 payload）
+            try:
+                dist_scores = [
+                    float(s["fusion_score"])
+                    for s in sigs
+                    if s.get("fusion_score") is not None
+                ]
+            except (TypeError, ValueError):
+                dist_scores = []
+            dist = compute_score_distribution(dist_scores)
+            if dist:
+                dist.pop("histogram", None)
+                it["score_distribution"] = dist
     return result
 
 

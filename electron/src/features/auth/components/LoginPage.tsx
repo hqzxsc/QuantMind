@@ -15,7 +15,7 @@ import {
   SettingOutlined,
 } from '@ant-design/icons';
 import { useAuth, useLoginForm } from '../hooks/useAuth';
-import { useAppDispatch } from '../../../store';
+import { useAppDispatch, useAppSelector } from '../../../store';
 import { setUser } from '../store/authSlice';
 import { PageLoading } from './LoadingStates';
 import type { LoginCredentials } from '../types/auth.types';
@@ -48,6 +48,8 @@ const LoginPage: React.FC = () => {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const autoLoginAttempted = useRef(false);
+  // 后端不可达时展示整页内提示（配置保留，用户可检查服务器或稍后重试）
+  const serverUnreachable = useAppSelector((state) => state.auth.serverUnreachable);
 
   // 响应式设计
   const [isMobile, setIsMobile] = useState(false);
@@ -491,6 +493,19 @@ const LoginPage: React.FC = () => {
           initialValues={{ remember_me: true }}
         >
           {/* 错误提示 */}
+          {serverUnreachable && (
+            <Alert
+              message={`服务器不可达（${getDynamicServerUrl() || '未配置'}），请确认后端已启动。你的服务器配置已保留，恢复后直接登录即可。`}
+              type="warning"
+              showIcon
+              style={{
+                marginBottom: '24px',
+                borderRadius: '12px',
+                border: 'none',
+                background: 'rgba(250, 173, 20, 0.1)',
+              }}
+            />
+          )}
           {loginError && (
             <Alert
               message={loginError}

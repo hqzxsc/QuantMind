@@ -534,6 +534,7 @@ def _redis_set_json(key: str, value: dict) -> None:
 
 async def run_tdx_l2_capture_task(interval_sec: int = 0) -> None:
     """L2 因子采集主循环：候选池+持仓轮询 → 13 因子 → PG + Redis。"""
+    global _last_watchlist  # 跨周期保留候选池；否则赋值语句使其被当局部变量，空池时 UnboundLocalError
     from backend.services.live_trading.services.tdx_rolling_trade_service import (
         TdxRollingTradeService,
     )

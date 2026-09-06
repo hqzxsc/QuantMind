@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Spin, message, Result, Button, Space, Typography, Tag, Progress, List, Badge, Divider, Modal } from 'antd';
-import { 
+import { Card, Row, Col, Statistic, Spin, message, Result, Button, Space, Typography, Tag, Progress, List, Badge, Divider, Modal, Switch, Tooltip } from 'antd';
+import {
     UserOutlined, 
     LineChartOutlined, 
     MessageOutlined, 
@@ -17,7 +17,8 @@ import {
     ClockCircleOutlined,
     AreaChartOutlined,
     CloudSyncOutlined,
-    SyncOutlined
+    SyncOutlined,
+    RobotOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
@@ -40,6 +41,9 @@ export const AdminDashboard: React.FC = () => {
     const [updating, setUpdating] = useState(false);
     const [perfHistory, setPerfHistory] = useState<Array<{ ts: number; cpu: number; mem: number; disk: number }>>([]);
     const [perfLoading, setPerfLoading] = useState(true);
+    const [finbertEnabled, setFinbertEnabled] = useState<boolean | null>(null);
+    const [finbertLoading, setFinbertLoading] = useState(false);
+    const [finbertDetail, setFinbertDetail] = useState<any>(null);
 
     useEffect(() => {
         loadMetrics();
@@ -127,6 +131,44 @@ export const AdminDashboard: React.FC = () => {
             clearInterval(timer);
         };
     }, []);
+
+    // FinBERT 独立开关：加载状态与切换
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const st: any = await adminService.getFinbertStatus();
+                if (!cancelled) {
+                    const enabled = !!(st?.enabled ?? st?.data?.enabled);
+                    const detail = st?.data ?? st;
+                    setFinbertEnabled(enabled);
+                    setFinbertDetail(detail);
+                }
+            } catch {
+                if (!cancelled) setFinbertEnabled(null);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    const handleFinbertToggle = async (checked: boolean) => {
+        setFinbertLoading(true);
+        const prev = finbertEnabled;
+        setFinbertEnabled(checked);
+        try {
+            const res: any = await adminService.setFinbertEnabled(checked);
+            const st = res?.data ?? res;
+            const enabled = !!(st?.enabled ?? checked);
+            setFinbertEnabled(enabled);
+            setFinbertDetail(st);
+            message.success(`FinBERT 已${enabled ? '开启' : '关闭'}${st?.model_ready ? '（模型就绪）' : checked ? '（后台加载中，约 10-20s 后生效）' : ''}`);
+        } catch (e: any) {
+            setFinbertEnabled(prev);
+            message.error(e?.response?.data?.detail || '切换失败，请检查管理员权限');
+        } finally {
+            setFinbertLoading(false);
+        }
+    };
 
     if (authError) {
         return (
@@ -276,6 +318,14 @@ export const AdminDashboard: React.FC = () => {
                     <Text className="text-slate-400 text-xs font-medium">基础设施节点监控与管理</Text>
                 </div>
                 <Space size={10}>
+                    <Tooltip title={finbertDetail ? `模型: ${finbertDetail.model} | 就绪: ${finbertDetail.model_ready ? '是' : finbertDetail.model_failed ? '失败' : '加载中'} | 设备: ${String(finbertDetail.device)}` : 'FinBERT 中文金融情感模型（CPU 推理，约 391M）'}>
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-white shadow-sm h-10">
+                            <RobotOutlined className="text-slate-500" />
+                            <span className="text-xs font-bold text-slate-700">FinBERT</span>
+                            <Switch size="small" checked={!!finbertEnabled} loading={finbertLoading || finbertEnabled === null} onChange={handleFinbertToggle} />
+                            <Tag color={finbertEnabled ? 'success' : 'default'} className="m-0 text-[10px] border-none">{finbertEnabled ? '已开启' : finbertEnabled === null ? '...' : '已关闭'}</Tag>
+                        </div>
+                    </Tooltip>
                     <Button
                         icon={<SyncOutlined spin={updating} />}
                         loading={updating}

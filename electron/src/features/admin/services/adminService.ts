@@ -591,6 +591,16 @@ class AdminService {
         const resp = await this.axiosInstance.get('/admin/system/update/status', { timeout: 15000 });
         return this.unwrap(resp.data);
     }
+
+    // FinBERT 开关（独立控制按键）
+    async getFinbertStatus(): Promise<{ enabled: boolean; device: number; model: string; model_ready: boolean; model_failed: boolean }> {
+        const resp = await this.axiosInstance.get('/admin/finbert/status');
+        return resp.data?.data ?? resp.data;
+    }
+    async setFinbertEnabled(enabled: boolean): Promise<{ enabled: boolean; model_ready: boolean }> {
+        const resp = await this.axiosInstance.post('/admin/finbert/toggle', { enabled });
+        return resp.data?.data ?? resp.data;
+    }
 }
 
 export const adminService = new AdminService();

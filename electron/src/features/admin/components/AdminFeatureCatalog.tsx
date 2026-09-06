@@ -720,7 +720,7 @@ export const AdminFeatureCatalog: React.FC = () => {
               rowKey="key"
               size="small"
               pagination={false}
-              scroll={{ y: 'calc(var(--app-h) - 340px)', x: 'max-content' }}
+              scroll={{ x: 1330 }}
               locale={{ emptyText: keyword || marketFilter !== 'ALL' ? '当前筛选下无特征' : '暂无特征' }}
             />
           ) : (

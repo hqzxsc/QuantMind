@@ -207,8 +207,8 @@ export default function StockTerminalPage() {
   const zoomStart = bars.length > 200 ? Number((100 - (200 / bars.length) * 100).toFixed(1)) : 0;
 
   return (
-    /* 底部 pb-[84px]：给悬浮 Dock 菜单栏（64px）留出空间，避免遮挡 K线图底部的缩放条 */
-    <div className="w-full h-full bg-[#f8fafc] px-6 pt-6 pb-[84px] flex flex-col overflow-hidden">
+    /* 底部紧贴 Dock 导航栏，与市场分析、RSS 保持容器底边严格对齐 */
+    <div className="w-full h-full bg-[#f8fafc] p-6 flex flex-col overflow-hidden" style={{ paddingBottom: 'calc(var(--dock-height, 0px))' }}>
       <div className={PAGE_LAYOUT.frameClass}>
         {/* 顶栏：标题 + 居中搜索框（1fr auto 1fr 网格保证搜索框视口严格居中，不随右侧内容宽度偏移）+ 价格/模型 */}
         <header className={PAGE_LAYOUT.headerClass} style={{ height: `${PAGE_LAYOUT.headerHeight}px`, display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center' }}>

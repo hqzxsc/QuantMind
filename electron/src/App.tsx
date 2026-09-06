@@ -644,11 +644,9 @@ export default function App() {
                     path="/rss-news"
                     element={
                       <ProtectedRoute>
-                        <div style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
-                          <Suspense fallback={<Spin size="large" />}>
-                            <AdminNewsPage />
-                          </Suspense>
-                        </div>
+                        <Suspense fallback={<Spin size="large" />}>
+                          <AdminNewsPage />
+                        </Suspense>
                       </ProtectedRoute>
                     }
                   />

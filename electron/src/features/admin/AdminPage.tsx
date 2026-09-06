@@ -143,7 +143,7 @@ const AdminPage: React.FC = () => {
                     {/* 资讯监控 / RD 因子挖掘等大屏页面用全宽，其余保留 1400px 阅读宽度 */}
                     <div
                         className={
-                            ['news', 'inference', 'tags'].includes(currentKey)
+                            ['news', 'inference', 'tags', 'settings'].includes(currentKey)
                                 ? 'w-full animate-in fade-in slide-in-from-bottom-4 duration-500'
                                 : 'max-w-[1400px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500'
                         }

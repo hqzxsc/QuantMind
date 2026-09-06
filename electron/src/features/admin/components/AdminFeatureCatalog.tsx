@@ -15,7 +15,6 @@ import {
   Input,
   Modal,
   Popconfirm,
-  Select,
   Space,
   Switch,
   Table,
@@ -75,6 +74,8 @@ export const AdminFeatureCatalog: React.FC = () => {
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [marketFilter, setMarketFilter] = useState<string>('ALL');
   const [keyword, setKeyword] = useState('');
+  // 全量目录（仅用于胶囊计数；按市场过滤后 catalog 为子集，计数仍以全量为准）
+  const [fullCatalog, setFullCatalog] = useState<AdminModelFeatureCatalog | null>(null);
 
   // 分类编辑
   const [catModalOpen, setCatModalOpen] = useState(false);
@@ -95,6 +96,9 @@ export const AdminFeatureCatalog: React.FC = () => {
         activeMarket && activeMarket !== 'ALL' ? activeMarket : undefined,
       );
       setCatalog(data);
+      if (!activeMarket || activeMarket === 'ALL') {
+        setFullCatalog(data);
+      }
       if (!data.categories?.length) {
         setSelectedCatId(null);
       }
@@ -203,7 +207,7 @@ export const AdminFeatureCatalog: React.FC = () => {
   const marketCounts = React.useMemo(() => {
     const counts: Record<string, number> = { ALL: 0 };
     for (const m of ALL_MARKETS) counts[m] = 0;
-    for (const cat of catalog?.categories ?? []) {
+    for (const cat of (fullCatalog ?? catalog)?.categories ?? []) {
       for (const f of cat.features) {
         counts.ALL += 1;
         for (const m of marketsOf(f)) {
@@ -212,7 +216,7 @@ export const AdminFeatureCatalog: React.FC = () => {
       }
     }
     return counts;
-  }, [catalog]);
+  }, [fullCatalog, catalog]);
 
   const visibleFeatures = React.useMemo(() => {
     const feats = selectedCat?.features ?? [];
@@ -455,9 +459,9 @@ export const AdminFeatureCatalog: React.FC = () => {
   const totalFeatures = catalog.categories.reduce((sum, c) => sum + c.features.length, 0);
 
   return (
-    <div className="p-6 space-y-4">
-      {/* 顶栏 */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+    <div className="p-6 space-y-3">
+      {/* 顶栏：标题（位置不变）+ 右侧搜索/刷新/保存 */}
+      <div className="flex items-center justify-between flex-wrap gap-3 sticky top-0 z-10 bg-white/95 backdrop-blur py-2">
         <div className="flex items-center gap-3">
           <DatabaseOutlined className="text-xl text-blue-500" />
           <div>
@@ -469,15 +473,6 @@ export const AdminFeatureCatalog: React.FC = () => {
           </div>
         </div>
         <Space wrap>
-          <Select
-            value={marketFilter}
-            onChange={handleMarketChange}
-            style={{ width: 130 }}
-            options={[
-              { value: 'ALL', label: `全部市场（${marketCounts.ALL ?? 0}）` },
-              ...MARKET_OPTIONS.map(m => ({ value: m.value, label: `${m.label}（${marketCounts[m.value] ?? 0}）` })),
-            ]}
-          />
           <Input.Search
             allowClear
             placeholder="搜索 Key / 名称 / 描述 / 公式"
@@ -485,7 +480,6 @@ export const AdminFeatureCatalog: React.FC = () => {
             onChange={e => setKeyword(e.target.value)}
             style={{ width: 260 }}
           />
-          {dirty && <Tag color="warning">未保存</Tag>}
           <Button icon={<ReloadOutlined />} onClick={() => loadCatalog()} loading={loading}>刷新</Button>
           <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={saving} disabled={!dirty}>
             保存
@@ -493,10 +487,29 @@ export const AdminFeatureCatalog: React.FC = () => {
         </Space>
       </div>
 
+      {/* 市场胶囊切换：5 个市场，点选过滤，再点取消回到全部 */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {MARKET_OPTIONS.map(m => {
+          const active = marketFilter === m.value;
+          return (
+            <Button
+              key={m.value}
+              shape="round"
+              type={active ? 'primary' : 'default'}
+              onClick={() => handleMarketChange(active ? 'ALL' : m.value)}
+            >
+              {m.label}（{marketCounts[m.value] ?? 0}）
+            </Button>
+          );
+        })}
+        {dirty && <Tag color="warning">未保存</Tag>}
+      </div>
+
       <Divider className="!my-2" />
 
-      {/* 主体：左侧分类列表 + 右侧特征表格 */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: '280px 1fr' }}>
+      {/* 主体：横向滚动容器，窄屏时出现左右滚动条 */}
+      <div style={{ overflowX: 'auto' }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: '280px 1fr', minWidth: 960 }}>
         {/* 左侧分类列表 */}
         <Card
           size="small"
@@ -567,6 +580,7 @@ export const AdminFeatureCatalog: React.FC = () => {
             <Empty description="请从左侧选择一个分类" />
           )}
         </Card>
+      </div>
       </div>
 
       {/* 分类编辑弹窗 */}

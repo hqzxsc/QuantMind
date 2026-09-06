@@ -173,6 +173,7 @@ def _load_feature_catalog_from_file(path: str = FEATURE_CATALOG_FALLBACK, market
                     "enabled": bool(feat.get("enabled", True)),
                     "order_no": int(feat.get("order_no") or len(features) + 1),
                     "default_selected": bool(feat.get("default_selected", False)),
+                    "markets": market_map.get(f_key, []),
                 }
             )
         if not features:
@@ -304,6 +305,7 @@ async def _load_feature_catalog_from_db(market: str | None = None) -> dict[str, 
                     "source_table_fields": str(r["source_table_fields"] or ""),
                     "enabled": bool(r["enabled"]),
                     "order_no": int(r["order_no"] or 0),
+                    "markets": market_map.get(f_key, []),
                 }
             )
             cat_map[cid]["feature_count"] += 1

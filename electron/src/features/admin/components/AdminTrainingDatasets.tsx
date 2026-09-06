@@ -49,6 +49,8 @@ type Mapping = {
   mapping_id: string; source_dataset: string; source_column: string; key: string;
   feature_name: string; enabled: boolean; default_selected: boolean; required: boolean;
   category_id?: string; category_name?: string; order_no?: number;
+  /** 长描述：B 特征字典用户编辑优先，缺省回退代码字典精确条目 */
+  explanation?: string;
 };
 
 type FactorDirectoryRow = {
@@ -129,7 +131,7 @@ export const AdminTrainingDatasets: React.FC = () => {
           source_column: field.column_name,
           factor: mapping?.key || field.column_name,
           style: mapping?.category_name || field.dictionary?.category_name || '待分类',
-          explanation: mapping?.feature_name || field.dictionary?.explanation || '尚未填写中文解释',
+          explanation: mapping?.explanation || mapping?.feature_name || field.dictionary?.explanation || '尚未填写中文解释',
           is_present: Boolean(field.is_present),
           mapping,
         };
@@ -196,10 +198,14 @@ export const AdminTrainingDatasets: React.FC = () => {
       const values = await form.validateFields();
       setCreating(true);
       const created = await adminService.createQuantDBFactorDraft(values.version_name, source, market);
-      await adminService.seedQuantDBFactorDraft(created.version_id);
+      const seeded = await adminService.seedQuantDBFactorDraft(created.version_id);
       setDraft(await adminService.getQuantDBFactorCatalog(source, created.version_id, market));
       setCreating(false);
-      message.success('草稿已创建：全部字段已默认启用，核心因子已默认勾选');
+      message.success(
+        seeded?.default_selected_fields > 0
+          ? '草稿已创建：全部字段已默认启用，核心因子已默认勾选'
+          : '草稿已创建：全部字段已默认启用，请手动勾选训练因子',
+      );
     } catch (error: any) {
       setCreating(false);
       if (error?.errorFields) return;
@@ -254,7 +260,9 @@ export const AdminTrainingDatasets: React.FC = () => {
     { title: '编号', dataIndex: 'row_no', width: 68, align: 'center' },
     { title: '因子', dataIndex: 'factor', width: 200, render: (value) => <Text code>{value}</Text> },
     { title: '风格', dataIndex: 'style', width: 130, render: (value) => <Tag color={value === '待分类' ? 'default' : 'blue'}>{value}</Tag> },
-    { title: '中文解释', dataIndex: 'explanation', ellipsis: true, render: (value) => <Text>{value}</Text> },
+    { title: '中文解释', dataIndex: 'explanation', ellipsis: true, render: (value) => (
+      <Tooltip title={value} placement="topLeft"><Text ellipsis className="text-xs">{value}</Text></Tooltip>
+    ) },
     { title: '状态', width: 80, render: (_, row) => row.is_present ? <Tag color="green">已发现</Tag> : <Tag>已删除</Tag> },
     { title: '训练配置', width: 230, render: (_, row) => row.mapping ? <Space size={8} wrap>
       <Tooltip title="启用：该因子参与训练（左开关）"><Space size={2}>启用<Switch size="small" checked={row.mapping.enabled} onChange={checked => saveMapping({ ...row.mapping!, enabled: checked })} /></Space></Tooltip>

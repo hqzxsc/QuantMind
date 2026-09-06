@@ -31,6 +31,7 @@ import {
   SaveOutlined,
   DatabaseOutlined,
   FolderOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { adminService } from '../services/adminService';
@@ -63,6 +64,8 @@ function generateFeatureId(): string {
   return 'feat_' + Math.random().toString(36).slice(2, 10);
 }
 
+const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 // ─── 主组件 ──────────────────────────────────────────────────────────────────
 
 export const AdminFeatureCatalog: React.FC = () => {
@@ -86,6 +89,7 @@ export const AdminFeatureCatalog: React.FC = () => {
   const [featModalOpen, setFeatModalOpen] = useState(false);
   const [editingFeat, setEditingFeat] = useState<AdminModelFeatureItem | null>(null);
   const [featForm] = Form.useForm();
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const loadCatalog = useCallback(async (market?: string) => {
     setLoading(true);
@@ -289,8 +293,124 @@ export const AdminFeatureCatalog: React.FC = () => {
     markDirty();
   };
 
-  const handleDeleteFeature = (featureKey: string) => {
+  // ─── 自定义因子导入（JSON / CSV 上传）─────────────────────────────────────
+
+  const normalizeImportMarkets = (v: unknown): string[] => {
+    const raw: string[] = Array.isArray(v)
+      ? v.map(x => String(x).toUpperCase().trim())
+      : String(v ?? '').split(/[,;|，；、\s]+/).map(x => x.toUpperCase().trim());
+    const cleaned = raw.filter(x => ALL_MARKETS.includes(x));
+    return cleaned.length === ALL_MARKETS.length ? [] : cleaned;
+  };
+
+  const splitCsvLine = (line: string): string[] => {
+    const out: string[] = [];
+    let cur = '';
+    let quoted = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (quoted) {
+        if (ch === '"') {
+          if (line[i + 1] === '"') { cur += '"'; i++; }
+          else { quoted = false; }
+        } else { cur += ch; }
+      } else if (ch === '"') { quoted = true; }
+      else if (ch === ',') { out.push(cur); cur = ''; }
+      else { cur += ch; }
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  };
+
+  const parseImportText = (text: string, filename: string) => {
+    const items: { key: string; feature_name: string; explanation: string; formula: string; source_table_fields: string; markets: string[] }[] = [];
+    if (/\.json$/i.test(filename)) {
+      const raw = JSON.parse(text);
+      const arr = Array.isArray(raw) ? raw : raw?.features;
+      if (!Array.isArray(arr)) throw new Error('JSON 需为特征数组或 {features:[...]} 结构');
+      for (const r of arr) {
+        if (!r || typeof r !== 'object') continue;
+        items.push({
+          key: String((r as any).key ?? '').trim(),
+          feature_name: String((r as any).feature_name ?? (r as any).description ?? '').trim(),
+          explanation: String((r as any).explanation ?? (r as any).detail ?? '').trim().slice(0, 500),
+          formula: String((r as any).formula ?? '').trim(),
+          source_table_fields: String((r as any).source_table_fields ?? (r as any).source ?? '').trim(),
+          markets: normalizeImportMarkets((r as any).markets),
+        });
+      }
+    } else {
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) throw new Error('CSV 文件为空');
+      const head = splitCsvLine(lines[0]).map(h => h.toLowerCase());
+      const col = (...names: string[]) => {
+        for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; }
+        return -1;
+      };
+      const iKey = col('key');
+      const iName = col('feature_name', 'name', 'description', '名称');
+      const iExpl = col('explanation', 'detail', '描述');
+      const iFormula = col('formula', '公式');
+      const iSource = col('source', 'source_table_fields', '数据来源');
+      const iMarkets = col('markets', 'market', '市场');
+      if (iKey < 0 || iName < 0) throw new Error('CSV 表头至少包含 key, feature_name 两列');
+      for (const line of lines.slice(1, 201)) {
+        const c = splitCsvLine(line);
+        items.push({
+          key: (c[iKey] ?? '').trim(),
+          feature_name: (c[iName] ?? '').trim(),
+          explanation: (iExpl >= 0 ? (c[iExpl] ?? '') : '').trim().slice(0, 500),
+          formula: (iFormula >= 0 ? (c[iFormula] ?? '') : '').trim(),
+          source_table_fields: (iSource >= 0 ? (c[iSource] ?? '') : '').trim(),
+          markets: normalizeImportMarkets(iMarkets >= 0 ? c[iMarkets] : []),
+        });
+      }
+    }
+    return items;
+  };
+
+  const handleImportFile = async (file: File) => {
     if (!catalog || !selectedCatId) return;
+    try {
+      const text = await file.text();
+      const parsed = parseImportText(text, file.name);
+      const cats = catalog.categories.map(cat => {
+        if (cat.id !== selectedCatId) return cat;
+        const keys = new Set(cat.features.map(f => f.key));
+        const features = [...cat.features];
+        let added = 0;
+        let skipped = 0;
+        let invalid = 0;
+        for (const p of parsed) {
+          if (!KEY_RE.test(p.key) || !p.feature_name) { invalid++; continue; }
+          if (keys.has(p.key)) { skipped++; continue; }
+          keys.add(p.key);
+          features.push({
+            feature_id: generateFeatureId(),
+            key: p.key,
+            feature_name: p.feature_name,
+            explanation: p.explanation,
+            formula: p.formula,
+            source_table_fields: p.source_table_fields,
+            enabled: true,
+            order_no: features.length + 1,
+            markets: p.markets,
+          });
+          added++;
+        }
+        message.success(`导入 ${added} 个，跳过 ${skipped} 个（已存在），舍弃 ${invalid} 个（key/名称非法）`);
+        return { ...cat, features, feature_count: features.length };
+      });
+      setCatalog({ ...catalog, categories: cats });
+      markDirty();
+    } catch (e: any) {
+      message.error(`导入失败：${e?.message || '文件格式不支持（仅 JSON/CSV）'}`);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteFeature = (featureKey: string) => {    if (!catalog || !selectedCatId) return;
     const cats = catalog.categories.map(cat => {
       if (cat.id !== selectedCatId) return cat;
       const features = cat.features.filter(f => f.key !== featureKey);
@@ -479,6 +599,7 @@ export const AdminFeatureCatalog: React.FC = () => {
             value={keyword}
             onChange={e => setKeyword(e.target.value)}
             style={{ width: 260 }}
+            className="feature-search-center"
           />
           <Button icon={<ReloadOutlined />} onClick={() => loadCatalog()} loading={loading}>刷新</Button>
           <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={saving} disabled={!dirty}>
@@ -560,9 +681,35 @@ export const AdminFeatureCatalog: React.FC = () => {
           }
           extra={
             selectedCat && (
-              <Button type="text" size="small" icon={<PlusOutlined />} onClick={openAddFeature}>
-                新增特征
-              </Button>
+              <Space size="small">
+                {selectedCat.id === 'custom' && (
+                  <>
+                    <Tooltip title="上传 JSON（数组或 {features:[...]}）或 CSV（key,feature_name,…）批量导入，最多200条/次">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<UploadOutlined />}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        导入
+                      </Button>
+                    </Tooltip>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".json,.csv"
+                      style={{ display: 'none' }}
+                      onChange={e => {
+                        const f = e.target.files?.[0];
+                        if (f) handleImportFile(f);
+                      }}
+                    />
+                  </>
+                )}
+                <Button type="text" size="small" icon={<PlusOutlined />} onClick={openAddFeature}>
+                  新增特征
+                </Button>
+              </Space>
             )
           }
         >

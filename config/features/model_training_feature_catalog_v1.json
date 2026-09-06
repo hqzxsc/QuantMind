@@ -2,7 +2,7 @@
   "version": "v2.0",
   "version_name": "QM Feature Set v2.1 (L2/microstructure unlocked, 20260820)",
   "description": "完整 QuantDB 特征集 (daily_forward + features_daily + l1_factors + l2_factors), 164 个可用特征",
-  "feature_count": 529,
+  "feature_count": 534,
   "categories": [
     {
       "id": "ohlcv",
@@ -9364,6 +9364,109 @@
           "direction": 1,
           "feature_name": "南向持股数量（正向）",
           "explanation": "港股通持股数量（正向）"
+        }
+      ]
+    },
+    {
+      "id": "custom",
+      "name": "自定义因子",
+      "order": 12,
+      "feature_count": 5,
+      "features": [
+        {
+          "feature_id": "feat_custom_001",
+          "key": "custom_ret_1d",
+          "description": "自定义1日涨跌幅",
+          "feature_name": "自定义1日涨跌幅",
+          "explanation": "当日收盘价相对前收的涨跌幅，演示用（OHLCV直接计算）",
+          "formula": "(close / pre_close) - 1",
+          "source": "OHLCV演示",
+          "enabled": true,
+          "markets": [
+            "CN",
+            "HK",
+            "US",
+            "CRYPTO",
+            "FUTURES"
+          ],
+          "order_no": 1,
+          "default_selected": false
+        },
+        {
+          "feature_id": "feat_custom_002",
+          "key": "custom_amp_1d",
+          "description": "自定义1日振幅",
+          "feature_name": "自定义1日振幅",
+          "explanation": "当日最高最低价相对前收的振幅，演示用",
+          "formula": "(high - low) / pre_close",
+          "source": "OHLCV演示",
+          "enabled": true,
+          "markets": [
+            "CN",
+            "HK",
+            "US",
+            "CRYPTO",
+            "FUTURES"
+          ],
+          "order_no": 2,
+          "default_selected": false
+        },
+        {
+          "feature_id": "feat_custom_003",
+          "key": "custom_close_pos",
+          "description": "自定义收盘位置",
+          "feature_name": "自定义收盘位置",
+          "explanation": "收盘价在当日最高最低区间中的相对位置（0=最低，1=最高），演示用",
+          "formula": "(close - low) / (high - low)",
+          "source": "OHLCV演示",
+          "enabled": true,
+          "markets": [
+            "CN",
+            "HK",
+            "US",
+            "CRYPTO",
+            "FUTURES"
+          ],
+          "order_no": 3,
+          "default_selected": false
+        },
+        {
+          "feature_id": "feat_custom_004",
+          "key": "custom_vol_ratio_5",
+          "description": "自定义5日量比",
+          "feature_name": "自定义5日量比",
+          "explanation": "当日成交量与近5日均量的比值，演示用",
+          "formula": "volume / mean(volume, 5)",
+          "source": "OHLCV演示",
+          "enabled": true,
+          "markets": [
+            "CN",
+            "HK",
+            "US",
+            "CRYPTO",
+            "FUTURES"
+          ],
+          "order_no": 4,
+          "default_selected": false
+        },
+        {
+          "feature_id": "feat_custom_005",
+          "key": "custom_amt_ma_5",
+          "description": "自定义5日成交额均线",
+          "feature_name": "自定义5日成交额均线",
+          "explanation": "近5日成交额均值，衡量短期资金活跃度，演示用",
+          "formula": "mean(amount, 5)",
+          "source": "OHLCV演示",
+          "enabled": true,
+          "markets": [
+            "CN",
+            "HK",
+            "US",
+            "CRYPTO",
+            "FUTURES"
+          ],
+          "order_no": 5,
+          "default_selected": false
         }
       ]
     }

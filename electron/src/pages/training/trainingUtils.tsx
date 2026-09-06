@@ -331,6 +331,8 @@ export interface FeatureOption {
   label: string;
   /** 后端 catalog 标记的默认勾选状态。新 schema 才有，老前端兼容性为可选。*/
   defaultSelected?: boolean;
+  /** B 特征字典用户编辑的长描述（A 目录回退合并后透出），缺省为空。*/
+  explanation?: string;
 }
 
 export interface FeatureCategory {
@@ -968,6 +970,10 @@ export const toDynamicCategories = (catalog: AdminModelFeatureCatalog): FeatureC
         .map((feature) => ({
           key: feature.key,
           label: compactCatalogFeatureLabel(feature.feature_name || feature.key, feature.key),
+          explanation:
+            typeof (feature as { explanation?: unknown }).explanation === 'string'
+              ? ((feature as { explanation?: string }).explanation || undefined)
+              : undefined,
           // catalog 透传 default_selected（缺失/null 时按 undefined 处理，
           // 由调用方决定 fallback 行为）
           defaultSelected:

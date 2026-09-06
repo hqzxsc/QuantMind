@@ -9,9 +9,12 @@
    前端无法读取，因此真正的压缩与上传都发生在后端。
 """
 
+import hashlib
 import io
 import json
+import logging
 import os
+import shutil
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,18 +24,32 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from backend.services.api.user_app.middleware.auth import get_current_user
+from backend.shared.database_manager_v2 import get_session
 from backend.shared.model_registry import model_registry_service
 from backend.shared.runtime_secrets import get_secret
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["HubProxy"])
 
-HUB_BASE_URL = os.getenv("QUANTDB_HUB_URL", "https://quantdb.quantmind.cloud").rstrip("/")
+HUB_BASE_URL = os.getenv("QUANTDB_HUB_URL", "https://quantdb.quantmind.cloud").rstrip(
+    "/"
+)
 
 _HOP_HEADERS = {
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
 }
 
 # 远端只接受 gzip 压缩的模型包
@@ -54,6 +71,11 @@ class PublishLocalRequest(BaseModel):
     max_drawdown: float = 0.0
     calmar_ratio: float = 0.0
     visibility: str = "public"
+
+
+class ImportRemoteRequest(BaseModel):
+    hub_model_id: str
+    local_name: str | None = None
 
 
 def _forward_headers(request: Request) -> dict[str, str]:
@@ -78,6 +100,77 @@ def _build_model_archive(model_dir: Path) -> bytes:
             if p.is_file():
                 tar.add(p, arcname=p.relative_to(model_dir).as_posix())
     return buf.getvalue()
+
+
+def _safe_extract_tar_gz(archive_bytes: bytes, dest_dir: Path) -> None:
+    """安全解压 tar.gz（防路径穿越），落盘到 dest_dir。"""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    resolved_dest = dest_dir.resolve()
+    buf = io.BytesIO(archive_bytes)
+    with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+        for member in tar.getmembers():
+            member_path = (dest_dir / member.name).resolve()
+            try:
+                member_path.relative_to(resolved_dest)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"压缩包包含非法路径: {member.name}"
+                ) from exc
+        buf.seek(0)
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar2:
+            tar2.extractall(path=dest_dir)
+
+
+def _find_model_file_in_dir(model_dir: Path) -> str:
+    """探测模型权重文件（与 ModelRegistryService 一致的候选集）。"""
+    candidates = [
+        "ensemble_config.json",
+        "model.lgb",
+        "model.xgb",
+        "model.cbm",
+        "model.pkl",
+        "model.pth",
+        "model.txt",
+        "model.bin",
+        "model_xgb.xgb",
+        "model_lgb.lgb",
+        "model_cbm.cbm",
+        "model_lin.pkl",
+        "meta_model.pkl",
+    ]
+    for name in candidates:
+        if (model_dir / name).is_file():
+            return name
+    # 兜底：目录下任意 model.* / *.pkl / *.lgb
+    for p in sorted(model_dir.rglob("*")):
+        if p.is_file() and p.suffix.lower() in {
+            ".lgb",
+            ".xgb",
+            ".cbm",
+            ".pkl",
+            ".bin",
+            ".txt",
+            ".pth",
+            ".onnx",
+            ".pt",
+            ".json",
+        }:
+            if p.name.startswith("model") or p.name == "ensemble_config.json":
+                return p.relative_to(model_dir).as_posix()
+    return ""
+
+
+def _build_import_model_id(*, hub_model_id: str, market: str) -> str:
+    """为导入模型生成本地 model_id（hub 来源、避免与训练模型冲突）。"""
+    raw = f"hub_{hub_model_id.strip()}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+    # 复用统一命名规则：mdl_{market}_hub_{sanitized}_{digest}
+    sanitized = "".join(
+        c if c.isalnum() or c in {"_", "-"} else "_" for c in hub_model_id.strip()
+    )
+    sanitized = sanitized[:24].strip("_") or "hub"
+    market_prefix = str(market or "CN").upper().strip()[:8] or "CN"
+    return f"mdl_{market_prefix.lower()}_hub_{sanitized}_{digest}"
 
 
 # ── 注意顺序：具体的 /api/v1/hub/publish-local 必须先于下方的 catch-all 注册，
@@ -106,12 +199,46 @@ async def publish_local_model(
 
     model_dir = Path(model.get("storage_path") or "")
     if not model_dir.is_dir():
-        raise HTTPException(
-            status_code=404, detail=f"模型文件目录不存在: {model_dir}"
-        )
+        raise HTTPException(status_code=404, detail=f"模型文件目录不存在: {model_dir}")
 
     # 1. 打包模型目录（tar.gz）
     archive = _build_model_archive(model_dir)
+
+    # 补全广场展示用的净值曲线/因子清单等（从本地 metadata/metrics 读取）
+    metadata_json = model.get("metadata_json") or {}
+    metrics_json = model.get("metrics_json") or {}
+    if isinstance(metadata_json, str):
+        try:
+            metadata_json = json.loads(metadata_json)
+        except Exception:
+            metadata_json = {}
+    if isinstance(metrics_json, str):
+        try:
+            metrics_json = json.loads(metrics_json)
+        except Exception:
+            metrics_json = {}
+    # factors_summary：优先取 features/feature_columns，否则取 metadata 的 factors_summary
+    factors_summary: Any = None
+    for key in ("features", "feature_columns", "factors_summary"):
+        val = metadata_json.get(key) if isinstance(metadata_json, dict) else None
+        if isinstance(val, list) and len(val) > 0:
+            factors_summary = val
+            break
+    equity_curve = None
+    if isinstance(metrics_json, dict):
+        equity_curve = metrics_json.get("equity_curve") or metrics_json.get(
+            "equity_curve_data"
+        )
+    if equity_curve is None and isinstance(metadata_json, dict):
+        equity_curve = metadata_json.get("equity_curve") or metadata_json.get(
+            "equity_curve_data"
+        )
+    psi_val = 0.0
+    if isinstance(metrics_json, dict):
+        raw_psi = metrics_json.get("psi")
+        if isinstance(raw_psi, (int, float)):
+            psi_val = float(raw_psi)
+    extra_metrics: Any = metrics_json if isinstance(metrics_json, dict) else {}
 
     hub_headers = {"X-API-Key": api_key}
     timeout = httpx.Timeout(connect=5.0, read=120.0, write=180.0, pool=10.0)
@@ -119,7 +246,7 @@ async def publish_local_model(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 2. 申请上传凭据
-            ticket_payload = {
+            ticket_payload: dict[str, Any] = {
                 "name": req.name,
                 "description": req.description,
                 "market": req.market,
@@ -135,6 +262,14 @@ async def publish_local_model(
                 "visibility": req.visibility,
                 "file_size_bytes": len(archive),
             }
+            if psi_val:
+                ticket_payload["psi"] = psi_val
+            if factors_summary is not None:
+                ticket_payload["factors_summary"] = factors_summary
+            if equity_curve is not None:
+                ticket_payload["equity_curve"] = equity_curve
+            if extra_metrics:
+                ticket_payload["extra_metrics"] = extra_metrics
             ticket_resp = await client.post(
                 f"{HUB_BASE_URL}/api/v1/hub/models/upload-ticket",
                 json=ticket_payload,
@@ -149,7 +284,9 @@ async def publish_local_model(
             hub_model_id = ticket.get("model_id")
             upload_url = ticket.get("upload_url")
             if not hub_model_id or not upload_url:
-                raise HTTPException(status_code=502, detail="上传凭据缺少 model_id/upload_url")
+                raise HTTPException(
+                    status_code=502, detail="上传凭据缺少 model_id/upload_url"
+                )
 
             # 3. 直传模型包（gzip）
             upload_resp = await client.put(
@@ -178,7 +315,9 @@ async def publish_local_model(
             except Exception:  # noqa: BLE001
                 publish_detail = {}
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"模型广场服务不可达: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"模型广场服务不可达: {exc}"
+        ) from exc
 
     return {
         "success": True,
@@ -188,7 +327,315 @@ async def publish_local_model(
     }
 
 
-@router.api_route("/api/v1/hub/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@router.post("/api/v1/hub/import-remote", summary="从模型广场下载并导入为本地模型")
+async def import_remote_model(
+    req: ImportRemoteRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
+    tenant_id = str(current_user.get("tenant_id") or "default")
+    user_id = str(current_user.get("user_id") or current_user.get("sub") or "")
+    hub_model_id = str(req.hub_model_id or "").strip()
+    if not hub_model_id:
+        raise HTTPException(status_code=400, detail="hub_model_id 不能为空")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未获取到用户信息")
+
+    await model_registry_service.ensure_tables()
+
+    # 1. 拉取广场模型详情（用于展示名/市场兜底），失败不阻断导入
+    hub_detail: dict[str, Any] = {}
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
+        ) as client:
+            detail_resp = await client.get(
+                f"{HUB_BASE_URL}/api/v1/hub/models/{hub_model_id}"
+            )
+            if detail_resp.status_code == 200:
+                try:
+                    hub_detail = detail_resp.json() or {}
+                except Exception:
+                    hub_detail = {}
+            elif detail_resp.status_code == 404:
+                raise HTTPException(
+                    status_code=404, detail=f"广场模型不存在: {hub_model_id}"
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("获取广场模型详情失败 %s: %s", hub_model_id, exc)
+
+    # 2. 获取下载直链（公共接口，无需 API Key）
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0)
+        ) as client:
+            ticket_resp = await client.get(
+                f"{HUB_BASE_URL}/api/v1/hub/models/{hub_model_id}/download-ticket"
+            )
+            if ticket_resp.status_code >= 300:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"获取下载地址失败({ticket_resp.status_code}): {ticket_resp.text[:300]}",
+                )
+            ticket = ticket_resp.json() or {}
+            download_url = str(ticket.get("download_url") or "").strip()
+            if not download_url:
+                raise HTTPException(
+                    status_code=502, detail="下载地址为空，模型可能尚未发布"
+                )
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"模型广场服务不可达: {exc}"
+        ) from exc
+
+    # 3. 下载模型包
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=120.0, write=120.0, pool=10.0),
+            follow_redirects=True,
+        ) as client:
+            dl_resp = await client.get(download_url)
+            if dl_resp.status_code >= 300:
+                raise HTTPException(
+                    status_code=502, detail=f"下载模型包失败({dl_resp.status_code})"
+                )
+            archive_bytes = dl_resp.content
+            if not archive_bytes or len(archive_bytes) < 32:
+                raise HTTPException(status_code=502, detail="下载的模型包为空或异常")
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"下载模型包失败: {exc}") from exc
+
+    # 4. 生成本地模型 ID 与目录
+    market_str = str(hub_detail.get("market") or "CN").upper().strip() or "CN"
+    local_model_id = _build_import_model_id(
+        hub_model_id=hub_model_id, market=market_str
+    )
+    # 若用户已导入过同款（同 hub id + 同 tenant/user），直接返回已有记录（幂等）
+    existing = await model_registry_service.get_model(
+        tenant_id=tenant_id, user_id=user_id, model_id=local_model_id
+    )
+    if existing and str(existing.get("status") or "") in (
+        "ready",
+        "active",
+        "candidate",
+    ):
+        return {
+            "success": True,
+            "model_id": local_model_id,
+            "storage_path": existing.get("storage_path") or "",
+            "model_file": existing.get("model_file") or "",
+            "message": "模型已存在，直接返回已有记录",
+            "already_exists": True,
+        }
+
+    # 市场分段目录（与 register_model_from_training_run 一致：非 CN 按市场子目录）
+    base_root = model_registry_service.user_models_root
+    model_dir = base_root / tenant_id / user_id / local_model_id
+    if market_str and market_str != "CN":
+        model_dir = (
+            base_root / tenant_id / user_id / market_str.lower() / local_model_id
+        )
+    # 清理旧残留（若曾失败过）
+    if model_dir.exists():
+        try:
+            shutil.rmtree(model_dir)
+        except Exception:
+            pass
+
+    # 5. 解压
+    try:
+        _safe_extract_tar_gz(archive_bytes, model_dir)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"解压模型包失败: {exc}") from exc
+
+    # 6. 探测模型文件与 metadata
+    model_file = _find_model_file_in_dir(model_dir)
+    metadata_path = model_dir / "metadata.json"
+    metadata: dict[str, Any] = {}
+    if metadata_path.is_file():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict):
+                metadata = {}
+        except Exception:
+            metadata = {}
+
+    # 若包内无 metadata.json，用广场详情合成一份基础 metadata
+    if not metadata:
+        hub_name = str(hub_detail.get("name") or hub_model_id)
+        metadata = {
+            "display_name": str(req.local_name or hub_name).strip() or hub_model_id,
+            "model_name": str(req.local_name or hub_name).strip() or hub_model_id,
+            "model_type": str(hub_detail.get("algorithm") or "unknown"),
+            "framework": str(hub_detail.get("algorithm") or "unknown"),
+            "market": market_str,
+            "target_horizon_days": 5,
+            "target_mode": str(hub_detail.get("target_mode") or "unknown"),
+        }
+        # 特征清单：优先取广场 factors_summary
+        hub_factors = hub_detail.get("factors_summary")
+        if isinstance(hub_factors, list) and hub_factors:
+            metadata["feature_columns"] = hub_factors
+            metadata["features"] = hub_factors
+            metadata["feature_count"] = len(hub_factors)
+    else:
+        # 补齐导入来源标识与市场信息
+        if "market" not in metadata or not str(metadata.get("market") or "").strip():
+            metadata["market"] = market_str
+        metadata.setdefault("imported_from_hub", True)
+        metadata.setdefault("hub_model_id", hub_model_id)
+        metadata.setdefault("hub_author", hub_detail.get("author_username") or "")
+        # display_name 允许用户重命名
+        if req.local_name and str(req.local_name).strip():
+            metadata["display_name"] = str(req.local_name).strip()
+        # 确保 feature_count
+        if metadata.get("feature_count") is None:
+            feats = metadata.get("feature_columns") or metadata.get("features") or []
+            if isinstance(feats, list):
+                metadata["feature_count"] = len(feats)
+
+    # 回写 metadata.json（便于后续推理与展示）
+    try:
+        metadata_path.write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("回写导入模型 metadata.json 失败 %s: %s", local_model_id, exc)
+
+    if not model_file:
+        # 无可识别模型文件：仍落库为 failed，便于排查
+        model_file = ""
+
+    metrics: dict[str, Any] = {}
+    # 从广场详情同步关键指标到 metrics_json
+    for key in (
+        "test_ic",
+        "rank_ic",
+        "sharpe_ratio",
+        "annual_return",
+        "max_drawdown",
+        "calmar_ratio",
+        "psi",
+    ):
+        val = hub_detail.get(key)
+        if isinstance(val, (int, float)):
+            metrics[key] = float(val)
+    hub_equity = hub_detail.get("equity_curve")
+    if hub_equity is not None:
+        metrics["equity_curve"] = hub_equity
+    # 也尝试从包内 metadata 的 performance_metrics 汲取
+    pm = (
+        metadata.get("performance_metrics")
+        if isinstance(metadata.get("performance_metrics"), dict)
+        else None
+    )
+    if isinstance(pm, dict):
+        for k, v in pm.items():
+            if k not in metrics and isinstance(v, (int, float, str)):
+                metrics[k] = v
+
+    # 7. 入库 qm_user_models（status=ready，可直接用于推理/设为默认）
+    now = datetime.now(timezone.utc)
+    status_to_write = "ready" if model_file else "failed"
+    context = (
+        metadata.get("context") if isinstance(metadata.get("context"), dict) else {}
+    )
+    if not isinstance(context, dict):
+        context = {}
+    # 合并市场到 context
+    if not str(context.get("market") or "").strip():
+        context["market"] = market_str
+        metadata["context"] = context
+
+    async with get_session() as session:
+        # 是否需要设为默认（无业务默认时自动设为默认）
+        has_business_default = (
+            await session.execute(
+                text(
+                    """
+                    SELECT 1 FROM qm_user_models
+                    WHERE tenant_id = :tenant_id AND user_id = :user_id
+                      AND is_default = TRUE
+                      AND COALESCE((metadata_json->>'system_default')::boolean, FALSE) = FALSE
+                    LIMIT 1
+                    """
+                ),
+                {"tenant_id": tenant_id, "user_id": user_id},
+            )
+        ).first()
+        should_default = not bool(has_business_default) and status_to_write == "ready"
+        if should_default:
+            await session.execute(
+                text(
+                    "UPDATE qm_user_models SET is_default = FALSE, updated_at = :updated_at WHERE tenant_id = :tenant_id AND user_id = :user_id AND is_default = TRUE"
+                ),
+                {"tenant_id": tenant_id, "user_id": user_id, "updated_at": now},
+            )
+
+        await session.execute(
+            text(
+                """
+                INSERT INTO qm_user_models (
+                    tenant_id, user_id, model_id, source_run_id, status, storage_path, model_file,
+                    metadata_json, metrics_json, is_default, created_at, updated_at, activated_at
+                ) VALUES (
+                    :tenant_id, :user_id, :model_id, :source_run_id, :status, :storage_path, :model_file,
+                    CAST(:metadata_json AS JSONB), CAST(:metrics_json AS JSONB), :is_default,
+                    :created_at, :updated_at, :activated_at
+                )
+                ON CONFLICT (tenant_id, user_id, model_id)
+                DO UPDATE SET
+                    status = EXCLUDED.status,
+                    storage_path = EXCLUDED.storage_path,
+                    model_file = EXCLUDED.model_file,
+                    metadata_json = EXCLUDED.metadata_json,
+                    metrics_json = EXCLUDED.metrics_json,
+                    updated_at = EXCLUDED.updated_at
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "model_id": local_model_id,
+                "source_run_id": hub_model_id,
+                "status": status_to_write,
+                "storage_path": str(model_dir.resolve()),
+                "model_file": model_file,
+                "metadata_json": json.dumps(metadata, ensure_ascii=False),
+                "metrics_json": json.dumps(metrics, ensure_ascii=False),
+                "is_default": bool(should_default),
+                "created_at": now,
+                "updated_at": now,
+                "activated_at": now if should_default else None,
+            },
+        )
+
+    if status_to_write == "failed":
+        raise HTTPException(
+            status_code=500,
+            detail="模型包解压后未找到可识别的模型文件，请联系广场作者检查打包内容",
+        )
+
+    return {
+        "success": True,
+        "model_id": local_model_id,
+        "storage_path": str(model_dir.resolve()),
+        "model_file": model_file,
+        "market": market_str,
+        "already_exists": False,
+    }
+
+
+@router.api_route(
+    "/api/v1/hub/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"]
+)
 async def proxy_model_hub(path: str, request: Request):
     api_key = _require_api_key()
 
@@ -206,14 +653,17 @@ async def proxy_model_hub(path: str, request: Request):
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.request(
-                method, upstream_url,
+                method,
+                upstream_url,
                 content=body if body else None,
                 headers=headers,
             )
             return Response(
                 content=resp.content,
                 status_code=resp.status_code,
-                headers={"content-type": resp.headers.get("content-type", "application/json")},
+                headers={
+                    "content-type": resp.headers.get("content-type", "application/json")
+                },
             )
     except httpx.HTTPError:
         return PlainTextResponse("模型广场服务不可达", status_code=502)

@@ -130,7 +130,7 @@ export const ModelHubDetailDrawer: React.FC<ModelHubDetailDrawerProps> = ({
               className="rounded-xl bg-blue-600 hover:bg-blue-500 font-bold px-5 border-none shadow-sm"
               onClick={() => onImport(model)}
             >
-              下载模型包
+              一键导入为本地模型
             </Button>
           </div>
         </div>
@@ -246,8 +246,8 @@ export const ModelHubDetailDrawer: React.FC<ModelHubDetailDrawerProps> = ({
           type="info"
           showIcon
           className="rounded-xl text-xs"
-          message="下载说明"
-          description="点击下载后将获取模型包。请按模型包内说明完成本地安装与注册，再在模型中心或推理中心使用。"
+          message="一键导入说明"
+          description="点击导入后，后端将自动下载模型包、解压并注册为本地模型，完成后可在「模型管理 → 我的模型」中直接用于推理，无需手动安装。"
         />
       </div>
     </Drawer>

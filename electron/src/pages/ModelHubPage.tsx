@@ -77,30 +77,43 @@ export const ModelHubPage: React.FC = () => {
     loadLocalUserModels();
   }, [loadLocalUserModels]);
 
-  // 获取后端签发的下载地址，不再伪造“已导入”结果。
+  // 后端一键导入：下载 COS 包 → 解压 → 注册为本地模型，可直接在“我的模型”中推理
   const handleImportModel = async (model: HubModelItem) => {
     try {
       setImportingId(model.id);
-      message.loading({ content: `正在获取 "${model.name}" 的下载地址...`, key: 'hub_import' });
+      message.loading({ content: `正在导入 "${model.name}" 到本地模型库...`, key: 'hub_import' });
 
-      // 1. 请求下载直链
-      const ticket = await modelHubService.getDownloadTicket(model.id);
-      if (!ticket?.download_url) {
-        throw new Error('未能获取到有效的下载直链');
+      const result = await modelHubService.importRemoteModel(model.id);
+      if (!result?.model_id) {
+        throw new Error('导入返回缺少 model_id');
       }
 
-      window.open(ticket.download_url, '_blank', 'noopener,noreferrer');
-
       message.success({
-        content: `已开始下载 "${model.name}" 的模型包。`,
+        content: result.already_exists
+          ? `模型 "${model.name}" 已存在于本地（${result.model_id}）`
+          : `已导入为本地模型 ${result.model_id}，可在“模型管理”中查看与推理`,
         key: 'hub_import',
-        duration: 4,
+        duration: 5,
       });
 
       // 刷新下载计数
       fetchHubModels();
     } catch (err: any) {
-      message.error({ content: `导入失败: ${err?.message || '未知异常'}`, key: 'hub_import' });
+      const detail = err?.response?.data?.detail || err?.message || '未知异常';
+      // 共享模型尚未发布或包异常时，兜底提供直接下载
+      if (String(detail).includes('下载地址为空') || String(detail).includes('模型包')) {
+        try {
+          const ticket = await modelHubService.getDownloadTicket(model.id);
+          if (ticket?.download_url) {
+            window.open(ticket.download_url, '_blank', 'noopener,noreferrer');
+            message.info({ content: '已为你打开浏览器直接下载模型包', key: 'hub_import' });
+            return;
+          }
+        } catch {
+          // ignore fallback error
+        }
+      }
+      message.error({ content: `导入失败: ${detail}`, key: 'hub_import' });
     } finally {
       setImportingId(null);
     }
@@ -187,17 +200,20 @@ export const ModelHubPage: React.FC = () => {
               <span>筛选:</span>
             </div>
 
-            {/* 市场过滤 */}
+            {/* 市场过滤（与 OSS 6 市场一致） */}
             <Select
               size="small"
               value={selectedMarket}
               onChange={(v) => { setSelectedMarket(v); setPage(1); }}
-              className="min-w-28 font-medium"
+              className="min-w-32 font-medium"
               options={[
                 { value: 'ALL', label: '全部市场' },
                 { value: 'CN', label: 'A股市场' },
                 { value: 'US', label: '美股市场' },
                 { value: 'HK', label: '港股市场' },
+                { value: 'CRYPTO', label: '加密市场' },
+                { value: 'FUTURES', label: '期货市场' },
+                { value: 'CUSTOM', label: '自定义市场' },
               ]}
             />
 

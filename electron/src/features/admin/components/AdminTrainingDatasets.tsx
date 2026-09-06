@@ -17,6 +17,7 @@ const MARKET_OPTIONS = [
   { value: 'US', label: '美股' },
   { value: 'CRYPTO', label: '区块链' },
   { value: 'FUTURES', label: '期货' },
+  { value: 'CUSTOM', label: '自定义' },
 ];
 
 const MARKET_SOURCE_FALLBACK: Record<string, { value: string; label: string }[]> = {
@@ -33,6 +34,7 @@ const MARKET_SOURCE_FALLBACK: Record<string, { value: string; label: string }[]>
   US: [{ value: 'l1_factors', label: 'L1 因子（默认）' }],
   CRYPTO: [{ value: 'l1_factors', label: 'L1 因子（默认）' }],
   FUTURES: [{ value: 'l1_factors', label: 'L1 因子（默认）' }],
+  CUSTOM: [{ value: 'l1_factors', label: 'L1 因子（默认）' }],
 };
 
 const CATEGORY_OPTIONS = [

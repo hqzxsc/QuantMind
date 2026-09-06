@@ -365,6 +365,7 @@ def _normalize_market_key(market: str | None) -> str:
         "US": "us_stock", "US_STOCK": "us_stock",
         "CRYPTO": "crypto", "BC": "crypto",
         "FUTURES": "futures",
+        "CUSTOM": "custom",
     }
     if raw in mapping:
         return mapping[raw]

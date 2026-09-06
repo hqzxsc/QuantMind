@@ -45,6 +45,7 @@ const MARKET_OPTIONS = [
   { value: 'US', label: '美股', color: 'green' },
   { value: 'CRYPTO', label: '加密', color: 'purple' },
   { value: 'FUTURES', label: '期货', color: 'orange' },
+  { value: 'CUSTOM', label: '自定义', color: 'cyan' },
 ];
 
 const ALL_MARKETS = MARKET_OPTIONS.map(m => m.value);
@@ -579,9 +580,9 @@ export const AdminFeatureCatalog: React.FC = () => {
   const totalFeatures = catalog.categories.reduce((sum, c) => sum + c.features.length, 0);
 
   return (
-    <div className="p-6 space-y-3">
-      {/* 顶栏：标题（位置不变）+ 右侧搜索/刷新/保存 */}
-      <div className="flex items-center justify-between flex-wrap gap-3 sticky top-0 z-10 bg-white/95 backdrop-blur py-2">
+    <div className="flex flex-col gap-3 overflow-hidden" style={{ height: 'calc(var(--app-h) - 148px)', minHeight: 520 }}>
+      {/* 顶栏：标题（位置不变）+ 右侧搜索/刷新/保存 —— 固定不动 */}
+      <div className="flex items-center justify-between flex-wrap gap-3 shrink-0">
         <div className="flex items-center gap-3">
           <DatabaseOutlined className="text-xl text-blue-500" />
           <div>
@@ -602,14 +603,22 @@ export const AdminFeatureCatalog: React.FC = () => {
             className="feature-search-center"
           />
           <Button icon={<ReloadOutlined />} onClick={() => loadCatalog()} loading={loading}>刷新</Button>
-          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={saving} disabled={!dirty}>
-            保存
-          </Button>
+          <Tooltip title={marketFilter !== 'ALL' ? '当前为市场过滤视图，请先取消胶囊筛选（回到全部）再保存，否则会丢失其他市场数据' : ''}>
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              onClick={handleSave}
+              loading={saving}
+              disabled={!dirty || marketFilter !== 'ALL'}
+            >
+              保存
+            </Button>
+          </Tooltip>
         </Space>
       </div>
 
-      {/* 市场胶囊切换：5 个市场，点选过滤，再点取消回到全部 */}
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* 市场胶囊切换：5 个市场，点选过滤，再点取消回到全部 —— 固定不动 */}
+      <div className="flex items-center gap-2 flex-wrap shrink-0">
         {MARKET_OPTIONS.map(m => {
           const active = marketFilter === m.value;
           return (
@@ -626,12 +635,11 @@ export const AdminFeatureCatalog: React.FC = () => {
         {dirty && <Tag color="warning">未保存</Tag>}
       </div>
 
-      <Divider className="!my-2" />
+      <Divider className="!m-0 shrink-0" />
 
-      {/* 主体：横向滚动容器，窄屏时出现左右滚动条 */}
-      <div style={{ overflowX: 'auto' }}>
-      <div className="grid gap-4" style={{ gridTemplateColumns: '280px 1fr', minWidth: 960 }}>
-        {/* 左侧分类列表 */}
+      {/* 主体：左右分栏占满剩余高度；左侧固定，右侧为双向滚动容器 */}
+      <div className="flex gap-4 flex-1 min-h-0">
+        {/* 左侧分类列表：固定不动，内部独立纵向滚动 */}
         <Card
           size="small"
           title={<span className="text-sm font-semibold">分类列表</span>}
@@ -640,8 +648,9 @@ export const AdminFeatureCatalog: React.FC = () => {
               新增
             </Button>
           }
-          className="h-fit"
-          styles={{ body: { padding: 0, maxHeight: 'calc(var(--app-h) - 260px)', overflowY: 'auto' } }}
+          className="shrink-0"
+          style={{ width: 280, height: '100%', display: 'flex', flexDirection: 'column' }}
+          styles={{ body: { padding: 0, flex: 1, minHeight: 0, overflowY: 'auto' } }}
         >
           {catalog.categories.map(cat => (
             <div
@@ -671,7 +680,7 @@ export const AdminFeatureCatalog: React.FC = () => {
           )}
         </Card>
 
-        {/* 右侧特征表格 */}
+        {/* 右侧特征表格：卡片 body 即双向滚动容器 */}
         <Card
           size="small"
           title={
@@ -712,6 +721,9 @@ export const AdminFeatureCatalog: React.FC = () => {
               </Space>
             )
           }
+          className="flex-1 min-w-0"
+          style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}
+          styles={{ body: { flex: 1, minHeight: 0, overflow: 'auto' } }}
         >
           {selectedCat ? (
             <Table
@@ -727,7 +739,6 @@ export const AdminFeatureCatalog: React.FC = () => {
             <Empty description="请从左侧选择一个分类" />
           )}
         </Card>
-      </div>
       </div>
 
       {/* 分类编辑弹窗 */}

@@ -61,12 +61,6 @@ INFRA_SERVICES = [
         "desc": "数据网关 (8004)",
     },
     {
-        "service": "web",
-        "host": os.getenv("ADMIN_DASHBOARD_WEB_HOST", "quantmind-web"),
-        "port": int(os.getenv("ADMIN_DASHBOARD_WEB_PORT", "80")),
-        "desc": "Nginx 前端 (80/3080)",
-    },
-    {
         "service": "qwenpaw",
         "host": os.getenv("ADMIN_DASHBOARD_QWENPAW_HOST", "qwenpaw"),
         "port": int(os.getenv("ADMIN_DASHBOARD_QWENPAW_PORT", "8088")),

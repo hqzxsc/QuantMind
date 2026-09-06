@@ -710,21 +710,6 @@ services:
     networks:
       - quantmind-net
 
-  # 8. Web 前端 (预编译静态资源，拉代码即更新，无需服务器构建)
-  web:
-    image: nginx:alpine
-    container_name: quantmind-web
-    ports:
-      - "80:80"
-    volumes:
-      - ./web/dist:/usr/share/nginx/html:ro
-      - ./docker/web/nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - quantmind
-    restart: unless-stopped
-    networks:
-      - quantmind-net
-
 networks:
   quantmind-net:
     driver: bridge

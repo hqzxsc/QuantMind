@@ -160,6 +160,23 @@ def _find_model_file_in_dir(model_dir: Path) -> str:
     return ""
 
 
+def _normalize_target_mode(raw: str) -> str:
+    """把 OSS 内的 target_mode（如 return/rank_IC）归一为广场允许的 3 枚举。"""
+    s = str(raw or "").strip().lower()
+    if s in {"classification", "regression", "ranking"}:
+        return s
+    # 兼容历史值：return/continuous/value → regression；含 rank 词 → ranking
+    if s in {"return", "continuous", "value", "regress"}:
+        return "regression"
+    if "rank" in s:
+        return "ranking"
+    if "class" in s:
+        return "classification"
+    if "regress" in s:
+        return "regression"
+    return "classification"
+
+
 def _build_import_model_id(*, hub_model_id: str, market: str) -> str:
     """为导入模型生成本地 model_id（hub 来源、避免与训练模型冲突）。"""
     raw = f"hub_{hub_model_id.strip()}"
@@ -243,6 +260,11 @@ async def publish_local_model(
     hub_headers = {"X-API-Key": api_key}
     timeout = httpx.Timeout(connect=5.0, read=120.0, write=180.0, pool=10.0)
 
+    # 归一校验字段，避免被广场 400 拦掉
+    normalized_mode = _normalize_target_mode(req.target_mode)
+    # 兜底：horizon 至少保留 T+N 形态
+    normalized_horizon = str(req.target_horizon or "T+5").strip() or "T+5"
+
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 2. 申请上传凭据
@@ -251,8 +273,8 @@ async def publish_local_model(
                 "description": req.description,
                 "market": req.market,
                 "algorithm": req.algorithm,
-                "target_horizon": req.target_horizon,
-                "target_mode": req.target_mode,
+                "target_horizon": normalized_horizon,
+                "target_mode": normalized_mode,
                 "test_ic": req.test_ic,
                 "rank_ic": req.rank_ic,
                 "sharpe_ratio": req.sharpe_ratio,

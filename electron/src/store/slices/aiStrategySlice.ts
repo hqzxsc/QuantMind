@@ -1,6 +1,8 @@
 /**
  * AI策略状态管理切片
  * 整合了原Recoil状态管理功能
+ * ⚠️  统一管理：策略列表真源已收敛到 features/user-center/store/strategiesSlice + strategyManagementService
+ * 本 slice 的 strategies/currentStrategy 仅作 AI 生成中间态镜像，新代码禁止作为策略列表真源
  */
 
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';

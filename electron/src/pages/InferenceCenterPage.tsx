@@ -537,11 +537,11 @@ export const InferenceCenterPage: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base font-black text-slate-800 m-0 tracking-tight">模型推理中心</h1>
-              <Tag color="blue" className="rounded-full text-[10px] font-bold border-0 px-2 py-0">
+              <Tag color="blue" className="rounded-full text-xs font-bold border-0 px-2 py-0">
                 {currentMarket === 'CN' ? 'A股市场' : currentMarket}
               </Tag>
             </div>
-            <p className="text-[11px] text-slate-400 m-0">生产级截面批量打分 · 单标的特征归因与共识走势预测</p>
+            <p className="text-xs text-slate-500 m-0">生产级截面批量打分 · 单标的特征归因与共识走势预测</p>
           </div>
         </div>
 

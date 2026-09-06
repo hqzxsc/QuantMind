@@ -207,8 +207,8 @@ export default function StockTerminalPage() {
   const zoomStart = bars.length > 200 ? Number((100 - (200 / bars.length) * 100).toFixed(1)) : 0;
 
   return (
-    /* 底部紧贴 Dock 导航栏，与市场分析、RSS 保持容器底边严格对齐 */
-    <div className="w-full h-full bg-[#f8fafc] p-6 flex flex-col overflow-hidden" style={{ paddingBottom: 'calc(var(--dock-height, 0px))' }}>
+    /* 统一标准全屏卡片布局（PAGE_LAYOUT 标准外框） */
+    <div className={PAGE_LAYOUT.outerClass}>
       <div className={PAGE_LAYOUT.frameClass}>
         {/* 顶栏：标题 + 居中搜索框（1fr auto 1fr 网格保证搜索框视口严格居中，不随右侧内容宽度偏移）+ 价格/模型 */}
         <header className={PAGE_LAYOUT.headerClass} style={{ height: `${PAGE_LAYOUT.headerHeight}px`, display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center' }}>
@@ -413,7 +413,7 @@ export default function StockTerminalPage() {
                     ))}
                   </div>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto p-3 bg-gray-50/30 custom-scrollbar">
+                <div className="flex-1 min-h-0 overflow-y-auto p-3 pb-6 bg-gray-50/30 custom-scrollbar">
                   <div className={detailTab === 'overview' ? '[&>div]:!grid-cols-1 [&>div]:!gap-3' : ''}>
                     {detailTab === 'overview' && <OverviewTab profile={profile} />}
                     {detailTab === 'financials' && <FinancialsTab symbol={selected.symbol} asof={signalDate} />}

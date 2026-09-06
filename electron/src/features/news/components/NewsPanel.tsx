@@ -729,8 +729,10 @@ export const NewsPanel: React.FC = () => {
           {/* Row 1: header + actions */}
           <div className="news-toolbar-row news-toolbar-head">
             <div className="news-toolbar-left">
-              <BellOutlined style={{ color: '#6366f1', fontSize: 18 }} />
-              <Title level={5} style={{ margin: 0, fontSize: 15, whiteSpace: 'nowrap' }}>资讯监控</Title>
+              <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-md shrink-0">
+                <BellOutlined style={{ color: '#ffffff', fontSize: 16 }} />
+              </div>
+              <Title level={5} style={{ margin: 0, fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap' }}>RSS信息流</Title>
               <Tag color={health?.huntly_status === 'up' ? 'green' : 'red'} style={{ margin: 0 }}>{health?.huntly_status === 'up' ? '已连接' : '未连接'}</Tag>
               <Tooltip title={latestPublishedAt ? `最新发布于 ${new Date(latestPublishedAt).toLocaleString('zh-CN')}` : '暂无'}>
                 <Tag icon={<SyncOutlined spin={loading} />} color="processing" style={{ margin: 0 }}>最新：{formatRelative(latestPublishedAt)}</Tag>

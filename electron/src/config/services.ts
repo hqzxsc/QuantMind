@@ -184,8 +184,14 @@ const API_BASE = normalizeBaseUrl(ENV.VITE_API_BASE_URL || '');
 
 /**
  * 获取基础 URL（优先使用动态配置）
+ * Web 端（非 Electron）强制返回空字符串以走相对路径 `/api/v1`，经 Nginx 反代到 quantmind:8000，
+ * 避免构建时 VITE_* 固化为 localhost 导致外网 IP 无法登录；桌面端不受影响
  */
 function getBaseUrl(): string {
+  // Web 浏览器走相对路径，不受构建时环境变量影响
+  if (!isElectronEnv()) {
+    return '';
+  }
   // 桌面端优先使用用户配置的服务器地址
   if (dynamicServerUrl) {
     return dynamicServerUrl;
@@ -198,10 +204,7 @@ function getBaseUrl(): string {
     return API_BASE;
   }
   // Electron 桌面端兜底：本地 OSS Docker 后端（避免 file:// 下相对路径请求全部失败）
-  if (isElectronEnv()) {
-    return DEFAULT_ELECTRON_API_BASE;
-  }
-  return API_BASE;
+  return DEFAULT_ELECTRON_API_BASE;
 }
 
 // WebSocket URL 构建
@@ -228,15 +231,15 @@ const getWebSocketUrl = () => {
 };
 
 export const SERVICE_URLS = {
-  get API_GATEWAY() { return normalizeBaseUrl(ENV.VITE_API_GATEWAY_URL) || getBaseUrl(); },
-  get MARKET_DATA() { return normalizeBaseUrl(ENV.VITE_MARKET_DATA_API_URL) || getBaseUrl(); },
-  get DATA_SERVICE() { return normalizeBaseUrl(ENV.VITE_DATA_SERVICE_API_URL) || getBaseUrl(); },
-  get USER_SERVICE() { return normalizeBaseUrl(ENV.VITE_USER_API_URL) || getBaseUrl(); },
-  get AI_STRATEGY() { return normalizeBaseUrl(ENV.VITE_AI_STRATEGY_API_URL) || getBaseUrl(); },
-  get STOCK_QUERY() { return normalizeBaseUrl(ENV.VITE_STOCK_QUERY_API_URL) || getBaseUrl(); },
-  get TRADING() { return normalizeBaseUrl(ENV.VITE_TRADING_API_URL) || getBaseUrl(); },
-  get QLIB_SERVICE() { return normalizeBaseUrl(ENV.VITE_QLIB_SERVICE_URL) || getBaseUrl(); },
-  get ENGINE_SERVICE() { return normalizeBaseUrl(ENV.VITE_ENGINE_SERVICE_URL) || getBaseUrl(); },
+  get API_GATEWAY() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_API_GATEWAY_URL) || getBaseUrl()); },
+  get MARKET_DATA() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_MARKET_DATA_API_URL) || getBaseUrl()); },
+  get DATA_SERVICE() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_DATA_SERVICE_API_URL) || getBaseUrl()); },
+  get USER_SERVICE() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_USER_API_URL) || getBaseUrl()); },
+  get AI_STRATEGY() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_AI_STRATEGY_API_URL) || getBaseUrl()); },
+  get STOCK_QUERY() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_STOCK_QUERY_API_URL) || getBaseUrl()); },
+  get TRADING() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_TRADING_API_URL) || getBaseUrl()); },
+  get QLIB_SERVICE() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_QLIB_SERVICE_URL) || getBaseUrl()); },
+  get ENGINE_SERVICE() { return !isElectronEnv() ? '' : (normalizeBaseUrl(ENV.VITE_ENGINE_SERVICE_URL) || getBaseUrl()); },
   get WEBSOCKET_MARKET() { return getWebSocketUrl(); },
 } as const;
 

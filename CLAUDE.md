@@ -78,13 +78,13 @@ npm run dashboard:build  # 生产环境构建
   - `update_feature_parquet.py` - 151 维特征计算（动量/波动率/流动性/资金流/风格）
 - **新闻/RSS**：Huntly + RSSHub 聚合财经新闻，经 API 服务代理访问
 
-## 股票代码标准化
+## 股票代码标准化（分层口径，禁止跨层混用）
 
-- **标准格式**：前缀式（如 `SH600036`），用于内部存储、Redis 键与 API 参数
-- **禁止引入** `600036.SH` 这类后缀式标识
+- **QuantDB parquet / Qlib / 行情数据层**：后缀式（如 `600036.SH`，Qlib 桥接用全小写 `sh600036`），否则静默查空
+- **PG 数据库字段 / Redis 键 / 前端 / Strategy Lab SDK / 大多数 API**：前缀式（如 `SH600036`）
 - **标准化工具**：
-  - 后端：`backend/shared/stock_utils.py` → `StockCodeUtil.to_prefix(code)`
-  - 前端：`electron/src/utils/portfolioUtils.ts` → `normalizeStockCode(code)`
+  - 后端：`backend/shared/stock_utils.py` → `StockCodeUtil.to_suffix(code)` / `.to_prefix(code)` / `.to_qlib(code)`
+  - 前端：`electron/src/utils/portfolioUtils.ts` → `normalizeStockCode(code)`（输出前缀式）
 - **市场自动识别**：
   - `SH`：6xxxxx、9xxxxx
   - `SZ`：0xxxxx、3xxxxx、2xxxxx
@@ -129,7 +129,7 @@ git push gitee master
 ssh ${SSH_TARGET} "cd ${PROJECT_DIR} && sudo bash deploy/update.sh"
 ```
 
-Electron 前端在本地开发时使用 Vite HMR；修改 `electron/src` 后运行 `npm run typecheck` 即可，不需要复制构建产物到服务器的 `web` 容器。
+Electron 前端在本地开发时使用 Vite HMR；修改 `electron/src` 后运行 `npm run typecheck` 即可（Web 前端已下线，无需复制构建产物到服务器）。
 
 ## 关键文件
 

@@ -41,7 +41,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-require_root() { [[ $EUID -eq 0 ]] || die '请使用 sudo 执行'; }
+require_root() {
+    if [[ $EUID -eq 0 ]]; then return; fi
+    # 无 sudo 时：若用户在 docker 组且对项目目录可写，仅告警后继续；否则再阻断
+    if groups 2>/dev/null | grep -qw docker && [[ -w "$PROJECT_DIR" ]] && docker ps >/dev/null 2>&1; then
+        log "提示: 未使用 sudo，但检测到 docker 权限正常，继续执行"
+        return
+    fi
+    log "提示: 未使用 sudo 且 docker 权限不足，尝试继续（失败请改用 sudo 或将用户加入 docker 组）"
+}
 require_project() {
     [[ -d "$PROJECT_DIR/.git" ]] || die "不是 Git 部署目录: $PROJECT_DIR"
     [[ -f "$PROJECT_DIR/docker-compose.yml" ]] || die "缺少 docker-compose.yml: $PROJECT_DIR"
@@ -67,7 +75,7 @@ backup_database() {
     # 从 .env 读库凭据（脚本自身环境变量里 DB_PASSWORD 几乎必为空，须显式加载 .env）
     pg_user="$(grep -E '^DB_USER=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' || echo quantmind)"
     pg_db="$(grep -E '^DB_NAME=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' || echo quantmind)"
-    pg_pass="$(grep -E '^(DB_PASSWORD|POSTGRES_PASSWORD)=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' | head -c 200)"
+    pg_pass="$(grep -E '^(DB_PASSWORD|POSTGRES_PASSWORD)=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' | head -c 200 || echo '')"
     if [[ -z "$pg_pass" ]]; then
         pg_pass="${POSTGRES_PASSWORD:-${DB_PASSWORD:-quantmind2026}}"
     fi

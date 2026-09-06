@@ -122,20 +122,15 @@ export const ModelHubDetailDrawer: React.FC<ModelHubDetailDrawerProps> = ({
           <div className="text-xs text-slate-400">
             大小：{formattedSize(model.file_size_bytes)} · 下载：{model.downloads_count || 0} 次
           </div>
-          <div className="flex gap-2">
-            <Button className="rounded-xl font-bold" onClick={onClose}>
-              关闭
-            </Button>
-            <Button
-              type="primary"
-              icon={<Download size={14} />}
-              loading={importing}
-              className="rounded-xl bg-blue-600 hover:bg-blue-500 font-bold px-5 border-none shadow-sm"
-              onClick={() => onImport(model)}
-            >
-              一键导入为本地模型
-            </Button>
-          </div>
+          <Button
+            type="primary"
+            icon={<Download size={14} />}
+            loading={importing}
+            className="rounded-xl bg-blue-600 hover:bg-blue-500 font-bold px-5 border-none shadow-sm"
+            onClick={() => onImport(model)}
+          >
+            一键导入为本地模型
+          </Button>
         </div>
       }
     >
@@ -209,21 +204,7 @@ export const ModelHubDetailDrawer: React.FC<ModelHubDetailDrawerProps> = ({
                 {fmtNum(model.calmar_ratio, 2)}
               </div>
             </div>
-            {typeof (model as any).psi === 'number' && (
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
-                <div className="text-[10px] text-slate-400 font-semibold">PSI 稳定性</div>
-                <div className="text-sm font-black text-slate-800 mt-0.5">
-                  {fmtNum((model as any).psi, 3)}
-                </div>
-              </div>
-            )}
           </div>
-        </div>
-
-        {/* 净值走势图 */}
-        <div>
-          <h5 className="text-xs font-black uppercase text-slate-400 tracking-wider mb-2">历史回测净值曲线</h5>
-          {renderDetailChart(model.equity_curve)}
         </div>
 
         {/* 特征与因子依赖清单 */}
@@ -238,7 +219,7 @@ export const ModelHubDetailDrawer: React.FC<ModelHubDetailDrawerProps> = ({
           </div>
 
           {factorList.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-3 bg-slate-50 rounded-2xl border border-slate-100 custom-scrollbar">
+            <div className="flex flex-wrap gap-1.5 max-h-[300px] overflow-y-auto p-3 bg-slate-50 rounded-2xl border border-slate-100 custom-scrollbar">
               {factorList.map((factor, idx) => (
                 <Tag key={idx} className="!text-[11px] !px-2 !py-0.5 !rounded-md !bg-white !border-slate-200 text-slate-600 font-mono">
                   {factor}

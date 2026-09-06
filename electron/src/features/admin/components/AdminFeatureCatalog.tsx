@@ -45,7 +45,7 @@ const MARKET_OPTIONS = [
   { value: 'US', label: '美股', color: 'green' },
   { value: 'CRYPTO', label: '加密', color: 'purple' },
   { value: 'FUTURES', label: '期货', color: 'orange' },
-  { value: 'CUSTOM', label: '自定义', color: 'cyan' },
+  { value: 'CUSTOM', label: '自定义市场', color: 'cyan' },
 ];
 
 const ALL_MARKETS = MARKET_OPTIONS.map(m => m.value);

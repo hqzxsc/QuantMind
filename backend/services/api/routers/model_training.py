@@ -25,6 +25,7 @@ from backend.services.api.routers.admin.model_management import (
 )
 from backend.services.api.routers.admin.model_management_utils import (
     _enrich_feature_catalog_with_data_coverage_async,
+    unify_feature_catalog_categories,
 )
 from backend.services.api.routers.admin.quantdb_factor_catalog import (
     load_quantdb_training_catalog,
@@ -635,6 +636,11 @@ async def get_model_feature_catalog(
 
     if not catalog:
         catalog = _load_feature_catalog_from_file(market=market)
+
+    if catalog:
+        # 训练消费侧按 A 训练目录口径统一分组（B 的 gtja/liquidity/holding 等归位）；
+        # admin 读写回路保持 B 原生口径，不受影响。
+        catalog = unify_feature_catalog_categories(catalog)
 
     if not catalog:
         raise HTTPException(

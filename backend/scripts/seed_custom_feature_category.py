@@ -72,7 +72,7 @@ def main() -> None:
     cats.append(
         {
             "id": "custom",
-            "name": "自定义因子",
+            "name": "自建因子",
             "order": max_order + 1,
             "feature_count": len(feats),
             "features": feats,

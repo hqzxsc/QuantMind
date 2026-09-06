@@ -11,14 +11,14 @@ import { adminService } from '../services/adminService';
 const { Title, Text } = Typography;
 
 // 市场切换（数据源选项以后端 /sources labels 为准，此表仅作加载前的占位）
-const MARKET_OPTIONS = [
-  { value: 'CN', label: 'A股' },
-  { value: 'HK', label: '港股' },
-  { value: 'US', label: '美股' },
-  { value: 'CRYPTO', label: '区块链' },
-  { value: 'FUTURES', label: '期货' },
-  { value: 'CUSTOM', label: '自定义' },
-];
+  const MARKET_OPTIONS = [
+    { value: 'CN', label: 'A股' },
+    { value: 'HK', label: '港股' },
+    { value: 'US', label: '美股' },
+    { value: 'CRYPTO', label: '区块链' },
+    { value: 'FUTURES', label: '期货' },
+    { value: 'CUSTOM', label: '自定义市场' },
+  ];
 
 const MARKET_SOURCE_FALLBACK: Record<string, { value: string; label: string }[]> = {
   CN: [
@@ -285,6 +285,15 @@ export const AdminTrainingDatasets: React.FC = () => {
         <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={refreshDiscovery}>字段发现</Button>
       </Space>
     </div>
+
+    {market === 'CUSTOM' && (
+      <Alert
+        type="warning"
+        showIcon
+        message="自定义市场：自传 parquet，后端仅扫描因子"
+        description="宿主机 ./data/quantcustom/6_ml_datasets/l1_factors/dt=YYYYMMDD/*.parquet（bind mount 自动同步进容器 /data/quantcustom）；至少包含 symbol + date（或 dt 分区）+ 自定因子列，不强制 OHLCV。缺 close 列时仅扫描浏览、无法构建训练标签。放好文件后点「字段发现」，再建草稿发布。"
+      />
+    )}
 
     <Row gutter={[16, 16]}>
       {sourceOptions.map(option => {

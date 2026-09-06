@@ -432,20 +432,54 @@ class AuthService {
   }
 
   /**
-   * 用户注册
+   * 从注册表单推导后端要求的 username（字母和数字，≥3位）。
+   * 优先用“用户名”栏的字母数字部分，否则用邮箱前缀；都不够 3 位时抛错提示用户补充。
+   */
+  private deriveRegisterUsername(userData: RegisterData): string {
+    const alnum = (s: string) => (s || '').replace(/[^A-Za-z0-9]/g, '');
+    const fromName = alnum(userData.full_name || '');
+    if (fromName.length >= 3) return fromName;
+    const emailPrefix = alnum((userData.email || '').split('@')[0] || '');
+    if (emailPrefix.length >= 3) return emailPrefix;
+    throw new Error('用户名至少需要3个字母或数字，请在用户名栏补充');
+  }
+
+  /**
+   * 用户注册（OSS版：邮箱直注，无手机/邮箱验证码，后端在线即可）。
    */
   async register(userData: RegisterData): Promise<TokenResponse> {
     const startTime = Date.now();
     try {
       const tenantId = (userData.tenant_id || this.getTenantId()).trim();
-      // 统一注册路径：手机号 + 短信验证码注册（阿里云短信）
-      const response = await this.postWithFallback(['/auth/register/phone'], {
+      const email = (userData.email || '').trim();
+      if (!email) throw new Error('请输入邮箱地址');
+      const baseUsername = this.deriveRegisterUsername(userData);
+      const basePayload = {
         tenant_id: tenantId,
-        phone: userData.phone,
-        code: userData.sms_verification_code,
+        email,
         password: userData.password,
-        username: userData.full_name,
-      });
+        full_name: userData.full_name?.trim() || undefined,
+      };
+
+      // 用户名冲突时自动加 4 位数字后缀重试一次，避免直注卡死
+      let response;
+      try {
+        response = await this.postWithFallback(['/auth/register'], {
+          ...basePayload,
+          username: baseUsername,
+        });
+      } catch (err: any) {
+        const msg = err?.response?.data?.detail || err?.message || '';
+        if (typeof msg === 'string' && msg.includes('用户名已存在')) {
+          const retryUsername = `${baseUsername}${Math.floor(1000 + Math.random() * 9000)}`;
+          response = await this.postWithFallback(['/auth/register'], {
+            ...basePayload,
+            username: retryUsername,
+          });
+        } else {
+          throw err;
+        }
+      }
       const endTime = Date.now();
 
       // 记录性能指标

@@ -17,6 +17,7 @@ import {
   StrategyPreset,
   CandidateStock,
 } from '../../services/stockPickingService';
+import { buildCsvText, downloadCsvFile } from '../../utils/csvExport';
 
 const { Text } = Typography;
 
@@ -105,14 +106,10 @@ export const StockPickingPanel: React.FC = () => {
     const rows = data.candidates.map(c => [
       c.symbol, c.name, c.score, c.industry, c.trend,
     ]);
-    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `选股_${data.meta.trade_date ?? 'today'}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const csv = buildCsvText(header, rows, { textColumns: [0], filename: '' });
+    if (downloadCsvFile(csv, `选股_${data.meta.trade_date ?? 'today'}.csv`)) {
+      message.success(`已导出 ${rows.length} 条候选`);
+    }
   };
 
   if (loading && !data) {

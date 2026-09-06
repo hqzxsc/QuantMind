@@ -12,6 +12,7 @@ import {
   ShortCandidate,
   MissedReference,
 } from '../../services/stockPickingService';
+import { buildCsvText, downloadCsvFile } from '../../utils/csvExport';
 
 const { Text } = Typography;
 
@@ -109,14 +110,10 @@ export const NegativeScorePanel: React.FC = () => {
     const rows = data.short_candidates.map(c => [
       c.symbol, c.name, c.score, c.cap, c.board, c.short_reason,
     ]);
-    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `负分候选_${data.meta.trade_date ?? 'today'}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const csv = buildCsvText(header, rows, { textColumns: [0], filename: '' });
+    if (downloadCsvFile(csv, `负分候选_${data.meta.trade_date ?? 'today'}.csv`)) {
+      message.success(`已导出 ${rows.length} 条负分候选`);
+    }
   };
 
   if (loading && !data) {

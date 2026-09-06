@@ -116,6 +116,12 @@ ssh ${SSH_TARGET} "cd ${PROJECT_DIR} && git pull && docker compose restart quant
 - 技能更新后需 `docker restart qwenpaw` 使其生效；验证用 `docker exec qwenpaw qwenpaw skills list`（技能数与启用数应一致）和 `docker exec qwenpaw qwenpaw skills test <name>`。
 - QwenPaw 镜像自带 reportlab 与中文字体（`docker/Dockerfile.qwenpaw`），报告 PDF 转换优先在 qwenpaw 容器内直接执行 `python3 /app/backend/scripts/md_to_pdf_report.py`（backend 为 bind mount，共享 `/data` 卷），无需 `docker exec quantmind`。
 
+### 5. Web 前端部署（Nginx 预编译）
+- **预编译目录**：`web/dist` 已纳入版本（`.gitignore` 放行 `!web/dist/**`），本地 `npm run dashboard:build` 后 `cp -r electron/dist-react/* web/dist/` 并提交，服务器 `git pull` 即更新，无需在服务器构建 `node`
+- **服务**：`web` 容器 `nginx:alpine`（`docker-compose.yml:web`），挂载 `./web/dist:/usr/share/nginx/html:ro` + `./docker/web/nginx.conf:ro`，反代 `/api/ → quantmind:8000`、`/ws/ → quantmind:8003`，`resolver 127.0.0.11` 动态解析
+- **更新**：`git pull && docker compose up -d web`（或 `restart web`），前端日常开发仍用 `npm run dev` HMR，无需每次重建
+- **构建过滤**：`deploy/update.sh` 仅在 `requirements*.txt`/`Dockerfile` 变更时重建后端镜像，前端走 `web/dist` Volume，与后端构建解耦
+
 ## 关键文件
 
 - `backend/main_oss.py` - 全部后端服务的统一入口

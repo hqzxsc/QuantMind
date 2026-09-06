@@ -180,7 +180,7 @@ export function KlineChart({
           + (hasScoreSubplot ? scoreSubH : 0)
           + (subCount - 1) * SUB_GAP)
       : 0;
-    const mainH = Math.max(140, chartH - TOP - GAP - subTotal - 26);
+    const mainH = Math.max(140, chartH - TOP - GAP - subTotal - 52);
     const grids: any[] = [];
     const xAxes: any[] = [];
     const yAxes: any[] = [];
@@ -557,7 +557,7 @@ export function KlineChart({
       yAxis: yAxes,
       dataZoom: [
         { type: 'inside', xAxisIndex: xAxes.map((_, i) => i), start: zoomStart, end: zoomEnd },
-        { type: 'slider', xAxisIndex: xAxes.map((_, i) => i), start: zoomStart, end: zoomEnd, bottom: 2, height: 16, borderColor: '#e2e8f0', fillerColor: 'rgba(59,130,246,0.08)' },
+        { type: 'slider', xAxisIndex: xAxes.map((_, i) => i), start: zoomStart, end: zoomEnd, bottom: 22, height: 20, borderColor: '#e2e8f0', fillerColor: 'rgba(59,130,246,0.08)' },
       ],
       series,
     };

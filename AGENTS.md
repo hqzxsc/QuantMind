@@ -53,13 +53,13 @@ npm run dashboard:build  # 生产环境构建
 - **共享模块**：`backend/shared/` 存放跨服务代码（DB 管理器、Redis 客户端、配置、日志）
 - **策略存储**：`backend/shared/strategy_storage.py` 是所有策略增删改查的唯一入口
 
-## 股票代码标准化（重要）
+## 股票代码标准化（重要，分层口径）
 
-- **强制格式**：前缀式（如 `SH600036`）。**所有内部 Redis 键、数据库字段、API 参数必须使用此格式。**
-- **禁止格式**：后缀式（如 `600036.SH`）。**任何新代码和配置中不得使用此格式。**
-- **标准化工具**：
-  - 后端：`backend/shared/stock_utils.py` → `StockCodeUtil.to_prefix(code)`
-  - 前端：`electron/src/utils/portfolioUtils.ts` → `normalizeStockCode(code)`
+- **QuantDB parquet / Qlib / 行情数据层**：后缀式（如 `600036.SH`，Qlib 桥接用全小写 `sh600036`）。查 parquet、`stock-terminal`（仅接受后缀校验）、Qlib `D.features` 时必须用此格式，否则静默查空。
+- **PG 数据库字段 / Redis 键 / 前端 / Strategy Lab SDK / 大多数 API**：前缀式（如 `SH600036`）。
+- **层边界必须经 `StockCodeUtil` 显式转换，禁止散落手写切片**，禁止跨层混用：
+  - 后端：`backend/shared/stock_utils.py` → `StockCodeUtil.to_suffix(code)` / `.to_prefix(code)` / `.to_qlib(code)`
+  - 前端：`electron/src/utils/portfolioUtils.ts` → `normalizeStockCode(code)`（输出前缀式）
 - **Redis 键格式**：
   - 快照：`market:snapshot:sh600036`（快照键用小写前缀）
   - 序列：`market:series:SH600036`（序列用标准前缀式）

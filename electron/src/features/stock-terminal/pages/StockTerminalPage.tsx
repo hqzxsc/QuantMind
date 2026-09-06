@@ -413,7 +413,7 @@ export default function StockTerminalPage() {
                     ))}
                   </div>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto p-3 pb-6 bg-gray-50/30 custom-scrollbar">
+                <div className="flex-1 min-h-0 overflow-y-auto p-3 pb-16 bg-gray-50/30 custom-scrollbar">
                   <div className={detailTab === 'overview' ? '[&>div]:!grid-cols-1 [&>div]:!gap-3' : ''}>
                     {detailTab === 'overview' && <OverviewTab profile={profile} />}
                     {detailTab === 'financials' && <FinancialsTab symbol={selected.symbol} asof={signalDate} />}

@@ -946,8 +946,8 @@ async def get_model_market_regime(
                 }
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    # 阈值 0.08/0.02 对 Top20 均值更敏感（全市场均值恒≈0/全负），仅 90 日
-    bull_thr, bear_thr = 0.08, 0.02
+    # 全市场均值量级小（Top100 均值约 0.02~0.05，全市场约低一个量级），阈值相应下调
+    bull_thr, bear_thr = 0.01, 0.0
     series: list[dict[str, Any]] = []
 
     def _regime_point(
@@ -974,7 +974,7 @@ async def get_model_market_regime(
 
     try:
         # ── 主路径：读 pred.parquet（全市场截面，B 套）──────────────────────
-        # 大盘分析反映「模型对全市场 Top100 的打分均值」。pred.parquet 是全市场
+        # 大盘分析反映「模型对全市场的打分均值」。pred.parquet 是全市场
         # 稳定分数源；engine_signal_scores 会被个股推理（仅持久化个别标点）污染，
         # 若以其为主会导致「大盘分析只显示个股数据」。故优先读 pred.parquet。
         storage_path = str(model.get("storage_path") or "").strip()
@@ -1016,19 +1016,14 @@ async def get_model_market_regime(
                     )
                     if score_col and date_col:
                         q = f"""
-                            SELECT CAST(trade_date AS VARCHAR) AS trade_date,
-                                   AVG(CAST(score AS DOUBLE))::DOUBLE AS avg_score,
-                                   MEDIAN(CAST(score AS DOUBLE))::DOUBLE AS median_score,
+                            SELECT CAST({date_col} AS VARCHAR) AS trade_date,
+                                   AVG(CAST({score_col} AS DOUBLE))::DOUBLE AS avg_score,
+                                   MEDIAN(CAST({score_col} AS DOUBLE))::DOUBLE AS median_score,
                                    COUNT(*)::INTEGER AS cnt
-                            FROM (
-                                SELECT {date_col} AS trade_date, CAST({score_col} AS DOUBLE) AS score,
-                                       ROW_NUMBER() OVER (PARTITION BY {date_col} ORDER BY CAST({score_col} AS DOUBLE) DESC) AS rn
-                                FROM read_parquet('{str(parquet_file)}')
-                                WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
-                            )
-                            WHERE rn <= 100
-                            GROUP BY trade_date
-                            ORDER BY trade_date DESC
+                            FROM read_parquet('{str(parquet_file)}')
+                            WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
+                            GROUP BY {date_col}
+                            ORDER BY {date_col} DESC
                             LIMIT {int(window)}
                         """
                         rows2 = con.execute(q).fetchall()
@@ -1061,13 +1056,11 @@ async def get_model_market_regime(
                                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY top.fusion_score)::float AS median_score,
                                        COUNT(*)::int AS cnt
                                 FROM qm_model_inference_runs r
-                                JOIN LATERAL (
-                                    SELECT s.fusion_score
-                                    FROM engine_signal_scores s
-                                    WHERE s.run_id = r.run_id AND s.tenant_id = r.tenant_id AND s.user_id = r.user_id
-                                    ORDER BY s.fusion_score DESC
-                                    LIMIT 100
-                                ) top ON true
+                                 JOIN LATERAL (
+                                     SELECT s.fusion_score
+                                     FROM engine_signal_scores s
+                                     WHERE s.run_id = r.run_id AND s.tenant_id = r.tenant_id AND s.user_id = r.user_id
+                                 ) top ON true
                                 WHERE r.tenant_id = :tenant_id AND r.user_id = :user_id
                                   AND r.model_id = :model_id AND r.status = 'completed'
                                 GROUP BY r.data_trade_date

@@ -50,6 +50,7 @@ from backend.services.engine.services.model_inference_persistence import (
 )
 from backend.shared.database_manager_v2 import get_session
 from backend.shared.inference_stats import compute_score_distribution
+from backend.shared.inference_coverage import find_inference_gap_dates
 from backend.shared.model_registry import model_registry_service
 from backend.shared.redis_sentinel_client import get_redis_sentinel_client
 from backend.shared.trading_calendar import calendar_service
@@ -1364,22 +1365,11 @@ async def get_inference_coverage(
         min_date, max_date = dates[0], dates[-1]
         latest = _latest_trading_date()
         # 生成交易日缺口；上限截至 QuantDB 因子数据已产出日（因子 T+1 更新，
-        # 当日数据未产出不算缺口），避免一键补全对无数据日做注定失败的推理
+        # 当日数据未产出不算缺口），避免一键补全对无数据日做注定失败的推理。
+        # 必须扫描 [min_date, gap_end] 全区间，不能只从 max_date 向后补；
+        # 否则中间某日推理失败后，即使后续日期已存在也会永久漏补。
         gap_end = min(latest, _quantdb_latest_factor_date() or latest)
-        try:
-            import exchange_calendars as xcals
-            import pandas as pd
-
-            cal = xcals.get_calendar("XSHG")
-            start = pd.Timestamp(max_date) + pd.Timedelta(days=1)
-            end = pd.Timestamp(gap_end)
-            if start <= end:
-                sessions = cal.sessions_in_range(start, end)
-                gap = [d.strftime("%Y-%m-%d") for d in sessions]
-            else:
-                gap = []
-        except Exception:
-            gap = []
+        gap = find_inference_gap_dates(dates, gap_end)
         return {
             "model_id": model_id,
             "min_date": min_date,
@@ -4208,23 +4198,62 @@ async def get_stock_inference_history(
     else:
         board = "其他"
 
-    # 曲线只展示单一模型（个股终端不传 model_id → 用户默认模型），不再返回历史涉及的多模型列表
+    # 曲线模型下拉：返回该用户全部可用模型（供个股终端切换），而非仅当前分数对应的单一模型
     models: list[dict[str, Any]] = []
-    if pred_model:
-        pmeta = pred_model.get("metadata_json") or {}
-        if not isinstance(pmeta, dict):
-            pmeta = {}
-        models.append(
-            {
-                "model_id": str(pred_model.get("model_id") or ""),
-                "display_name": pmeta.get("display_name")
-                or pmeta.get("model_name")
-                or "",
-                "is_default": bool(pred_model.get("is_default")),
-                "train_start": str(pmeta.get("train_start") or "")[:10],
-                "train_end": str(pmeta.get("train_end") or "")[:10],
-            }
+    try:
+        from backend.shared.model_registry import model_registry_service
+
+        all_models = await model_registry_service.list_models(
+            tenant_id=tenant_id, user_id=user_id
         )
+        for m in all_models:
+            pmeta = m.get("metadata_json") or {}
+            if not isinstance(pmeta, dict):
+                pmeta = {}
+            models.append(
+                {
+                    "model_id": str(m.get("model_id") or ""),
+                    "display_name": pmeta.get("display_name")
+                    or pmeta.get("model_name")
+                    or str(m.get("model_id") or ""),
+                    "is_default": bool(m.get("is_default")),
+                    "train_start": str(pmeta.get("train_start") or "")[:10],
+                    "train_end": str(pmeta.get("train_end") or "")[:10],
+                }
+            )
+        # 若用户暂无模型记录（历史数据），回退到单模型兜底
+        if not models and pred_model:
+            pmeta = pred_model.get("metadata_json") or {}
+            if not isinstance(pmeta, dict):
+                pmeta = {}
+            models.append(
+                {
+                    "model_id": str(pred_model.get("model_id") or ""),
+                    "display_name": pmeta.get("display_name")
+                    or pmeta.get("model_name")
+                    or "",
+                    "is_default": bool(pred_model.get("is_default")),
+                    "train_start": str(pmeta.get("train_start") or "")[:10],
+                    "train_end": str(pmeta.get("train_end") or "")[:10],
+                }
+            )
+    except Exception as _e:
+        logger.debug(f"加载模型列表失败，回退单模型: {_e}")
+        if pred_model:
+            pmeta = pred_model.get("metadata_json") or {}
+            if not isinstance(pmeta, dict):
+                pmeta = {}
+            models.append(
+                {
+                    "model_id": str(pred_model.get("model_id") or ""),
+                    "display_name": pmeta.get("display_name")
+                    or pmeta.get("model_name")
+                    or "",
+                    "is_default": bool(pred_model.get("is_default")),
+                    "train_start": str(pmeta.get("train_start") or "")[:10],
+                    "train_end": str(pmeta.get("train_end") or "")[:10],
+                }
+            )
 
     return {
         "symbol": sym,

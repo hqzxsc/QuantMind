@@ -235,9 +235,10 @@ export default function StockTerminalPage() {
                 size="small"
                 style={{ width: 130 }}
                 placeholder="默认模型"
-                value={modelId}
-                onChange={setModelId}
+                value={modelId ?? undefined}
+                onChange={(v) => setModelId(v === 'default' ? undefined : (v as string | undefined))}
                 popupMatchSelectWidth={false}
+                allowClear
                 options={[
                   { value: 'default', label: '默认模型' },
                   ...scoreModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id })),

@@ -865,6 +865,21 @@ async def admin_list_folders(request: Request):
     ) or []
 
     # 索引：folder_id -> connectors（folder_id=None 视为未分组）
+    # 补充订阅地址：folder-connectors 仅含 id/name/icon/inboxCount，需从 SQLite 补 subscribe_url
+    subscribe_map: dict[int, str] = {}
+    if _huntly_sqlite_available():
+        try:
+            with _huntly_sqlite() as sconn:
+                cur = sconn.cursor()
+                cur.execute("SELECT id, subscribe_url FROM connector")
+                for row in cur.fetchall():
+                    try:
+                        subscribe_map[int(row["id"])] = str(row["subscribe_url"] or "")
+                    except Exception:
+                        continue
+        except Exception as exc:
+            logger.warning("补齐订阅地址失败: %s", exc)
+
     conn_by_folder: dict[int | None, list[dict]] = {}
     seen_folder_ids: set[int | None] = set()
     for f in ffc:
@@ -872,6 +887,7 @@ async def admin_list_folders(request: Request):
         conn_by_folder[fid] = [
             {
                 **item,
+                "subscribeUrl": item.get("subscribeUrl") or subscribe_map.get(int(item.get("id") or 0), ""),
                 "iconUrl": _public_connector_icon_url(item.get("iconUrl"), request),
             }
             for item in (f.get("connectorItems") or [])

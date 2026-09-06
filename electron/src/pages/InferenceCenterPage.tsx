@@ -582,41 +582,53 @@ export const InferenceCenterPage: React.FC = () => {
           {/* 模型选择与二级导航 Bar */}
           <div className="px-6 py-3.5 border-b border-gray-200 bg-slate-50/50 flex flex-wrap items-center justify-between gap-4 shrink-0">
             {/* 模型选择 */}
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
-                <Database size={14} className="text-blue-500" />
-                当前推理模型:
-              </span>
-              <Select
-                value={selectedModelId}
-                onChange={setSelectedModelId}
-                loading={modelsLoading}
-                className="w-72"
-                options={registeredModels.map((m) => ({
-                  value: m.model_id,
-                  label: (
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold truncate">{modelDisplayName(m)}</span>
-                      {m.is_default && (
-                        <Tag color="gold" className="!mr-0 text-[10px] scale-90">默认</Tag>
-                      )}
-                    </div>
-                  ),
-                }))}
-              />
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 bg-white border border-slate-200 rounded-2xl pl-3.5 pr-3 py-1.5 shadow-sm">
+                <Database size={16} className="text-blue-600 shrink-0" />
+                <div className="flex flex-col leading-tight">
+                  <span className="text-xs font-bold text-slate-400">当前推理模型</span>
+                  <Select
+                    value={selectedModelId}
+                    onChange={setSelectedModelId}
+                    loading={modelsLoading}
+                    variant="borderless"
+                    className="!w-80 [&_.ant-select-selection-item]:text-[13px] [&_.ant-select-selection-item]:font-bold [&_.ant-select-selection-item]:text-slate-800"
+                    options={registeredModels.map((m) => ({
+                      value: m.model_id,
+                      label: (
+                        <div className="flex items-center justify-between text-[13px]">
+                          <span className="font-semibold truncate">{modelDisplayName(m)}</span>
+                          {m.is_default && (
+                            <Tag color="gold" className="!mr-0 text-xs">默认</Tag>
+                          )}
+                        </div>
+                      ),
+                    }))}
+                  />
+                </div>
+              </div>
               {selectedModel && (
-                <div className="flex items-center gap-2 text-[11px] text-slate-500 bg-white px-3 py-1 rounded-xl border border-slate-200">
-                  <span>架构: <strong className="text-slate-700 font-mono">{extractModelType(selectedModel)}</strong></span>
-                  <span className="text-slate-300">|</span>
-                  <span>目标: <strong className="text-blue-600 font-mono">T+{horizonDays}</strong></span>
-                  {selectedModel.is_default && (
-                    <>
-                      <span className="text-slate-300">|</span>
-                      <span className="text-amber-600 font-bold flex items-center gap-0.5">
-                        <Star size={11} fill="currentColor" /> 默认生效
+                <div className="flex items-center gap-2">
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 leading-snug whitespace-nowrap">
+                    <span className="text-xs text-slate-400">架构 </span>
+                    <span className="text-xs font-bold text-slate-800 font-mono">{extractModelType(selectedModel)}</span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 leading-snug whitespace-nowrap">
+                    <span className="text-xs text-slate-400">目标 </span>
+                    <span className="text-xs font-bold text-blue-600 font-mono">T+{horizonDays}</span>
+                  </div>
+                  <div className={clsx(
+                    'border rounded-xl px-3 py-1.5 leading-snug whitespace-nowrap',
+                    selectedModel.is_default ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'
+                  )}>
+                    {selectedModel.is_default ? (
+                      <span className="text-xs font-bold text-amber-600 flex items-center gap-1">
+                        <Star size={12} fill="currentColor" /> 默认生效
                       </span>
-                    </>
-                  )}
+                    ) : (
+                      <span className="text-xs text-slate-400">非默认模型</span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

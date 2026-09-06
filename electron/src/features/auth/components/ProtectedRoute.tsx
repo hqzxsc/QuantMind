@@ -9,7 +9,7 @@ import { LockOutlined, CloudServerOutlined } from '@ant-design/icons';
 import { useRequireAuth, useRequireRole } from '../hooks/useAuth';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { logout, retryAuthInit } from '../store/authSlice';
-import { getDynamicServerUrl } from '../../../config/services';
+import { getDynamicServerUrl, initDynamicServerUrl } from '../../../config/services';
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -30,6 +30,12 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   const { isAuthenticated, isLoading, user } = useRequireAuth();
   const { hasRole } = useRequireRole(requiredRole);
   const serverUnreachable = useAppSelector((state) => state.auth.serverUnreachable);
+
+  // 重试连接：先重新探测服务器地址（换 IP 后旧地址会失效），再重置认证状态重试
+  const handleRetry = async () => {
+    await initDynamicServerUrl();
+    dispatch(retryAuthInit());
+  };
 
   // 认证唯一依据是 Redux 已校验状态。localStorage 里有旧 token 不代表已登录——
   // 服务器不可达/初始化失败时不得放行，避免后端关闭后“登录成功看缓存数据”。
@@ -88,7 +94,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
               <Button
                 type="primary"
                 size="large"
-                onClick={() => dispatch(retryAuthInit())}
+                onClick={() => void handleRetry()}
               >
                 重试连接
               </Button>

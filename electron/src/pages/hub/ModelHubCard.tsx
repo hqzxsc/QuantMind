@@ -22,59 +22,24 @@ export const ModelHubCard: React.FC<ModelHubCardProps> = ({
   onLike,
   importing = false,
 }) => {
-  // 生成简易 SVG 净值走势曲线 (Mini Sparkline)
-  const renderSparkline = (curve?: Array<{ date: string; value: number }>) => {
-    if (!curve || curve.length < 2) {
-      return (
-        <div className="h-10 w-full flex items-center justify-center bg-slate-50/50 rounded-lg text-[10px] text-slate-300">
-          暂无净值曲线数据
-        </div>
-      );
-    }
-
-    const values = curve.map((p) => p.value);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const range = max - min || 1;
-    const width = 280;
-    const height = 40;
-    const padding = 4;
-
-    const points = curve
-      .map((p, i) => {
-        const x = (i / (curve.length - 1)) * (width - padding * 2) + padding;
-        const y = height - padding - ((p.value - min) / range) * (height - padding * 2);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(' ');
-
-    const isPositive = values[values.length - 1] >= values[0];
-    const strokeColor = isPositive ? '#ef4444' : '#10b981'; // A股红涨绿跌
-    const fillColor = isPositive ? 'rgba(239, 68, 68, 0.08)' : 'rgba(16, 185, 129, 0.08)';
-
-    const areaPoints = `${padding},${height} ${points} ${width - padding},${height}`;
-
-    return (
-      <div className="relative w-full h-10 overflow-hidden rounded-md">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full">
-          <polygon points={areaPoints} fill={fillColor} />
-          <polyline
-            fill="none"
-            stroke={strokeColor}
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            points={points}
-          />
-        </svg>
-      </div>
-    );
-  };
-
   const fmtNum = (v: unknown, digits = 2) =>
     typeof v === 'number' && Number.isFinite(v) ? (v as number).toFixed(digits) : '—';
   const fmtPct = (v: unknown, digits = 1) =>
     typeof v === 'number' && Number.isFinite(v) ? `${((v as number) * 100).toFixed(digits)}%` : '—';
+  const extraMetrics: Record<string, unknown> =
+    typeof (model as unknown as Record<string, unknown>).extra_metrics === 'object' &&
+    (model as unknown as Record<string, unknown>).extra_metrics !== null
+      ? ((model as unknown as Record<string, unknown>).extra_metrics as Record<string, unknown>)
+      : {};
+  const volatilityRaw =
+    (model as unknown as Record<string, unknown>).volatility ??
+    extraMetrics.volatility ??
+    extraMetrics.annual_volatility ??
+    (model as unknown as Record<string, unknown>).annual_volatility;
+  const winRateRaw =
+    (model as unknown as Record<string, unknown>).win_rate ??
+    extraMetrics.win_rate ??
+    extraMetrics.winRate;
 
   const formattedSize = (bytes?: number) => {
     if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '—';
@@ -206,18 +171,15 @@ export const ModelHubCard: React.FC<ModelHubCardProps> = ({
             <div className="text-xs font-black text-slate-800">{fmtNum(model.calmar_ratio, 2)}</div>
           </div>
           <div>
-            <div className="text-[10px] text-slate-400 font-semibold">PSI 稳定性</div>
-            <div className="text-xs font-black text-slate-800">{fmtNum(model.psi, 3)}</div>
+            <div className="text-[10px] text-slate-400 font-semibold">
+              {typeof winRateRaw === 'number' && Number.isFinite(winRateRaw as number) ? '胜率 (Win Rate)' : '年化波动率'}
+            </div>
+            <div className="text-xs font-black text-slate-800">
+              {typeof winRateRaw === 'number' && Number.isFinite(winRateRaw as number)
+                ? fmtPct(winRateRaw as number, 1)
+                : fmtPct(volatilityRaw as number, 1)}
+            </div>
           </div>
-        </div>
-
-        {/* 净值走势预览 */}
-        <div className="mb-3">
-          <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold mb-1">
-            <span>净值回测走势</span>
-            {typeof model.calmar_ratio === 'number' && Number.isFinite(model.calmar_ratio) ? <span>Calmar: {model.calmar_ratio.toFixed(2)}</span> : null}
-          </div>
-          {renderSparkline(model.equity_curve)}
         </div>
       </div>
 

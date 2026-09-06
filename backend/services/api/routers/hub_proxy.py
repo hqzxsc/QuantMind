@@ -320,6 +320,23 @@ async def publish_local_model(
                         _calc = float(bt_summary["annual_return"]) / _dd if _dd else 0
                         if not req.calmar_ratio and abs(_calc) < 1e6:
                             req.calmar_ratio = float(_calc)
+                    # 额外可展示指标：波动率/胜率等写入 extra_metrics，供卡片“波动率/胜率”展示
+                    if not isinstance(extra_metrics, dict):
+                        extra_metrics = {}
+                    for _k in (
+                        "volatility",
+                        "win_rate",
+                        "profit_factor",
+                        "total_trades",
+                        "total_return",
+                    ):
+                        _v = bt_summary.get(_k)
+                        if isinstance(_v, (int, float)) and _v not in (None,):
+                            # 仅当 extra_metrics 尚无该键时回填，避免覆盖训练已有值
+                            if extra_metrics.get(_k) is None:
+                                extra_metrics[_k] = (
+                                    float(_v) if isinstance(_v, float) else _v
+                                )
                 # 净值曲线在本地大字段文件中
                 _bt_path = bt_row.get("result_file_path")
                 if _bt_path:

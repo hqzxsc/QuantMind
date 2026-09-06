@@ -35,7 +35,7 @@ const MARKET_BROKER_LABEL: Record<string, string> = {
 };
 
 /**
- * 拓扑控制台：输入层 → 运行层 → 输出层 → 日志折叠。
+ * 拓扑控制台：输入层 → 运行层（状态+计划） → 交易记录 → 日志折叠。
  * 数据经 useRuntimeOverview 聚合：首屏 3 路并行、preflight 不进轮询、
  * 策略列表懒加载、每层独立骨架。
  */
@@ -163,26 +163,23 @@ const TopologyConsole: React.FC<TopologyConsoleProps> = ({
                 {/* L1 输入层 */}
                 <InputLayer nodes={nodes} loading={!ready.precheck} />
 
-                {/* L2 运行层 */}
+                {/* L2 运行层：左运行策略+参数，右下个交易日计划+任务汇报 */}
                 <RuntimeLayer
                     runState={runState}
                     status={status}
                     loading={!ready.status}
                     latestRun={latestRun}
                     defaultModelName={defaultModelName}
+                />
+
+                {/* L3 交易记录（全宽） */}
+                <OutputLayer
                     recentOrders={overview.recentOrders}
                     ordersLoading={!overview.ordersReady}
                     onOpenHistory={onOpenHistory}
-                />
-
-                {/* L3 输出层 */}
-                <OutputLayer
-                    status={status}
-                    latestRun={latestRun}
-                    loading={!ready.status}
+                    onOpenManualTask={onOpenManualTask}
                     logsOpen={logsOpen}
                     onToggleLogs={() => setLogsOpen(!logsOpen)}
-                    onOpenManualTask={onOpenManualTask}
                 />
 
                 {/* L4 日志折叠 */}

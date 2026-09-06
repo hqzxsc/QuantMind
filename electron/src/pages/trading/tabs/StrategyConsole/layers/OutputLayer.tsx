@@ -1,128 +1,117 @@
 import React from 'react';
 import { Skeleton } from 'antd';
 import { Activity, TerminalSquare } from 'lucide-react';
-import type { RealTradingStatus } from '../../../../../services/realTradingService';
-import type { LatestInferenceRunInfo } from '../../../../../services/modelTrainingService';
+import type { Order } from '../../../../../services/realTradingService';
 
 interface OutputLayerProps {
-    status: RealTradingStatus | null;
-    latestRun: LatestInferenceRunInfo | null;
-    loading: boolean;
+    recentOrders: Order[];
+    ordersLoading: boolean;
+    onOpenHistory?: () => void;
+    onOpenManualTask?: () => void;
     logsOpen: boolean;
     onToggleLogs: () => void;
-    onOpenManualTask?: () => void;
 }
 
-const taskTone = (value?: string | null): string => {
+const orderStatusLabel = (value?: string | null): string => {
     const s = String(value || '').toLowerCase();
-    if (s === 'completed') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-    if (['running', 'dispatching', 'validating', 'queued'].includes(s)) return 'bg-blue-50 text-blue-700 border-blue-200';
-    if (s === 'failed' || s === 'cancelled') return 'bg-rose-50 text-rose-700 border-rose-200';
-    return 'bg-slate-50 text-slate-600 border-slate-200';
-};
-
-const taskLabel = (value?: string | null): string => {
-    const s = String(value || '').toLowerCase();
-    if (s === 'completed') return '已完成';
-    if (s === 'running') return '执行中';
-    if (s === 'dispatching') return '派发中';
-    if (s === 'validating') return '校验中';
-    if (s === 'queued') return '排队中';
-    if (s === 'failed') return '已失败';
-    if (s === 'cancelled') return '已取消';
+    if (s === 'filled') return '已成';
+    if (s === 'partial_filled' || s === 'partially_filled') return '部成';
+    if (s === 'cancelled' || s === 'canceled') return '已撤';
+    if (s === 'rejected') return '已拒绝';
+    if (s === 'submitted' || s === 'pending' || s === 'new') return '待成交';
     return value || '-';
 };
 
-/**
- * L3 输出层：下个交易日计划 + 最新任务汇报。
- * 数据源自 status.latest_hosted_task（后端已聚合），无新增接口。
- */
-const OutputLayer: React.FC<OutputLayerProps> = ({ status, latestRun, loading, logsOpen, onToggleLogs, onOpenManualTask }) => {
-    const task = status?.latest_hosted_task || null;
-    const result = (task?.result_json || {}) as Record<string, unknown>;
-    const request = (task?.request_json || {}) as Record<string, unknown>;
-    const preview = (result?.preview_summary || {}) as Record<string, unknown>;
-    const execWindow = (request?.execution_window || {}) as Record<string, string | undefined>;
-    const success = Number(task?.success_count ?? (result?.success_count as number) ?? 0);
-    const failed = Number(task?.failed_count ?? (result?.failed_count as number) ?? 0);
-    const skipped = Number(preview?.skipped_count ?? 0);
-    const horizon = preview?.target_horizon_days as number | undefined;
+const formatOrderTime = (value?: string | null): string => {
+    if (!value) return '-';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value).slice(11, 16) || '-';
+    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 
+/**
+ * L3 交易记录：全宽单行列表（最近委托），行高放开、每条一行展示
+ * 代码 / 方向 / 数量 / 价格 / 状态 / 时间，不再挤窄列换行。
+ */
+const OutputLayer: React.FC<OutputLayerProps> = ({
+    recentOrders,
+    ordersLoading,
+    onOpenHistory,
+    onOpenManualTask,
+    logsOpen,
+    onToggleLogs,
+}) => {
     return (
         <section className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4">
             <div className="flex items-center gap-2 mb-3">
-                <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-500 tracking-widest">OUTPUT</span>
-                <h3 className="font-bold text-slate-800 text-sm">输出状态</h3>
-            </div>
-            {loading && !task && !latestRun ? (
-                <Skeleton active paragraph={{ rows: 2 }} />
-            ) : !task ? (
-                <div className="flex items-center justify-center gap-2 border border-dashed border-slate-100 rounded-xl py-6 text-xs text-slate-400">
-                    <Activity size={16} className="opacity-30" />
-                    今日暂未触发自动化托管任务
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                    <div className="rounded-xl border border-slate-100 p-3">
-                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">下个交易日计划</div>
-                        <div className="space-y-1.5 text-xs font-bold text-slate-700">
-                            <div className="flex justify-between gap-2">
-                                <span className="text-slate-400 font-medium">目标跨度</span>
-                                <span>{horizon ? `${horizon} 个交易日` : '-'}</span>
-                            </div>
-                            <div className="flex justify-between gap-2">
-                                <span className="text-slate-400 font-medium">执行窗口</span>
-                                <span className="truncate" title={`${execWindow?.start || '-'} ~ ${execWindow?.end || '-'}`}>
-                                    {execWindow?.start || '-'} ~ {execWindow?.end || '-'}
-                                </span>
-                            </div>
-                            <div className="flex justify-between gap-2">
-                                <span className="text-slate-400 font-medium">信号批次</span>
-                                <span className="font-mono truncate" title={task.run_id}>{task.prediction_trade_date || '-'}</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="rounded-xl border border-slate-100 p-3">
-                        <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">任务汇报</span>
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${taskTone(task.status)}`}>
-                                {taskLabel(task.status)}
-                            </span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                            <div className="rounded-lg bg-emerald-50 border border-emerald-100 py-1.5">
-                                <div className="text-[9px] font-black text-emerald-600/70">成功</div>
-                                <div className="text-sm font-black text-emerald-700">{success}</div>
-                            </div>
-                            <div className="rounded-lg bg-rose-50 border border-rose-100 py-1.5">
-                                <div className="text-[9px] font-black text-rose-600/70">失败</div>
-                                <div className="text-sm font-black text-rose-700">{failed}</div>
-                            </div>
-                            <div className="rounded-lg bg-slate-50 border border-slate-200 py-1.5">
-                                <div className="text-[9px] font-black text-slate-400">跳过</div>
-                                <div className="text-sm font-black text-slate-700">{skipped}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="rounded-xl border border-slate-100 p-3 flex flex-col justify-center gap-2">
+                <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-500">RECORDS</span>
+                <h3 className="font-bold text-slate-800 text-sm">交易记录</h3>
+                {!ordersLoading && recentOrders.length > 0 && (
+                    <span className="text-xs text-slate-400">最近 {recentOrders.length} 条</span>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                    {onOpenManualTask && (
                         <button
                             type="button"
-                            onClick={onToggleLogs}
-                            className="w-full py-2.5 rounded-xl bg-slate-50 text-slate-800 text-[11px] font-black hover:bg-slate-100 transition-all flex items-center justify-center gap-2 border border-slate-200"
+                            onClick={onOpenManualTask}
+                            className="px-3 py-1.5 rounded-xl bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100 transition-all flex items-center gap-1.5 border border-blue-100"
                         >
-                            <TerminalSquare size={14} />
-                            {logsOpen ? '收起任务日志' : '查看任务日志'}
+                            <Activity size={13} /> 查看详情
                         </button>
-                        {onOpenManualTask && (
-                            <button
-                                type="button"
-                                onClick={onOpenManualTask}
-                                className="w-full py-2.5 rounded-xl bg-blue-50 text-blue-700 text-[11px] font-black hover:bg-blue-100 transition-all flex items-center justify-center gap-2 border border-blue-100"
+                    )}
+                    <button
+                        type="button"
+                        onClick={onToggleLogs}
+                        className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-700 text-xs font-bold hover:bg-slate-100 transition-all flex items-center gap-1.5 border border-slate-200"
+                    >
+                        <TerminalSquare size={13} />
+                        {logsOpen ? '收起任务日志' : '查看任务日志'}
+                    </button>
+                    {onOpenHistory && (
+                        <button
+                            type="button"
+                            onClick={onOpenHistory}
+                            className="text-xs font-bold text-blue-600 hover:text-blue-700"
+                        >
+                            查看全部 →
+                        </button>
+                    )}
+                </div>
+            </div>
+            {ordersLoading ? (
+                <Skeleton active paragraph={{ rows: 4 }} />
+            ) : recentOrders.length === 0 ? (
+                <div className="flex items-center justify-center border border-dashed border-slate-100 rounded-xl text-xs text-slate-400 py-10">
+                    暂无委托记录
+                </div>
+            ) : (
+                <div className="overflow-y-auto custom-scrollbar divide-y divide-slate-100 max-h-96">
+                    {recentOrders.map((order) => {
+                        const isBuy = String(order.side || '').toLowerCase() === 'buy';
+                        const price = order.average_price ?? order.price;
+                        return (
+                            <div
+                                key={order.order_id || order.id}
+                                className="grid grid-cols-[28px_minmax(0,1fr)_auto_auto_auto] items-center gap-3 py-2"
                             >
-                                <Activity size={14} /> 查看详情
-                            </button>
-                        )}
-                    </div>
+                                <span className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center ${isBuy ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                    {isBuy ? '买' : '卖'}
+                                </span>
+                                <div className="min-w-0 flex items-baseline gap-2 truncate">
+                                    <span className="text-xs font-bold text-slate-800 truncate" title={`${order.symbol} ${order.symbol_name || ''}`}>
+                                        {order.symbol_name || order.symbol}
+                                    </span>
+                                    <span className="font-mono text-xs text-slate-400 shrink-0">{order.symbol}</span>
+                                </div>
+                                <span className="text-xs text-slate-600 font-mono whitespace-nowrap">
+                                    {order.filled_quantity ?? order.quantity} 股
+                                    {typeof price === 'number' ? ` @ ${price.toFixed(2)}` : ''}
+                                </span>
+                                <span className="text-xs font-bold text-slate-500 whitespace-nowrap">{orderStatusLabel(order.status)}</span>
+                                <span className="text-xs text-slate-400 font-mono whitespace-nowrap">{formatOrderTime(order.created_at)}</span>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </section>

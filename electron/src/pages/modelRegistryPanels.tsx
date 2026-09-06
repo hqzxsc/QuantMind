@@ -1006,7 +1006,7 @@ export const InferenceCenterPanel: React.FC<{
                             {precheck.passed ? "环境就绪" : "预检阻断"}
                           </Text>
                            <Text className="text-xs text-slate-500">
-                             数据截止: {precheck.prediction_trade_date} · {dayjs(precheck.checked_at).format('HH:mm')}
+                             数据截止: {precheck.data_trade_date}
                            </Text>
                          </div>
                        </div>

@@ -195,14 +195,19 @@ export const InferenceCenterPage: React.FC = () => {
     return Number(meta?.target_horizon_days ?? meta?.target_horizon ?? 5);
   }, [selectedModel]);
 
-  // 截面推理：Precheck
+  // 截面推理：Precheck（基准日跟随后端的数据回退，避免输入框与实际数据日不一致）
   const loadPrecheck = useCallback(async (modelId: string, checkDate?: string) => {
     setInferencePrecheckLoading(true);
     try {
       const resp = await modelTrainingService.precheckInference(modelId, checkDate);
       setInferencePrecheck(resp);
-      if (resp?.prediction_trade_date) {
-        setInferenceTargetDate(resp.prediction_trade_date);
+      // 后端在请求日无数据时会自动回退到最新可用数据日（data_trade_date），
+      // 输入框必须同步，否则“行情基准日”显示的日期与实际推理用的数据日脱节。
+      // 预测目标 T+N 由 loadInferenceTargetDate 按回退后的基准日重算，这里不再复写。
+      const resolvedDataDate = resp?.data_trade_date;
+      if (resolvedDataDate && checkDate && resolvedDataDate !== checkDate) {
+        setInferenceDate(dayjs(resolvedDataDate));
+        message.info(`所选日期 ${checkDate} 无可用数据，已回退到最新数据日 ${resolvedDataDate}`);
       }
       return resp;
     } catch {
@@ -529,7 +534,7 @@ export const InferenceCenterPage: React.FC = () => {
   return (
     <div className="w-full h-full bg-[#f8fafc] p-6 flex flex-col overflow-hidden font-sans box-border select-none">
       {/* 顶部主切换栏 */}
-      <div className="flex items-center justify-between bg-white border border-gray-200 rounded-2xl px-6 py-3 mb-4 shadow-2xs shrink-0">
+      <div className="flex items-center justify-between bg-white border border-gray-200 rounded-2xl px-6 h-[68px] mb-4 shadow-2xs shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-blue-200">
             <Cpu className="w-5 h-5" />
@@ -579,46 +584,46 @@ export const InferenceCenterPage: React.FC = () => {
       {/* ================= 模式 1：市场截面推理 ================= */}
       {topTab === 'cross-section' && (
         <div className="flex-1 min-h-0 bg-white border border-gray-200 shadow-sm rounded-[28px] flex flex-col overflow-hidden">
-          {/* 模型选择与二级导航 Bar */}
-          <div className="px-6 py-3.5 border-b border-gray-200 bg-slate-50/50 flex flex-wrap items-center justify-between gap-4 shrink-0">
+          {/* 模型选择与二级导航 Bar（与顶部栏同高 68px） */}
+          <div className="px-6 h-[68px] border-b border-gray-200 bg-slate-50/50 flex flex-wrap items-center justify-between gap-4 shrink-0">
             {/* 模型选择 */}
             <div className="flex items-center gap-2.5">
-              <div className="flex items-center gap-2.5 bg-white border border-slate-200 rounded-2xl pl-3.5 pr-3 py-1.5 shadow-sm">
-                <Database size={16} className="text-blue-600 shrink-0" />
-                <div className="flex flex-col leading-tight">
-                  <span className="text-xs font-bold text-slate-400">当前推理模型</span>
-                  <Select
-                    value={selectedModelId}
-                    onChange={setSelectedModelId}
-                    loading={modelsLoading}
-                    variant="borderless"
-                    className="!w-80 [&_.ant-select-selection-item]:text-[13px] [&_.ant-select-selection-item]:font-bold [&_.ant-select-selection-item]:text-slate-800"
-                    options={registeredModels.map((m) => ({
-                      value: m.model_id,
-                      label: (
-                        <div className="flex items-center justify-between text-[13px]">
-                          <span className="font-semibold truncate">{modelDisplayName(m)}</span>
-                          {m.is_default && (
-                            <Tag color="gold" className="!mr-0 text-xs">默认</Tag>
-                          )}
-                        </div>
-                      ),
-                    }))}
-                  />
-                </div>
+              <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5 whitespace-nowrap">
+                <Database size={14} className="text-blue-600" />
+                当前推理模型
+              </span>
+              <div className="flex items-center bg-white border border-slate-200 rounded-xl px-2 h-9 shadow-sm">
+                <Select
+                  value={selectedModelId}
+                  onChange={setSelectedModelId}
+                  loading={modelsLoading}
+                  variant="borderless"
+                  className="!w-80 [&_.ant-select-selection-item]:text-[13px] [&_.ant-select-selection-item]:font-bold [&_.ant-select-selection-item]:text-slate-800"
+                  options={registeredModels.map((m) => ({
+                    value: m.model_id,
+                    label: (
+                      <div className="flex items-center justify-between text-[13px]">
+                        <span className="font-semibold truncate">{modelDisplayName(m)}</span>
+                        {m.is_default && (
+                          <Tag color="gold" className="!mr-0 text-xs">默认</Tag>
+                        )}
+                      </div>
+                    ),
+                  }))}
+                />
               </div>
               {selectedModel && (
                 <div className="flex items-center gap-2">
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 leading-snug whitespace-nowrap">
-                    <span className="text-xs text-slate-400">架构 </span>
-                    <span className="text-xs font-bold text-slate-800 font-mono">{extractModelType(selectedModel)}</span>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 h-9 flex items-center gap-1.5 whitespace-nowrap">
+                    <span className="text-xs font-bold text-slate-500">架构</span>
+                    <span className="text-[13px] font-black text-slate-900 font-mono">{extractModelType(selectedModel)}</span>
                   </div>
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 leading-snug whitespace-nowrap">
-                    <span className="text-xs text-slate-400">目标 </span>
-                    <span className="text-xs font-bold text-blue-600 font-mono">T+{horizonDays}</span>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 h-9 flex items-center gap-1.5 whitespace-nowrap">
+                    <span className="text-xs font-bold text-slate-500">目标</span>
+                    <span className="text-[13px] font-black text-blue-700 font-mono">T+{horizonDays}</span>
                   </div>
                   <div className={clsx(
-                    'border rounded-xl px-3 py-1.5 leading-snug whitespace-nowrap',
+                    'border rounded-xl px-3 h-9 flex items-center whitespace-nowrap',
                     selectedModel.is_default ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'
                   )}>
                     {selectedModel.is_default ? (

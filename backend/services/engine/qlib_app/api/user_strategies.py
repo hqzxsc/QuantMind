@@ -281,47 +281,20 @@ async def _fetch_latest_backtest_summaries(user_id: str, tenant_id: str) -> dict
 async def _perform_sync(user_id: str):
     """
     执行模板同步的内部逻辑：将内置模板同步到用户的个人策略数据库。
+    统一管理：仅通过 StrategyStorageService 写入，禁止直连 SQL；去重键为 strategy_type==template.id。
     同步 DB 操作通过 asyncio.to_thread 避免阻塞事件循环。
     """
     svc = get_strategy_storage_service()
-    from sqlalchemy import text
-
-    from backend.shared.strategy_storage import _ensure_int_user_id, get_db
-
-    # 彻底清理残留：如果用户已有"抗下行 Alpha 策略"，则将其移除
-    # 避免因名称冲突导致的新模板(多空TopK)无法同步
-    def _cleanup_old_templates():
-        try:
-            uid_int = _ensure_int_user_id(user_id)
-            with get_db() as session:
-                session.execute(
-                    text("DELETE FROM strategies WHERE user_id = :uid AND name = '抗下行 Alpha 策略'"), {"uid": uid_int}
-                )
-                session.execute(
-                    text("DELETE FROM strategies WHERE user_id = :uid AND parameters->>'strategy_type' = 'downside_alpha'"),
-                    {"uid": uid_int},
-                )
-                session.commit()
-            return True
-        except Exception:
-            return False
-
-    cleanup_ok = await asyncio.to_thread(_cleanup_old_templates)
-    if cleanup_ok:
-        StructuredTaskLogger(logger, "user-strategies", {"user_id": user_id}).info(
-            "sync_cleanup", "清理旧模板", strategy="抗下行 Alpha 策略/downside_alpha"
-        )
-    else:
-        StructuredTaskLogger(logger, "user-strategies", {"user_id": user_id}).warning(
-            "sync_cleanup_failed", "Failed to cleanup obsolete strategy in sync"
-        )
 
     templates = get_all_templates()
     synced_count = 0
     for t in templates:
-        # 检查是否已存在同名策略 (同步 DB 调用，放线程池)
-        existing = await asyncio.to_thread(svc.list, user_id=user_id, search=t.name)
-        if any(s["name"] == t.name for s in existing):
+        # 去重：按 parameters.strategy_type == template.id 判重，避免同名误判
+        existing = await asyncio.to_thread(svc.list, user_id=user_id)
+        if any((s.get("parameters") or {}).get("strategy_type") == t.id for s in existing):
+            continue
+        # 兼容旧数据：同名已存在也跳过，避免重复克隆
+        if any(s.get("name") == t.name for s in existing):
             continue
 
         await svc.save(
@@ -451,10 +424,6 @@ async def list_user_strategies(
 
         items = await asyncio.to_thread(svc.list, user_id=user_id, category=category, search=search, tags=tag_list)
 
-        if not items and not search and not tags:
-            await _perform_sync(user_id)
-            items = await asyncio.to_thread(svc.list, user_id=user_id)
-
         backtest_summaries = await _fetch_latest_backtest_summaries(user_id=user_id, tenant_id=tenant_id)
         trading_status = await _fetch_real_trading_status(request)
         runtime_state = _normalize_runtime_state((trading_status or {}).get("status"))
@@ -555,6 +524,8 @@ async def list_user_strategies(
                     last_signal_at=summary.get("created_at"),
                     execution_latency_ms=execution_latency_ms,
                     parameters=item.get("parameters") or {},
+                    category=item.get("tags", [None])[0] if item.get("tags") and item.get("is_system") else "db_stored",
+                    is_system=bool(item.get("is_system", False)),
                 )
             )
 

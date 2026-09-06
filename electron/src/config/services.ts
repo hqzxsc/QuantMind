@@ -93,30 +93,32 @@ export async function isServerReachable(url: string, timeoutMs = 8000): Promise<
 
 /**
  * 初始化动态服务器配置（桌面端启动时调用）
- * 优先级：持久化配置 > Electron 配置文件 > 桌面端默认本地地址
+ * 优先级：持久化配置 > 旧版缓存 > Electron 配置文件 > 桌面端默认本地地址
  *
  * 关键约定：健康检查失败**绝不删除**用户已保存的服务器地址。
  * 后端可能正处于重启/冷启动/网络抖动，探测失败只打日志、保留配置并继续使用，
  * 避免“隔段时间保存的 IP 丢失、需重新配置”的问题。删除配置只能由用户手动操作。
+ *
+ * 新增策略：持久化地址探测不可达时，不直接采用它，而是继续回退探测其它候选地址
+ * （旧版缓存 / 配置文件 / 本地默认），若找到可达地址则自动采用并迁移持久化配置，
+ * 解决“服务器换 IP 后客户端仍连旧地址导致卡在登录/加载”的问题。
  */
 export async function initDynamicServerUrl(): Promise<void> {
-  // 1. 持久化配置：可达则采用；不可达也保留并继续使用（仅告警），
-  //    绝不自动清除——后端可能只是重启中，清除会导致用户保存的 IP 永久丢失。
   const persisted = readPersistedServerUrl();
-  if (persisted) {
-    dynamicServerUrl = persisted;
-    void isServerReachable(persisted).then((ok) => {
-      if (!ok) console.warn(`[services] 服务器 ${persisted} 当前不可达（可能正在重启），保留配置并继续使用`);
-    });
-    return;
-  }
-
-  // 2. 旧 key（quantmind_server_url）遗留缓存迁移：可达则采用并迁移到新 key；
-  //    不可达同样保留旧 key 不动，只是不采用本次（避免误删用户配置）。
   const legacy = readLegacyPersistedServerUrl();
-  if (legacy) {
-    const ok = await isServerReachable(legacy);
-    if (ok) {
+
+  // 1. 持久化配置：可达则采用；不可达则继续探测其它候选，不立即采用
+  if (persisted) {
+    const persistedOk = await isServerReachable(persisted);
+    if (persistedOk) {
+      dynamicServerUrl = persisted;
+      return;
+    }
+    console.warn(`[services] 持久化服务器 ${persisted} 当前不可达，继续探测其它候选地址`);
+  } else if (legacy) {
+    // 2. 旧 key 遗留缓存：可达则采用并迁移到新 key；不可达则继续探测
+    const legacyOk = await isServerReachable(legacy);
+    if (legacyOk) {
       dynamicServerUrl = legacy;
       persistServerUrl(legacy);
       return;
@@ -124,32 +126,34 @@ export async function initDynamicServerUrl(): Promise<void> {
     console.warn(`[services] 旧版服务器地址当前不可达，保留缓存: ${legacy}`);
   }
 
-  // 3. Electron 配置文件：同样采用 + 后台探测日志，不清除
+  // 3. 候选地址集合：配置文件 + 本地默认（去重、剔除已确认不可达的持久化/旧缓存）
+  const candidates: string[] = [];
   if (isElectronEnv()) {
     try {
       const url = await (window as any).electronAPI.getServerUrl();
       if (url && typeof url === 'string') {
-        const normalized = url.replace(/\/+$/, '');
-        dynamicServerUrl = normalized;
-        persistServerUrl(normalized);
-        void isServerReachable(normalized).then((ok) => {
-          if (!ok) console.warn(`[services] 配置文件服务器 ${normalized} 探测未通过（可能暂不可达），保留并继续使用`);
-        });
-        return;
+        candidates.push(url.replace(/\/+$/, ''));
       }
     } catch (e) {
       console.warn('[services] Failed to get server URL from config:', e);
     }
+  }
+  candidates.push(DEFAULT_ELECTRON_API_BASE);
 
-    // 4. 兜底：本地 OSS Docker 后端
-    if (!dynamicServerUrl) {
-      const ok = await isServerReachable(DEFAULT_ELECTRON_API_BASE);
-      if (ok) {
-        dynamicServerUrl = DEFAULT_ELECTRON_API_BASE;
-        persistServerUrl(DEFAULT_ELECTRON_API_BASE);
-      }
+  // 4. 逐个探测候选，取第一个可达地址；找到后自动迁移持久化配置
+  for (const url of [...new Set(candidates)]) {
+    const ok = await isServerReachable(url);
+    if (ok) {
+      dynamicServerUrl = url;
+      persistServerUrl(url);
+      console.warn(`[services] 已自动切换到可达服务器 ${url}`);
+      return;
     }
   }
+
+  // 5. 全部不可达：保留原持久化配置继续使用（后端可能重启中），不删除
+  dynamicServerUrl = persisted || legacy || candidates[0] || DEFAULT_ELECTRON_API_BASE;
+  if (persisted) persistServerUrl(persisted);
 }
 
 /**

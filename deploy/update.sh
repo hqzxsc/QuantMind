@@ -353,8 +353,11 @@ main() {
 
     # 健康检查：API + celery worker/beat 均就绪才算升级成功。
     # 仅 curl API 不充分——API 可能 200 而 celery 起崩。
+    # 时序注意：容器是 --force-recreate 重建，celery healthcheck 为
+    # StartPeriod=60s + Interval=30s + Retries=3，最坏 ~150s 才判 healthy，
+    # 因此等待窗口必须 ≥ 180s，否则升级成功后仍会误报"未就绪"。
     local attempt
-    for attempt in {1..30}; do
+    for attempt in {1..90}; do
         # 容器带 healthcheck 时校验为 healthy；无 healthcheck 的基础设施（db/redis）不校验
         local hk
         api_ok=false; celery_ok=false; beat_ok=false
@@ -381,7 +384,7 @@ main() {
     if [[ "$(docker inspect --format '{{.State.Health.Status}}' quantmind-db 2>/dev/null)" != "healthy" ]]; then
         docker logs --tail 50 quantmind-db >&2 || true
     fi
-    die 'API/celery 未在 60s 内就绪，请根据上述日志排查'
+    die 'API/celery 未在 180s 内就绪，请根据上述日志排查'
 }
 
 main

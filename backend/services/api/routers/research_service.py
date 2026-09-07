@@ -3008,6 +3008,51 @@ async def predict_single_stock(
                 main_row["quality"] = qr.get("quality")
                 break
 
+    # 多模型共识兜底：当信号表在该基准日数据不全时（常见于独立轻路线 persist=False
+    # 从未写库，或历史日期早于最近批次），从各模型的 pred.parquet 直读该标的
+    # 当日分数补齐缺口，仍不写库。保证底部“多模型分数与30天曲线”有历史可回溯。
+    if len(consensus_rows) < len(available_models) and available_models:
+        try:
+            from backend.shared.model_registry import model_registry_service as _mrs_cons
+
+            fallback_date = str((main_row or {}).get("trade_date") or resolved_date or date_bound_str)
+            existing_mids = {
+                str(r.get("run_model_id") or r.get("run_id") or "").strip() for r in consensus_rows
+            }
+            for m in available_models:
+                mid = str(m.get("modelId") or "").strip()
+                if not mid or mid in existing_mids:
+                    continue
+                try:
+                    mod = await _mrs_cons.get_model(tenant_id=tid, user_id=uid, model_id=mid)
+                    sp = str((mod or {}).get("storage_path") or "").strip()
+                    if not sp:
+                        continue
+                    sc = _read_pred_single_symbol(sp, fallback_date, normalized_symbol)
+                    if sc is None:
+                        continue
+                    side = "BUY" if sc > 0.2 else ("SELL" if sc < -0.2 else "HOLD")
+                    consensus_rows.append(
+                        {
+                            "fusion_score": float(sc),
+                            "signal_side": side,
+                            "score_rank": None,
+                            "quality": None,
+                            "expected_price": None,
+                            "run_model_id": mid,
+                            "run_id": None,
+                            "trade_date": fallback_date,
+                        }
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+            # 若补齐后主分仍为空（极早日期且独立路线未命中），用补齐首个当主分
+            if main_row is None and consensus_rows:
+                main_row = dict(consensus_rows[0])
+                resolved_date = str(main_row.get("trade_date") or fallback_date)
+        except Exception:  # noqa: BLE001
+            pass
+
     # 4. 只展示真实模型 SHAP 归因；没有 SHAP 结果就保持为空，绝不回退到启发式数据。
     drivers: list[dict[str, Any]] = []
 

@@ -1490,6 +1490,60 @@ def _read_model_pred_day(storage_path: str, trade_date: str) -> list[dict[str, A
     return rows
 
 
+def _read_pred_single_symbol(
+    storage_path: str, trade_date: str, normalized_symbol: str
+) -> float | None:
+    """直读模型 pred.parquet 某日单个标的的分数。
+
+    个股独立轻路线专用：单行点查（duckdb 下推 date+symbol 谓词，毫秒级），
+    不走按日物化分片、不写进程缓存、不碰数据库。无文件/无列/无命中返回 None，
+    调用方据此决定是否转实时推理。
+    """
+    parquet_file = _pred_parquet_file(storage_path)
+    if parquet_file is None:
+        return None
+    digits = re.sub(r"[^0-9]", "", normalized_symbol)
+    try:
+        import duckdb
+
+        con = duckdb.connect()
+        try:
+            cols = [
+                r[0]
+                for r in con.execute(
+                    f"SELECT * FROM read_parquet('{str(parquet_file)}') LIMIT 0"
+                ).description
+            ]
+            score_col = next((c for c in ("pred", "fusion_score", "score") if c in cols), None)
+            date_col = (
+                "trade_date" if "trade_date" in cols else "date" if "date" in cols else None
+            )
+            sym_col = next((c for c in ("symbol", "instrument") if c in cols), None)
+            if not (score_col and date_col and sym_col):
+                return None
+            row = con.execute(
+                f"""
+                SELECT CAST({score_col} AS DOUBLE)
+                FROM read_parquet('{str(parquet_file)}')
+                WHERE CAST({date_col} AS DATE) = CAST('{trade_date}' AS DATE)
+                  AND CAST({score_col} AS DOUBLE) IS NOT NULL
+                  AND regexp_replace(CAST({sym_col} AS VARCHAR), '[^0-9]', '', 'g') = '{digits}'
+                LIMIT 1
+                """
+            ).fetchone()
+            if not row or row[0] is None:
+                return None
+            return float(row[0])
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[predict_single_stock] pred 单标的直读失败 %s: %s", normalized_symbol, exc)
+        return None
+
+
 _PRED_DATES_CACHE: dict[str, tuple[float, list[str]]] = {}
 _PRED_DATES_CACHE_TTL = 600.0
 
@@ -2766,8 +2820,10 @@ async def predict_single_stock(
     # rank/score 口径未知时留空，由宽度门禁兜底。
     chosen_target_mode = str(sel.get("targetMode") or sel.get("target_mode") or "").strip().lower()
 
-    # “开始预测推理”必须实际执行注册模型，不能用页面侧或服务侧的公式伪造结果。
+    # “开始预测推理”走独立轻路线：pred.parquet 直读优先，否则实时推理，
+    # 全程不落库（不写 run 记录/信号表/Redis 标记/pred 回写），结果只在前端缓存。
     # 延迟导入避免 research/model_training 路由在应用启动阶段发生循环导入。
+    independent_main: dict[str, Any] | None = None
     if execute:
         if not selected_model:
             raise HTTPException(status_code=404, detail="未找到可执行的已注册模型")
@@ -2781,25 +2837,74 @@ async def predict_single_stock(
                 {"tenant_id": tid, "user_id": uid}, chosen_model_id
             )
             requested_date = date.fromisoformat(target_date or latest_date)
-            execution = await _execute_single_day_inference(
-                requested_model_id=requested_model_id,
-                resolved=resolved,
-                model_dir=Path(resolved.storage_path),
-                requested_date=requested_date,
-                tenant_id=tid,
-                user_id=uid,
-                symbols=[normalized_symbol],
+            storage_path = str(resolved.storage_path)
+            # ① pred.parquet 单标的直读（不物化分片、不写库）
+            hit = _read_pred_single_symbol(
+                storage_path, requested_date.isoformat(), normalized_symbol
             )
+            hit_date = requested_date.isoformat()
+            live_signal: dict[str, Any] | None = None
+            if hit is None:
+                # ② 无命中则实时推理（persist=False：解析信号但不写库不发布）
+                execution = await _execute_single_day_inference(
+                    requested_model_id=requested_model_id,
+                    resolved=resolved,
+                    model_dir=Path(storage_path),
+                    requested_date=requested_date,
+                    tenant_id=tid,
+                    user_id=uid,
+                    symbols=[normalized_symbol],
+                    persist=False,
+                )
+                if not execution.get("success"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=execution.get("error_message") or "模型推理未产生有效结果",
+                    )
+                # 回退后的数据日可能有 parquet（请求日无数据但回退日有），再试一次
+                rolled = str(execution.get("data_trade_date") or hit_date)
+                hit = _read_pred_single_symbol(storage_path, rolled, normalized_symbol)
+                hit_date = rolled
+                if hit is None:
+                    # ③ 取内存信号（已按 symbols 过滤，仅含目标股）
+                    for sig in execution.get("signals") or []:
+                        try:
+                            if StockCodeUtil.to_prefix(str(sig.get("symbol") or "")) == normalized_symbol:
+                                live_signal = sig
+                                break
+                        except Exception:
+                            continue
+                    if live_signal is None:
+                        raise HTTPException(status_code=422, detail="模型推理未产生有效结果")
+            if live_signal is not None:
+                fusion = float(live_signal["score"])
+                from backend.services.engine.inference.script_runner import (
+                    InferenceScriptRunner,
+                )
+
+                side = InferenceScriptRunner._resolve_signal_sides(
+                    [fusion], [int(live_signal.get("consensus") or 0)]
+                )[0]
+                data_source = "live"
+            else:
+                fusion = float(hit)
+                side = "BUY" if fusion > 0.2 else ("SELL" if fusion < -0.2 else "HOLD")
+                data_source = "pred_parquet"
+            independent_main = {
+                "fusion_score": fusion,
+                "signal_side": side,
+                "score_rank": None,
+                "quality": None,
+                "expected_price": None,
+                "run_model_id": chosen_model_id,
+                "run_id": None,
+                "trade_date": hit_date,
+            }
         except HTTPException:
             raise
         except Exception as exc:
             logger.exception("[predict_single_stock] 实时模型推理失败")
             raise HTTPException(status_code=502, detail=f"实时模型推理失败: {exc}") from exc
-        if not execution.get("success"):
-            raise HTTPException(
-                status_code=422,
-                detail=execution.get("error_message") or "模型推理未产生有效结果",
-            )
 
     # 3. 读真实推理分数：engine_signal_scores（混合A：默认读持久化真实分数）
     _sym_variants = list({
@@ -2885,6 +2990,24 @@ async def predict_single_stock(
             seen.add(mid)
             consensus_rows.append(r)
 
+    # 独立轻路线主分（内存态：pred.parquet 直读或实时信号，不读信号表）。
+    # 分位扇形所需 quality 允许从信号表同模型同日行只读复用（零写入），
+    # 无则保持 None（旧模型不伪造区间）。
+    if independent_main is not None:
+        main_row = independent_main
+        resolved_date = str(independent_main["trade_date"])
+        for qr in score_rows or []:
+            if str(qr.get("trade_date")) != resolved_date:
+                continue
+            if (qr.get("run_model_id") or qr.get("run_id")) not in {
+                chosen_model_id,
+                independent_main.get("run_model_id"),
+            }:
+                continue
+            if isinstance(qr.get("quality"), str) and qr.get("quality"):
+                main_row["quality"] = qr.get("quality")
+                break
+
     # 4. 只展示真实模型 SHAP 归因；没有 SHAP 结果就保持为空，绝不回退到启发式数据。
     drivers: list[dict[str, Any]] = []
 
@@ -2897,7 +3020,10 @@ async def predict_single_stock(
             rating = "STRONG_BUY"
         else:
             rating = {"BUY": "BUY", "HOLD": "HOLD", "SELL": "SELL"}.get(signal_side, "HOLD")
-        data_source = "persisted"
+        # 独立轻路线（pred.parquet/实时内存分）已在上游设定 data_source，
+        # 仅信号表老路径回退为 persisted。
+        if independent_main is None:
+            data_source = "persisted"
         headline_mid = main_row["run_model_id"] or main_row["run_id"]
         if headline_mid:
             headline_meta = next(

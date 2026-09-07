@@ -2249,11 +2249,16 @@ async def _execute_single_day_inference(
     user_id: str,
     batch_id: str | None = None,
     symbols: list[str] | None = None,
+    persist: bool = True,
 ) -> dict[str, Any]:
     """单日推理执行体：预检 → 数据回退 → 执行 → 落库 → 返回 run payload。
 
     由 POST /inference/run（单日）与批量推理编排器共用。batch_id 仅写入
     request_json 供追溯，不改变执行逻辑。
+
+    persist=False 时跳过全部落库（run 记录/信号表/Redis 标记/pred 回写），
+    仅返回内存结果；成功时 payload 附带 signals 供调用方直接使用。
+    个股独立轻路线用此模式，结果只在前端缓存。
     """
     model_calendar = _get_model_calendar(model_dir)
     requested_inference_date = requested_date
@@ -2353,43 +2358,44 @@ async def _execute_single_day_inference(
             "stderr": "",
             "precheck": precheck,
         }
-        await model_inference_persistence.create_run(
-            run_id=provisional_run_id,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            model_id=requested_model_id,
-            data_trade_date=date.fromisoformat(data_trade_date),
-            prediction_trade_date=date.fromisoformat(prediction_trade_date),
-            status="failed",
-            request_payload=_build_inference_request_payload(
-                requested_model_id, data_trade_date, precheck, batch_id
-            ),
-            created_at=run_created_at,
-        )
-        await model_inference_persistence.update_run(
-            run_id=provisional_run_id,
-            status="failed",
-            updated_at=run_created_at,
-            signals_count=0,
-            duration_ms=0,
-            fallback_used=False,
-            fallback_reason="precheck_failed",
-            failure_stage="precheck",
-            error_message="推理前置检查未通过",
-            stdout="",
-            stderr="",
-            active_model_id=resolved.effective_model_id,
-            effective_model_id=resolved.effective_model_id,
-            model_source=resolved.model_source,
-            active_data_source=_get_model_data_dir(model_dir),
-            result_payload=failure_payload,
-        )
-        await model_inference_persistence.record_run_to_settings(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            model_id=requested_model_id,
-            run_payload=failure_payload,
-        )
+        if persist:
+            await model_inference_persistence.create_run(
+                run_id=provisional_run_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                model_id=requested_model_id,
+                data_trade_date=date.fromisoformat(data_trade_date),
+                prediction_trade_date=date.fromisoformat(prediction_trade_date),
+                status="failed",
+                request_payload=_build_inference_request_payload(
+                    requested_model_id, data_trade_date, precheck, batch_id
+                ),
+                created_at=run_created_at,
+            )
+            await model_inference_persistence.update_run(
+                run_id=provisional_run_id,
+                status="failed",
+                updated_at=run_created_at,
+                signals_count=0,
+                duration_ms=0,
+                fallback_used=False,
+                fallback_reason="precheck_failed",
+                failure_stage="precheck",
+                error_message="推理前置检查未通过",
+                stdout="",
+                stderr="",
+                active_model_id=resolved.effective_model_id,
+                effective_model_id=resolved.effective_model_id,
+                model_source=resolved.model_source,
+                active_data_source=_get_model_data_dir(model_dir),
+                result_payload=failure_payload,
+            )
+            await model_inference_persistence.record_run_to_settings(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                model_id=requested_model_id,
+                run_payload=failure_payload,
+            )
         return failure_payload
 
     import asyncio
@@ -2407,6 +2413,7 @@ async def _execute_single_day_inference(
                 model_id=requested_model_id,
                 resolved_model=resolved.to_dict(),
                 symbols=symbols,
+                persist=persist,
             )
         )
     except Exception as exc:
@@ -2434,43 +2441,44 @@ async def _execute_single_day_inference(
             "stderr": "",
             "precheck": precheck,
         }
-        await model_inference_persistence.create_run(
-            run_id=provisional_run_id,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            model_id=requested_model_id,
-            data_trade_date=date.fromisoformat(data_trade_date),
-            prediction_trade_date=date.fromisoformat(prediction_trade_date),
-            status="failed",
-            request_payload=_build_inference_request_payload(
-                requested_model_id, data_trade_date, precheck, batch_id
-            ),
-            created_at=inference_started_at,
-        )
-        await model_inference_persistence.update_run(
-            run_id=provisional_run_id,
-            status="failed",
-            updated_at=datetime.now(ZoneInfo("Asia/Shanghai")),
-            signals_count=0,
-            duration_ms=duration_ms,
-            fallback_used=False,
-            fallback_reason="",
-            failure_stage="execute",
-            error_message=str(exc),
-            stdout="",
-            stderr="",
-            active_model_id=resolved.effective_model_id,
-            effective_model_id=resolved.effective_model_id,
-            model_source=resolved.model_source,
-            active_data_source=_get_model_data_dir(model_dir),
-            result_payload=failure_payload,
-        )
-        await model_inference_persistence.record_run_to_settings(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            model_id=requested_model_id,
-            run_payload=failure_payload,
-        )
+        if persist:
+            await model_inference_persistence.create_run(
+                run_id=provisional_run_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                model_id=requested_model_id,
+                data_trade_date=date.fromisoformat(data_trade_date),
+                prediction_trade_date=date.fromisoformat(prediction_trade_date),
+                status="failed",
+                request_payload=_build_inference_request_payload(
+                    requested_model_id, data_trade_date, precheck, batch_id
+                ),
+                created_at=inference_started_at,
+            )
+            await model_inference_persistence.update_run(
+                run_id=provisional_run_id,
+                status="failed",
+                updated_at=datetime.now(ZoneInfo("Asia/Shanghai")),
+                signals_count=0,
+                duration_ms=duration_ms,
+                fallback_used=False,
+                fallback_reason="",
+                failure_stage="execute",
+                error_message=str(exc),
+                stdout="",
+                stderr="",
+                active_model_id=resolved.effective_model_id,
+                effective_model_id=resolved.effective_model_id,
+                model_source=resolved.model_source,
+                active_data_source=_get_model_data_dir(model_dir),
+                result_payload=failure_payload,
+            )
+            await model_inference_persistence.record_run_to_settings(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                model_id=requested_model_id,
+                run_payload=failure_payload,
+            )
         return failure_payload
 
     run_id = str(result.run_id or provisional_run_id)
@@ -2510,44 +2518,52 @@ async def _execute_single_day_inference(
         "stderr": stderr,
         "precheck": precheck,
     }
+    # persist=False 时把内存信号附在 payload 供调用方直接使用（不落库，
+    # 调用方自行从 signals 取分，不再读信号表）。
+    if not persist:
+        try:
+            success_payload["signals"] = list(getattr(result, "signals", None) or [])
+        except Exception:
+            success_payload["signals"] = []
 
-    await model_inference_persistence.create_run(
-        run_id=run_id,
-        tenant_id=tenant_id,
-        user_id=user_id,
-        model_id=requested_model_id,
-        data_trade_date=date.fromisoformat(data_trade_date),
-        prediction_trade_date=date.fromisoformat(prediction_trade_date),
-        status="completed" if result.success else "failed",
-        request_payload=_build_inference_request_payload(
-            requested_model_id, data_trade_date, precheck, batch_id
-        ),
-        created_at=inference_started_at,
-    )
-    await model_inference_persistence.update_run(
-        run_id=run_id,
-        status="completed" if result.success else "failed",
-        updated_at=datetime.now(ZoneInfo("Asia/Shanghai")),
-        signals_count=int(result.signals_count or 0),
-        duration_ms=duration_ms,
-        fallback_used=bool(result.fallback_used),
-        fallback_reason=result.fallback_reason or "",
-        failure_stage=result.failure_stage or "",
-        error_message=result.error or None,
-        stdout=stdout,
-        stderr=stderr,
-        active_model_id=result.active_model_id or resolved.effective_model_id,
-        effective_model_id=result_effective_model_id,
-        model_source=result_model_source,
-        active_data_source=result.active_data_source or _get_model_data_dir(model_dir),
-        result_payload=success_payload,
-    )
-    await model_inference_persistence.record_run_to_settings(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        model_id=requested_model_id,
-        run_payload=success_payload,
-    )
+    if persist:
+        await model_inference_persistence.create_run(
+            run_id=run_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            model_id=requested_model_id,
+            data_trade_date=date.fromisoformat(data_trade_date),
+            prediction_trade_date=date.fromisoformat(prediction_trade_date),
+            status="completed" if result.success else "failed",
+            request_payload=_build_inference_request_payload(
+                requested_model_id, data_trade_date, precheck, batch_id
+            ),
+            created_at=inference_started_at,
+        )
+        await model_inference_persistence.update_run(
+            run_id=run_id,
+            status="completed" if result.success else "failed",
+            updated_at=datetime.now(ZoneInfo("Asia/Shanghai")),
+            signals_count=int(result.signals_count or 0),
+            duration_ms=duration_ms,
+            fallback_used=bool(result.fallback_used),
+            fallback_reason=result.fallback_reason or "",
+            failure_stage=result.failure_stage or "",
+            error_message=result.error or None,
+            stdout=stdout,
+            stderr=stderr,
+            active_model_id=result.active_model_id or resolved.effective_model_id,
+            effective_model_id=result_effective_model_id,
+            model_source=result_model_source,
+            active_data_source=result.active_data_source or _get_model_data_dir(model_dir),
+            result_payload=success_payload,
+        )
+        await model_inference_persistence.record_run_to_settings(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            model_id=requested_model_id,
+            run_payload=success_payload,
+        )
     return success_payload
 
 

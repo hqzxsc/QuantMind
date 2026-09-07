@@ -29,6 +29,10 @@ from . import sentiment as sentiment_mod
 
 logger = logging.getLogger("news.enricher")
 
+# 全量目标版本（与 enrich_article 写入的 model_version 同源，避免两处不同步引发无限重跑）
+def _current_target_version() -> str:
+    return MODEL_VERSION + ("+finbert" if sentiment_mod.is_available() else "")
+
 HUNTLY_BASE_URL = os.getenv("HUNTLY_BASE_URL", "http://quantmind-huntly").rstrip("/")
 HUNTLY_USERNAME = os.getenv("HUNTLY_USERNAME", "")
 HUNTLY_PASSWORD = os.getenv("HUNTLY_PASSWORD", "")
@@ -146,7 +150,7 @@ def enrich_article(
         sentiment_score=round(float(final_score), 4),
         sentiment_label=final_label,
         sentiment_confidence=round(float(final_conf), 4),
-        model_version=MODEL_VERSION + ("+finbert" if sentiment_mod.is_available() else ""),
+        model_version=_current_target_version(),
         countries=countries,
         regions=regions,
         key_terms=key_terms,
@@ -316,7 +320,11 @@ def fetch_page_content(client: httpx.Client, page_id: int) -> str:
 
 
 def _pending_page_ids(conn, candidate_ids: Iterable[int]) -> set[int]:
-    """从候选 ID 中找出尚未 enrich 或 model 版本过旧的。"""
+    """从候选 ID 中找出尚未 enrich 或 model 版本过旧的。
+
+    完成判定与写入的 model_version 同源（_current_target_version，全等比较），
+    避免硬编码历史前缀导致启用 FinBERT 后已处理行被无限重跑。
+    """
     ids = list(set(int(x) for x in candidate_ids if x))
     if not ids:
         return set()
@@ -327,12 +335,13 @@ def _pending_page_ids(conn, candidate_ids: Iterable[int]) -> set[int]:
             (ids,),
         )
         done = {row[0]: row[1] for row in cur.fetchall()}
+    target = _current_target_version()
     pending = set()
     for pid in ids:
         if pid not in done:
             pending.add(pid)
-        elif done[pid] != MODEL_VERSION and (done[pid] or "").startswith("ac-v1+lex-v1") is False:
-            # 旧版本，重跑
+        elif done[pid] != target:
+            # 版本不一致（含旧版/无后缀版），需升级重跑
             pending.add(pid)
     return pending
 

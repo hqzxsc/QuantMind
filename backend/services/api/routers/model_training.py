@@ -4102,15 +4102,57 @@ async def get_stock_inference_history(
         norm = StockCodeUtil.to_suffix(norm)
 
     params: dict[str, Any] = {
-        "sym": sym,
         "cutoff": cutoff,
         "tenant_id": tenant_id,
         "user_id": user_id,
     }
-    model_filter_sql = ""
+    # symbol 多口径匹配：engine_signal_scores.symbol 约定为纯数字（600519），
+    # 但调用方常传后缀式（600519.SH）/前缀式（SH600519），单等值匹配会静默查空。
+    # 用 ANY(变体数组) 保持索引可用（research 侧同理）。
+    try:
+        _sym_variants = {
+            sym,
+            StockCodeUtil.to_prefix(sym),
+            StockCodeUtil.to_suffix(sym),
+            re.sub(r"[^0-9]", "", sym),
+        }
+        _sym_variants |= {s.lower() for s in list(_sym_variants)}
+        _sym_variants = {s for s in _sym_variants if s}
+    except Exception:  # noqa: BLE001
+        _sym_variants = {sym}
+    params["syms"] = sorted(_sym_variants)
+    # model_id 可能是 run_id（共识行 run_model_id 缺失时前端回退用 run_id 展示，
+    # 如 "Run 20260831 6F803500"）：先解析为真实 model_id；解析不出（垃圾输入
+    # 或 run 无模型关联）则退化为不过滤，走全模型最新批次曲线兜底，避免小卡空白。
+    resolved_model_id: str | None = model_id
     if model_id:
-        model_filter_sql = "AND e.run_id IN (SELECT run_id FROM qm_model_inference_runs WHERE model_id = :model_id)"
-        params["model_id"] = model_id
+        try:
+            async with get_session(read_only=True) as _rs:
+                _mid = await _rs.execute(
+                    text("SELECT model_id FROM qm_model_inference_runs WHERE run_id = :r LIMIT 1"),
+                    {"r": model_id},
+                )
+                _found = str(_mid.scalar() or "").strip()
+                if _found:
+                    resolved_model_id = _found
+        except Exception:  # noqa: BLE001
+            pass
+    model_filter_sql = ""
+    if resolved_model_id:
+        # 仅当确认为注册模型时才过滤；否则（run_id 无关联/非法输入）不过滤兜底。
+        try:
+            from backend.shared.model_registry import model_registry_service as _mrs
+
+            _m = await _mrs.get_model(
+                tenant_id=tenant_id, user_id=user_id, model_id=resolved_model_id
+            )
+        except Exception:  # noqa: BLE001
+            _m = None
+        if _m:
+            model_filter_sql = "AND e.run_id IN (SELECT run_id FROM qm_model_inference_runs WHERE model_id = :model_id)"
+            params["model_id"] = resolved_model_id
+        else:
+            resolved_model_id = None
 
     async with get_session(read_only=True) as session:
         # 性能：先用 (tenant_id, symbol, trade_date) 索引取该股每日最新一条（毫秒级），
@@ -4126,7 +4168,7 @@ async def get_stock_inference_history(
                         SELECT DISTINCT ON (e.trade_date)
                                e.trade_date, e.run_id, e.fusion_score, e.signal_side, e.created_at
                         FROM engine_signal_scores e
-                        WHERE e.symbol = :sym
+                        WHERE e.symbol = ANY(:syms)
                           AND e.trade_date >= :cutoff
                           AND e.tenant_id = :tenant_id AND e.user_id = :user_id
                           {model_filter_sql}
@@ -4171,7 +4213,7 @@ async def get_stock_inference_history(
     # 不受每日推理批次影响，也不展示非默认模型；默认模型缺失/无 pred 文件时才回退
     # 上面的 engine_signal_scores 批次结果
     pred_items, pred_model = await _load_stock_pred_history(
-        tenant_id=tenant_id, user_id=user_id, model_id=model_id, sym=sym, cutoff=cutoff
+        tenant_id=tenant_id, user_id=user_id, model_id=resolved_model_id, sym=sym, cutoff=cutoff
     )
     if pred_items:
         items = pred_items

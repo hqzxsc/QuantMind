@@ -2283,15 +2283,18 @@ async def get_symbols_features(tid: str, uid: str, symbols: list[str], lite: boo
 
 
 def _quantdb_kline_items(
-    normalized_symbol: str, days: int, end_date: str | None = None
+    normalized_symbol: str, days: int, end_date: str | None = None, start_date: str | None = None
 ) -> list[dict[str, Any]]:
     """从 QuantDB 读取截止到 end_date 的最近 days 日「不复权」日线（真实成交价），与行情软件同口径。
 
     当前价格/前端 K 线统一走 QuantDB（qdb_daily_unadjusted，不复权原始价）。
     视图或数据不可用时返回空列表，由调用方回退到聚合表/实时行情源。
 
-    end_date 为 K 线截止日（含当日）：个股盲测时必须按基准日截断，否则
-    图表会画出基准日之后的数据造成前视泄露；缺省为今日（最新 days 根）。
+    end_date 为 K 线截止日（含当日）：指标计算等需要无前视口径时按基准日截断；
+    缺省为今日（最新 days 根）。
+    start_date 为 K 线起始日（含当日）：图表需要展示基准日之后实际走势以验证
+    预测时，传基准日前推的起始日，此时返回 [start_date, end] 全窗口（上限 2000
+    根兜底），不再按 days 截尾。
     """
     try:
         from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
@@ -2304,14 +2307,27 @@ def _quantdb_kline_items(
             end = date.fromisoformat(str(end_date)[:10]) if end_date else date.today()
         except (ValueError, TypeError):
             end = date.today()
-        # 自然日回退缓冲，确保覆盖 days 个交易日
-        start = end - timedelta(days=days * 2 + 20)
+        try:
+            start_s = str(start_date)[:10] if start_date else ""
+            if start_s:
+                date.fromisoformat(start_s)
+        except (ValueError, TypeError):
+            start_s = ""
+        if start_s:
+            # 图表验证窗口：[起始日, 截止日] 全量返回（上限 2000 根兜底），
+            # 保留基准日之后的实际走势供对照预测，数字口径仍由调用方按基准日截断。
+            start = date.fromisoformat(start_s)
+            window_cap = 2000
+        else:
+            # 自然日回退缓冲，确保覆盖 days 个交易日
+            start = end - timedelta(days=days * 2 + 20)
+            window_cap = days
         df = hub.fetch_daily_kline(suffix, start, end, adjust="none")
         if df is None or df.empty or "trade_date" not in df.columns:
             return []
         df = df.dropna(subset=["close"]).copy()
         df = df.drop_duplicates(subset=["trade_date"]).sort_values("trade_date")
-        df = df.tail(days)
+        df = df.tail(window_cap)
         items = [
             {
                 "date": r["trade_date"].strftime("%Y-%m-%d"),
@@ -2329,20 +2345,30 @@ def _quantdb_kline_items(
         return []
 
 
-async def get_stock_kline(symbol: str, days: int, end_date: str | None = None) -> dict[str, Any]:
+async def get_stock_kline(
+    symbol: str, days: int, end_date: str | None = None, start_date: str | None = None
+) -> dict[str, Any]:
     normalized_symbol = StockCodeUtil.to_prefix(symbol)
-    # 截止日归一化（非法值回退为最新）；缓存键必须带截止日维度，否则
-    # 盲测截断结果会被最新 K 线缓存污染（或反之）。
+    # 截止日/起始日归一化（非法值回退为缺省）；缓存键必须带日期维度，否则
+    # 不同窗口的 K 线结果会互相污染。
     try:
         end_s = str(end_date)[:10] if end_date else ""
         if end_s:
             date.fromisoformat(end_s)
     except (ValueError, TypeError):
         end_s = ""
-    cache_key = f"sdl-kline:{normalized_symbol}:{days}:{end_s or 'latest'}"
+    try:
+        start_s = str(start_date)[:10] if start_date else ""
+        if start_s:
+            date.fromisoformat(start_s)
+    except (ValueError, TypeError):
+        start_s = ""
+    cache_key = f"sdl-kline:{normalized_symbol}:{days}:{end_s or 'latest'}:{start_s or '-'}"
 
     # 当前价格统一走 QuantDB（不复权真实价），避免 stock_daily_latest 空表/复权口径不一致
-    qd_items = _quantdb_kline_items(normalized_symbol, days, end_date=end_s or None)
+    qd_items = _quantdb_kline_items(
+        normalized_symbol, days, end_date=end_s or None, start_date=start_s or None
+    )
     if qd_items:
         payload = {"code": 200, "data": {"symbol": normalized_symbol, "items": qd_items}}
         _set_local_cache(_SDL_CACHE, cache_key, payload, _SDL_CACHE_MAX_ENTRIES)
@@ -2355,22 +2381,38 @@ async def get_stock_kline(symbol: str, days: int, end_date: str | None = None) -
     # 表里 stock_daily_latest.symbol 实际可能是后缀格式（"600519.SH"）或前缀格式
     # （"SH600519"）。统一两边都走 _norm_symbol_sql 归一化为前缀格式后再比较，
     # 才能匹配上当前数据（5536 个股票全部为后缀格式存储）。
-    end_filter = "AND trade_date <= :e" if end_s else ""
-    sql = f"""
-        SELECT trade_date, open, high, low, close, volume, adj_factor
-        FROM stock_daily_latest
-        WHERE {_norm_symbol_sql("symbol")} = {_norm_symbol_sql(":s")}
-        {end_filter}
-        ORDER BY trade_date DESC LIMIT :l
-    """
+    # 有起始日时返回 [起始日, 截止日] 全窗口（升序，上限 2000 根），供图表展示
+    # 基准日之后实际走势；无起始日时保持“最近 days 根”语义。
+    window_cap = 2000 if start_s else days
+    if start_s:
+        sql = f"""
+            SELECT trade_date, open, high, low, close, volume, adj_factor
+            FROM stock_daily_latest
+            WHERE {_norm_symbol_sql("symbol")} = {_norm_symbol_sql(":s")}
+            AND trade_date >= :st
+            {"AND trade_date <= :e" if end_s else ""}
+            ORDER BY trade_date ASC LIMIT :l
+        """
+        sql_params = {"s": normalized_symbol, "l": window_cap, "st": start_s}
+        if end_s:
+            sql_params["e"] = end_s
+    else:
+        end_filter = "AND trade_date <= :e" if end_s else ""
+        sql = f"""
+            SELECT trade_date, open, high, low, close, volume, adj_factor
+            FROM stock_daily_latest
+            WHERE {_norm_symbol_sql("symbol")} = {_norm_symbol_sql(":s")}
+            {end_filter}
+            ORDER BY trade_date DESC LIMIT :l
+        """
+        sql_params = {"s": normalized_symbol, "l": days}
+        if end_s:
+            sql_params["e"] = end_s
 
     items = []
     try:
         async with get_session(read_only=True) as session:
-            res = await session.execute(
-                text(sql),
-                {"s": normalized_symbol, "l": days, **({"e": end_s} if end_s else {})},
-            )
+            res = await session.execute(text(sql), sql_params)
             for r in res:
                 adj_factor = r[6]
                 items.append(
@@ -2383,18 +2425,20 @@ async def get_stock_kline(symbol: str, days: int, end_date: str | None = None) -
                         "volume": float(r[5]),
                     }
                 )
-            items.reverse()
+            if not start_s:
+                items.reverse()
     except Exception as exc:
         logger.warning(f"[get_stock_kline] DB query failed: {exc}")
 
     # 若 DB 暂无行情数据，自动通过实时行情源拉取真实 K 线。
-    # 腾讯 fqkline 支持起止日期（param=code,day,start,end,count,qfq），盲测时
-    # 用 end_date 截断，避免把基准日之后的实时 bar 带入历史视角。
+    # 腾讯 fqkline 支持起止日期（param=code,day,start,end,count,qfq）：无起始日
+    # 时用 end_date/count 截断防前视泄露；有起始日时拉取验证窗口供对照预测。
     if not items:
         try:
             import aiohttp
             ts_code = normalized_symbol.lower()
-            url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={ts_code},day,,{end_s},{days},qfq"
+            tx_count = 2000 if start_s else days
+            url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={ts_code},day,{start_s},{end_s},{tx_count},qfq"
             async with aiohttp.ClientSession() as client:
                 async with client.get(url, timeout=aiohttp.ClientTimeout(total=6)) as resp:
                     if resp.status == 200:
@@ -2413,9 +2457,18 @@ async def get_stock_kline(symbol: str, days: int, end_date: str | None = None) -
         except Exception as e:
             logger.warning(f"[get_stock_kline] 实时在线拉取 K 线失败: {e}")
 
-    # 统一兜底截断：任何数据源都不允许返回截止日之后的 bar（前视泄露）。
-    if end_s and items:
-        items = [it for it in items if str(it.get("date", ""))[:10] <= end_s][-days:]
+    # 统一兜底：按窗口边界过滤。无起始日时保持“最近 days 根”；
+    # 有起始日时保留全窗口（上限 2000 根）。
+    if start_s or end_s:
+        items = [
+            it for it in items
+            if (not start_s or str(it.get("date", ""))[:10] >= start_s)
+            and (not end_s or str(it.get("date", ""))[:10] <= end_s)
+        ]
+    if not start_s:
+        items = items[-days:]
+    else:
+        items = items[:2000]
 
     payload = {"code": 200, "data": {"symbol": normalized_symbol, "items": items}}
     if items:

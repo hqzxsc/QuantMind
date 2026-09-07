@@ -448,8 +448,10 @@ export const InferenceCenterPage: React.FC = () => {
     setSingleStockLoading(true);
     try {
       const dateStr = singleStockDate ? singleStockDate.format('YYYY-MM-DD') : undefined;
-      // K 线按基准日截断：盲测历史日期时不得展示基准日之后的数据
-      const klineData = await inferenceCenterService.getStockKline(sym, 60, dateStr);
+      // K 线取 [基准日前100天, 最新] 全窗口：既覆盖基准日锚点，又能展示基准日后
+      // 实际走势对照预测；数字口径（基准价/扇形）仍按基准日截断，无前视泄露
+      const startStr = singleStockDate ? singleStockDate.subtract(100, 'day').format('YYYY-MM-DD') : undefined;
+      const klineData = await inferenceCenterService.getStockKline(sym, 60, undefined, startStr);
       if (klineData && klineData.length > 0) {
         setKline(klineData);
       }
@@ -537,7 +539,7 @@ export const InferenceCenterPage: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full bg-[#f8fafc] p-6 flex flex-col overflow-hidden font-sans box-border select-none">
+    <div className="w-full h-full bg-[#f8fafc] p-6 flex flex-col overflow-hidden box-border select-none" style={{ fontFamily: "'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Hiragino Sans GB', sans-serif" }}>
       {/* 顶部主切换栏 */}
       <div className="flex items-center justify-between bg-white border border-gray-200 rounded-2xl px-6 h-[68px] mb-4 shadow-2xs shrink-0">
         <div className="flex items-center gap-3">
@@ -551,7 +553,7 @@ export const InferenceCenterPage: React.FC = () => {
                 {currentMarket === 'CN' ? 'A股市场' : currentMarket}
               </Tag>
             </div>
-            <p className="text-xs text-slate-500 m-0">生产级截面批量打分 · 单标的特征归因与共识走势预测</p>
+            <p className="text-xs text-slate-700 m-0">生产级截面批量打分 · 单标的特征归因与共识走势预测</p>
           </div>
         </div>
 
@@ -564,7 +566,7 @@ export const InferenceCenterPage: React.FC = () => {
               'flex items-center gap-2 px-5 py-1.5 rounded-lg text-xs font-bold transition-all',
               topTab === 'cross-section'
                 ? 'bg-white text-blue-600 shadow-sm border border-slate-200/50'
-                : 'text-slate-500 hover:text-slate-800'
+                : 'text-slate-700 hover:text-slate-900'
             )}
           >
             <LayoutGrid size={14} />
@@ -577,7 +579,7 @@ export const InferenceCenterPage: React.FC = () => {
               'flex items-center gap-2 px-5 py-1.5 rounded-lg text-xs font-bold transition-all',
               topTab === 'individual'
                 ? 'bg-white text-blue-600 shadow-sm border border-slate-200/50'
-                : 'text-slate-500 hover:text-slate-800'
+                : 'text-slate-700 hover:text-slate-900'
             )}
           >
             <TrendingUp size={14} />
@@ -593,7 +595,7 @@ export const InferenceCenterPage: React.FC = () => {
           <div className="px-6 h-[68px] border-b border-gray-200 bg-slate-50/50 flex flex-wrap items-center justify-between gap-4 shrink-0">
             {/* 模型选择 */}
             <div className="flex items-center gap-2.5">
-              <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
                 <Database size={14} className="text-blue-600" />
                 当前推理模型
               </span>
@@ -620,11 +622,11 @@ export const InferenceCenterPage: React.FC = () => {
               {selectedModel && (
                 <div className="flex items-center gap-2">
                   <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 h-9 flex items-center gap-1.5 whitespace-nowrap">
-                    <span className="text-xs font-bold text-slate-500">架构</span>
+                    <span className="text-xs font-bold text-slate-700">架构</span>
                     <span className="text-[13px] font-black text-slate-900 font-mono">{extractModelType(selectedModel)}</span>
                   </div>
                   <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 h-9 flex items-center gap-1.5 whitespace-nowrap">
-                    <span className="text-xs font-bold text-slate-500">目标</span>
+                    <span className="text-xs font-bold text-slate-700">目标</span>
                     <span className="text-[13px] font-black text-blue-700 font-mono">T+{horizonDays}</span>
                   </div>
                   <div className={clsx(
@@ -636,7 +638,7 @@ export const InferenceCenterPage: React.FC = () => {
                         <Star size={12} fill="currentColor" /> 默认生效
                       </span>
                     ) : (
-                      <span className="text-xs text-slate-400">非默认模型</span>
+                      <span className="text-xs text-slate-600">非默认模型</span>
                     )}
                   </div>
                 </div>
@@ -724,7 +726,7 @@ export const InferenceCenterPage: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-slate-800 m-0">个股预测配置</h3>
-                  <p className="text-[10px] text-slate-400 m-0">目标代码 · 预测周期 · 模型选型</p>
+                  <p className="text-[10px] text-slate-600 m-0">目标代码 · 预测周期 · 模型选型</p>
                 </div>
               </div>
               <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
@@ -733,7 +735,7 @@ export const InferenceCenterPage: React.FC = () => {
             <div className="flex flex-col gap-3.5 mb-4">
               {/* 目标个股 */}
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
                   <Search className="w-3.5 h-3.5 text-blue-500" /> 目标代码
                 </span>
                 <div className="relative">
@@ -794,7 +796,7 @@ export const InferenceCenterPage: React.FC = () => {
 
               {/* 预测周期 */}
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5 text-indigo-500" /> 预测周期 (Horizon)
                 </span>
                 <Select
@@ -812,7 +814,7 @@ export const InferenceCenterPage: React.FC = () => {
 
               {/* 基准日期 */}
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
                   <Calendar className="w-3.5 h-3.5 text-amber-500" /> 基准日期 (支持盲测)
                 </span>
                 <DatePicker
@@ -832,7 +834,7 @@ export const InferenceCenterPage: React.FC = () => {
               {/* 模型选型 */}
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                  <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
                     <Database className="w-3.5 h-3.5 text-purple-500" /> 模型选型
                   </span>
                   <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[10px]">
@@ -843,7 +845,7 @@ export const InferenceCenterPage: React.FC = () => {
                         onClick={() => setModelCategoryFilter(cat)}
                         className={clsx(
                           'px-1.5 py-0.5 rounded-md font-bold transition-all',
-                          modelCategoryFilter === cat ? 'bg-white text-blue-600 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                          modelCategoryFilter === cat ? 'bg-white text-blue-600 shadow-2xs' : 'text-slate-700 hover:text-slate-900'
                         )}
                       >
                         {cat === 'all' ? '全部' : cat === 'dl' ? '深度' : '树模'}
@@ -870,11 +872,11 @@ export const InferenceCenterPage: React.FC = () => {
                           <span className={clsx('text-xs font-bold truncate', isSelected ? 'text-blue-700' : 'text-slate-800')}>
                             {m.modelName}
                           </span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/90 border border-slate-200 text-slate-500">
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/90 border border-slate-200 text-slate-700">
                             {m.tag}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <div className="flex items-center justify-between text-[10px] text-slate-600">
                           <span>{m.horizonDesc}</span>
                           <span>Sharpe: <strong className="text-slate-600">{m.sharpe.toFixed(2)}</strong></span>
                         </div>
@@ -921,7 +923,7 @@ export const InferenceCenterPage: React.FC = () => {
                   </div>
                   <div className="h-5 w-[1px] bg-slate-200" />
                   <div className="flex items-baseline gap-1.5 font-mono">
-                    <span className="text-xs text-slate-400 font-sans font-medium">基准价格</span>
+                    <span className="text-xs text-slate-600 font-medium">基准价格</span>
                     <span className="text-base font-black text-slate-900">
                       ¥{prediction.current_price ? prediction.current_price.toFixed(2) : '—'}
                     </span>
@@ -929,7 +931,7 @@ export const InferenceCenterPage: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-700 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
                     <span>模型信号分数:</span>
                     <strong className={clsx('font-mono font-black', prediction.expected_return >= 0 ? 'text-rose-600' : 'text-emerald-600')}>
                       {prediction.predicted_score.toFixed(4)}
@@ -937,14 +939,14 @@ export const InferenceCenterPage: React.FC = () => {
                   </div>
                   {getRatingBadge(prediction.rating)}
                   <div className="flex items-center gap-1.5 bg-rose-50/70 border border-rose-100 px-3 py-1 rounded-xl">
-                    <span className="text-[11px] text-slate-500 font-semibold">来源:</span>
+                    <span className="text-[11px] text-slate-700 font-semibold">来源:</span>
                     <span className="text-xs font-black font-mono text-rose-600">真实推理</span>
                   </div>
                 </div>
               </div>
             ) : (
               <div className="bg-white px-6 py-4 border-b border-gray-200 flex items-center justify-between shrink-0 z-10">
-                <span className="text-sm text-slate-400 font-semibold">请在左侧选择标的并点击「开始个股推理」</span>
+                <span className="text-sm text-slate-600 font-semibold">请在左侧选择标的并点击「开始个股推理」</span>
               </div>
             )}
 
@@ -952,7 +954,7 @@ export const InferenceCenterPage: React.FC = () => {
               {singleStockLoading && !prediction ? (
                 <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-white rounded-2xl border border-gray-200 shadow-xs min-h-[300px]">
                   <Spin size="large" />
-                  <span className="text-xs font-semibold text-slate-500">正在接入真实推理引擎与行情...</span>
+                  <span className="text-xs font-semibold text-slate-700">正在接入真实推理引擎与行情...</span>
                 </div>
               ) : prediction ? (
                 <div className="flex-1 min-h-0 flex flex-col gap-4">
@@ -977,12 +979,12 @@ export const InferenceCenterPage: React.FC = () => {
                     <div className="bg-white rounded-2xl p-5 border border-gray-200 shadow-xs flex flex-col justify-between">
                       <div>
                         <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 mb-3">
-                          <span className="text-xs font-bold text-slate-500">模型推理指标</span>
+                          <span className="text-xs font-bold text-slate-700">模型推理指标</span>
                           <Tag color="blue" className="rounded font-mono text-[10px] m-0">Persisted Model Score</Tag>
                         </div>
 
                         <div className="p-3.5 bg-slate-50/80 rounded-2xl border border-slate-200/80 mb-3 text-center">
-                          <span className="text-[11px] text-slate-400 font-semibold block mb-0.5">模型信号分数</span>
+                          <span className="text-[11px] text-slate-600 font-semibold block mb-0.5">模型信号分数</span>
                           <span className={clsx('text-2xl font-black font-mono', prediction.expected_return >= 0 ? 'text-rose-600' : 'text-emerald-600')}>
                             {prediction.predicted_score.toFixed(4)}
                           </span>
@@ -992,7 +994,7 @@ export const InferenceCenterPage: React.FC = () => {
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-bold text-slate-700">分位数区间</span>
                             <Tooltip title={prediction.p10_return != null && prediction.p90_return != null ? '真实 LightGBM 分位回归结果，区间已按验证集校准。' : '当前注册模型未启用分位推理，因此不展示估算区间。'}>
-                              <Sparkles className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
+                              <Sparkles className="w-3.5 h-3.5 text-slate-600 cursor-pointer" />
                             </Tooltip>
                           </div>
                           {prediction.p10_return != null && prediction.p90_return != null ? (
@@ -1002,15 +1004,15 @@ export const InferenceCenterPage: React.FC = () => {
                                 <div><div className="text-[10px] text-blue-600">P50 中枢</div><div className="font-mono text-xs font-bold text-blue-700">{(prediction.p50_return ?? 0).toFixed(2)}%</div></div>
                                 <div><div className="text-[10px] text-rose-600">P90 上界</div><div className="font-mono text-xs font-bold text-rose-700">{prediction.p90_return.toFixed(2)}%</div></div>
                               </div>
-                              <p className="mt-2 text-[10px] text-slate-400 m-0">验证集校准覆盖率：{prediction.confidence > 0 ? `${(prediction.confidence * 100).toFixed(1)}%` : '—'}</p>
+                              <p className="mt-2 text-[10px] text-slate-600 m-0">验证集校准覆盖率：{prediction.confidence > 0 ? `${(prediction.confidence * 100).toFixed(1)}%` : '—'}</p>
                             </>
                           ) : (
-                            <p className="text-[11px] leading-relaxed text-slate-400 m-0">该模型未启用分位推理；当前仅提供真实信号分数。</p>
+                            <p className="text-[11px] leading-relaxed text-slate-600 m-0">该模型未启用分位推理；当前仅提供真实信号分数。</p>
                           )}
                         </div>
                       </div>
 
-                      <div className="pt-2.5 border-t border-slate-100 text-[11px] text-slate-400 flex items-center justify-between">
+                      <div className="pt-2.5 border-t border-slate-100 text-[11px] text-slate-600 flex items-center justify-between">
                         <span>模型准确率 (IC): <strong className="text-slate-700 font-mono">{currentSelectedSingleModel?.accuracy != null && currentSelectedSingleModel.accuracy !== 0 ? (typeof currentSelectedSingleModel.accuracy === 'number' ? currentSelectedSingleModel.accuracy.toFixed(3) : currentSelectedSingleModel.accuracy) : '—'}</strong></span>
                         <span>绩效指标: <strong className="text-slate-700 font-mono">以注册信息为准</strong></span>
                       </div>
@@ -1031,7 +1033,7 @@ export const InferenceCenterPage: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-white rounded-2xl border border-dashed border-gray-200 text-slate-400 min-h-[300px]">
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-white rounded-2xl border border-dashed border-gray-200 text-slate-600 min-h-[300px]">
                   <Database size={28} className="opacity-30" />
                   <span className="text-xs font-semibold">请在左侧配置参数并点击「开始个股推理」查看多维量化分析</span>
                 </div>

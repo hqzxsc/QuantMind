@@ -447,12 +447,13 @@ export const InferenceCenterPage: React.FC = () => {
     setPrediction(null);
     setSingleStockLoading(true);
     try {
-      const klineData = await inferenceCenterService.getStockKline(sym, 60);
+      const dateStr = singleStockDate ? singleStockDate.format('YYYY-MM-DD') : undefined;
+      // K 线按基准日截断：盲测历史日期时不得展示基准日之后的数据
+      const klineData = await inferenceCenterService.getStockKline(sym, 60, dateStr);
       if (klineData && klineData.length > 0) {
         setKline(klineData);
       }
 
-      const dateStr = singleStockDate ? singleStockDate.format('YYYY-MM-DD') : undefined;
       const res = await inferenceCenterService.predictSingleStock({
         symbol: sym,
         model_id: mId || undefined,
@@ -465,6 +466,10 @@ export const InferenceCenterPage: React.FC = () => {
 
       if (res && res.status === 'success') {
         setPrediction(res);
+        // 所选日期无数据时后端会回退到最近数据日，明确提示避免误以为选中日期生效
+        if (dateStr && res.as_of_date && res.as_of_date !== dateStr) {
+          message.info(`所选 ${dateStr} 无可用数据，已回退到最近数据日 ${res.as_of_date}`);
+        }
         if (!singleStockModelId && res.model_id) {
           setSingleStockModelId(res.model_id);
         }
@@ -816,6 +821,12 @@ export const InferenceCenterPage: React.FC = () => {
                   style={{ width: '100%', height: 34, borderRadius: 10 }}
                   allowClear={false}
                 />
+                {prediction?.as_of_date && singleStockDate &&
+                  prediction.as_of_date !== singleStockDate.format('YYYY-MM-DD') && (
+                  <span className="text-[10px] text-amber-600 font-semibold leading-tight">
+                    实际数据日：{prediction.as_of_date}（所选日期无数据已回退）
+                  </span>
+                )}
               </div>
 
               {/* 模型选型 */}

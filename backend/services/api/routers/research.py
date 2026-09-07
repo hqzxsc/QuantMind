@@ -171,9 +171,9 @@ async def get_symbols_features(
 
 
 @router.get("/kline/{symbol}")
-async def get_stock_kline(symbol: str, days: int = Query(60), current_user: dict = Depends(get_current_user)):
+async def get_stock_kline(symbol: str, days: int = Query(60), end_date: str | None = Query(None, description="K线截止日YYYY-MM-DD（含当日），缺省最新；盲测时按基准日截断防前视泄露"), current_user: dict = Depends(get_current_user)):
     _ = current_user
-    return await get_stock_kline_service(symbol, days)
+    return await get_stock_kline_service(symbol, days, end_date=end_date)
 
 
 @router.post("/batch-features")

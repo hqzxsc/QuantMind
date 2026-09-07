@@ -152,9 +152,12 @@ class InferenceCenterService {
     }
   }
 
-  async getStockKline(symbol: string, days: number = 60): Promise<KlineItem[]> {
+  async getStockKline(symbol: string, days: number = 60, endDate?: string): Promise<KlineItem[]> {
     try {
-      const resp = await this.client.get<{ code: number; data: { items: KlineItem[] } }>(`/research/kline/${encodeURIComponent(symbol)}?days=${days}`);
+      const params = new URLSearchParams({ days: String(days) });
+      // 盲测时按基准日截断 K 线，禁止把基准日之后的数据画进历史视角（前视泄露）
+      if (endDate) params.set('end_date', endDate);
+      const resp = await this.client.get<{ code: number; data: { items: KlineItem[] } }>(`/research/kline/${encodeURIComponent(symbol)}?${params.toString()}`);
       return resp.data?.data?.items || [];
     } catch (e) {
       console.warn('获取股票K线失败:', e);

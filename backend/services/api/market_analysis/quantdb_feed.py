@@ -745,12 +745,16 @@ def get_market_breadth() -> dict[str, Any]:
 
 
 def get_sector_heatmap(category: str = "shenwan") -> list[dict[str, Any]]:
-    """获取申万一级行业或热门概念热力矩形图数据（板块均值涨跌、成交额/市值权重、领涨龙头及涨跌幅）。"""
+    """获取申万一级行业或热门概念热力矩形图数据（板块均值涨跌、市值/成交额权重、领涨龙头及涨跌幅）。
+
+    矩形面积权重与离线快照/官网一致：优先用总市值 total_mv（元→亿），
+    无估值数据时回退当日成交额，避免实时与快照的市值口径不一致。
+    """
     def _load():
         if not _available():
             return []
 
-        _, prices = _market_pct_snapshot()
+        today, prices = _market_pct_snapshot()
         if prices.empty:
             return []
 
@@ -762,14 +766,39 @@ def get_sector_heatmap(category: str = "shenwan") -> list[dict[str, Any]]:
         if not groups:
             return []
 
+        # 市值权重：从 valuation 读总市值，symbol 统一大写后缀与板块成员对齐
+        today_s = str(today).zfill(8) if today else ""
+        mv_map: dict[str, float] = {}
+        if today_s:
+            vdf = _read_partitioned("5_technical_derived/valuation", [today_s], "symbol, total_mv")
+            if not vdf.empty:
+                for r in vdf.itertuples(index=False):
+                    sym = str(r.symbol).strip().upper()
+                    tv = float(r.total_mv or 0.0)
+                    if not math.isfinite(tv):
+                        tv = 0.0
+                    mv_map[sym] = tv
+
         items: list[dict[str, Any]] = []
         for sname, syms in groups.items():
             sub = prices[prices["symbol"].isin(syms)]
             if sub.empty:
                 continue
             avg_pct = round(float(sub["pct_change"].mean() or 0.0), 2)
-            tot_amt = float(sub["amount"].sum() or 0.0)
-            val_yi = round(tot_amt / 1e8, 1) if tot_amt > 1e11 else round(tot_amt / 1e4, 1) if tot_amt > 1e7 else round(tot_amt, 1)
+            val_yi: float | None = None
+            if mv_map:
+                tot_mv = sum(mv_map.get(s, 0.0) for s in syms)
+                if tot_mv > 0:
+                    val_yi = round(tot_mv / 1e8, 1)
+            if val_yi is None:
+                # 无估值时按成交额兜底（单位分档换算，避免多分支比例错乱）
+                tot_amt = float(sub["amount"].sum() or 0.0)
+                if tot_amt > 1e11:
+                    val_yi = round(tot_amt / 1e8, 1)
+                elif tot_amt > 1e7:
+                    val_yi = round(tot_amt / 1e4, 1)
+                else:
+                    val_yi = round(tot_amt, 1)
 
             leader_row = sub.sort_values("pct_change", ascending=False).iloc[0]
             items.append({

@@ -917,20 +917,20 @@ export const InferenceCenterPage: React.FC = () => {
               </div>
             )}
 
-            <div className="flex-1 min-h-0 p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+            <div className="flex-1 min-h-0 p-4 flex flex-col gap-3 overflow-hidden">
               {singleStockLoading && !prediction ? (
                 <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-white rounded-2xl border border-gray-200 shadow-xs min-h-[300px]">
                   <Spin size="large" />
-                  <span className="text-xs font-semibold text-slate-700">正在接入真实推理引擎与行情...</span>
+                  <span className="text-xs font-semibold text-slate-600">正在接入真实推理引擎与行情...</span>
                 </div>
               ) : prediction ? (
-                <div className="flex-1 min-h-0 flex flex-col gap-4">
+                <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
                   {prediction.forecast_warning && (
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-800">
                       {prediction.forecast_warning}
                     </div>
                   )}
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" style={{ height: '420px', minHeight: '420px' }}>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 shrink-0" style={{ height: '360px', minHeight: '360px' }}>
                     <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-200 shadow-xs flex flex-col overflow-hidden">
                       <StockForecastChart
                         kline={kline}
@@ -986,7 +986,7 @@ export const InferenceCenterPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden" style={{ minHeight: '380px' }}>
+                  <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden flex-1 min-h-0">
                     <ModelScoreCurveGrid
                       consensus={prediction.consensus}
                       consensusScore={prediction.consensus_score}

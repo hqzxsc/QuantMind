@@ -16,7 +16,7 @@ interface ModelScoreCurveGridProps {
   asOfDate?: string;
 }
 
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 3;
 
 export const ModelScoreCurveGrid: React.FC<ModelScoreCurveGridProps> = ({
   consensus,
@@ -85,7 +85,7 @@ export const ModelScoreCurveGrid: React.FC<ModelScoreCurveGridProps> = ({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+      <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden custom-scrollbar pb-2">
         {consensus.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
             <p className="text-xs font-semibold text-slate-700 m-0">暂无多模型分数数据</p>
@@ -96,11 +96,11 @@ export const ModelScoreCurveGrid: React.FC<ModelScoreCurveGridProps> = ({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             {pageItems.map((item, idx) => (
               <div
                 key={item.model_id || `row-${idx}`}
-                className="flex flex-col rounded-xl bg-white border border-slate-200 shadow-xs overflow-hidden"
+                className="flex flex-col rounded-xl bg-white border border-slate-200 shadow-xs overflow-hidden min-w-0"
               >
                 <div className="flex items-center justify-between px-3 pt-2 pb-1">
                   <div className="flex items-center gap-1.5 min-w-0 pr-2">
@@ -113,16 +113,25 @@ export const ModelScoreCurveGrid: React.FC<ModelScoreCurveGridProps> = ({
                     {Number(item.score).toFixed(4)}
                   </span>
                 </div>
-                <div style={{ height: 118 }}>
+                <div style={{ height: 158 }}>
                   <InferenceScoreChart
                     symbol={suffixSymbol}
                     modelId={item.model_id || undefined}
                     selectedDate={asOfDate}
                     endDate={asOfDate}
-                    height={118}
+                    height={158}
                     days={30}
                     compact
                   />
+                </div>
+                <div className="px-3 py-1.5 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between text-[10px] leading-none">
+                  <span className="flex items-center gap-1 text-slate-600">
+                    <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[10px]">{item.model_type || '—'}</span>
+                    <span className="font-mono">T+{item.horizon || 5}</span>
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${item.rating === 'STRONG_BUY' ? 'bg-rose-50 text-rose-700 border-rose-200' : item.rating === 'BUY' ? 'bg-red-50 text-red-600 border-red-200' : item.rating === 'SELL' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                    {item.rating}
+                  </span>
                 </div>
               </div>
             ))}

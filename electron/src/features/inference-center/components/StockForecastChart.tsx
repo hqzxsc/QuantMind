@@ -174,7 +174,7 @@ export const StockForecastChart: React.FC<StockForecastChartProps> = ({
                 lineStyle: { color: '#3b82f6', type: 'dashed', width: 1.5 },
                 label: {
                   show: true,
-                  formatter: 'T 基准日',
+                  formatter: baseIndex >= 0 ? `T 基准日 ${historyDates[baseIndex].slice(5)}` : 'T 基准日',
                   position: 'top',
                   color: '#2563eb',
                   fontSize: 10,

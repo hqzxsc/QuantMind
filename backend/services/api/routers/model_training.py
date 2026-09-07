@@ -3932,16 +3932,17 @@ _PRED_HIST_TTL = 600.0
 
 
 def _read_stock_pred_history(
-    storage_path: str, code6: str, cutoff: date, model_id: str
+    storage_path: str, code6: str, cutoff: date, model_id: str, anchor: date | None = None
 ) -> list[dict[str, Any]]:
     """从模型目录 pred.parquet 读取该股历史分数时序（含每日截面排名）。
 
     兼容多种列名（pred/fusion_score/score、trade_date/date/datetime、
     symbol/instrument 前缀/后缀/小写式均可）；无文件或读取失败返回 []。
+    anchor 非空时窗口为 [cutoff, anchor]，否则为 [cutoff, ∞)。
     """
     import time as _time
 
-    cache_key = f"{storage_path}|{code6}|{cutoff.isoformat()}"
+    cache_key = f"{storage_path}|{code6}|{cutoff.isoformat()}|{anchor.isoformat() if anchor else ''}"
     hit = _PRED_HIST_CACHE.get(cache_key)
     if hit and _time.time() - hit[0] < _PRED_HIST_TTL:
         return hit[1]
@@ -3991,6 +3992,7 @@ def _read_stock_pred_history(
                             FROM read_parquet('{str(parquet_file)}')
                             WHERE CAST({score_col} AS DOUBLE) IS NOT NULL
                               AND CAST({date_col} AS DATE) >= CAST(? AS DATE)
+                              {f"AND CAST({date_col} AS DATE) <= CAST('{anchor.isoformat()}' AS DATE)" if anchor else ""}
                               AND NOT (
                                   UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SH000%'
                                   OR UPPER(CAST({sym_col} AS VARCHAR)) LIKE 'SZ399%'
@@ -4034,7 +4036,7 @@ def _read_stock_pred_history(
 
 
 async def _load_stock_pred_history(
-    *, tenant_id: str, user_id: str, model_id: str | None, sym: str, cutoff: date
+    *, tenant_id: str, user_id: str, model_id: str | None, sym: str, cutoff: date, anchor: date | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """读模型目录 pred.parquet 的全量历史分数序列。
 
@@ -4068,6 +4070,7 @@ async def _load_stock_pred_history(
         code6,
         cutoff,
         str(model.get("model_id") or ""),
+        anchor,
     )
     return (items or []), model
 
@@ -4081,6 +4084,9 @@ async def get_stock_inference_history(
     model_id: str | None = Query(
         None, description="按模型过滤，缺省返回所有模型的最新批次"
     ),
+    end_date: str | None = Query(
+        None, description="窗口终点YYYY-MM-DD（含当日），缺省今日；个股推理下方30天曲线以基准日为终点，保证与上方K线重叠"
+    ),
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     """返回某只股票的历史模型分数（供 K 线下方分数曲线叠加）。
@@ -4088,13 +4094,18 @@ async def get_stock_inference_history(
     主数据源为模型目录的 pred.parquet（训练生成的全量历史分数），不受每日推理批次影响；
     model_id 为空时取用户默认模型（个股终端下方曲线），显式传 model_id 时取该模型（推理批次详情）。
     无 pred.parquet 时才回退 engine_signal_scores 批次（按交易日去重取最新批次）。
+    end_date 指定时窗口为 [end_date-days, end_date]，否则为 [今日-days, 今日]。
     """
     tenant_id, user_id = _owner_scope(current_user)
     from datetime import timedelta as _td
     from backend.shared.stock_utils import StockCodeUtil
 
     sym = str(symbol).strip().upper()
-    cutoff = date.today() - _td(days=days)
+    try:
+        anchor = date.fromisoformat(str(end_date)[:10]) if end_date else date.today()
+    except (ValueError, TypeError):
+        anchor = date.today()
+    cutoff = anchor - _td(days=days)
 
     # 归一化 symbol：兼容纯数字 / SH前缀 / suffix 三种格式
     norm = sym
@@ -4159,6 +4170,10 @@ async def get_stock_inference_history(
         # 排名用相关子查询只统计所在 run 内的行（idx_ess_run_id），避免对全市场做窗口函数
         # （旧写法 CTE 对所有股票 RANK() 后才过滤 symbol，500 天要 20s，现 ~0.6s）。
         # 排名仍在同一批 run 内计算：同一天多个 run 各自内部排名，取最新批次那条。
+        # 有 end_date（个股推理以基准日为终点）时加 trade_date 上限，保证与上方K线重叠。
+        end_filter = "AND e.trade_date <= :anchor" if end_date else ""
+        if end_date:
+            params["anchor"] = anchor
         rows = (
             (
                 await session.execute(
@@ -4170,6 +4185,7 @@ async def get_stock_inference_history(
                         FROM engine_signal_scores e
                         WHERE e.symbol = ANY(:syms)
                           AND e.trade_date >= :cutoff
+                          {end_filter}
                           AND e.tenant_id = :tenant_id AND e.user_id = :user_id
                           {model_filter_sql}
                         ORDER BY e.trade_date, e.created_at DESC
@@ -4211,9 +4227,10 @@ async def get_stock_inference_history(
 
     # ── 分数曲线锁定「用户默认模型」目录的 pred.parquet（训练生成的全量历史分数），
     # 不受每日推理批次影响，也不展示非默认模型；默认模型缺失/无 pred 文件时才回退
-    # 上面的 engine_signal_scores 批次结果
+    # 上面的 engine_signal_scores 批次结果。end_date 指定时窗口以基准日为终点，
+    # 保证与上方K线重叠（个股推理30天小卡）。
     pred_items, pred_model = await _load_stock_pred_history(
-        tenant_id=tenant_id, user_id=user_id, model_id=resolved_model_id, sym=sym, cutoff=cutoff
+        tenant_id=tenant_id, user_id=user_id, model_id=resolved_model_id, sym=sym, cutoff=cutoff, anchor=anchor
     )
     if pred_items:
         items = pred_items

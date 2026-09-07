@@ -37,13 +37,12 @@ import {
 } from './modelRegistryUtils';
 import { InferenceCenterPanel } from './modelRegistryPanels';
 import { StockForecastChart } from '../features/inference-center/components/StockForecastChart';
-import { FeatureDriversPanel } from '../features/inference-center/components/FeatureDriversPanel';
-import { ModelConsensusPanel } from '../features/inference-center/components/ModelConsensusPanel';
+import { ModelScoreCurveGrid } from '../features/inference-center/components/ModelScoreCurveGrid';
 import { InferenceHistoryPanel } from '../components/inference/InferenceHistoryPanel';
 import { useAppSelector } from '../store';
 import { selectCurrentMarket } from '../store/slices/uiSlice';
 import { getMarketConfig } from '../config/marketConfig';
-import { normalizeStockCode } from '../utils/portfolioUtils';
+import { normalizeStockCode, toSuffixCode } from '../utils/portfolioUtils';
 import { stockListService, Stock } from '../services/stockListService';
 
 const { Text } = Typography;
@@ -505,39 +504,6 @@ export const InferenceCenterPage: React.FC = () => {
     handleRunSingleStockInference(normalized);
   };
 
-  const getRatingBadge = (rating: string) => {
-    switch (rating) {
-      case 'STRONG_BUY':
-        return (
-          <div className="flex items-center gap-1.5 text-rose-700 bg-rose-50/90 border border-rose-200/90 px-3 py-1 rounded-xl font-black text-xs">
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-            强烈看多 (STRONG BUY)
-          </div>
-        );
-      case 'BUY':
-        return (
-          <div className="flex items-center gap-1.5 text-red-600 bg-red-50/90 border border-red-200 px-3 py-1 rounded-xl font-black text-xs">
-            <span className="w-2 h-2 rounded-full bg-red-500" />
-            偏多研判 (BUY)
-          </div>
-        );
-      case 'HOLD':
-        return (
-          <div className="flex items-center gap-1.5 text-slate-700 bg-slate-100 border border-slate-200 px-3 py-1 rounded-xl font-black text-xs">
-            <span className="w-2 h-2 rounded-full bg-slate-400" />
-            中性观望 (HOLD)
-          </div>
-        );
-      default:
-        return (
-          <div className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl font-black text-xs">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            看空警示 (SELL)
-          </div>
-        );
-    }
-  };
-
   return (
     <div className="w-full h-full bg-[#f8fafc] p-6 flex flex-col overflow-hidden box-border select-none" style={{ fontFamily: "'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Hiragino Sans GB', sans-serif" }}>
       {/* 顶部主切换栏 */}
@@ -732,7 +698,7 @@ export const InferenceCenterPage: React.FC = () => {
               <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
             </div>
 
-            <div className="flex flex-col gap-3.5 mb-4">
+            <div className="flex flex-col gap-3.5 mb-4 flex-1 min-h-0">
               {/* 目标个股 */}
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
@@ -832,20 +798,23 @@ export const InferenceCenterPage: React.FC = () => {
               </div>
 
               {/* 模型选型 */}
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5 flex-1 min-h-[220px]">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
                     <Database className="w-3.5 h-3.5 text-purple-500" /> 模型选型
+                    <span className="ml-1 text-[10px] font-mono font-bold text-blue-600 bg-blue-50 px-1.5 py-0.2 rounded-md border border-blue-100">
+                      {filteredSingleModels.length}
+                    </span>
                   </span>
-                  <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[10px]">
+                  <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-lg text-[11px]">
                     {(['all', 'dl', 'tree'] as const).map((cat) => (
                       <button
                         key={cat}
                         type="button"
                         onClick={() => setModelCategoryFilter(cat)}
                         className={clsx(
-                          'px-1.5 py-0.5 rounded-md font-bold transition-all',
-                          modelCategoryFilter === cat ? 'bg-white text-blue-600 shadow-2xs' : 'text-slate-700 hover:text-slate-900'
+                          'px-2 py-0.5 rounded-md font-bold transition-all',
+                          modelCategoryFilter === cat ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-700 hover:text-slate-900'
                         )}
                       >
                         {cat === 'all' ? '全部' : cat === 'dl' ? '深度' : '树模'}
@@ -854,7 +823,7 @@ export const InferenceCenterPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-0.5">
+                <div className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5">
                   {filteredSingleModels.map((m) => {
                     const isSelected = singleStockModelId === m.modelId;
                     return (
@@ -864,21 +833,20 @@ export const InferenceCenterPage: React.FC = () => {
                         className={clsx(
                           'p-2.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1',
                           isSelected
-                            ? 'bg-blue-50/80 border-blue-300 ring-2 ring-blue-100 shadow-xs'
-                            : 'bg-slate-50/60 border-slate-200/80 hover:bg-slate-100/80 hover:border-slate-300'
+                            ? 'bg-blue-50/80 border-blue-400 ring-2 ring-blue-100 shadow-xs'
+                            : 'bg-white border-slate-300 hover:bg-slate-50 hover:border-slate-400'
                         )}
                       >
                         <div className="flex items-center justify-between">
-                          <span className={clsx('text-xs font-bold truncate', isSelected ? 'text-blue-700' : 'text-slate-800')}>
+                          <span className={clsx('text-[13px] font-black truncate', isSelected ? 'text-blue-800' : 'text-slate-900')}>
                             {m.modelName}
                           </span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/90 border border-slate-200 text-slate-700">
+                          <span className="text-[10px] font-bold font-mono px-1.5 py-0.2 rounded bg-slate-100 border border-slate-300 text-slate-700">
                             {m.tag}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-[10px] text-slate-600">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700">
                           <span>{m.horizonDesc}</span>
-                          <span>Sharpe: <strong className="text-slate-600">{m.sharpe.toFixed(2)}</strong></span>
                         </div>
                       </div>
                     );
@@ -937,7 +905,6 @@ export const InferenceCenterPage: React.FC = () => {
                       {prediction.predicted_score.toFixed(4)}
                     </strong>
                   </div>
-                  {getRatingBadge(prediction.rating)}
                   <div className="flex items-center gap-1.5 bg-rose-50/70 border border-rose-100 px-3 py-1 rounded-xl">
                     <span className="text-[11px] text-slate-700 font-semibold">来源:</span>
                     <span className="text-xs font-black font-mono text-rose-600">真实推理</span>
@@ -1019,17 +986,14 @@ export const InferenceCenterPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ minHeight: '250px' }}>
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden">
-                      <FeatureDriversPanel drivers={prediction.drivers} source={prediction.drivers_source} />
-                    </div>
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden">
-                      <ModelConsensusPanel
-                        consensus={prediction.consensus}
-                        consensusScore={prediction.consensus_score}
-                        selectedCount={consensusModelIds.length}
-                      />
-                    </div>
+                  <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden" style={{ minHeight: '380px' }}>
+                    <ModelScoreCurveGrid
+                      consensus={prediction.consensus}
+                      consensusScore={prediction.consensus_score}
+                      selectedCount={consensusModelIds.length}
+                      suffixSymbol={toSuffixCode(prediction.symbol || symbol)}
+                      asOfDate={prediction.as_of_date}
+                    />
                   </div>
                 </div>
               ) : (

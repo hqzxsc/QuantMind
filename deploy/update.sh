@@ -376,7 +376,12 @@ main() {
         # 容器带 healthcheck 时校验为 healthy；无 healthcheck 的基础设施（db/redis）不校验
         local hk
         api_ok=false; celery_ok=false; beat_ok=false
-        curl --fail --silent --max-time 3 http://127.0.0.1:8000/health >/dev/null 2>&1 && api_ok=true
+        # updater 容器为 bridge 网络，127.0.0.1 指向自身；改走宿主容器 exec，避免 180s 误报失败
+        if docker exec quantmind curl --fail --silent --max-time 3 http://127.0.0.1:8000/health >/dev/null 2>&1; then
+            api_ok=true
+        elif curl --fail --silent --max-time 3 http://127.0.0.1:8000/health >/dev/null 2>&1; then
+            api_ok=true
+        fi
         for svc in quantmind-celery quantmind-celery-beat; do
             hk="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$svc" 2>/dev/null)"
             if [[ "$hk" == "healthy" ]]; then

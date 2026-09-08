@@ -84,7 +84,7 @@ backup_database() {
     local backup_dir="$PROJECT_DIR/data/backups"
     mkdir -p "$backup_dir"
     local stamp backup_file pg_user pg_db pg_pass
-    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    stamp="$(TZ=Asia/Shanghai date +%Y%m%dT%H%M%S+08:00)"
     backup_file="$backup_dir/quantmind_pre_update_${stamp}.sql.gz"
     # 从 .env 读库凭据（脚本自身环境变量里 DB_PASSWORD 几乎必为空，须显式加载 .env）
     pg_user="$(grep -E '^DB_USER=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' || echo quantmind)"
@@ -147,7 +147,7 @@ sync_code() {
   "version": "$head_describe",
   "commit": "$head_sha",
   "branch": "$REF",
-  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "generated_at": "$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)"
 }
 EOF
     else

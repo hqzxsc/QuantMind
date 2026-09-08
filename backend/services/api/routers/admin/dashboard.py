@@ -335,6 +335,29 @@ async def _collect_system_health_uncached() -> tuple[int, list[dict[str, Any]]]:
 
 
 def _get_uptime_days(request: Request) -> int | None:
+    """系统运行天数，优先取宿主机 uptime，容器重启不会归零。
+
+    宿主机自 2026-09-01 05:21 已运行 7 天，但 API 容器每次部署都会重置
+    started_at（上次仅 1 小时），导致前端显示 0 天。优先用 psutil.boot_time
+    或 /proc/uptime，失败再回退到 started_at。
+    """
+    # 1) 宿主机 uptime（最能反映“系统运行时间”）
+    try:
+        import psutil
+        from zoneinfo import ZoneInfo
+        boot_ts = psutil.boot_time()
+        boot = datetime.fromtimestamp(boot_ts, tz=timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        return max(int((now - boot).total_seconds() // 86400), 0)
+    except Exception:
+        pass
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as f:
+            up_seconds = float(f.read().split()[0])
+            return max(int(up_seconds // 86400), 0)
+    except Exception:
+        pass
+
     started_at = getattr(request.app.state, "started_at", None)
     if not isinstance(started_at, datetime):
         return None
@@ -440,6 +463,15 @@ async def get_dashboard_metrics(
                     # 前端期望 time 为可读字符串，type 映射 level
                     lvl = str(r.get("level") or "info")
                     type_map = {"info": "success", "warning": "warning", "error": "warning", "critical": "warning"}
+                    # 统一东八区显示（DB 存 TIMESTAMPTZ UTC，宿主机 UTC，直接 strftime 会少 8 小时）
+                    try:
+                        from zoneinfo import ZoneInfo
+                        if ts is not None and hasattr(ts, "astimezone"):
+                            if ts.tzinfo is None:
+                                ts = ts.replace(tzinfo=timezone.utc)
+                            ts = ts.astimezone(ZoneInfo("Asia/Shanghai"))
+                    except Exception:
+                        pass
                     recent_events.append(
                         {
                             "title": r.get("title") or "",

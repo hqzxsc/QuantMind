@@ -50,6 +50,20 @@ require_root() {
     fi
     log "提示: 未使用 sudo 且 docker 权限不足，尝试继续（失败请改用 sudo 或将用户加入 docker 组）"
 }
+record_system_event() {
+    # 写入 system_events，供管理后台“最近事件”展示；失败不阻断主流程
+    local _level="$1" _title="$2" _msg="${3:-}"
+    local _pg_user
+    _pg_user="$(grep -E '^DB_USER=' "$PROJECT_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d \"\' || echo quantmind)"
+    _pg_user="${_pg_user:-quantmind}"
+    # 转义单引号
+    local _t_esc _m_esc
+    _t_esc="$(printf '%s' "$_title" | sed "s/'/''/g")"
+    _m_esc="$(printf '%s' "$_msg" | sed "s/'/''/g" | head -c 4000)"
+    docker exec -e PGUSER="$_pg_user" quantmind-db psql -U "$_pg_user" -v ON_ERROR_STOP=0 \
+        -c "INSERT INTO system_events (event_type, level, source, title, message) VALUES ('system_update', '$_level', 'updater', '$_t_esc', '$_m_esc')" >/dev/null 2>&1 || true
+}
+
 require_project() {
     [[ -d "$PROJECT_DIR/.git" ]] || die "不是 Git 部署目录: $PROJECT_DIR"
     [[ -f "$PROJECT_DIR/docker-compose.yml" ]] || die "缺少 docker-compose.yml: $PROJECT_DIR"
@@ -345,6 +359,7 @@ EOSQL
 main() {
     require_root
     require_project
+    record_system_event "info" "系统更新开始" "分支 $REF 远端 $REMOTE"
     backup_database
     sync_code
     build_core
@@ -370,10 +385,12 @@ main() {
         done
         if $api_ok && $celery_ok && $beat_ok; then
             log "升级完成 ✓ (HEAD: $(git -C "$PROJECT_DIR" rev-parse --short HEAD))"
+            record_system_event "info" "系统更新成功" "HEAD $(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
             return
         fi
         sleep 2
     done
+    record_system_event "error" "系统更新失败" "API/celery 180s 内未就绪，请查看 data/update.log"
     log '健康检查失败，尾部日志：' >&2
     docker logs --tail 100 quantmind >&2 || true
     for svc in quantmind-celery quantmind-celery-beat; do

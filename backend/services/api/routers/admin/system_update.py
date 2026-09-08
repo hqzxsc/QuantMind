@@ -184,6 +184,20 @@ async def trigger_update(
             raise HTTPException(
                 status_code=502, detail=f"启动 updater 容器失败: {started.text[:300]}"
             )
+        # 异步记录“更新已触发”事件（失败不阻断主流程）
+        try:
+            from backend.shared.system_events import record_system_event_async
+            import asyncio as _asyncio
+            _asyncio.create_task(record_system_event_async(
+                event_type="system_update",
+                level="info",
+                source="quantmind-api",
+                title="系统更新已触发（Web）",
+                message=f"updater 镜像 {image} 已启动，容器 {cid[:12]}",
+                meta={"container_id": cid, "image": image},
+            ))
+        except Exception:
+            pass
         return {"success": True, "data": {"started": True, "task_id": cid}}
     except HTTPException:
         raise

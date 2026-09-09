@@ -112,10 +112,17 @@ const OutputLayer: React.FC<OutputLayerProps> = ({
                                         </span>
                                     </span>
                                     <span className="flex flex-col items-center justify-center min-w-0 text-center" title={`${order.symbol} ${order.symbol_name || ''}`}>
-                                        <span className="font-bold text-slate-800 truncate max-w-full">
-                                            {order.symbol_name && order.symbol_name !== order.symbol ? order.symbol_name : '—'}
-                                        </span>
-                                        <span className="font-mono text-[11px] text-slate-400">{order.symbol}</span>
+                                        {(() => {
+                                            const hasName = !!(order.symbol_name && order.symbol_name !== order.symbol && order.symbol_name !== '—');
+                                            return (
+                                                <>
+                                                    <span className="font-bold text-slate-800 truncate max-w-full">
+                                                        {hasName ? order.symbol_name : order.symbol}
+                                                    </span>
+                                                    {hasName && <span className="font-mono text-[11px] text-slate-400">{order.symbol}</span>}
+                                                </>
+                                            );
+                                        })()}
                                     </span>
                                     <span className="text-center font-mono text-slate-700 whitespace-nowrap">{qty != null ? `${qty} 股` : '—'}</span>
                                     <span className="text-center font-mono text-slate-700 whitespace-nowrap">{typeof price === 'number' ? price.toFixed(2) : '—'}</span>

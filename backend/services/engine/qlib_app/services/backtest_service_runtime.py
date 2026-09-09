@@ -357,18 +357,17 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                         end_ts = signal_ts
 
                 # 2. Qlib 物理日历边界检查
-                # 边界语义：cal_max_ts 是日历最后一天，若请求终点 >= cal_max_ts，
-                # 则实际终点收缩到 cal_max_ts 本身（可用数据最后一天），而不是
-                # 倒数第二天 full_cal[-2]。
-                # 否则会污染两个下游环节：
-                #   a) signal_end_date_truncated（上方）：信号只覆盖到 cal_max_ts，
-                #      但 request.end_date 被写成 cal_max_ts-1，导致 rows_in_range
-                #      少算一天；
-                #   b) qlib.backtest() 以 request.end_date 作为终点：当日历完全
-                #      不覆盖区间时 qlib 静默用工作日日历补 44 天空转（0 成交、
-                #      全部指标 0），而收缩到 cal_max_ts 后即可正常出信号。
+                # qlib TradeCalendar.get_step_time 会取 calendar[i+1] 做
+                # trade_end_time，终点顶到日历最后一天必报
+                # IndexError: index N out of bounds for axis 0 with size N。
+                # 因此 end >= cal_max 时必须留一根 bar，回退到倒数第二个交易日
+                # full_cal[-2]，而不是 cal_max 本身。
                 if end_ts >= cal_max_ts:
-                    actual_end_date = str(cal_max_ts.date())
+                    if len(full_cal) >= 2:
+                        safe_end_ts = pd.Timestamp(full_cal[-2].date())
+                    else:
+                        safe_end_ts = cal_max_ts - pd.Timedelta(days=1)
+                    actual_end_date = str(safe_end_ts.date())
                     task_log.info(
                         "calendar_limit_reached",
                         "检测到目标日期达到日历边界，执行安全回退",

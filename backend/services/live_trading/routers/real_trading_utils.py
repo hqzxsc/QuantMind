@@ -225,8 +225,11 @@ def get_strategy_path(user_id: str):
 
 
 def _active_strategy_key(tenant_id: str, user_id: str) -> str:
-    tenant = (tenant_id or "").strip() or "default"
-    return f"trade:active_strategy:{tenant}:{str(user_id).zfill(8)}"
+    # 唯一口径见 shared/simulation_account_keys：数字补零 8 位，非数字保持原样。
+    # 禁止手写 zfill(8)——曾导致 admin 被写成 000admin，重启恢复与状态查询分裂。
+    from backend.shared.simulation_account_keys import active_strategy_key
+
+    return active_strategy_key(tenant_id, user_id)
 
 
 def _normalize_identity(

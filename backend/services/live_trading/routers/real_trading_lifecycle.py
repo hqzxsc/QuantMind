@@ -393,6 +393,9 @@ async def start_trading(
                     "code_sha": _code_sha,
                     "code_str": code_str[:8000] if code_str else None,
                     "code_overrides": code_overrides,
+                    # 重启恢复/托管调度解析身份用，避免按键后缀反推（历史 000admin 坑）
+                    "runtime_tenant_id": resolved_tenant_id,
+                    "runtime_user_id": resolved_user_id,
                 }
             ),
         )

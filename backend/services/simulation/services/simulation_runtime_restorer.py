@@ -51,16 +51,31 @@ class SimulationRuntimeRestorer:
         if str(active_data.get("mode") or "").upper() != "SIMULATION":
             return False
 
-        parts = key.split(":")
-        if len(parts) < 4:
+        from backend.shared.simulation_account_keys import parse_active_strategy_key
+        from backend.shared.simulation_account_keys import resolve_active_identity
+
+        parsed = parse_active_strategy_key(key)
+        if not parsed:
             return False
-        tenant_id = parts[-2].strip() or "default"
-        user_id = parts[-1].strip()
-        return await self.restore_active_payload(
+        tenant_id, user_id = resolve_active_identity(
+            tenant_suffix=parsed[0], user_suffix=parsed[1], payload=active_data
+        )
+        restored = await self.restore_active_payload(
             tenant_id=tenant_id,
             user_id=user_id,
             active_data=active_data,
         )
+        # 历史键（如 000admin）恢复成功后删除，避免新旧双键并存
+        if restored:
+            try:
+                from backend.shared.simulation_account_keys import active_strategy_key
+
+                canonical = active_strategy_key(tenant_id, user_id)
+                if canonical != key:
+                    self.redis.client.delete(key)
+            except Exception:
+                pass
+        return restored
 
     async def restore_active_payload(
         self,
@@ -115,8 +130,10 @@ class SimulationRuntimeRestorer:
         active_data["sandbox_restored_run_id"] = sandbox_run_id
         # 保留原始 started_at 锚点，不覆盖，避免 5 日等调仓节奏漂移
         try:
+            from backend.shared.simulation_account_keys import active_strategy_key
+
             self.redis.client.set(
-                f"trade:active_strategy:{tenant_id}:{str(user_id).zfill(8)}",
+                active_strategy_key(tenant_id, user_id),
                 json.dumps(active_data, ensure_ascii=False),
             )
         except Exception:

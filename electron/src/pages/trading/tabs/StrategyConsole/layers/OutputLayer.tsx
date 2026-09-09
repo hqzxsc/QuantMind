@@ -31,9 +31,9 @@ const formatOrderTime = (value?: string | null): string => {
 
 /**
  * L3 交易记录：等宽居中表格（方向 / 股票 / 数量 / 价格 / 状态 / 时间）
- * 各列固定宽度、表头与行对齐、全部居中。
+ * 股票列固定 180px，不再 1fr 抢占；右侧数量/价格/状态/时间均分 1fr，间距松开，全部居中。
  */
-const GRID_COLS = 'grid-cols-[64px_1fr_96px_96px_72px_120px]';
+const GRID_COLS = 'grid-cols-[56px_180px_1fr_1fr_1fr_1fr]';
 
 const OutputLayer: React.FC<OutputLayerProps> = ({
     recentOrders,
@@ -52,15 +52,6 @@ const OutputLayer: React.FC<OutputLayerProps> = ({
                     <span className="text-xs text-slate-400">最近 {recentOrders.length} 条</span>
                 )}
                 <div className="ml-auto flex items-center gap-2">
-                    {onOpenManualTask && (
-                        <button
-                            type="button"
-                            onClick={onOpenManualTask}
-                            className="px-3 py-1.5 rounded-xl bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100 transition-all flex items-center gap-1.5 border border-blue-100"
-                        >
-                            <Activity size={13} /> 查看详情
-                        </button>
-                    )}
                     <button
                         type="button"
                         onClick={onToggleLogs}

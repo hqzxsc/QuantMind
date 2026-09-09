@@ -1092,12 +1092,56 @@ def run_market_scheduled_sync(market: str, cfg: dict[str, Any]) -> dict[str, Any
         return {"market": market, "status": "failed", "error": str(e)}
 
 
+# 与 compute.py 同口径的轻量新鲜度检查（只读目录与 latest.json，不引重型依赖）。
+# 快照分区目录：<data_dir>/1_kline_data/daily_unadjusted/dt=YYYYMMDD
+_SNAPSHOT_PARTITION_REL = "1_kline_data/daily_unadjusted"
+
+
+def _snapshot_source_state(data_dir: str, out_dir: str) -> tuple[str | None, str | None]:
+    """返回 (库内最大分区日期, latest.json 的 trade_date)，均为 YYYYMMDD 或 None。"""
+    import json as _json
+    from pathlib import Path as _P
+
+    max_part: str | None = None
+    part_root = _P(data_dir) / _SNAPSHOT_PARTITION_REL
+    try:
+        if part_root.is_dir():
+            dates = [
+                e.name.split("=", 1)[1]
+                for e in part_root.iterdir()
+                if e.is_dir()
+                and e.name.startswith("dt=")
+                and "=" in e.name
+                and e.name.split("=", 1)[1].isdigit()
+            ]
+            max_part = max(dates) if dates else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[MarketSnapshot] 扫描分区失败: %s", exc)
+
+    latest_td: str | None = None
+    latest_path = _P(out_dir) / "latest.json"
+    try:
+        if latest_path.is_file():
+            td = str(_json.loads(latest_path.read_text(encoding="utf-8")).get("trade_date") or "")
+            td = td.strip().replace("-", "")
+            if len(td) == 8 and td.isdigit():
+                latest_td = td
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[MarketSnapshot] 读取 latest.json 失败: %s", exc)
+    return max_part, latest_td
+
+
 @celery_app.task(name="engine.tasks.market_snapshot")
 def run_market_snapshot() -> dict[str, Any]:
     """在服务器容器内计算市场分析快照，写入 QM_MARKET_SNAPSHOT_DIR。
 
     服务器即生产环境：数据(读取容器 /data/quantdb)与脚本都在容器内。
     交易日盘后由 beat 触发，API 通过 QM_MARKET_SNAPSHOT_DIR=/data/market-analysis 读取。
+
+    新鲜度门控：仅当库内最大分区比线上快照（latest.json 的 trade_date）更新时
+    才真正计算并覆盖 latest；否则直接跳过（同步还没跑完或今日无新数据），
+    避免用过期数据静默覆盖线上快照。beat 在 04:00–05:50 每 10 分钟触发一次，
+    给用户配置时间的同步留足完成窗口；节假日无新分区时全天跳过属正常行为。
     """
     import subprocess
     import sys
@@ -1110,6 +1154,22 @@ def run_market_snapshot() -> dict[str, Any]:
         data_dir = os.getenv("QM_QUANTDB_DATA_DIR", "/data/quantdb")
         out_dir = os.getenv("QM_MARKET_SNAPSHOT_DIR", "/data/market-analysis")
         _Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+        max_part, latest_td = _snapshot_source_state(str(data_dir), str(out_dir))
+        if max_part is None:
+            logger.error("[MarketSnapshot] 跳过：未找到任何日线分区")
+            return {"status": "skipped", "reason": "no_partitions"}
+        if latest_td is not None and max_part <= latest_td:
+            logger.warning(
+                "[MarketSnapshot] 跳过：库内最新分区 %s 未超过线上快照 %s（同步未完成或今日无新数据），不覆盖 latest",
+                max_part, latest_td,
+            )
+            return {
+                "status": "skipped",
+                "reason": "stale",
+                "max_partition": max_part,
+                "latest_trade_date": latest_td,
+            }
 
         cmd = [
             sys.executable, str(script),

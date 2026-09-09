@@ -63,11 +63,11 @@ const RuntimeLayer: React.FC<RuntimeLayerProps> = ({
         ? `${live.order_type === 'MARKET' ? '市价' : '限价'}${typeof live.max_price_deviation === 'number' ? ` / 偏离 ${(live.max_price_deviation * 100).toFixed(1)}%` : ''}`
         : '-';
     const strategyName = status?.strategy?.name || status?.strategy?.id
-        || (task as unknown as Record<string, unknown> | null)?.strategy_name as string
+        || (status?.latest_hosted_task as unknown as Record<string, unknown> | null)?.strategy_name as string
         || '-';
     const progress = Number(status?.latest_hosted_task?.progress ?? NaN);
     // 有最后一次托管任务时也展示运行卡（标注已停止），避免停止后左侧空白
-    const showIdleGuide = (runState === 'idle' || runState === 'stopped') && !status?.strategy && !task;
+    const showIdleGuide = (runState === 'idle' || runState === 'stopped') && !status?.strategy && !status?.latest_hosted_task;
 
     // 右列数据源：最新托管任务（后端已聚合）
     const task = status?.latest_hosted_task || null;

@@ -78,7 +78,10 @@ class SimulationRuntimeRestorer:
         if sandbox_manager.is_strategy_running(tenant_id, user_id, strategy_id):
             return False
 
-        code_str = await self._resolve_code(strategy_id=strategy_id, user_id=user_id)
+        # 优先用启动时持久化的代码快照（覆盖 strategy_file 上传场景），避免重启后因存储查不到而丢运行态
+        code_str = str(active_data.get("code_str") or "").strip()
+        if not code_str:
+            code_str = await self._resolve_code(strategy_id=strategy_id, user_id=user_id)
         if not code_str.strip():
             logger.warning(
                 "simulation runtime restore skipped missing code: tenant=%s user=%s strategy=%s",
@@ -107,6 +110,7 @@ class SimulationRuntimeRestorer:
             live_trade_config=live_trade_config,
         )
         active_data["sandbox_restored_run_id"] = sandbox_run_id
+        # 保留原始 started_at 锚点，不覆盖，避免 5 日等调仓节奏漂移
         try:
             self.redis.client.set(
                 f"trade:active_strategy:{tenant_id}:{str(user_id).zfill(8)}",

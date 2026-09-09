@@ -242,6 +242,7 @@ async def start_trading(
             }
 
         run_id = f"run_{int(time.time())}"
+        started_at_iso = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
         strategy_dir = get_strategy_path(resolved_user_id)
         os.makedirs(strategy_dir, exist_ok=True)
         file_path = os.path.join(strategy_dir, f"{run_id}.py")
@@ -252,8 +253,15 @@ async def start_trading(
                 f.write(content)
             code_str = content.decode("utf-8")
         else:
+            # 从存储加载的策略代码也持久化一份快照，供重启恢复直接使用
+            try:
+                _detail_code = detail.get("code") if 'detail' in locals() and isinstance(detail, dict) else None
+                if _detail_code:
+                    code_str = str(_detail_code)
+            except Exception:
+                pass
             with open(file_path, "w", encoding="utf-8") as f:
-                f.write(f"# strategy_ref={strategy_id}\n")
+                f.write(code_str or f"# strategy_ref={strategy_id}\n")
 
         # 3. 沙箱模拟盘执行
         result = {"status": "success", "mode": "SIMULATION"}
@@ -274,7 +282,10 @@ async def start_trading(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"沙箱启动失败: {str(e)}")
 
-        # 4. 状态持久化
+        # 4. 状态持久化（started_at 锚定调仓节奏，code_str 保障重启可恢复）
+        import hashlib as _hashlib
+
+        _code_sha = _hashlib.sha256(code_str.encode("utf-8")).hexdigest()[:12] if code_str else None
         redis.client.set(
             _active_strategy_key(resolved_tenant_id, resolved_user_id),
             json.dumps(
@@ -288,6 +299,9 @@ async def start_trading(
                     "trading_permission": trading_permission,
                     "signal_readiness": signal_readiness,
                     "launch_result": result,
+                    "started_at": started_at_iso,
+                    "code_sha": _code_sha,
+                    "code_str": code_str[:8000] if code_str else None,
                 }
             ),
         )

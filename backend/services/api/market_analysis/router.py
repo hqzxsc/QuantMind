@@ -602,11 +602,66 @@ def _persist_stream_snapshot(
         tmp_latest.write_text(payload, encoding="utf-8")
         tmp_dated.replace(dated_path)
         tmp_latest.replace(latest_path)
+        _refresh_latest_tags_db(out_dir, trade_date, heatmap_shenwan, heatmap_concept)
         logger.info("[market-analysis][stream] 快照已持久化 trade_date=%s dir=%s", trade_date, out_dir)
         return trade_date
     except Exception as exc:  # noqa: BLE001
         logger.warning("[market-analysis][stream] 快照持久化失败: %s", exc)
         return None
+
+
+def _refresh_latest_tags_db(
+    out_dir: Path,
+    trade_date: str,
+    heatmap_shenwan: Any,
+    heatmap_concept: Any,
+) -> None:
+    """同步刷新 latest.db 的 sector_mv（与 trade_date），与离线 build_tags_db 同表结构。
+
+    背景：/heatmap 优先读 SQLite latest.db，而流式落盘此前只写 JSON，
+    导致手动分析后表头（读 JSON 的 breadth）已是新交易日、热力图（读 db）
+    仍是旧交易日的错配。只替换 sector_mv + meta，tags 标签库留给离线全量重建。
+    永不抛异常。
+    """
+    try:
+        import sqlite3
+
+        rows: list[tuple] = []
+        for cat, items in (("shenwan", heatmap_shenwan), ("concept", heatmap_concept)):
+            for it in items or []:
+                if not isinstance(it, dict):
+                    continue
+                rows.append((
+                    cat, it.get("name"), it.get("value"),
+                    it.get("pct_change"), it.get("leader"), it.get("leader_pct"),
+                ))
+        if not rows:
+            return
+        db_path = out_dir / "latest.db"
+        con = sqlite3.connect(str(db_path), timeout=30)
+        try:
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS sector_mv("
+                "category TEXT, name TEXT, value REAL, "
+                "pct_change REAL, leader TEXT, leader_pct REAL)"
+            )
+            con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+            con.execute("DELETE FROM sector_mv")
+            con.executemany("INSERT INTO sector_mv VALUES(?,?,?,?,?,?)", rows)
+            con.execute(
+                "INSERT INTO meta(key, value) VALUES('trade_date', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (trade_date,),
+            )
+            con.commit()
+        finally:
+            con.close()
+        logger.info(
+            "[market-analysis][stream] latest.db sector_mv 已刷新 trade_date=%s rows=%d",
+            trade_date, len(rows),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[market-analysis][stream] latest.db 刷新失败: %s", exc)
 
 
 # 受限分析执行器：最多 2 个并发线程。

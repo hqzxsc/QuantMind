@@ -110,6 +110,69 @@ def test_custom_strategy_builder_strict_filtering_with_kwargs():
         assert result.mandatory_param == "val"
 
 
+def test_custom_strategy_builder_code_first_keeps_explicit_topk():
+    """专家模式代码优先：代码里写 topk=10 时，前端/UI 默认 50 不得覆盖。"""
+    builder = CustomStrategyBuilder()
+
+    class TopkStrategy:
+        def __init__(self, topk, n_drop=5, signal="<PRED>", **kwargs):
+            self.topk = topk
+
+    request = MagicMock(spec=QlibBacktestRequest)
+    request.strategy_content = "STRATEGY_CONFIG = {... topk: 10 ...}"
+    request.strategy_params = MagicMock()
+    request.strategy_params.topk = 50
+    request.strategy_params.n_drop = 5
+    for key in ["min_score", "max_weight", "stop_loss", "take_profit"]:
+        setattr(request.strategy_params, key, None)
+
+    builder._build_strategy_from_content = MagicMock(
+        return_value=(
+            {"class": "TopkStrategy", "kwargs": {"topk": 10, "signal": "<PRED>"}},
+            {"TopkStrategy": TopkStrategy},
+        )
+    )
+    builder._validate_strategy_content = MagicMock()
+
+    result = builder.build(request, {}, None, "bt_test")
+
+    if isinstance(result, dict):
+        assert result["kwargs"]["topk"] == 10
+    else:
+        assert result.topk == 10
+
+
+def test_custom_strategy_builder_backfills_missing_topk():
+    """代码缺失 topk 时，类支持则用 UI/默认值回填。"""
+    builder = CustomStrategyBuilder()
+
+    class TopkStrategy:
+        def __init__(self, topk, signal="<PRED>", **kwargs):
+            self.topk = topk
+
+    request = MagicMock(spec=QlibBacktestRequest)
+    request.strategy_content = "STRATEGY_CONFIG without topk"
+    request.strategy_params = MagicMock()
+    request.strategy_params.topk = 50
+    for key in ["n_drop", "min_score", "max_weight", "stop_loss", "take_profit"]:
+        setattr(request.strategy_params, key, None)
+
+    builder._build_strategy_from_content = MagicMock(
+        return_value=(
+            {"class": "TopkStrategy", "kwargs": {"signal": "<PRED>"}},
+            {"TopkStrategy": TopkStrategy},
+        )
+    )
+    builder._validate_strategy_content = MagicMock()
+
+    result = builder.build(request, {}, None, "bt_test")
+
+    if isinstance(result, dict):
+        assert result["kwargs"]["topk"] == 50
+    else:
+        assert result.topk == 50
+
+
 @pytest.mark.parametrize("strategy_type", ["custom", "CustomStrategy", "custom_strategy"])
 def test_strategy_factory_maps_custom_aliases(strategy_type):
     builder = StrategyFactory.get_builder(strategy_type)

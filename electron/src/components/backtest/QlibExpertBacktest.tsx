@@ -199,7 +199,7 @@ export const QlibExpertBacktest: React.FC = () => {
         initial_capital: initialCapital,
         user_id: normalizeUserId(resolvedUserId),
         strategy_type: 'CustomStrategy',
-        strategy_params: { topk: 50, n_drop: 5 }, // 专家模式默认参数
+        // 专家模式代码优先：不传 strategy_params，后端以 STRATEGY_CONFIG 为准补全缺失项
         benchmark_symbol: benchmark,
         strategy_code: codeToRun,
         commission: 0.00025,

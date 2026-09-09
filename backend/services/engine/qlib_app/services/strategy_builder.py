@@ -320,8 +320,9 @@ class CustomStrategyBuilder(StrategyBuilder):
                             )
                             kwargs[p] = val
 
-                    # 2. Smart UI Slider Merging
-                    # ONLY merge if it's already in kwargs OR explicitly in the signature
+                    # 2. Smart UI Slider Merging (CustomStrategy 代码优先)
+                    # 专家模式以 STRATEGY_CONFIG 为准：用户代码已显式声明的参数
+                    # 不用 UI/默认值覆盖，仅在代码缺失且类支持时回填。
                     ui_params = [
                         "topk",
                         "n_drop",
@@ -343,9 +344,10 @@ class CustomStrategyBuilder(StrategyBuilder):
                     for key in ui_params:
                         val = getattr(request.strategy_params, key, None)
                         if val is not None:
+                            if key in original_kwargs:
+                                continue
                             if (
                                 key in explicit_params
-                                or key in kwargs
                                 or (has_var_kwargs and key in force_passthrough_ui_params)
                             ):
                                 # 特殊处理：n_drop=0 表示不限调仓即全速调仓
@@ -387,9 +389,9 @@ class CustomStrategyBuilder(StrategyBuilder):
                         error=str(e),
                     )
             else:
-                # Fallback UI Merging (external class):
+                # Fallback UI Merging (external class, 代码优先):
                 # 当 STRATEGY_CONFIG 只引用外部类（class 不在 namespace）时，
-                # 仍然需要将 UI 参数回填到 kwargs，避免关键参数丢失。
+                # 用户代码已声明的参数保持不动，仅回填缺失的 rebalance_days。
                 ui_params = [
                     "topk",
                     "n_drop",
@@ -410,7 +412,9 @@ class CustomStrategyBuilder(StrategyBuilder):
                     val = getattr(request.strategy_params, key, None)
                     if val is None:
                         continue
-                    if key == "rebalance_days" or key in kwargs:
+                    if key in original_kwargs:
+                        continue
+                    if key == "rebalance_days":
                         logger.info(
                             "fallback_merge_ui_param",
                             "CustomStrategyBuilder fallback merge UI param",

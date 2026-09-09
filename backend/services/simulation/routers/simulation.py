@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, File, UploadFile
 from pydantic import BaseModel
 
-from backend.services.trade_shared.deps import AuthContext, get_auth_context, get_redis
+from backend.services.trade_shared.deps import AuthContext, get_auth_context, get_db, get_redis
 from backend.services.trade_shared.redis_client import RedisClient
 from backend.services.simulation.services.fund_snapshot_service import (
     SimulationFundSnapshotService,
@@ -259,9 +259,12 @@ async def reset_simulation_account(
     request: AccountResetRequest,
     auth: AuthContext = Depends(get_auth_context),
     redis: RedisClient = Depends(get_redis),
+    db=Depends(get_db),
 ):
     """
     Reset simulation account with initial cash.
+    重置即视为全新起点：必须同步停止当前运行任务（沙箱+active_strategy+portfolio），
+    否则会出现“资金已清零但控制台仍显示运行中”。
     """
     manager = SimulationAccountManager(redis)
     uid = _require_user_id(auth.user_id)
@@ -303,6 +306,11 @@ async def reset_simulation_account(
         logger.warning(f"Reset DB cleanup failed for {auth.tenant_id}:{uid}: {_e}")
 
     # 清空 Redis 缓存（交易列表/统计），避免重置后仍命中旧缓存秒级延迟
+    # 运行态身份必须与 live_trading 完全同口径：数字补零8位、非数字保持原样。
+    # 模拟账户 uid（admin->0）只用于资金键，运行时停止必须用 runtime_user。
+    _raw_sub = str(auth.user_id or "").strip()
+    _runtime_user = _raw_sub.zfill(8) if _raw_sub.isdigit() else _raw_sub
+    _runtime_tenant = str(auth.tenant_id or "default").strip() or "default"
     try:
         if redis.client:
             redis.delete_pattern(f"sim_trade:list:{auth.tenant_id}:{uid}:*")
@@ -316,49 +324,101 @@ async def reset_simulation_account(
             for pat in (
                 f"qm:hosted:simulation:{auth.tenant_id}:{uid}:*",
                 f"qm:hosted:simulation:{auth.tenant_id}:{auth.user_id}:*",
+                f"qm:hosted:simulation:{_runtime_tenant}:{_runtime_user}:*",
                 f"qm:hosted:simulation:bootstrap:{auth.tenant_id}:{uid}:*",
                 f"qm:hosted:simulation:bootstrap:{auth.tenant_id}:{auth.user_id}:*",
+                f"qm:hosted:simulation:bootstrap:{_runtime_tenant}:{_runtime_user}:*",
             ):
                 try:
                     redis.delete_pattern(pat)
                 except Exception:
                     pass
-            # 初始化即视为全新起点，运行态也同步重置，避免“恢复后仍显示 50 成/已完成”或“重置后因旧 active_strategy 导致不交易”
-            # 先收集待停的活跃策略，再删键，避免删后取不到 strategy_id
-            _to_stop: list[tuple[str, str, str]] = []
-            for raw_uid in {str(uid), str(auth.user_id)}:
-                for t in (auth.tenant_id, "default"):
-                    for key in (
-                        f"trade:active_strategy:{t}:{raw_uid}",
-                        f"trade:active_strategy:{t}:{raw_uid.zfill(8)}",
-                    ):
-                        try:
-                            raw = redis.client.get(key)
-                            if raw:
-                                import json as _json
+            # 1) 先停沙箱：精确 sid + 按用户前缀兜底双保险，避免 sid 为空/口径不一致时漏杀
+            try:
+                from backend.services.trade.sandbox.manager import sandbox_manager
 
-                                d = _json.loads(raw)
-                                sid = str(d.get("strategy_id") or "").strip()
-                                if sid:
-                                    _to_stop.append((t, raw_uid, sid))
-                        except Exception:
-                            pass
-            for t, raw_uid, sid in _to_stop:
-                try:
-                    from backend.services.trade.sandbox.manager import sandbox_manager
-
-                    sandbox_manager.stop_strategy(t, raw_uid, sid)
-                except Exception:
-                    pass
-            for raw_uid in {str(uid), str(auth.user_id)}:
-                for t in (auth.tenant_id, "default"):
+                _sids: set[str] = set()
+                for key in (
+                    f"trade:active_strategy:{_runtime_tenant}:{_runtime_user}",
+                    f"trade:active_strategy:{_runtime_tenant}:{_runtime_user.zfill(8)}",
+                    f"trade:active_strategy:{auth.tenant_id}:{_raw_sub}",
+                    f"trade:active_strategy:{auth.tenant_id}:{_raw_sub.zfill(8)}",
+                    f"trade:active_strategy:default:{_raw_sub}",
+                    f"trade:active_strategy:default:{_raw_sub.zfill(8)}",
+                ):
                     try:
-                        redis.client.delete(f"trade:active_strategy:{t}:{raw_uid}")
-                        redis.client.delete(f"trade:active_strategy:{t}:{raw_uid.zfill(8)}")
+                        raw = redis.client.get(key)
+                        if raw:
+                            import json as _json
+
+                            d = _json.loads(raw)
+                            sid = str(d.get("strategy_id") or d.get("strategy_name") or "").strip()
+                            if sid:
+                                _sids.add(sid)
                     except Exception:
                         pass
+                for sid in _sids:
+                    try:
+                        sandbox_manager.stop_strategy(_runtime_tenant, _runtime_user, sid)
+                    except Exception:
+                        pass
+                # 前缀兜底：即使 sid 取不到，也能杀掉该用户残留进程
+                for t_uid in {(_runtime_tenant, _runtime_user), (auth.tenant_id, _raw_sub), ("default", _raw_sub)}:
+                    try:
+                        sandbox_manager.stop_user_strategies(t_uid[0], t_uid[1])
+                    except Exception:
+                        pass
+            except Exception as _e:
+                logger.warning(f"Reset sandbox stop failed for {_runtime_tenant}:{_runtime_user}: {_e}")
+            # 2) 再删 active_strategy 全写法，避免 /status 仍读到旧运行态
+            for key in {
+                f"trade:active_strategy:{_runtime_tenant}:{_runtime_user}",
+                f"trade:active_strategy:{_runtime_tenant}:{_runtime_user.zfill(8)}",
+                f"trade:active_strategy:{auth.tenant_id}:{_raw_sub}",
+                f"trade:active_strategy:{auth.tenant_id}:{_raw_sub.zfill(8)}",
+                f"trade:active_strategy:default:{_raw_sub}",
+                f"trade:active_strategy:default:{_raw_sub.zfill(8)}",
+                f"trade:active_strategy:{auth.tenant_id}:{uid}",
+                f"trade:active_strategy:{auth.tenant_id}:{str(uid).zfill(8)}",
+            }:
+                try:
+                    redis.client.delete(key)
+                except Exception:
+                    pass
     except Exception:
         pass
+
+    # 3) 同步 portfolio run_status running->stopped，与 /stop 接口同口径，前端不再显示运行中
+    try:
+        from sqlalchemy import desc as _desc
+        from sqlalchemy import select as _select
+        from backend.services.trade_shared.portfolio.models import Portfolio as _Portfolio
+
+        for _pu in {_runtime_user, _raw_sub}:
+            try:
+                _stmt = (
+                    _select(_Portfolio)
+                    .where(
+                        _Portfolio.tenant_id == _runtime_tenant,
+                        _Portfolio.user_id == _pu,
+                        _Portfolio.run_status == "running",
+                        _Portfolio.is_deleted.is_(False),
+                    )
+                    .order_by(_desc(_Portfolio.updated_at))
+                    .limit(1)
+                )
+                _res = await db.execute(_stmt)
+                _pf = _res.scalars().first()
+                if _pf is not None:
+                    _pf.run_status = "stopped"
+                    await db.commit()
+            except Exception:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+    except Exception as _e:
+        logger.warning(f"Reset portfolio stop failed for {_runtime_tenant}:{_runtime_user}: {_e}")
 
     account = await manager.init_account(
         uid, initial_cash, tenant_id=auth.tenant_id, market=market

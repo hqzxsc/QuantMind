@@ -360,21 +360,20 @@ return cjson.encode({success=true, unlocked=unlocked})
         try:
             market_norm = self._normalize_market(market)
             async with _get_session() as session:
-                # 初始资金：最新 fund 快照的 initial_capital，否则默认 100 万
+                # 初始资金口径与 /account 一致：Redis settings 优先，否则默认 100 万。
+                # 注意不能用 fund 快照的 initial_capital——settings 缺失时它会被
+                # total_asset 兜底污染，不再是真实初始值。
                 initial_cash = 1_000_000.0
                 try:
-                    row = (
-                        await session.execute(
-                            _text(
-                                "SELECT initial_capital FROM simulation_fund_snapshots "
-                                "WHERE tenant_id=:tid AND user_id=:uid "
-                                "ORDER BY snapshot_date DESC LIMIT 1"
-                            ),
-                            {"tid": tenant_id, "uid": str(user_id)},
-                        )
-                    ).fetchone()
-                    if row and float(row[0] or 0) > 0:
-                        initial_cash = float(row[0])
+                    sraw = self.redis.client.get(
+                        f"simulation:settings:{tenant_id}:{user_id}"
+                    )
+                    if sraw:
+                        import json as _json
+
+                        sdata = _json.loads(sraw)
+                        if float(sdata.get("initial_cash") or 0) > 0:
+                            initial_cash = float(sdata["initial_cash"])
                 except Exception:
                     pass
 

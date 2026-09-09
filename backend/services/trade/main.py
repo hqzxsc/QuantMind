@@ -219,6 +219,30 @@ async def lifespan(app: FastAPI):
             logger.error(
                 "trade sim fund snapshot worker start failed: %s", e, exc_info=True
             )
+        # 模拟账户盘中重估（仅改现价/市值，不碰现金成本；交易时段外自动跳过）
+        try:
+            from backend.services.simulation.services.account_remark_service import (
+                SimulationRemarkWorker,
+                remark_enabled,
+                remark_interval_seconds,
+            )
+
+            if remark_enabled():
+                sim_remark_worker = SimulationRemarkWorker(
+                    redis_client, interval_seconds=remark_interval_seconds()
+                )
+                await sim_remark_worker.start()
+                app.state.sim_remark_worker = sim_remark_worker
+                logger.info(
+                    "Simulation remark worker started (interval=%ss)",
+                    sim_remark_worker.interval_seconds,
+                )
+            else:
+                logger.info("Simulation remark worker disabled (SIM_REMARK_ENABLED=false)")
+        except Exception as e:
+            logger.error(
+                "trade sim remark worker start failed: %s", e, exc_info=True
+            )
         from backend.services.live_trading.services.tdx_l2_capture_task import run_tdx_l2_capture_task
         from backend.services.live_trading.services.tdx_l2_realtime import run_tdx_l2_realtime_task
 

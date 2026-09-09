@@ -91,6 +91,64 @@ async def _resolve_strategy_detail(*, strategy_id: str, user_id: str) -> dict:
     }
 
 
+# 策略代码 STRATEGY_CONFIG kwargs 中允许覆盖交易参数的键。
+# 优先级：策略代码 > 前端传入 > 存储详情 > 默认值。模型只负责生成信号，
+# 真正决定买卖节奏的是策略；代码没写才由前端补充。
+_CODE_LIVE_OVERRIDE_KEYS = (
+    "rebalance_days",
+    "schedule_type",
+    "trade_weekdays",
+    "enabled_sessions",
+    "sell_time",
+    "buy_time",
+    "sell_first",
+    "order_type",
+    "max_price_deviation",
+    "max_orders_per_cycle",
+)
+_CODE_EXEC_OVERRIDE_KEYS = ("max_buy_drop", "stop_loss")
+
+
+def _extract_code_trade_overrides(code_str: str) -> tuple[dict, dict]:
+    """从策略代码 STRATEGY_CONFIG kwargs 提取交易参数覆盖。"""
+    import ast
+
+    exec_over: dict = {}
+    live_over: dict = {}
+    if not code_str:
+        return exec_over, live_over
+    try:
+        tree = ast.parse(code_str)
+    except Exception:
+        return exec_over, live_over
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(isinstance(t, ast.Name) and t.id == "STRATEGY_CONFIG" for t in targets):
+            continue
+        try:
+            cfg = ast.literal_eval(node.value)
+        except Exception:
+            break
+        if not isinstance(cfg, dict):
+            break
+        kwargs = cfg.get("kwargs") if isinstance(cfg.get("kwargs"), dict) else {}
+        # 兼容顶层直写（少数模板把交易参数放 STRATEGY_CONFIG 顶层）
+        merged_source = {**kwargs}
+        for key in list(cfg.keys()):
+            if key in _CODE_LIVE_OVERRIDE_KEYS + _CODE_EXEC_OVERRIDE_KEYS and key not in merged_source:
+                merged_source[key] = cfg[key]
+        for key in _CODE_EXEC_OVERRIDE_KEYS:
+            if merged_source.get(key) is not None:
+                exec_over[key] = merged_source[key]
+        for key in _CODE_LIVE_OVERRIDE_KEYS:
+            if merged_source.get(key) is not None:
+                live_over[key] = merged_source[key]
+        break
+    return exec_over, live_over
+
+
 @router.post("/start")
 async def start_trading(
     user_id: Optional[str] = Form(None),
@@ -263,6 +321,38 @@ async def start_trading(
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(code_str or f"# strategy_ref={strategy_id}\n")
 
+        # 策略代码优先：STRATEGY_CONFIG kwargs 写了交易频率/时点/风控则覆盖前端传入；
+        # 代码没写才由前端补充。生效配置以本次快照为准并持久化。
+        code_overrides: dict = {}
+        try:
+            _code_exec_over, _code_live_over = _extract_code_trade_overrides(code_str)
+            if _code_exec_over:
+                exec_config = _normalize_execution_config(_code_exec_over, exec_config)
+                ExecutionConfigSchema.model_validate(exec_config)
+                code_overrides["execution_config"] = sorted(_code_exec_over.keys())
+            if _code_live_over:
+                live_config = _normalize_live_trade_config(_code_live_over, live_config)
+                code_overrides["live_trade_config"] = sorted(_code_live_over.keys())
+            if code_overrides:
+                logger.info(
+                    "[Sim] 策略代码覆盖交易参数 tenant=%s user=%s strategy=%s overrides=%s effective_rebalance=%s",
+                    resolved_tenant_id,
+                    resolved_user_id,
+                    strategy_id or strategy_name,
+                    code_overrides,
+                    (live_config or {}).get("rebalance_days"),
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[Sim] 策略代码交易参数解析失败 tenant=%s user=%s strategy=%s err=%s",
+                resolved_tenant_id,
+                resolved_user_id,
+                strategy_id or strategy_name,
+                exc,
+            )
+
         # 3. 沙箱模拟盘执行
         result = {"status": "success", "mode": "SIMULATION"}
         from backend.services.trade.sandbox.manager import sandbox_manager
@@ -302,6 +392,7 @@ async def start_trading(
                     "started_at": started_at_iso,
                     "code_sha": _code_sha,
                     "code_str": code_str[:8000] if code_str else None,
+                    "code_overrides": code_overrides,
                 }
             ),
         )
@@ -389,6 +480,7 @@ async def start_trading(
             "message": f"策略 {strategy_name} 已成功启动",
             "effective_execution_config": exec_config,
             "effective_live_trade_config": live_config,
+            "code_overrides": code_overrides,
             "trading_permission": trading_permission,
             "signal_readiness": signal_readiness,
             "bootstrap": {

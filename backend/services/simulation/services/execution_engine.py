@@ -431,6 +431,7 @@ class SimulationExecutionEngine:
         except Exception:
             # #5 兜底：DB 落成交失败时，Redis 账户已在 execute_order 被扣款/加仓，
             # 此处回滚 DB 并把 Redis 账户恢复到执行前快照，避免资金与订单不一致。
+            # 禁止删键：PG 为主、Redis 只是缓存，删键会丢持仓；无快照时从 PG 自愈。
             await self.db.rollback()
             if self.manager.redis and self.manager.redis.client:
                 try:
@@ -442,7 +443,16 @@ class SimulationExecutionEngine:
                             self.manager.redis, key, result.account_snapshot
                         )
                     else:
-                        self.manager.redis.client.delete(key)
+                        healed = await self.manager.get_account(
+                            order.user_id,
+                            tenant_id=order.tenant_id,
+                            market=result.market,
+                        )
+                        if not healed:
+                            logger.error(
+                                "Sim account missing and PG has no history, cannot restore: %s",
+                                key,
+                            )
                 except Exception as restore_err:  # noqa: BLE001
                     logger.error(
                         "Failed to restore sim account after commit failure: %s",

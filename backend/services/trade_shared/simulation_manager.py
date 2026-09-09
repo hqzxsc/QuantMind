@@ -316,16 +316,168 @@ return cjson.encode({success=true, unlocked=unlocked})
     async def get_account(
         self, user_id: int, tenant_id: str = "default", market: str = "CN"
     ) -> dict[str, Any] | None:
-        """Get simulation account state. Returns None if account not initialized."""
+        """Get simulation account state. PG 为主、Redis 只是缓存。
+
+        Redis 缺键时从 PG 自愈（sim_trades 回放 + fund 快照基线），并回填 Redis；
+        PG 也无任何记录时返回 None（表示账户从未创建，不自动建空账）。
+        """
         if not self.redis.client:
             return None
 
         tenant_id = self._normalize_tenant(tenant_id)
         key = self._get_key(user_id, tenant_id, market)
         data = read_json_cache(self.redis, key)
+        if data:
+            return data
 
+        rebuilt = await self._rebuild_from_pg(user_id, tenant_id, market)
+        if rebuilt:
+            write_json_cache(self.redis, key, rebuilt)
+            logger.warning(
+                "Simulation account cache miss, rebuilt from PG: tenant=%s user=%s market=%s positions=%d",
+                tenant_id,
+                user_id,
+                market,
+                len(rebuilt.get("positions") or {}),
+            )
+            return rebuilt
         # 不再自动初始化，返回 None 表示账户未创建
-        return data
+        return None
+
+    async def _rebuild_from_pg(
+        self, user_id: int, tenant_id: str, market: str = "CN"
+    ) -> dict[str, Any] | None:
+        """从 PG 重建模拟账户（trades 回放）。无任何 PG 记录时返回 None。"""
+        try:
+            from sqlalchemy import text as _text
+
+            from backend.shared.database_manager_v2 import get_session as _get_session
+            from backend.shared.stock_utils import StockCodeUtil
+        except Exception as exc:
+            logger.warning("Simulation account PG rebuild unavailable: %s", exc)
+            return None
+
+        try:
+            market_norm = self._normalize_market(market)
+            async with _get_session() as session:
+                # 初始资金：最新 fund 快照的 initial_capital，否则默认 100 万
+                initial_cash = 1_000_000.0
+                try:
+                    row = (
+                        await session.execute(
+                            _text(
+                                "SELECT initial_capital FROM simulation_fund_snapshots "
+                                "WHERE tenant_id=:tid AND user_id=:uid "
+                                "ORDER BY snapshot_date DESC LIMIT 1"
+                            ),
+                            {"tid": tenant_id, "uid": str(user_id)},
+                        )
+                    ).fetchone()
+                    if row and float(row[0] or 0) > 0:
+                        initial_cash = float(row[0])
+                except Exception:
+                    pass
+
+                rows = (
+                    await session.execute(
+                        _text(
+                            "SELECT symbol, side, quantity, price, commission, "
+                            "stamp_duty, transfer_fee FROM sim_trades "
+                            "WHERE tenant_id=:tid AND user_id=:uid "
+                            "ORDER BY id ASC"
+                        ),
+                        {"tid": tenant_id, "uid": int(user_id)},
+                    )
+                ).fetchall()
+                if not rows:
+                    return None
+
+                positions: dict[str, dict[str, float]] = {}
+                cash = float(initial_cash)
+                for symbol, side, quantity, price, commission, stamp_duty, transfer_fee in rows:
+                    try:
+                        prefix = StockCodeUtil.to_prefix(str(symbol))
+                    except Exception:
+                        continue
+                    # 非 CN 市场的成交不计入 CN 账户（分市场键隔离）
+                    suffix = prefix[2:] if len(prefix) > 2 else prefix
+                    is_cn = prefix[:2] in {"SH", "SZ", "BJ"} and len(suffix) == 6
+                    if (market_norm == "CN") != bool(is_cn):
+                        continue
+                    qty = float(quantity or 0)
+                    px = float(price or 0)
+                    fee = float(commission or 0) + float(stamp_duty or 0) + float(transfer_fee or 0)
+                    key = f"{prefix}::long"
+                    pos = positions.get(key) or {
+                        "volume": 0.0,
+                        "available_volume": 0.0,
+                        "cost": 0.0,
+                        "market_value": 0.0,
+                        "price": 0.0,
+                    }
+                    if str(side).lower() == "buy":
+                        total_cost = pos["cost"] * pos["volume"] + qty * px
+                        pos["volume"] += qty
+                        pos["available_volume"] += qty
+                        pos["cost"] = total_cost / pos["volume"] if pos["volume"] > 0 else 0.0
+                        cash -= qty * px + fee
+                    else:
+                        pos["volume"] = max(0.0, pos["volume"] - qty)
+                        pos["available_volume"] = max(0.0, pos["available_volume"] - qty)
+                        cash += qty * px - fee
+                    if px > 0:
+                        pos["price"] = px
+                    positions[key] = pos
+
+                if not positions and abs(cash - initial_cash) < 1e-9:
+                    return None
+
+                # 现价重估市值（无行情时回退成本价）
+                market_value = 0.0
+                for key, pos in positions.items():
+                    prefix = key.split("::", 1)[0]
+                    last_px = 0.0
+                    try:
+                        for cand in (prefix, StockCodeUtil.to_suffix(prefix)):
+                            r = (
+                                await session.execute(
+                                    _text(
+                                        "SELECT close FROM stock_daily_latest "
+                                        "WHERE symbol=:sym ORDER BY trade_date DESC LIMIT 1"
+                                    ),
+                                    {"sym": cand},
+                                )
+                            ).fetchone()
+                            if r and float(r[0] or 0) > 0:
+                                last_px = float(r[0])
+                                break
+                    except Exception:
+                        pass
+                    px = last_px if last_px > 0 else float(pos.get("cost") or 0)
+                    pos["price"] = px
+                    pos["market_value"] = round(pos["volume"] * px, 2)
+                    market_value += pos["market_value"]
+                market_value = round(market_value, 2)
+                cash = round(cash, 2)
+                return {
+                    "cash": cash,
+                    "total_asset": round(cash + market_value, 2),
+                    "market_value": market_value,
+                    "short_market_value": 0.0,
+                    "liabilities": 0.0,
+                    "maintenance_margin_ratio": 0.0,
+                    "warning_level": "normal",
+                    "positions": positions,
+                    "market": market_norm,
+                }
+        except Exception as exc:
+            logger.warning(
+                "Simulation account PG rebuild failed tenant=%s user=%s: %s",
+                tenant_id,
+                user_id,
+                exc,
+            )
+            return None
 
     async def update_balance(
         self,

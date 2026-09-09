@@ -186,6 +186,22 @@ async def lifespan(app: FastAPI):
             run_simulation_corporate_action_task(),
             name="simulation-corporate-action",
         )
+        # 模拟盘对账：Redis vs PG 台账，每天 03:20 只报不改
+        # （SIM_RECONCILE_AUTOFIX=true 才回填，默认关闭）
+        try:
+            from backend.services.simulation.services.reconcile_service import (
+                run_simulation_reconcile_worker,
+            )
+
+            reconcile_task = asyncio.create_task(
+                run_simulation_reconcile_worker(), name="simulation-reconcile"
+            )
+            app.state.simulation_reconcile_task = reconcile_task
+            logger.info("Simulation reconcile worker started (daily 03:20)")
+        except Exception as e:
+            logger.error(
+                "trade simulation reconcile worker start failed: %s", e, exc_info=True
+            )
         # 模拟盘资金快照只读周期采集（仅 capture_all upsert，不做 init/reset；
         # 旧 simulation_fund_snapshot_task 已删除，此处用 fund_snapshot_service 内
         # 已有的 SimulationFundSnapshotWorker 重建定时持久化，避免 Redis 丢失）。

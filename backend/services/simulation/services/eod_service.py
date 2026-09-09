@@ -226,10 +226,8 @@ async def _execute_eod(trade_date: date) -> bool:
             )
         else:
             try:
-                await SimulationFundSnapshotService.capture_all(
-                    redis_client,
-                    snapshot_date=trade_date,
-                )
+                # capture_all 签名只有 (redis)，日期按当天算，不传多余参数
+                await SimulationFundSnapshotService.capture_all(redis_client)
             except Exception as exc:
                 logger.warning("EOD fund snapshot capture failed: %s", exc)
 

@@ -9,6 +9,7 @@ from datetime import datetime
 import asyncio
 import json
 import logging
+import os
 
 from sqlalchemy import Select, or_, select
 from sqlalchemy import text
@@ -115,9 +116,10 @@ class SimulationCorporateActionService:
             for lot in lots:
                 by_account[str(lot.account_id)].append(lot)
             applied_accounts = 0
+            per_share = float(action.cash_dividend_per_share or 0.0)
             for account_id, account_lots in by_account.items():
                 qty = sum(float(lot.quantity_remaining or 0.0) for lot in account_lots)
-                cash = cls.compute_dividend_cash(qty, float(action.cash_dividend_per_share or 0.0))
+                cash = cls.compute_dividend_cash(qty, per_share)
                 if cash <= 0:
                     continue
                 account = await session.get(SimulationAccount, account_id)
@@ -128,6 +130,20 @@ class SimulationCorporateActionService:
                 account.total_asset = float(account.total_asset or 0.0) + cash
                 account.equity = float(account.equity or account.total_asset or 0.0) + cash
                 account.last_projected_at = applied_at
+                # 除息下调成本：名义价自然贴权，成本不降则此后浮盈系统性偏低。
+                # cost_amount 同步重算；下限 0（高分红不倒贴）。
+                if per_share > 0:
+                    for lot in account_lots:
+                        try:
+                            new_cost = max(
+                                0.0, float(lot.cost_price or 0.0) - per_share
+                            )
+                            lot.cost_price = round(new_cost, 6)
+                            lot.cost_amount = round(
+                                new_cost * float(lot.quantity_open or 0.0), 6
+                            )
+                        except Exception:
+                            continue
                 session.add(
                     SimulationCashLedger(
                         account_id=account.account_id,
@@ -151,9 +167,17 @@ class SimulationCorporateActionService:
                 applied_accounts += 1
             cls._merge_action_note(
                 action,
-                f"dividend_applied_accounts={applied_accounts}",
+                f"dividend_applied_accounts={applied_accounts},cost_adjusted_per_share={per_share}",
             )
         elif normalized_type in {"bonus_share", "split", "reverse_split"}:
+            # 注意：当前 QuantDB 同步与 CSV 导入都不产生 split/reverse_split，
+            # 该分支仅对手工入库的记录生效；若出现会在 note 中标出来源。
+            if normalized_type in {"split", "reverse_split"}:
+                logger.warning(
+                    "公司行为出现拆股类型 %s symbol=%s（上游暂不产出，请核对手工录入）",
+                    normalized_type,
+                    normalized_symbol,
+                )
             multiplier = cls.compute_share_multiplier(normalized_type, float(action.share_ratio or 0.0))
             if multiplier <= 0:
                 multiplier = 1.0
@@ -226,6 +250,34 @@ class SimulationCorporateActionService:
                     continue
                 total_cost = round(subscribed_qty * float(action.rights_price or 0.0), 4)
                 if total_cost <= 0:
+                    continue
+                # 配股认购开关：SIM_RIGHTS_AUTO_SUBSCRIBE=false 时只记录跳过，不动资金
+                # （默认 true 保持现状：现金足够即全额认购）。
+                if os.getenv("SIM_RIGHTS_AUTO_SUBSCRIBE", "true").strip().lower() in {
+                    "0",
+                    "false",
+                    "no",
+                    "off",
+                }:
+                    skipped_accounts += 1
+                    session.add(
+                        SimulationCashLedger(
+                            account_id=account.account_id,
+                            tenant_id=account.tenant_id,
+                            user_id=account.user_id,
+                            event_type="RIGHTS_SUBSCRIPTION_SKIPPED",
+                            ref_type="corporate_action",
+                            ref_id=str(action.id),
+                            amount=0.0,
+                            balance_after=float(account.cash or 0.0),
+                            trade_date=applied_at,
+                            occurred_at=applied_at,
+                            note=(
+                                f"{normalized_symbol} rights issue skipped: "
+                                f"auto-subscribe disabled (SIM_RIGHTS_AUTO_SUBSCRIBE=false)"
+                            ),
+                        )
+                    )
                     continue
                 available_cash = float(account.available_cash or 0.0)
                 if available_cash + 1e-6 < total_cost:

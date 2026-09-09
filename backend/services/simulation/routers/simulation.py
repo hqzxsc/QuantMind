@@ -291,6 +291,17 @@ async def reset_simulation_account(
     market = str(request.market or "CN").upper()
     # 清空数据库中的历史交易/订单/快照，避免重置后前端仍拉到旧数据。
     # user_id 有 int 与原始 sub 两种口径（历史 varchar 兼容），一并清理。
+    # 新台账（accounts/lots/ledger/daily/fills/orders_v2）同步清空，否则 PG 新旧两套
+    # 台账分叉，对账与重建读到孤儿数据。
+    _NEW_LEDGER_TABLES = (
+        "simulation_accounts",
+        "simulation_position_lots",
+        "simulation_cash_ledger",
+        "simulation_account_daily",
+        "simulation_position_daily",
+        "simulation_fills",
+        "simulation_orders",
+    )
     try:
         from sqlalchemy import text as _text
         from backend.shared.database_manager_v2 import get_session as _get_session
@@ -302,6 +313,17 @@ async def reset_simulation_account(
                 await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": uv})
                 await _session.execute(_text("DELETE FROM sim_orders WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": uv})
                 await _session.execute(_text("DELETE FROM simulation_fund_snapshots WHERE tenant_id=:tid AND user_id=:uid2"), {"tid": auth.tenant_id, "uid2": uv})
+                for _table in _NEW_LEDGER_TABLES:
+                    try:
+                        # SAVEPOINT 隔离：表不存在（如旧库）只回滚本条，不影响已删数据
+                        async with _session.begin_nested():
+                            await _session.execute(
+                                _text(f"DELETE FROM {_table} WHERE tenant_id=:tid AND user_id=:uid2"),
+                                {"tid": auth.tenant_id, "uid2": uv},
+                            )
+                    except Exception:
+                        continue
+            await _session.commit()
     except Exception as _e:
         logger.warning(f"Reset DB cleanup failed for {auth.tenant_id}:{uid}: {_e}")
 
@@ -624,6 +646,40 @@ async def confirm_holding_sync(
     """
     manager = SimulationAccountManager(redis)
     uid = _require_user_id(auth.user_id)
+
+    # OCR 同步即“重新对齐起点”：先清旧成交/快照/新台账，避免旧基线导致
+    # today_pnl 脉冲、历史曲线串基线（与 reset 同口径）。
+    try:
+        from sqlalchemy import text as _text
+        from backend.shared.database_manager_v2 import get_session as _get_session
+        _uid_variants = {str(uid), str(auth.user_id)}
+        async with _get_session() as _session:
+            await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND user_id=:uid"), {"tid": auth.tenant_id, "uid": uid})
+            await _session.execute(_text("DELETE FROM sim_orders WHERE tenant_id=:tid AND user_id=:uid"), {"tid": auth.tenant_id, "uid": uid})
+            for _uv in _uid_variants:
+                await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": _uv})
+                await _session.execute(_text("DELETE FROM sim_orders WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": _uv})
+                await _session.execute(_text("DELETE FROM simulation_fund_snapshots WHERE tenant_id=:tid AND user_id=:uid2"), {"tid": auth.tenant_id, "uid2": _uv})
+                for _table in (
+                    "simulation_accounts",
+                    "simulation_position_lots",
+                    "simulation_cash_ledger",
+                    "simulation_account_daily",
+                    "simulation_position_daily",
+                    "simulation_fills",
+                    "simulation_orders",
+                ):
+                    try:
+                        async with _session.begin_nested():
+                            await _session.execute(
+                                _text(f"DELETE FROM {_table} WHERE tenant_id=:tid AND user_id=:uid2"),
+                                {"tid": auth.tenant_id, "uid2": _uv},
+                            )
+                    except Exception:
+                        continue
+            await _session.commit()
+    except Exception as _e:
+        logger.warning(f"OCR sync DB cleanup failed for {auth.tenant_id}:{uid}: {_e}")
 
     # 1. 预先获取所有股票的最新价格并计算总市值
     sync_positions = []

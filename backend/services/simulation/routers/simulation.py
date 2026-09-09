@@ -311,6 +311,52 @@ async def reset_simulation_account(
             redis.delete_pattern(f"sim_trade:stats:{auth.tenant_id}:{auth.user_id}:*")
             # 订单缓存
             redis.delete_pattern(f"order:list:user:{uid}:*")
+            # 重置后需可立即再次触发交易：清掉托管调度的幂等锁与 bootstrap 锁
+            # 否则同日同策略会被 36h/24h 锁挡住，表现为“重置后不交易”
+            for pat in (
+                f"qm:hosted:simulation:{auth.tenant_id}:{uid}:*",
+                f"qm:hosted:simulation:{auth.tenant_id}:{auth.user_id}:*",
+                f"qm:hosted:simulation:bootstrap:{auth.tenant_id}:{uid}:*",
+                f"qm:hosted:simulation:bootstrap:{auth.tenant_id}:{auth.user_id}:*",
+            ):
+                try:
+                    redis.delete_pattern(pat)
+                except Exception:
+                    pass
+            # 初始化即视为全新起点，运行态也同步重置，避免“恢复后仍显示 50 成/已完成”或“重置后因旧 active_strategy 导致不交易”
+            # 先收集待停的活跃策略，再删键，避免删后取不到 strategy_id
+            _to_stop: list[tuple[str, str, str]] = []
+            for raw_uid in {str(uid), str(auth.user_id)}:
+                for t in (auth.tenant_id, "default"):
+                    for key in (
+                        f"trade:active_strategy:{t}:{raw_uid}",
+                        f"trade:active_strategy:{t}:{raw_uid.zfill(8)}",
+                    ):
+                        try:
+                            raw = redis.client.get(key)
+                            if raw:
+                                import json as _json
+
+                                d = _json.loads(raw)
+                                sid = str(d.get("strategy_id") or "").strip()
+                                if sid:
+                                    _to_stop.append((t, raw_uid, sid))
+                        except Exception:
+                            pass
+            for t, raw_uid, sid in _to_stop:
+                try:
+                    from backend.services.trade.sandbox.manager import sandbox_manager
+
+                    sandbox_manager.stop_strategy(t, raw_uid, sid)
+                except Exception:
+                    pass
+            for raw_uid in {str(uid), str(auth.user_id)}:
+                for t in (auth.tenant_id, "default"):
+                    try:
+                        redis.client.delete(f"trade:active_strategy:{t}:{raw_uid}")
+                        redis.client.delete(f"trade:active_strategy:{t}:{raw_uid.zfill(8)}")
+                    except Exception:
+                        pass
     except Exception:
         pass
 

@@ -457,6 +457,15 @@ async def stop_trading(
 
         # Clear active strategy in Redis
         redis.client.delete(_active_strategy_key(resolved_tenant_id, resolved_user_id))
+        # 清理 24h bootstrap 锁，避免同策略 24h 内重启被误挡
+        for pat in (
+            f"qm:hosted:simulation:bootstrap:{resolved_tenant_id}:{resolved_user_id}:*",
+            f"qm:hosted:simulation:{resolved_tenant_id}:{resolved_user_id}:*",
+        ):
+            try:
+                redis.delete_pattern(pat)
+            except Exception:
+                pass
 
         # 同步更新数据库中 portfolio 的 run_status
         try:

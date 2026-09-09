@@ -77,12 +77,12 @@ class QlibBacktestRequest(BaseModel):
     )
     is_third_party: bool = Field(False, description="是否为第三方/外置策略")
 
-    # 时间范围
-    start_date: str = Field(
-        ..., description="开始日期 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    # 时间范围（为空时由引擎默认近一年；策略代码指定日期时代码优先覆盖）
+    start_date: str | None = Field(
+        None, description="开始日期 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
     )
-    end_date: str = Field(
-        ..., description="结束日期 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    end_date: str | None = Field(
+        None, description="结束日期 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
     )
 
     # 回测配置

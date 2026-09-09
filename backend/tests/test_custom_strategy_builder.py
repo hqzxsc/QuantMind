@@ -7,6 +7,7 @@ from backend.services.engine.qlib_app.services.strategy_builder import (
     CustomStrategyBuilder,
     LongShortTopkBuilder,
     StrategyFactory,
+    extract_backtest_dates,
 )
 
 
@@ -177,6 +178,61 @@ def test_custom_strategy_builder_backfills_missing_topk():
 def test_strategy_factory_maps_custom_aliases(strategy_type):
     builder = StrategyFactory.get_builder(strategy_type)
     assert isinstance(builder, CustomStrategyBuilder)
+
+
+def test_extract_backtest_dates_from_backtest_config():
+    code = 'BACKTEST_CONFIG = {"start_date": "2024-01-01", "end_date": "2024-12-31"}\n'
+    assert extract_backtest_dates(code) == {
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+    }
+
+
+def test_extract_backtest_dates_from_constants():
+    code = 'START_DATE = "2023-06-01"\nEND_DATE = "2024-06-01"\n'
+    assert extract_backtest_dates(code) == {
+        "start_date": "2023-06-01",
+        "end_date": "2024-06-01",
+    }
+
+
+def test_extract_backtest_dates_from_getter():
+    code = (
+        "def get_backtest_config():\n"
+        '    return {"start": "2024-01-01", "end": "2024-12-31"}\n'
+    )
+    assert extract_backtest_dates(code) == {
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+    }
+
+
+def test_extract_backtest_dates_none_when_absent():
+    code = 'STRATEGY_CONFIG = {"class": "X", "kwargs": {"topk": 10}}\n'
+    assert extract_backtest_dates(code) is None
+
+
+def test_extract_backtest_dates_rejects_bad_format():
+    with pytest.raises(ValueError):
+        extract_backtest_dates('START_DATE = "2024-01-01"\nEND_DATE = "2024/12/31"\n')
+
+
+def test_extract_backtest_dates_rejects_inverted_range():
+    with pytest.raises(ValueError):
+        extract_backtest_dates(
+            'BACKTEST_CONFIG = {"start_date": "2024-12-31", "end_date": "2024-01-01"}\n'
+        )
+
+
+def test_extract_backtest_dates_config_beats_constants():
+    code = (
+        'BACKTEST_CONFIG = {"start_date": "2024-01-01", "end_date": "2024-12-31"}\n'
+        'START_DATE = "2020-01-01"\nEND_DATE = "2020-12-31"\n'
+    )
+    assert extract_backtest_dates(code) == {
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+    }
 
 
 def test_strategy_factory_maps_long_short_topk_template():

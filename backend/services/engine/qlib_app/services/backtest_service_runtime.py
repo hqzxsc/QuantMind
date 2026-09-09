@@ -7,7 +7,7 @@ import os
 import random
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -26,7 +26,10 @@ from backend.services.engine.qlib_app.services.market_state_service import (
     MarketStateService,
 )
 from backend.services.engine.qlib_app.services.risk_analyzer import RiskAnalyzer
-from backend.services.engine.qlib_app.services.strategy_builder import StrategyFactory
+from backend.services.engine.qlib_app.services.strategy_builder import (
+    StrategyFactory,
+    extract_backtest_dates,
+)
 from backend.services.engine.qlib_app.services.strategy_templates import (
     get_template_by_id,
 )
@@ -240,6 +243,47 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                             error=pool_err,
                         )
             # --- Pool File Resolution [END] ---
+
+            # --- Backtest Date Resolution [START] ---
+            # 专家模式 / AI-IDE 代码优先：策略代码可通过 BACKTEST_CONFIG /
+            # START_DATE+END_DATE / get_backtest_config() 指定回测区间，
+            # 有则覆盖请求参数；请求与代码均未指定时默认近一年。
+            if request.strategy_content:
+                try:
+                    code_dates = extract_backtest_dates(request.strategy_content)
+                    if code_dates:
+                        task_log.info(
+                            "code_dates_applied",
+                            "策略代码指定回测日期，覆盖请求参数",
+                            old_start=request.start_date,
+                            old_end=request.end_date,
+                            new_start=code_dates["start_date"],
+                            new_end=code_dates["end_date"],
+                        )
+                        request.start_date = code_dates["start_date"]
+                        request.end_date = code_dates["end_date"]
+                except ValueError:
+                    raise
+                except Exception as date_err:
+                    task_log.warning(
+                        "code_dates_parse_failed",
+                        "策略代码日期解析失败，使用请求参数",
+                        error=str(date_err),
+                    )
+            if not request.start_date or not request.end_date:
+                default_end = datetime.now().strftime("%Y-%m-%d")
+                default_start = (datetime.now() - timedelta(days=365)).strftime(
+                    "%Y-%m-%d"
+                )
+                task_log.info(
+                    "default_dates_applied",
+                    "未指定回测日期，默认近一年",
+                    start=default_start,
+                    end=default_end,
+                )
+                request.start_date = request.start_date or default_start
+                request.end_date = request.end_date or default_end
+            # --- Backtest Date Resolution [END] ---
 
             task_log.info(
                 "signal_raw", "原始signal配置", signal=request.strategy_params.signal,

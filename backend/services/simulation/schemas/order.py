@@ -57,3 +57,4 @@ class SimOrderResponse(SimOrderBase):
     price_source: str | None
     created_at: datetime
     updated_at: datetime
+    symbol_name: str | None = None

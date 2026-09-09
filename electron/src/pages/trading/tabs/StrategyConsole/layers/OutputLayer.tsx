@@ -99,9 +99,11 @@ const OutputLayer: React.FC<OutputLayerProps> = ({
                                 </span>
                                 <div className="min-w-0 flex items-baseline gap-2 truncate">
                                     <span className="text-xs font-bold text-slate-800 truncate" title={`${order.symbol} ${order.symbol_name || ''}`}>
-                                        {order.symbol_name || order.symbol}
+                                        {order.symbol_name && order.symbol_name !== order.symbol ? order.symbol_name : order.symbol}
                                     </span>
-                                    <span className="font-mono text-xs text-slate-400 shrink-0">{order.symbol}</span>
+                                    {order.symbol_name && order.symbol_name !== order.symbol && (
+                                        <span className="font-mono text-xs text-slate-400 shrink-0">{order.symbol}</span>
+                                    )}
                                 </div>
                                 <span className="text-xs text-slate-600 font-mono whitespace-nowrap">
                                     {order.filled_quantity ?? order.quantity} 股

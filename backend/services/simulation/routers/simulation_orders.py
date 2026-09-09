@@ -80,7 +80,7 @@ async def list_orders(
 ):
     user_id = _require_user_id(auth.user_id)
     service = SimOrderService(db)
-    return await service.list_orders(
+    orders = await service.list_orders(
         auth.tenant_id,
         user_id,
         portfolio_id=portfolio_id,
@@ -91,6 +91,25 @@ async def list_orders(
         limit=limit,
         offset=offset,
     )
+    # 批量 enrich 名称，避免前端 N+1，外观与 真实订单/持仓 口径一致
+    try:
+        from backend.services.trade_shared.utils.stock_lookup import lookup_symbol_name
+
+        enriched = []
+        for o in orders:
+            try:
+                name = lookup_symbol_name(o.symbol) if getattr(o, "symbol", None) else None
+            except Exception:
+                name = None
+            # Pydantic from_attributes 读不到 DB 列时，用运行时属性补齐
+            try:
+                o.symbol_name = name  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            enriched.append(o)
+        return enriched
+    except Exception:
+        return orders
 
 
 @router.get("/orders/{order_id}", response_model=SimOrderResponse)

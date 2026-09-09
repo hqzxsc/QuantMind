@@ -1,5 +1,7 @@
 from fastapi import APIRouter
+import json
 import logging
+import os
 from .real_trading_utils import *
 from .real_trading_utils import (
     _active_strategy_key,
@@ -299,6 +301,75 @@ async def start_trading(
             action_url="/trading",
         )
 
+        # 5. 首次启动 Bootstrap：不限时、按最新价、用真实推理立即跑一遍
+        # 目的：让用户启动后立刻看到策略在真实运行（等价于手动任务），后续再按
+        # 调度计划执行。仅时间门限放开，其余（模型/推理/账户/行情）全部走真实链路；
+        # 无可用推理时跳过（不阻断启动），等下一轮推理就绪后由托管调度器自然补跑。
+        bootstrap_result = None
+        bootstrap_skipped_reason = None
+        if mode == "SIMULATION" and trading_permission != "blocked":
+            if os.getenv("SIM_BOOTSTRAP_FIRST_RUN_ENABLED", "true").strip().lower() == "true":
+                try:
+                    from datetime import datetime, timezone
+
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    bootstrap_lock_key = (
+                        f"qm:hosted:simulation:bootstrap:{resolved_tenant_id}:{resolved_user_id}:{strategy_id or strategy_name}"
+                    )
+                    bootstrap_task_id = f"bootstrap_{run_id}_{strategy_id or strategy_name}"
+                    # 24h 内同一策略只 bootstrap 一次，避免重复启动短时间内重复建单
+                    try:
+                        acquired = redis.client.set(bootstrap_lock_key, bootstrap_task_id, ex=24 * 3600, nx=True)
+                    except Exception:
+                        acquired = True  # Redis 异常不阻断，仍尝试建单（靠 task_id 去重兜底）
+                    if acquired:
+                        bootstrap_result = await manual_execution_service.create_hosted_task(
+                            tenant_id=resolved_tenant_id,
+                            user_id=resolved_user_id,
+                            strategy_id=strategy_id or strategy_name,
+                            trading_mode="SIMULATION",
+                            execution_config=exec_config,
+                            live_trade_config=live_config,
+                            trigger_context={
+                                "source": "bootstrap_first_run",
+                                "runner_trade_date": datetime.now(timezone.utc).date().isoformat(),
+                                "triggered_at": now_iso,
+                                "started_at": now_iso,
+                                "runner_mode": "SIMULATION",
+                                "note": "first_run_unlimited_time_latest_price",
+                            },
+                            parent_runtime_id=run_id,
+                            note="bootstrap: first run unlimited time, latest price, real inference",
+                            task_id=bootstrap_task_id,
+                        )
+                        logger.info(
+                            "[SimBootstrap] 首次启动即时任务已创建 tenant=%s user=%s strategy=%s task=%s status=%s",
+                            resolved_tenant_id, resolved_user_id, strategy_id or strategy_name,
+                            bootstrap_task_id, (bootstrap_result or {}).get("status"),
+                        )
+                    else:
+                        bootstrap_skipped_reason = "bootstrap_lock_exists"
+                        logger.info(
+                            "[SimBootstrap] 跳过（24h 内已 bootstrap） tenant=%s user=%s strategy=%s",
+                            resolved_tenant_id, resolved_user_id, strategy_id or strategy_name,
+                        )
+                except Exception as exc:
+                    # HTTPException 409/400（无可用推理/无模拟账户）等仅 warning，不阻断 start_trading 成功返回
+                    from fastapi import HTTPException as _HTTPException
+
+                    if isinstance(exc, _HTTPException) and exc.status_code in (400, 409):
+                        bootstrap_skipped_reason = str(exc.detail)[:300] if isinstance(exc.detail, str) else str(exc.detail)[:300]
+                        logger.warning(
+                            "[SimBootstrap] 跳过（推理/账户未就绪） tenant=%s user=%s strategy=%s reason=%s",
+                            resolved_tenant_id, resolved_user_id, strategy_id or strategy_name, bootstrap_skipped_reason,
+                        )
+                    else:
+                        bootstrap_skipped_reason = str(exc)[:300]
+                        logger.warning(
+                            "[SimBootstrap] 创建失败 tenant=%s user=%s strategy=%s err=%s",
+                            resolved_tenant_id, resolved_user_id, strategy_id or strategy_name, exc, exc_info=True,
+                        )
+
         return {
             "status": "success",
             "message": f"策略 {strategy_name} 已成功启动",
@@ -306,6 +377,12 @@ async def start_trading(
             "effective_live_trade_config": live_config,
             "trading_permission": trading_permission,
             "signal_readiness": signal_readiness,
+            "bootstrap": {
+                "attempted": mode == "SIMULATION" and trading_permission != "blocked",
+                "task_id": (bootstrap_result or {}).get("task_id") if isinstance(bootstrap_result, dict) else None,
+                "status": (bootstrap_result or {}).get("status") if isinstance(bootstrap_result, dict) else None,
+                "skipped_reason": bootstrap_skipped_reason,
+            } if mode == "SIMULATION" else None,
         }
     except HTTPException:
         _schedule_user_notification(

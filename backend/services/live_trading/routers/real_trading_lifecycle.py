@@ -475,6 +475,20 @@ async def start_trading(
                             resolved_tenant_id, resolved_user_id, strategy_id or strategy_name, exc, exc_info=True,
                         )
 
+        # 启动成功后立即失效该用户的 status 缓存，避免读到上一轮旧值
+        try:
+            from backend.services.trade_shared.utils.redis_cache import (
+                invalidate_user_cache as _invalidate_user_cache,
+            )
+
+            _invalidate_user_cache(
+                resolved_tenant_id,
+                resolved_user_id,
+                func_names=["get_status", "get_orders"],
+            )
+        except Exception:
+            pass
+
         return {
             "status": "success",
             "message": f"策略 {strategy_name} 已成功启动",
@@ -558,6 +572,19 @@ async def stop_trading(
                 redis.delete_pattern(pat)
             except Exception:
                 pass
+        # 启停后立即失效该用户的 status/orders 缓存，避免 5-10s 内读到旧值
+        try:
+            from backend.services.trade_shared.utils.redis_cache import (
+                invalidate_user_cache,
+            )
+
+            invalidate_user_cache(
+                resolved_tenant_id,
+                resolved_user_id,
+                func_names=["get_status", "get_orders"],
+            )
+        except Exception:
+            pass
 
         # 同步更新数据库中 portfolio 的 run_status
         try:
@@ -808,6 +835,8 @@ async def get_status(
             "latest_hosted_task": latest_hosted_task,
             "latest_signal_run_id": latest_signal_run_id,
             "signal_source_status": signal_source_status,
+            "trading_permission": trading_permission,
+            "signal_readiness": signal_readiness,
         }
 
     # No active strategy

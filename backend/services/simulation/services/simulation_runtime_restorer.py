@@ -89,6 +89,9 @@ class SimulationRuntimeRestorer:
                 user_id,
                 strategy_id,
             )
+            # 幽灵态清理：沙箱已死、代码也找不回时，清掉 active 键并把 portfolio 置 stopped，
+            # 避免 Redis 有键 + PG running 但实际无运行，前端与 DB 长期错位。
+            await self._cleanup_ghost(tenant_id=tenant_id, user_id=user_id)
             return False
 
         exec_config = (
@@ -126,6 +129,52 @@ class SimulationRuntimeRestorer:
             sandbox_run_id,
         )
         return True
+
+    async def _cleanup_ghost(self, *, tenant_id: str, user_id: str) -> None:
+        """清理无法恢复的幽灵运行态（active 键 + portfolio run_status）。永不抛异常。"""
+        try:
+            if self.redis.client:
+                self.redis.client.delete(
+                    f"trade:active_strategy:{tenant_id}:{str(user_id).zfill(8)}"
+                )
+        except Exception:
+            pass
+        try:
+            from sqlalchemy import desc as _desc
+            from sqlalchemy import select as _select
+
+            from backend.services.trade_shared.portfolio.models import Portfolio as _Portfolio
+            from backend.shared.database_manager_v2 import get_session as _get_session
+
+            async with _get_session() as session:
+                for uid_form in {str(user_id), str(user_id).zfill(8)}:
+                    try:
+                        res = await session.execute(
+                            _select(_Portfolio)
+                            .where(
+                                _Portfolio.tenant_id == tenant_id,
+                                _Portfolio.user_id == uid_form,
+                                _Portfolio.run_status == "running",
+                                _Portfolio.is_deleted.is_(False),
+                            )
+                            .order_by(_desc(_Portfolio.updated_at))
+                            .limit(1)
+                        )
+                        pf = res.scalars().first()
+                        if pf is not None:
+                            pf.run_status = "stopped"
+                            await session.commit()
+                            logger.info(
+                                "simulation ghost cleaned: portfolio %s running->stopped",
+                                getattr(pf, "id", "?"),
+                            )
+                    except Exception:
+                        try:
+                            await session.rollback()
+                        except Exception:
+                            pass
+        except Exception as exc:
+            logger.warning("simulation ghost cleanup failed: %s", exc)
 
     async def _resolve_code(self, *, strategy_id: str, user_id: str) -> str:
         if strategy_id.startswith("sys_"):

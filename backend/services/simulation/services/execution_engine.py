@@ -474,6 +474,18 @@ class SimulationExecutionEngine:
             if self.manager.redis and self.manager.redis.client:
                 self.manager.redis.delete_pattern(f"sim_trade:list:{order.tenant_id}:{order.user_id}:*")
                 self.manager.redis.delete_pattern(f"sim_trade:stats:{order.tenant_id}:{order.user_id}:*")
+                try:
+                    from backend.services.trade_shared.utils.redis_cache import (
+                        invalidate_user_cache as _invalidate_user_cache,
+                    )
+
+                    _invalidate_user_cache(
+                        order.tenant_id,
+                        order.user_id,
+                        func_names=["get_status", "get_orders"],
+                    )
+                except Exception:
+                    pass
         except Exception:
             pass
         return trade

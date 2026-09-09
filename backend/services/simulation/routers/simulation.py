@@ -489,6 +489,19 @@ async def get_simulation_account(
     account["today_pnl"] = today_pnl
     account["daily_pnl"] = today_pnl
     account["monthly_pnl"] = monthly_pnl
+    # 持仓数量统一口径：只计 volume > 0 的有效持仓（与前端/组合快照一致）
+    try:
+        _positions = account.get("positions") or {}
+        if isinstance(_positions, dict):
+            account["position_count"] = sum(
+                1
+                for _pos in _positions.values()
+                if isinstance(_pos, dict) and float(_pos.get("volume") or 0) > 0
+            )
+        elif isinstance(_positions, list):
+            account["position_count"] = len(_positions)
+    except Exception:
+        pass
     account["total_return_ratio"] = (total_pnl / initial_equity) if initial_equity > 0 else 0.0
     # 日收益率（今日实时锚点，智能图表每日收益率用）
     account["daily_return_ratio"] = (today_pnl / day_open_equity) if day_open_equity > 0 else 0.0

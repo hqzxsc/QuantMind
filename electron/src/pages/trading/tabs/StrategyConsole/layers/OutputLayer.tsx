@@ -92,6 +92,11 @@ const OutputLayer: React.FC<OutputLayerProps> = ({
                             const isBuy = String(order.side || '').toLowerCase() === 'buy';
                             const price = order.average_price ?? order.price;
                             const qty = order.filled_quantity ?? order.quantity;
+                            // 已成交/部分成交显示成交时间，其余显示委托时间
+                            const st = String(order.status || '').toLowerCase();
+                            const showFilledTime = st === 'filled' || st.includes('partial');
+                            const timeValue = (showFilledTime ? (order as any).filled_at : undefined)
+                                ?? order.created_at;
                             return (
                                 <div
                                     key={order.order_id || order.id}
@@ -118,7 +123,7 @@ const OutputLayer: React.FC<OutputLayerProps> = ({
                                     <span className="text-center font-mono text-slate-700 whitespace-nowrap">{qty != null ? `${qty} 股` : '—'}</span>
                                     <span className="text-center font-mono text-slate-700 whitespace-nowrap">{typeof price === 'number' ? price.toFixed(2) : '—'}</span>
                                     <span className="text-center font-bold text-slate-600 whitespace-nowrap">{orderStatusLabel(order.status)}</span>
-                                    <span className="text-center font-mono text-slate-400 whitespace-nowrap">{formatOrderTime(order.created_at)}</span>
+                                    <span className="text-center font-mono text-slate-400 whitespace-nowrap">{formatOrderTime(timeValue)}</span>
                                 </div>
                             );
                         })}

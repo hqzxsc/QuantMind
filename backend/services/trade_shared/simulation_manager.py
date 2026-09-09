@@ -407,7 +407,9 @@ return cjson.encode({success=true, unlocked=unlocked})
                     qty = float(quantity or 0)
                     px = float(price or 0)
                     fee = float(commission or 0) + float(stamp_duty or 0) + float(transfer_fee or 0)
-                    key = f"{prefix}::long"
+                    # 多头键用裸 symbol（与 Lua update_balance 的 positions[symbol] 同口径）；
+                    # 只有空头才带 ::side 后缀（见 _position_key）。
+                    key = prefix
                     pos = positions.get(key) or {
                         "volume": 0.0,
                         "available_volume": 0.0,

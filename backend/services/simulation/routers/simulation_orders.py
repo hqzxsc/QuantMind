@@ -20,6 +20,7 @@ from backend.services.simulation.services.execution_engine import (
 from backend.services.simulation.services.order_service import SimOrderService
 from backend.services.simulation.services.simulation_manager import (
     SimulationAccountManager,
+    require_sim_user_id,
 )
 
 router = APIRouter()
@@ -27,14 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 def _require_user_id(raw_user_id: str) -> int:
-    """获取用户ID。sim_orders.user_id 列为 integer，JWT 的 sub 是字符串，需转 int。"""
-    if not raw_user_id:
-        raise HTTPException(status_code=400, detail="Invalid user_id in token")
-    raw = str(raw_user_id).strip()
-    if raw.isdigit():
-        return int(raw)
-    logger.warning("Non-numeric user_id in simulation order request: %s", raw)
-    return 0
+    """兼容别名，统一走 require_sim_user_id（OSS admin 归保留账户 0）。"""
+    return require_sim_user_id(raw_user_id)
 
 
 @router.post("/orders", response_model=SimOrderResponse, status_code=status.HTTP_201_CREATED)

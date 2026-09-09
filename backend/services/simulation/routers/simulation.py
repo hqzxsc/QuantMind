@@ -12,6 +12,7 @@ from backend.services.simulation.services.fund_snapshot_service import (
 )
 from backend.services.simulation.services.simulation_manager import (
     SimulationAccountManager,
+    require_sim_user_id,
 )
 from backend.services.simulation.services.ocr_service import SimulationOCRService
 from backend.services.trade_shared.trade_config import settings
@@ -28,15 +29,8 @@ router = APIRouter()
 
 
 def _require_user_id(raw_user_id: str) -> int:
-    """获取用户ID。Redis 账户 key 与 sim_orders/sim_trades 的 user_id 均为 integer，
-    JWT 的 sub 是字符串，需统一转 int 才能命中同一账户 key。"""
-    if not raw_user_id:
-        raise HTTPException(status_code=400, detail="Invalid user_id in token")
-    raw = str(raw_user_id).strip()
-    if raw.isdigit():
-        return int(raw)
-    logger.warning("Non-numeric user_id in simulation request: %s", raw)
-    return 0
+    """兼容别名，统一走 require_sim_user_id（OSS admin 归保留账户 0）。"""
+    return require_sim_user_id(raw_user_id)
 
 FUNDAMENTAL_PARQUET_PATH = "/app/db/custom/fundamental_aligned.parquet"
 _PARQUET_LATEST_PRICE_MAP: dict[str, float] | None = None
@@ -292,21 +286,19 @@ async def reset_simulation_account(
         await manager.set_initial_cash(uid, initial_cash, tenant_id=auth.tenant_id)
 
     market = str(request.market or "CN").upper()
-    # 清空数据库中的历史交易/订单/快照，避免重置后前端仍拉到旧数据
+    # 清空数据库中的历史交易/订单/快照，避免重置后前端仍拉到旧数据。
+    # user_id 有 int 与原始 sub 两种口径（历史 varchar 兼容），一并清理。
     try:
         from sqlalchemy import text as _text
         from backend.shared.database_manager_v2 import get_session as _get_session
+        uid_str_variants = {str(uid), str(auth.user_id)}
         async with _get_session() as _session:
             await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND user_id=:uid"), {"tid": auth.tenant_id, "uid": uid})
             await _session.execute(_text("DELETE FROM sim_orders WHERE tenant_id=:tid AND user_id=:uid"), {"tid": auth.tenant_id, "uid": uid})
-            # 兼容部分旧库用 varchar user_id
-            try:
-                await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": str(uid)})
-            except Exception:
-                pass
-            await _session.execute(_text("DELETE FROM simulation_fund_snapshots WHERE tenant_id=:tid AND user_id=:uid_str"), {"tid": auth.tenant_id, "uid_str": str(uid)})
-            await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": auth.user_id})
-            await _session.execute(_text("DELETE FROM simulation_fund_snapshots WHERE tenant_id=:tid AND user_id=:uid2"), {"tid": auth.tenant_id, "uid2": auth.user_id})
+            for uv in uid_str_variants:
+                await _session.execute(_text("DELETE FROM sim_trades WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": uv})
+                await _session.execute(_text("DELETE FROM sim_orders WHERE tenant_id=:tid AND cast(user_id as varchar)=:uid_str"), {"tid": auth.tenant_id, "uid_str": uv})
+                await _session.execute(_text("DELETE FROM simulation_fund_snapshots WHERE tenant_id=:tid AND user_id=:uid2"), {"tid": auth.tenant_id, "uid2": uv})
     except Exception as _e:
         logger.warning(f"Reset DB cleanup failed for {auth.tenant_id}:{uid}: {_e}")
 

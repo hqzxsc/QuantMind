@@ -23,6 +23,7 @@ from backend.services.simulation.services.projection_service import (
     SimulationProjectionService,
 )
 from backend.shared.database_manager_v2 import get_session
+from backend.shared.simulation_account_keys import account_key
 from backend.shared.trade_account_cache import write_json_cache, write_trade_account_cache
 
 logger = logging.getLogger(__name__)
@@ -249,7 +250,7 @@ async def _rebuild_redis_cache(account: SimulationAccount) -> None:
             positions=projection.positions or {},
             source="margin_monitor_projection",
         )
-        sim_key = f"simulation:account:{account.tenant_id}:{str(account.user_id).strip()}"
+        sim_key = account_key(account.tenant_id, account.user_id)
         write_json_cache(redis_client, sim_key, payload)
         write_trade_account_cache(
             redis_client, account.tenant_id, account.user_id, payload

@@ -21,6 +21,9 @@ from backend.services.simulation.models.fund_snapshot import (
     SimulationFundSnapshot,
 )
 from backend.shared.database_manager_v2 import get_session
+from backend.shared.simulation_account_keys import (
+    parse_account_key as parse_canonical_account_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +49,15 @@ def _local_today() -> datetime.date:
 
 
 def _parse_account_key(key: str) -> tuple[str, str] | None:
-    # simulation:account:{tenant_id}:{user_id}
-    parts = key.split(":")
-    if len(parts) != 4:
+    # simulation:account:{tenant_id}:{user_id}（CN），带 :MARKET 后缀的市场账户
+    # 暂不纳入资金快照（快照表以 tenant/user/date 唯一，跨市场会串行覆盖），
+    # 显式跳过并记录，避免静默丢失。
+    parsed = parse_canonical_account_key(key)
+    if not parsed:
         return None
-    if parts[0] != "simulation" or parts[1] != "account":
-        return None
-    tenant_id = parts[2].strip() or "default"
-    user_id = parts[3].strip()
-    if not user_id:
+    tenant_id, user_id, market = parsed
+    if market != "CN":
+        logger.debug("资金快照跳过非 CN 市场账户: %s", key)
         return None
     return tenant_id, user_id
 

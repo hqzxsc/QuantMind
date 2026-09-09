@@ -23,6 +23,7 @@ from backend.services.simulation.services.projection_service import (
     SimulationProjectionService,
 )
 from backend.shared.stock_utils import StockCodeUtil
+from backend.shared.simulation_account_keys import account_key
 from backend.shared.database_manager_v2 import get_session
 from backend.shared.trade_account_cache import write_trade_account_cache
 from backend.services.trade_shared.redis_client import redis_client
@@ -356,7 +357,7 @@ class SimulationCorporateActionService:
             positions=positions,
             source="corporate_action_apply",
         )
-        sim_key = f"simulation:account:{tenant_id}:{str(user_id).strip()}"
+        sim_key = account_key(tenant_id, user_id)
         redis_client.client.set(sim_key, json.dumps(payload, ensure_ascii=False))
         write_trade_account_cache(redis_client, tenant_id, user_id, payload)
 

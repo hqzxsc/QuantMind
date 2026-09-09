@@ -13,6 +13,31 @@ from backend.shared.trade_account_cache import read_json_cache, write_json_cache
 
 logger = logging.getLogger(__name__)
 
+# OSS 单用户部署的保留映射：JWT sub 为用户名（如 admin）时，历史模拟数据
+# （sim_orders/sim_trades PG user_id、Redis 账户键）全落在 user 0 上。
+# 改映射会丢历史，故保持 0，但用 error 日志标出，便于多用户部署时发现串号。
+RESERVED_NON_NUMERIC_USER_ID = 0
+
+
+def require_sim_user_id(raw_user_id: str) -> int:
+    """JWT sub 转模拟盘 int user_id。三处路由共用，禁止各自手写分叉。
+
+    数字 sub 直接转 int；非数字（OSS 默认 admin 用户）归 0。
+    """
+    from fastapi import HTTPException
+
+    if not raw_user_id:
+        raise HTTPException(status_code=400, detail="Invalid user_id in token")
+    raw = str(raw_user_id).strip()
+    if raw.isdigit():
+        return int(raw)
+    logger.error(
+        "Non-numeric user_id mapped to reserved account 0: %s "
+        "(多用户部署下不同用户名会串号，请改用数字 sub)",
+        raw,
+    )
+    return RESERVED_NON_NUMERIC_USER_ID
+
 
 class SimulationAccountManager:
     """
@@ -155,25 +180,33 @@ return cjson.encode({success=true, unlocked=unlocked})
 
     @staticmethod
     def _normalize_tenant(tenant_id: str | None) -> str:
-        return (tenant_id or "").strip() or "default"
+        from backend.shared.simulation_account_keys import normalize_tenant
+
+        return normalize_tenant(tenant_id)
 
     @staticmethod
     def _normalize_market(market: str | None) -> str:
         """市场标识（账户 Redis 键维度）。CN 保持无后缀旧键，兼容存量账户。"""
-        market_upper = str(market or "CN").upper().strip()
-        if market_upper in {"", "CN", "A", "A_SHARE"}:
-            return "CN"
-        return market_upper
+        from backend.shared.simulation_account_keys import normalize_market
+
+        return normalize_market(market)
 
     def _get_key(self, user_id: int, tenant_id: str, market: str = "CN") -> str:
-        market = self._normalize_market(market)
-        if market == "CN":
-            # 存量 A 股账户保持无后缀键，不迁移
-            return f"simulation:account:{tenant_id}:{user_id}"
-        return f"simulation:account:{tenant_id}:{user_id}:{market}"
+        from backend.shared.simulation_account_keys import account_key
+
+        return account_key(tenant_id, user_id, market)
+
+    @staticmethod
+    def parse_account_key(key: str) -> tuple[str, str, str] | None:
+        """解析账户键 -> (tenant, user原文, market)，供扫描类任务使用。"""
+        from backend.shared.simulation_account_keys import parse_account_key
+
+        return parse_account_key(key)
 
     def _get_settings_key(self, user_id: int, tenant_id: str) -> str:
-        return f"simulation:settings:{tenant_id}:{user_id}"
+        from backend.shared.simulation_account_keys import settings_key
+
+        return settings_key(tenant_id, user_id)
 
     @staticmethod
     def _position_key(symbol: str, position_side: str) -> str:

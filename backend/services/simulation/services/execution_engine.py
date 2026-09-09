@@ -122,6 +122,26 @@ class SimulationExecutionEngine:
         market_url = settings.MARKET_DATA_SERVICE_URL.rstrip("/")
         endpoint = f"{market_url}/api/v1/quotes/{symbol}"
 
+        # Level 0: Redis 实时行情（market:series ZSET）— 模拟撮合第一价格源。
+        # 盘中 tick 新鲜时直接按 Redis 现价成交；陈旧/缺失则走下方兜底链路。
+        try:
+            from backend.services.simulation.services.redis_series_quote import (
+                fetch_series_tick,
+            )
+
+            tick = await fetch_series_tick(symbol)
+            if tick:
+                logger.info(
+                    "Redis series price for %s: %.4f (age=%.0fs)",
+                    symbol, tick["price"], tick["age_s"],
+                )
+                return MarketSnapshot(
+                    price=float(tick["price"]),
+                    price_source="redis_series",
+                )
+        except Exception as e:
+            logger.warning("Failed to fetch redis series quote for %s: %s", symbol, e)
+
         # Level 1: 实时行情服务
         try:
             client = await self._http_client()

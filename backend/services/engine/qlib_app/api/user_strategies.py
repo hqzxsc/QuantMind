@@ -425,8 +425,12 @@ async def _fetch_sim_fund_fallback(
     sub = str(user_sub or "").strip()
     # JWT sub -> 模拟盘 uid（与 trade_shared.require_sim_user_id 同规则）：
     # 数字直接用，非数字（OSS 默认 admin）归保留账户 0。
+    # 末尾恒带 "0"：OSS 单用户/策略 runner 落 0 号账户，数字 sub 也能命中。
     sim_uid = sub if sub.isdigit() else "0"
-    candidates = [sim_uid] if sim_uid == sub else [sim_uid, sub]
+    candidates = []
+    for c in (sim_uid, sub, "0"):
+        if c and c not in candidates:
+            candidates.append(c)
     try:
         async with get_session(read_only=True) as session:
             placeholders = ",".join(f":u{i}" for i in range(len(candidates)))

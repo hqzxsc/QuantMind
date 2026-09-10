@@ -28,6 +28,15 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_date(value: Any) -> date:
+    """把 'YYYY-MM-DD' / date / datetime 统一成 date，供 DATE 列绑定。"""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+
+
 def _rank_ic_from_scores(df: pd.DataFrame, pred_col: str = "score", label_col: str = "label") -> float:
     """单日截面 Rank IC（Spearman）。与 train.py _rank_ic_series 同算法。"""
     df = df[[pred_col, label_col]].dropna()
@@ -153,6 +162,8 @@ class InferenceQualityBackfill:
     async def _get_scores_for_date(self, tenant_id: str, user_id: str, model_id: str,
                                    trade_date: str) -> pd.DataFrame | None:
         """读某模型某日推理分数（engine_signal_scores via run 定位）。"""
+        # data_trade_date 是 DATE 列，asyncpg 不接受字符串，统一转成 date
+        trade_date = _as_date(trade_date)
         async with get_session(read_only=True) as session:
             run_row = (
                 await session.execute(
@@ -201,6 +212,8 @@ class InferenceQualityBackfill:
                             model_id: str, trade_date: str, market: str = "CN",
                             horizon: int = 5, data_dir: str = _DEFAULT_DATA_DIR) -> dict[str, Any]:
         """回填单个 (model_id, trade_date) 的质量数据。幂等 upsert。"""
+        # 落库用 date，parquet 路径/日志继续用 YYYY-MM-DD 字符串
+        trade_date_db = _as_date(trade_date)
         scores_df = await self._get_scores_for_date(tenant_id, user_id, model_id, trade_date)
         if scores_df is None or scores_df.empty:
             return {"model_id": model_id, "trade_date": trade_date, "status": "no_scores", "rank_ic": None}
@@ -241,7 +254,7 @@ class InferenceQualityBackfill:
                 ),
                 {
                     "model_id": model_id,
-                    "trade_date": trade_date,
+                    "trade_date": trade_date_db,
                     "signals_count": int(len(scores_df)),
                     "coverage": float(coverage) if np.isfinite(coverage) else None,
                     "ic": float(ic) if np.isfinite(ic) else None,

@@ -67,7 +67,9 @@ def _shared_redis():
         return None
 
 
-def record_sim_sub(sim_user_id: int, raw_user_id: str, tenant_id: str = "default") -> None:
+def record_sim_sub(
+    sim_user_id: int, raw_user_id: str, tenant_id: str = "default"
+) -> None:
     """记录 sub 反查映射。纯旁路，任何失败都只记日志，不影响鉴权主流程。"""
     try:
         raw = str(raw_user_id or "").strip()
@@ -295,12 +297,16 @@ return cjson.encode({success=true, unlocked=unlocked})
             last_modified_at = data.get("last_modified_at")
             if last_modified_at:
                 try:
-                    last_dt = datetime.fromisoformat(last_modified_at.replace("Z", "+00:00"))
+                    last_dt = datetime.fromisoformat(
+                        last_modified_at.replace("Z", "+00:00")
+                    )
                     next_dt = last_dt + timedelta(days=cooldown_days)
                     next_allowed_modified_at = next_dt.isoformat()
                     can_modify = self._utc_now() >= next_dt
                 except Exception:
-                    logger.warning("Failed to parse simulation settings timestamp for key=%s", key)
+                    logger.warning(
+                        "Failed to parse simulation settings timestamp for key=%s", key
+                    )
 
         return {
             "initial_cash": initial_cash,
@@ -334,7 +340,6 @@ return cjson.encode({success=true, unlocked=unlocked})
         )
 
     # set_settings removed as initial cash modification is deprecated.
-
 
     async def init_account(
         self,
@@ -438,7 +443,7 @@ return cjson.encode({success=true, unlocked=unlocked})
                     await session.execute(
                         _text(
                             "SELECT symbol, side, quantity, price, commission, "
-                            "stamp_duty, transfer_fee FROM sim_trades "
+                            "stamp_duty, transfer_fee, executed_at FROM sim_trades "
                             "WHERE tenant_id=:tid AND user_id=:uid "
                             "ORDER BY id ASC"
                         ),
@@ -448,9 +453,21 @@ return cjson.encode({success=true, unlocked=unlocked})
                 if not rows:
                     return None
 
+                from datetime import date as _date
+
+                today = _date.today()
                 positions: dict[str, dict[str, float]] = {}
                 cash = float(initial_cash)
-                for symbol, side, quantity, price, commission, stamp_duty, transfer_fee in rows:
+                for (
+                    symbol,
+                    side,
+                    quantity,
+                    price,
+                    commission,
+                    stamp_duty,
+                    transfer_fee,
+                    executed_at,
+                ) in rows:
                     try:
                         prefix = StockCodeUtil.to_prefix(str(symbol))
                     except Exception:
@@ -462,7 +479,11 @@ return cjson.encode({success=true, unlocked=unlocked})
                         continue
                     qty = float(quantity or 0)
                     px = float(price or 0)
-                    fee = float(commission or 0) + float(stamp_duty or 0) + float(transfer_fee or 0)
+                    fee = (
+                        float(commission or 0)
+                        + float(stamp_duty or 0)
+                        + float(transfer_fee or 0)
+                    )
                     # 多头键用订单 symbol 原格式（后缀大写，如 600928.SH），与 Lua
                     # update_balance 的 positions[symbol] 同口径；只有空头才带 ::side 后缀。
                     try:
@@ -480,12 +501,28 @@ return cjson.encode({success=true, unlocked=unlocked})
                     if str(side).lower() == "buy":
                         total_cost = pos["cost"] * pos["volume"] + qty * px
                         pos["volume"] += qty
-                        pos["available_volume"] += qty
-                        pos["cost"] = total_cost / pos["volume"] if pos["volume"] > 0 else 0.0
+                        # T+1：当日买入不计入可卖量，历史买入才可卖（重建不再直接解锁）
+                        try:
+                            trade_day = (
+                                executed_at.date()
+                                if hasattr(executed_at, "date")
+                                else None
+                            )
+                        except Exception:
+                            trade_day = None
+                        if market_norm == "CN" and trade_day == today:
+                            pass
+                        else:
+                            pos["available_volume"] += qty
+                        pos["cost"] = (
+                            total_cost / pos["volume"] if pos["volume"] > 0 else 0.0
+                        )
                         cash -= qty * px + fee
                     else:
                         pos["volume"] = max(0.0, pos["volume"] - qty)
-                        pos["available_volume"] = max(0.0, pos["available_volume"] - qty)
+                        pos["available_volume"] = max(
+                            0.0, pos["available_volume"] - qty
+                        )
                         cash += qty * px - fee
                     if px > 0:
                         pos["price"] = px
@@ -577,7 +614,10 @@ return cjson.encode({success=true, unlocked=unlocked})
         if (
             is_margin_trade
             or str(position_side).lower() == "short"
-            or (trade_action and trade_action.lower() in {"sell_to_open", "buy_to_close"})
+            or (
+                trade_action
+                and trade_action.lower() in {"sell_to_open", "buy_to_close"}
+            )
         ):
             return await self._update_balance_margin(
                 user_id=user_id,
@@ -590,7 +630,9 @@ return cjson.encode({success=true, unlocked=unlocked})
             )
 
         # T+0 市场买入即可卖；CN 买入锁定（avail_delta=0）
-        avail_delta = float(delta_volume) if (delta_volume > 0 and not t_plus_1) else 0.0
+        avail_delta = (
+            float(delta_volume) if (delta_volume > 0 and not t_plus_1) else 0.0
+        )
 
         try:
             result = self.redis.client.eval(
@@ -632,7 +674,9 @@ return cjson.encode({success=true, unlocked=unlocked})
                 return payload
             return {"success": False, "reason": "INVALID_SCRIPT_RESULT"}
         except Exception as e:
-            logger.error("Failed to unlock T+1 for tenant=%s user=%s: %s", tenant_id, user_id, e)
+            logger.error(
+                "Failed to unlock T+1 for tenant=%s user=%s: %s", tenant_id, user_id, e
+            )
             return {"success": False, "reason": "UNLOCK_T1_FAILED"}
 
     async def _update_balance_margin(

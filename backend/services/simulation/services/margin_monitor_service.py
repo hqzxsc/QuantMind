@@ -24,7 +24,10 @@ from backend.services.simulation.services.projection_service import (
 )
 from backend.shared.database_manager_v2 import get_session
 from backend.shared.simulation_account_keys import account_key
-from backend.shared.trade_account_cache import write_json_cache, write_trade_account_cache
+from backend.shared.trade_account_cache import (
+    write_json_cache,
+    write_trade_account_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +54,9 @@ async def _scan_and_monitor() -> tuple[int, int]:
                         SimulationAccount.liabilities > 0,
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
 
         manager = SimulationAccountManager(redis_client)
@@ -100,10 +105,13 @@ async def _write_warning(
 ) -> None:
     now = datetime.utcnow()
     existing = await session.execute(
-        select(SimulationCashLedger).where(
+        select(SimulationCashLedger)
+        .where(
             SimulationCashLedger.account_id == account.account_id,
             SimulationCashLedger.event_type == "MARGIN_WARNING",
-        ).order_by(SimulationCashLedger.occurred_at.desc()).limit(1)
+        )
+        .order_by(SimulationCashLedger.occurred_at.desc())
+        .limit(1)
     )
     last_warning = existing.scalar_one_or_none()
     if last_warning is not None:
@@ -150,17 +158,21 @@ async def _force_liquidate(
     lots = list(
         (
             await session.execute(
-                select(SimulationPositionLot).where(
+                select(SimulationPositionLot)
+                .where(
                     SimulationPositionLot.account_id == account_id,
                     SimulationPositionLot.position_side == "short",
                     SimulationPositionLot.status == "open",
                     SimulationPositionLot.quantity_remaining > 0,
-                ).order_by(
+                )
+                .order_by(
                     SimulationPositionLot.open_date.asc().nullsfirst(),
                     SimulationPositionLot.id.asc(),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
     for lot in lots:
@@ -175,7 +187,9 @@ async def _force_liquidate(
 
         board_lot_qty = int(qty // 100) * 100
         if board_lot_qty <= 0:
-            board_lot_qty = 100
+            # 不足一手按实际数量平，不超卖（原先或100股必触发INSUFFICIENT）
+            board_lot_qty = int(qty)
+        board_lot_qty = min(int(board_lot_qty), int(qty))
 
         session.add(
             SimulationCashLedger(

@@ -39,6 +39,7 @@ class ExecutionResult:
         quantity: float = 0.0,
         commission: float = 0.0,
         stamp_duty: float = 0.0,
+        transfer_fee: float = 0.0,
         market: str = "CN",
         account_snapshot: dict | None = None,
         price_source: str | None = None,
@@ -49,6 +50,7 @@ class ExecutionResult:
         self.quantity = quantity
         self.commission = commission
         self.stamp_duty = stamp_duty
+        self.transfer_fee = transfer_fee
         self.market = market
         self.account_snapshot = account_snapshot
         self.price_source = price_source
@@ -62,6 +64,8 @@ class MarketSnapshot:
     limit_up: bool = False
     limit_down: bool = False
     suspended: bool = False
+    limit_up_price: float | None = None
+    limit_down_price: float | None = None
 
 
 class SimulationExecutionEngine:
@@ -107,10 +111,87 @@ class SimulationExecutionEngine:
         return text in {"1", "true", "yes", "y", "on"}
 
     @staticmethod
-    def _is_price_near(price: float, limit_price: float | None, tolerance: float = 0.0015) -> bool:
+    def _is_price_near(
+        price: float, limit_price: float | None, tolerance: float = 0.0015
+    ) -> bool:
         if limit_price is None or limit_price <= 0 or price <= 0:
             return False
         return abs(price - limit_price) / max(limit_price, 1e-6) <= tolerance
+
+    @staticmethod
+    def _board_limit_threshold(symbol: str) -> float:
+        """按板块返回涨跌停启发式判定阈值（ask1/bid1缺失时的兜底）。
+
+        主板 10% -> 0.095；创业板/科创 20% -> 0.195；北交所 30% -> 0.295。
+        取整-0.005容差，避免恰好压线时漏判。
+        """
+        try:
+            from backend.services.simulation.services.local_market_data import (
+                _board_pct,
+            )
+
+            pct = float(_board_pct(symbol))
+            if pct >= 0.29:
+                return 0.295
+            if pct >= 0.19:
+                return 0.195
+            return 0.095
+        except Exception:
+            return 0.095
+
+    @staticmethod
+    def _enrich_cn_limits(
+        symbol: str, price: float
+    ) -> tuple[bool, bool, bool, float | None, float | None]:
+        """用本地日线为L0/L2等缺风控字段的价格源补齐涨跌停/停牌信息。
+
+        返回 (limit_up, limit_down, suspended, limit_up_price, limit_down_price)。
+        任何失败返回全False，保证撮合不因 enrichment 崩。
+        """
+        try:
+            from datetime import date as _date
+
+            from backend.services.simulation.services.local_market_data import (
+                get_local_market_data,
+            )
+            from backend.services.simulation.services.market_rules import infer_market
+
+            mkt = infer_market(symbol).value if symbol else "CN"
+            if mkt != "CN":
+                return False, False, False, None, None
+            lmd = get_local_market_data(market=mkt)
+            bar = None
+            for d in [_date.today(), lmd.latest_trade_date()]:
+                if d is None:
+                    continue
+                try:
+                    bar = lmd.get_bar(symbol, d)
+                except Exception:
+                    bar = None
+                if bar is not None:
+                    break
+            if bar is None:
+                return False, False, False, None, None
+            if getattr(bar, "suspended", False):
+                return False, False, True, None, None
+            limit_up_price = float(getattr(bar, "limit_up", 0) or 0) or None
+            limit_down_price = float(getattr(bar, "limit_down", 0) or 0) or None
+            # 无穷大表示无限制（如新股首日），按无涨跌停处理
+            if limit_up_price is not None and limit_up_price == float("inf"):
+                limit_up_price = None
+            if limit_down_price is not None and limit_down_price <= 0:
+                limit_down_price = None
+            limit_up = bool(
+                limit_up_price and price > 0 and price >= limit_up_price * (1 - 0.0015)
+            )
+            limit_down = bool(
+                limit_down_price
+                and price > 0
+                and price <= limit_down_price * (1 + 0.0015)
+            )
+            return limit_up, limit_down, False, limit_up_price, limit_down_price
+        except Exception:
+            return False, False, False, None, None
 
     async def _latest_price(
         self,
@@ -133,11 +214,21 @@ class SimulationExecutionEngine:
             if tick:
                 logger.info(
                     "Redis series price for %s: %.4f (age=%.0fs)",
-                    symbol, tick["price"], tick["age_s"],
+                    symbol,
+                    tick["price"],
+                    tick["age_s"],
                 )
+                px = float(tick["price"])
+                # L0 原先直接返回裸价导致涨跌停/停牌拦截失效，这里补齐风控字段
+                lu, ld, susp, lu_px, ld_px = self._enrich_cn_limits(symbol, px)
                 return MarketSnapshot(
-                    price=float(tick["price"]),
+                    price=px,
                     price_source="redis_series",
+                    limit_up=lu,
+                    limit_down=ld,
+                    suspended=susp,
+                    limit_up_price=lu_px,
+                    limit_down_price=ld_px,
                 )
         except Exception as e:
             logger.warning("Failed to fetch redis series quote for %s: %s", symbol, e)
@@ -156,7 +247,9 @@ class SimulationExecutionEngine:
                 if px and px > 0:
                     limit_up = self._as_bool(data.get("is_limit_up"))
                     limit_down = self._as_bool(data.get("is_limit_down"))
-                    suspended = self._as_bool(data.get("suspended") or data.get("is_suspended"))
+                    suspended = self._as_bool(
+                        data.get("suspended") or data.get("is_suspended")
+                    )
                     limit_up_price = self._as_float(data.get("limit_up_today"))
                     limit_down_price = self._as_float(data.get("limit_down_today"))
                     if not limit_up and self._is_price_near(px, limit_up_price):
@@ -164,14 +257,27 @@ class SimulationExecutionEngine:
                     if not limit_down and self._is_price_near(px, limit_down_price):
                         limit_down = True
 
-                    pre_close = self._as_float(data.get("pre_close") or data.get("close_price"))
+                    pre_close = self._as_float(
+                        data.get("pre_close") or data.get("close_price")
+                    )
                     ask1_volume = self._as_int(data.get("ask1_volume"))
                     bid1_volume = self._as_int(data.get("bid1_volume"))
                     if pre_close and pre_close > 0:
                         change_ratio = (px - pre_close) / pre_close
-                        if not limit_up and ask1_volume is not None and ask1_volume <= 0 and change_ratio >= 0.095:
+                        threshold = self._board_limit_threshold(symbol)
+                        if (
+                            not limit_up
+                            and ask1_volume is not None
+                            and ask1_volume <= 0
+                            and change_ratio >= threshold
+                        ):
                             limit_up = True
-                        if not limit_down and bid1_volume is not None and bid1_volume <= 0 and change_ratio <= -0.095:
+                        if (
+                            not limit_down
+                            and bid1_volume is not None
+                            and bid1_volume <= 0
+                            and change_ratio <= -threshold
+                        ):
                             limit_down = True
 
                     return MarketSnapshot(
@@ -180,6 +286,8 @@ class SimulationExecutionEngine:
                         limit_up=limit_up,
                         limit_down=limit_down,
                         suspended=suspended,
+                        limit_up_price=limit_up_price,
+                        limit_down_price=limit_down_price,
                     )
         except Exception as e:
             logger.warning("Failed to fetch market quote for %s: %s", symbol, e)
@@ -207,10 +315,18 @@ class SimulationExecutionEngine:
                     hfq_close = float(row[0])
                     adj_factor = float(row[1] or 1.0)
                     price = hfq_close / adj_factor if adj_factor > 0 else hfq_close
-                    logger.info("Fallback to DB nominal price for %s: %s", symbol, price)
+                    logger.info(
+                        "Fallback to DB nominal price for %s: %s", symbol, price
+                    )
+                    lu, ld, susp, lu_px, ld_px = self._enrich_cn_limits(symbol, price)
                     return MarketSnapshot(
                         price=price,
                         price_source="db_fallback",
+                        limit_up=lu,
+                        limit_down=ld,
+                        suspended=susp,
+                        limit_up_price=lu_px,
+                        limit_down_price=ld_px,
                     )
             except Exception:
                 # 首次查询失败（如事务被污染），rollback 恢复后再用更简单的查询重试
@@ -226,37 +342,108 @@ class SimulationExecutionEngine:
                     ORDER BY trade_date DESC LIMIT 1
                     """
                 )
-                legacy_result = await self.db.execute(query_legacy, {"symbol": db_symbol})
+                legacy_result = await self.db.execute(
+                    query_legacy, {"symbol": db_symbol}
+                )
                 legacy_row = legacy_result.fetchone()
                 if legacy_row:
                     hfq_close = float(legacy_row[0])
                     adj_factor = float(legacy_row[1] or 1.0)
                     price = hfq_close / adj_factor if adj_factor > 0 else hfq_close
-                    logger.info("Fallback to DB legacy nominal price for %s: %s", symbol, price)
-                    return MarketSnapshot(price=price, price_source="db_fallback")
+                    logger.info(
+                        "Fallback to DB legacy nominal price for %s: %s", symbol, price
+                    )
+                    lu, ld, susp, lu_px, ld_px = self._enrich_cn_limits(symbol, price)
+                    return MarketSnapshot(
+                        price=price,
+                        price_source="db_fallback",
+                        limit_up=lu,
+                        limit_down=ld,
+                        suspended=susp,
+                        limit_up_price=lu_px,
+                        limit_down_price=ld_px,
+                    )
         except Exception as e:
             logger.error("Database fallback failed for %s: %s", symbol, e)
 
         # Level 2.5: 本地日线兜底（QuantDB parquet）— Redis 不可用时以开盘价撮合
         # 模拟盘核心兜底：直读本地不复权日线，用开盘价作为撮合价，不依赖实时流
         def _local_daily_snapshot() -> MarketSnapshot | None:
-            from backend.services.simulation.services.local_market_data import get_local_market_data
+            from backend.services.simulation.services.local_market_data import (
+                get_local_market_data,
+            )
             from backend.services.simulation.services.market_rules import infer_market
             from datetime import date as _date
 
             mkt = infer_market(symbol).value if symbol else "CN"
             lmd = get_local_market_data(market=mkt)
             # 优先当日，其次最近交易日
-            for d in [ _date.today(), lmd.latest_trade_date() ]:
+            for d in [_date.today(), lmd.latest_trade_date()]:
                 if d is None:
                     continue
                 bar = lmd.get_bar(symbol, d)
                 if bar and bar.open > 0:
-                    logger.info("Fallback to LocalMarketData open for %s %s: open=%s", symbol, d, bar.open)
-                    return MarketSnapshot(price=float(bar.open), price_source="local_daily_open")
+                    logger.info(
+                        "Fallback to LocalMarketData open for %s %s: open=%s",
+                        symbol,
+                        d,
+                        bar.open,
+                    )
+                    px = float(bar.open)
+                    lu = (
+                        bool(px >= float(bar.limit_up or 0) * (1 - 0.0015))
+                        if (bar.limit_up and bar.limit_up != float("inf"))
+                        else False
+                    )
+                    ld = (
+                        bool(px <= float(bar.limit_down or 0) * (1 + 0.0015))
+                        if (bar.limit_down and bar.limit_down > 0)
+                        else False
+                    )
+                    return MarketSnapshot(
+                        price=px,
+                        price_source="local_daily_open",
+                        limit_up=lu,
+                        limit_down=ld,
+                        suspended=bool(getattr(bar, "suspended", False)),
+                        limit_up_price=float(bar.limit_up)
+                        if bar.limit_up != float("inf")
+                        else None,
+                        limit_down_price=float(bar.limit_down)
+                        if bar.limit_down > 0
+                        else None,
+                    )
                 if bar and bar.close > 0:
-                    logger.info("Fallback to LocalMarketData close for %s %s: close=%s", symbol, d, bar.close)
-                    return MarketSnapshot(price=float(bar.close), price_source="local_daily_close")
+                    logger.info(
+                        "Fallback to LocalMarketData close for %s %s: close=%s",
+                        symbol,
+                        d,
+                        bar.close,
+                    )
+                    px = float(bar.close)
+                    lu = (
+                        bool(px >= float(bar.limit_up or 0) * (1 - 0.0015))
+                        if (bar.limit_up and bar.limit_up != float("inf"))
+                        else False
+                    )
+                    ld = (
+                        bool(px <= float(bar.limit_down or 0) * (1 + 0.0015))
+                        if (bar.limit_down and bar.limit_down > 0)
+                        else False
+                    )
+                    return MarketSnapshot(
+                        price=px,
+                        price_source="local_daily_close",
+                        limit_up=lu,
+                        limit_down=ld,
+                        suspended=bool(getattr(bar, "suspended", False)),
+                        limit_up_price=float(bar.limit_up)
+                        if bar.limit_up != float("inf")
+                        else None,
+                        limit_down_price=float(bar.limit_down)
+                        if bar.limit_down > 0
+                        else None,
+                    )
             return None
 
         try:
@@ -271,7 +458,9 @@ class SimulationExecutionEngine:
         # 避免以虚假价格成交污染模拟盘资产/持仓。
         return MarketSnapshot(price=0.0, price_source="unavailable")
 
-    async def execute_order(self, order: SimOrder, market: str | None = None) -> ExecutionResult:
+    async def execute_order(
+        self, order: SimOrder, market: str | None = None
+    ) -> ExecutionResult:
         snapshot = await self._latest_price(
             order.symbol,
             user_id=order.user_id,
@@ -308,15 +497,38 @@ class SimulationExecutionEngine:
 
         side = str(order.side.value).lower()
         if snapshot.suspended:
-            return ExecutionResult(success=False, message="Security is suspended, cannot trade")
+            return ExecutionResult(
+                success=False, message="Security is suspended, cannot trade"
+            )
         if side == "buy" and snapshot.limit_up:
-            return ExecutionResult(success=False, message="Limit-up locked, buy order cannot be filled")
+            return ExecutionResult(
+                success=False, message="Limit-up locked, buy order cannot be filled"
+            )
         if side == "sell" and snapshot.limit_down:
-            return ExecutionResult(success=False, message="Limit-down locked, sell order cannot be filled")
+            return ExecutionResult(
+                success=False, message="Limit-down locked, sell order cannot be filled"
+            )
+
+        # A股买入整手校验（卖出允许零碎以便清仓/强平）
+        if rules.market.value == "CN" and side == "buy":
+            qty = float(order.quantity or 0)
+            if (
+                abs(qty - round(qty)) > 1e-6
+                or int(round(qty)) % int(rules.lot_size or 100) != 0
+            ):
+                return ExecutionResult(
+                    success=False,
+                    message=f"CN买入须为{int(rules.lot_size or 100)}股整手，当前{order.quantity}",
+                )
 
         if order.order_type == OrderType.MARKET:
             direction = 1 if side == "buy" else -1
-            exec_price = round(base_price * (1 + direction * slippage), 4)
+            exec_price = round(base_price * (1 + direction * slippage), 2)
+            # 市价滑点不得冲破涨跌停：钳制到日内限价内
+            if snapshot.limit_up_price and exec_price > snapshot.limit_up_price:
+                exec_price = round(float(snapshot.limit_up_price), 2)
+            if snapshot.limit_down_price and exec_price < snapshot.limit_down_price:
+                exec_price = round(float(snapshot.limit_down_price), 2)
             price_source = fetched_source
         elif order.order_type == OrderType.LIMIT:
             if order.price is None or order.price <= 0:
@@ -335,10 +547,12 @@ class SimulationExecutionEngine:
                         success=False,
                         message=f"卖单委托价 {order.price} 高于市价 {base_price}，限价单未成交",
                     )
-            exec_price = round(float(base_price), 4)
-            price_source = "market_price"
+            exec_price = round(float(base_price), 2)
+            price_source = fetched_source
         else:
-            return ExecutionResult(success=False, message=f"Unsupported order type: {order.order_type}")
+            return ExecutionResult(
+                success=False, message=f"Unsupported order type: {order.order_type}"
+            )
 
         gross = order.quantity * exec_price
         if rules.market.value == "CN":
@@ -353,14 +567,17 @@ class SimulationExecutionEngine:
                 if order.side.value == "sell"
                 else 0.0
             )
+            # 过户费：双向 0.001%（1e-5），与回放 ashare_matcher / 台账口径对齐
+            transfer_fee = round(gross * 0.00001, 2)
         else:
             commission = rules.compute_commission(order.quantity, exec_price, side)
             stamp_duty = 0.0
+            transfer_fee = 0.0
         if order.side.value == "buy":
-            delta_cash = -(gross + commission)
+            delta_cash = -(gross + commission + transfer_fee)
             delta_volume = order.quantity
         else:
-            delta_cash = gross - commission - stamp_duty
+            delta_cash = gross - commission - stamp_duty - transfer_fee
             delta_volume = -order.quantity
 
         update = await self.manager.update_balance(
@@ -376,10 +593,21 @@ class SimulationExecutionEngine:
         if not update.get("success"):
             reason = update.get("reason", "BALANCE_UPDATE_FAILED")
             if reason == "INSUFFICIENT_CASH":
-                return ExecutionResult(success=False, message="Insufficient cash for buy order")
+                return ExecutionResult(
+                    success=False, message="Insufficient cash for buy order"
+                )
             if reason == "INSUFFICIENT_HOLDINGS":
-                return ExecutionResult(success=False, message="Insufficient holdings for sell order")
-            return ExecutionResult(success=False, message=f"Balance update failed: {reason}")
+                return ExecutionResult(
+                    success=False, message="Insufficient holdings for sell order"
+                )
+            if reason == "INSUFFICIENT_AVAILABLE_VOLUME":
+                return ExecutionResult(
+                    success=False,
+                    message=f"Insufficient available volume for sell order (T+1 locked): {update}",
+                )
+            return ExecutionResult(
+                success=False, message=f"Balance update failed: {reason}"
+            )
 
         return ExecutionResult(
             success=True,
@@ -387,6 +615,7 @@ class SimulationExecutionEngine:
             quantity=order.quantity,
             commission=commission,
             stamp_duty=stamp_duty,
+            transfer_fee=transfer_fee,
             market=market_str,
             account_snapshot=account_snapshot,
             price_source=price_source,
@@ -394,7 +623,8 @@ class SimulationExecutionEngine:
 
     async def apply_filled(self, order: SimOrder, result: ExecutionResult) -> SimTrade:
         trade_value = result.quantity * result.price
-        total_fee = result.commission + result.stamp_duty
+        transfer_fee = float(getattr(result, "transfer_fee", 0.0) or 0.0)
+        total_fee = result.commission + result.stamp_duty + transfer_fee
         trade = SimTrade(
             order_id=order.order_id,
             tenant_id=order.tenant_id,
@@ -407,6 +637,7 @@ class SimulationExecutionEngine:
             trade_value=trade_value,
             commission=result.commission,
             stamp_duty=result.stamp_duty,
+            transfer_fee=transfer_fee,
             total_fee=total_fee,
             executed_at=datetime.now(),
             price_source=result.price_source,
@@ -472,8 +703,12 @@ class SimulationExecutionEngine:
         # 交易时即失效 Redis，下次 GET 立即回源 DB 并回填缓存，实现秒级可见
         try:
             if self.manager.redis and self.manager.redis.client:
-                self.manager.redis.delete_pattern(f"sim_trade:list:{order.tenant_id}:{order.user_id}:*")
-                self.manager.redis.delete_pattern(f"sim_trade:stats:{order.tenant_id}:{order.user_id}:*")
+                self.manager.redis.delete_pattern(
+                    f"sim_trade:list:{order.tenant_id}:{order.user_id}:*"
+                )
+                self.manager.redis.delete_pattern(
+                    f"sim_trade:stats:{order.tenant_id}:{order.user_id}:*"
+                )
                 try:
                     from backend.services.trade_shared.utils.redis_cache import (
                         invalidate_user_cache as _invalidate_user_cache,
@@ -496,6 +731,58 @@ class SimulationExecutionEngine:
         order.remarks = f"Execution rejected: {message}"
         await self.db.commit()
         await self.db.refresh(order)
+
+    @staticmethod
+    def _normalize_runtime_datetime(value):
+        """V2挂单链路兼容：透传datetime/None，避免AttributeError。"""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            from datetime import datetime as _dt
+
+            return _dt.fromisoformat(str(value))
+        except Exception:
+            return None
+
+    async def assess_execution_window(self, order):
+        """V2挂单链路兼容：模拟盘无盘前盘后会话限制，默认可执行。"""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            can_execute=True,
+            target_trade_date=getattr(order, "trading_session_date", None),
+            final_state=None,
+            retryable=False,
+            message="ok",
+        )
+
+    async def mark_expired(self, order, message: str):
+        """V2挂单过期兼容：旧SimOrder无EXPIRED枚举，降级为REJECTED；V2投影用字符串expired。"""
+        try:
+            status = getattr(order, "status", None)
+            # SimulationOrderV2.status 是纯字符串
+            if isinstance(status, str):
+                order.status = "expired"
+            else:
+                order.status = OrderStatus.REJECTED
+            if hasattr(order, "rejected_reason"):
+                order.rejected_reason = str(message or "")[:500]
+            if hasattr(order, "remarks"):
+                order.remarks = f"Execution expired: {message}"
+            if getattr(order, "submitted_at", None) is None and hasattr(
+                order, "submitted_at"
+            ):
+                order.submitted_at = datetime.now()
+            await self.db.commit()
+            try:
+                await self.db.refresh(order)
+            except Exception:
+                pass
+        except Exception:
+            logger.error("mark_expired failed", exc_info=True)
+            raise
 
     async def _sync_trade_account(self, tenant_id: str, user_id: int):
         if not self.manager.redis.client:

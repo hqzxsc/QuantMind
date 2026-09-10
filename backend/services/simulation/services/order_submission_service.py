@@ -5,7 +5,7 @@ Unified simulation/shadow order submission pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -209,7 +209,7 @@ class SimulationOrderSubmissionService:
             )
 
         order.status = OrderStatus.SUBMITTED
-        order.submitted_at = order.submitted_at or datetime.now()
+        order.submitted_at = order.submitted_at or datetime.now(timezone.utc)
         await self.order_service.sync_order_projection(order)
         await self.db.commit()
 

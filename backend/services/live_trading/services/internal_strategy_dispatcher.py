@@ -9,7 +9,14 @@ from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade_shared.models.enums import OrderSide, OrderStatus, OrderType, PositionSide, TradeAction, TradingMode
+from backend.services.trade_shared.models.enums import (
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+    TradeAction,
+    TradingMode,
+)
 from backend.services.trade_shared.models.order import Order
 from backend.services.trade_shared.portfolio.models import Portfolio
 from backend.services.trade_shared.redis_client import RedisClient
@@ -17,7 +24,9 @@ from backend.services.trade_shared.schemas.order import OrderCreate
 from backend.services.trade_shared.services.order_service import OrderService
 from backend.services.trade_shared.simulation_manager import SimulationAccountManager
 from backend.services.live_trading.services.trading_engine import TradingEngine
-from backend.services.live_trading.routers.real_trading_utils import _fetch_active_portfolio_snapshot
+from backend.services.live_trading.routers.real_trading_utils import (
+    _fetch_active_portfolio_snapshot,
+)
 from backend.services.live_trading.services.real_mirror_service import (
     mirror_virtual_fill,
 )
@@ -63,7 +72,9 @@ async def dispatch_internal_strategy_order(
     try:
         trading_mode = TradingMode(trading_mode_raw)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"invalid trading_mode: {trading_mode_raw}")
+        raise HTTPException(
+            status_code=400, detail=f"invalid trading_mode: {trading_mode_raw}"
+        )
 
     symbol = str(order_data.get("symbol") or "").strip().upper()
     side_raw = str(order_data.get("side") or "").strip().upper()
@@ -202,7 +213,9 @@ async def dispatch_internal_strategy_order(
                 strategy_id=int(strategy_id_raw) if strategy_id_raw.isdigit() else None,
                 symbol=symbol,
                 side=sim_side,
-                order_type=SimOrderType.MARKET if order_type_raw == "MARKET" else SimOrderType.LIMIT,
+                order_type=SimOrderType.MARKET
+                if order_type_raw == "MARKET"
+                else SimOrderType.LIMIT,
                 status=SimOrderStatus.FILLED,
                 quantity=quantity,
                 filled_quantity=quantity,
@@ -234,7 +247,9 @@ async def dispatch_internal_strategy_order(
                     commission=commission,
                     stamp_duty=stamp_duty,
                     total_fee=total_fee,
-                    executed_at=datetime.utcnow(),
+                    # 时区BUG修复：naive utcnow 经会话时区(Asia/Shanghai)会被存成 -8h
+                    # 的错误 instant，必须用 aware UTC。
+                    executed_at=datetime.now(timezone.utc),
                     price_source="internal_dispatcher",
                 )
             )
@@ -317,17 +332,23 @@ async def dispatch_internal_strategy_order(
         try:
             order_type = OrderType(order_type_raw)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"invalid order_type: {order_type_raw}")
+            raise HTTPException(
+                status_code=400, detail=f"invalid order_type: {order_type_raw}"
+            )
         try:
             position_side = PositionSide(position_side_raw)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"invalid position_side: {position_side_raw}")
+            raise HTTPException(
+                status_code=400, detail=f"invalid position_side: {position_side_raw}"
+            )
         trade_action = None
         if trade_action_raw:
             try:
                 trade_action = TradeAction(trade_action_raw)
             except ValueError:
-                raise HTTPException(status_code=400, detail=f"invalid trade_action: {trade_action_raw}")
+                raise HTTPException(
+                    status_code=400, detail=f"invalid trade_action: {trade_action_raw}"
+                )
 
         order_service = OrderService(db, redis)
         engine = TradingEngine(db, redis)

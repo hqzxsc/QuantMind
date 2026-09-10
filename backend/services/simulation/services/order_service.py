@@ -2,7 +2,7 @@
 Simulation order service.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 
@@ -113,7 +113,7 @@ class SimOrderService:
         ]:
             raise ValueError(f"Cannot cancel order in status: {order.status.value}")
         order.status = OrderStatus.CANCELLED
-        order.cancelled_at = datetime.now()
+        order.cancelled_at = datetime.now(timezone.utc)
         if reason:
             order.remarks = f"{order.remarks or ''} [Cancelled: {reason}]"
         await self.db.commit()

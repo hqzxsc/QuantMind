@@ -5,7 +5,7 @@ Synthetic execution engine for simulation orders.
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -658,14 +658,16 @@ class SimulationExecutionEngine:
             stamp_duty=result.stamp_duty,
             transfer_fee=transfer_fee,
             total_fee=total_fee,
-            executed_at=datetime.now(),
+            # 时区BUG修复：timestamptz 列必须用 aware UTC，naive 值会被会话
+            # 时区重解释（曾导致成交时间 -8h）。
+            executed_at=datetime.now(timezone.utc),
             price_source=result.price_source,
         )
         self.db.add(trade)
 
         order.status = OrderStatus.FILLED
-        order.submitted_at = order.submitted_at or datetime.now()
-        order.filled_at = datetime.now()
+        order.submitted_at = order.submitted_at or datetime.now(timezone.utc)
+        order.filled_at = datetime.now(timezone.utc)
         order.filled_quantity = result.quantity
         order.average_price = result.price
         order.filled_value = trade_value
@@ -746,7 +748,7 @@ class SimulationExecutionEngine:
 
     async def mark_rejected(self, order: SimOrder, message: str):
         order.status = OrderStatus.REJECTED
-        order.submitted_at = order.submitted_at or datetime.now()
+        order.submitted_at = order.submitted_at or datetime.now(timezone.utc)
         order.remarks = f"Execution rejected: {message}"
         await self.db.commit()
         await self.db.refresh(order)
@@ -793,7 +795,7 @@ class SimulationExecutionEngine:
             if getattr(order, "submitted_at", None) is None and hasattr(
                 order, "submitted_at"
             ):
-                order.submitted_at = datetime.now()
+                order.submitted_at = datetime.now(timezone.utc)
             await self.db.commit()
             try:
                 await self.db.refresh(order)

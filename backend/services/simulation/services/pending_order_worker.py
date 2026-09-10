@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import or_, select
 
@@ -118,7 +118,7 @@ class SimulationPendingOrderWorker:
                 try:
                     async with _lock_cm:
                         runtime_order.status = OrderStatus.SUBMITTED
-                        runtime_order.submitted_at = datetime.now()
+                        runtime_order.submitted_at = datetime.now(timezone.utc)
                         await order_service.sync_order_projection(
                             runtime_order,
                             rejected_reason=None,

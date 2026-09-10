@@ -6,7 +6,12 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.trade_shared.deps import AuthContext, get_auth_context, get_db, get_redis
+from backend.services.trade_shared.deps import (
+    AuthContext,
+    get_auth_context,
+    get_db,
+    get_redis,
+)
 from backend.services.trade_shared.redis_client import RedisClient
 from backend.services.simulation.models.order import OrderStatus, TradingMode
 from backend.services.simulation.schemas.order import (
@@ -32,7 +37,9 @@ def _require_user_id(raw_user_id: str, tenant_id: str = "default") -> int:
     return require_sim_user_id(raw_user_id, tenant_id=tenant_id)
 
 
-@router.post("/orders", response_model=SimOrderResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/orders", response_model=SimOrderResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_order(
     data: SimOrderCreate,
     auth: AuthContext = Depends(get_auth_context),
@@ -50,20 +57,30 @@ async def create_order(
     engine = SimulationExecutionEngine(db, manager)
 
     user_id = _require_user_id(auth.user_id, auth.tenant_id)
-    order = await order_service.create_order(auth.tenant_id, user_id, data)
-    order.status = OrderStatus.SUBMITTED
-    await db.commit()
-    await db.refresh(order)
+    # P0-1：同用户撮合临界区串行化，防止并发下单双花/快照恢复覆盖。
+    # 拿不到锁直接429由前端重试，不静默放行。
+    try:
+        async with SimulationAccountManager.locked_execution(user_id, auth.tenant_id):
+            order = await order_service.create_order(auth.tenant_id, user_id, data)
+            order.status = OrderStatus.SUBMITTED
+            await db.commit()
+            await db.refresh(order)
 
-    result = await engine.execute_order(order)
-    if not result.success:
-        await engine.mark_rejected(order, result.message)
-        await db.refresh(order)
-        return order
+            result = await engine.execute_order(order)
+            if not result.success:
+                await engine.mark_rejected(order, result.message)
+                await db.refresh(order)
+                return order
 
-    await engine.apply_filled(order, result)
-    await db.refresh(order)
-    return order
+            await engine.apply_filled(order, result)
+            await db.refresh(order)
+            return order
+    except RuntimeError as exc:
+        if str(exc) == "SIM_EXEC_LOCK_BUSY":
+            raise HTTPException(
+                status_code=429, detail="账户撮合繁忙，请稍后重试"
+            ) from exc
+        raise
 
 
 @router.get("/orders", response_model=list[SimOrderResponse])
@@ -98,7 +115,9 @@ async def list_orders(
         enriched = []
         for o in orders:
             try:
-                name = lookup_symbol_name(o.symbol) if getattr(o, "symbol", None) else None
+                name = (
+                    lookup_symbol_name(o.symbol) if getattr(o, "symbol", None) else None
+                )
             except Exception:
                 name = None
             # Pydantic from_attributes 读不到 DB 列时，用运行时属性补齐

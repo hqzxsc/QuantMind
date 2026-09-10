@@ -477,6 +477,25 @@ class SimulationExecutionEngine:
                 message=f"无法获取 {order.symbol} 实时行情，模拟单拒绝成交",
             )
 
+        # P0-5：兜底价（DB昨收/本地日线）是陈旧价，非交易时段市价单禁止按此成交，
+        # 否则盘后/节假日一点即成交。限价单允许（用户显式定价）。
+        if (
+            fetched_source
+            in {
+                "db_fallback",
+                "local_daily_open",
+                "local_daily_close",
+            }
+            and order.order_type == OrderType.MARKET
+        ):
+            return ExecutionResult(
+                success=False,
+                message=(
+                    f"{order.symbol} 当前为非实时行情({fetched_source})，"
+                    "市价单拒绝成交，请用限价单或盘中再试"
+                ),
+            )
+
         slippage = settings.SIMULATION_SLIPPAGE_BPS / 10000
 
         # 市场规则：由标的代码推断（信号/订单来自同一市场），佣金、

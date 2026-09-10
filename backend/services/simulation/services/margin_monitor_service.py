@@ -191,23 +191,7 @@ async def _force_liquidate(
             board_lot_qty = int(qty)
         board_lot_qty = min(int(board_lot_qty), int(qty))
 
-        session.add(
-            SimulationCashLedger(
-                account_id=account.account_id,
-                tenant_id=account.tenant_id,
-                user_id=account.user_id,
-                event_type="FORCED_LIQUIDATION",
-                ref_type="margin_monitor",
-                ref_id=str(lot.id),
-                amount=0.0,
-                balance_after=float(account.cash or 0.0),
-                trade_date=now,
-                occurred_at=now,
-                note=f"forced liquidation: closing {board_lot_qty} shares of {lot.symbol} short position",
-            )
-        )
-        await session.commit()
-
+        # P0-4：先成交、后记账。成交失败不留幽灵流水，避免审计与余额对不上。
         outcome = await submission_service.submit_and_fill(
             tenant_id=account.tenant_id,
             user_id=int(account.user_id),
@@ -223,6 +207,22 @@ async def _force_liquidate(
         )
 
         if outcome.success:
+            session.add(
+                SimulationCashLedger(
+                    account_id=account.account_id,
+                    tenant_id=account.tenant_id,
+                    user_id=account.user_id,
+                    event_type="FORCED_LIQUIDATION",
+                    ref_type="margin_monitor",
+                    ref_id=f"{lot.id}:{outcome.order_id or ''}",
+                    amount=0.0,
+                    balance_after=float(account.cash or 0.0),
+                    trade_date=now,
+                    occurred_at=now,
+                    note=f"forced liquidation: closing {board_lot_qty} shares of {lot.symbol} short position",
+                )
+            )
+            await session.commit()
             liquidated += 1
             await session.refresh(account)
             logger.warning(

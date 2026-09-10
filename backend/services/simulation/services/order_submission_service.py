@@ -68,6 +68,69 @@ class SimulationOrderSubmissionService:
         time_in_force: str = "DAY",
         expires_at: datetime | None = None,
     ) -> SimulationSubmissionOutcome:
+        # P0-1/P0-4：同用户临界区串行化（幂等查+建单+撮合+落库），防并发双花与
+        # 融券读-改-写丢更新。锁忙直接失败由调用方重试，不静默放行。
+        try:
+            _lock_cm = SimulationAccountManager.locked_execution(
+                int(user_id), tenant_id
+            )
+        except Exception:
+            _lock_cm = None
+        if _lock_cm is None:
+            return SimulationSubmissionOutcome(
+                success=False,
+                client_order_id=str(client_order_id or "").strip() or None,
+                message="账户撮合繁忙，请稍后重试",
+            )
+        try:
+            async with _lock_cm:
+                return await self._submit_and_fill_locked(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    order_type=order_type,
+                    price=price,
+                    portfolio_id=portfolio_id,
+                    strategy_id=strategy_id,
+                    trade_action=trade_action,
+                    position_side=position_side,
+                    is_margin_trade=is_margin_trade,
+                    remarks=remarks,
+                    client_order_id=client_order_id,
+                    trigger_source=trigger_source,
+                    time_in_force=time_in_force,
+                    expires_at=expires_at,
+                )
+        except RuntimeError:
+            return SimulationSubmissionOutcome(
+                success=False,
+                client_order_id=str(client_order_id or "").strip() or None,
+                message="账户撮合繁忙，请稍后重试",
+            )
+
+    async def _submit_and_fill_locked(
+        self,
+        *,
+        tenant_id: str,
+        user_id: int,
+        symbol: str,
+        side: str,
+        quantity: float,
+        order_type: str,
+        price: float | None = None,
+        portfolio_id: int = 0,
+        strategy_id: int | None = None,
+        trade_action: str | None = None,
+        position_side: str = "long",
+        is_margin_trade: bool = False,
+        remarks: str | None = None,
+        client_order_id: str | None = None,
+        trigger_source: str = "manual",
+        time_in_force: str = "DAY",
+        expires_at: datetime | None = None,
+    ) -> SimulationSubmissionOutcome:
         normalized_client_order_id = str(client_order_id or "").strip() or None
         if normalized_client_order_id:
             existing_order = (

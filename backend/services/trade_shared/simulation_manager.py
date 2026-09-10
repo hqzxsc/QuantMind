@@ -256,6 +256,105 @@ return cjson.encode({success=true, unlocked=unlocked})
         return account_key(tenant_id, user_id, market)
 
     @staticmethod
+    def _exec_lock_key(user_id: int, tenant_id: str) -> str:
+        return f"simulation:exec_lock:{SimulationAccountManager._normalize_tenant(tenant_id)}:{user_id}"
+
+    @staticmethod
+    def acquire_exec_lock(
+        user_id: int, tenant_id: str = "default", ttl_seconds: int = 15
+    ) -> str | None:
+        """同一用户撮合/结算临界区分布式锁（SET NX EX），跨进程串行化。
+
+        返回token（持锁成功）或None（未拿到锁/Redis不可用时返回特殊放行标记""）。
+        调用方必须用 release_exec_lock(token) 释放。Redis不可用时返回""表示
+        降级放行（单机并发仍有风险，但不阻塞交易）。
+        """
+        import uuid as _uuid
+
+        try:
+            client = _shared_redis()
+            if client is None:
+                return ""
+            token = _uuid.uuid4().hex
+            ok = client.set(
+                SimulationAccountManager._exec_lock_key(user_id, tenant_id),
+                token,
+                nx=True,
+                ex=max(3, int(ttl_seconds or 15)),
+            )
+            return token if ok else None
+        except Exception:
+            return ""
+
+    @staticmethod
+    def locked_execution(
+        user_id: int, tenant_id: str = "default", ttl_seconds: int = 20
+    ):
+        """同用户撮合临界区异步上下文管理器（P0-1/P0-4）。
+
+        用法: `async with SimulationAccountManager.locked_execution(uid, tid): ...`
+        拿不到锁时重试~1s，仍失败则抛RuntimeError由调用方转拒单（不静默双花）。
+        Redis不可用时降级放行（Lua原子扣减仍是兜底）。
+        """
+        import asyncio as _asyncio
+        import contextlib as _ctxlib
+
+        @_ctxlib.asynccontextmanager
+        async def _cm():
+            token: str | None = None
+            for _attempt in range(10):
+                token = SimulationAccountManager.acquire_exec_lock(
+                    user_id, tenant_id, ttl_seconds=ttl_seconds
+                )
+                if token:
+                    break
+                if token == "":
+                    break
+                await _asyncio.sleep(0.1)
+            if token is None:
+                raise RuntimeError("SIM_EXEC_LOCK_BUSY")
+            try:
+                yield token
+            finally:
+                SimulationAccountManager.release_exec_lock(user_id, tenant_id, token)
+
+        return _cm()
+
+    @staticmethod
+    def release_exec_lock(user_id: int, tenant_id: str, token: str | None) -> None:
+        if not token:
+            return
+        try:
+            client = _shared_redis()
+            if client is None:
+                return
+            _release_lua = """
+local key = KEYS[1]
+if redis.call("GET", key) == ARGV[1] then
+    return redis.call("DEL", key)
+end
+return 0
+"""
+            try:
+                client.eval(
+                    _release_lua,
+                    1,
+                    SimulationAccountManager._exec_lock_key(user_id, tenant_id),
+                    token,
+                )
+            except Exception:
+                # eval不可用（如代理限制）时退化为直接删除：最坏多放行一次，
+                # 不影响资金安全（Lua扣减仍是原子兜底）。
+                try:
+                    client.delete(
+                        SimulationAccountManager._exec_lock_key(user_id, tenant_id)
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    @staticmethod
     def parse_account_key(key: str) -> tuple[str, str, str] | None:
         """解析账户键 -> (tenant, user原文, market)，供扫描类任务使用。"""
         from backend.shared.simulation_account_keys import parse_account_key
@@ -691,6 +790,8 @@ return cjson.encode({success=true, unlocked=unlocked})
         market: str = "CN",
     ) -> dict[str, Any]:
         key = self._get_key(user_id, tenant_id, market)
+        # NOTE(P0-4): 本函数读-改-写非原子，依赖调用方（撮合入口/强平）持有
+        # 同用户执行锁（acquire_exec_lock）来串行化；直接调用方必须先加锁。
         account = await self.get_account(user_id, tenant_id=tenant_id) or {}
         positions = dict(account.get("positions") or {})
         cash = float(account.get("cash") or 0.0)

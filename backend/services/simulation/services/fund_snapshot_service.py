@@ -236,7 +236,8 @@ class SimulationFundSnapshotService:
                             "total_pnl": row["total_pnl"],
                             "today_pnl": row["today_pnl"],
                             "source": row["source"],
-                            "updated_at": datetime.now(),
+                            # naive 列沿用 utcnow 口径（与模型默认值一致；审计字段不展示）
+                            "updated_at": datetime.utcnow(),
                         },
                     )
                 )

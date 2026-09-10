@@ -323,6 +323,14 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
                 status_code=422,
                 detail="WFA 走查暂不支持多周期训练：wfa 与 horizons 请二选一",
             )
+        # 分位推理与多周期互斥：子任务会继承 prediction_mode=quantile，
+        # 每个周期训 3 个分位模型（4 周期=12 次 LGB），预算却被切到 1/4，
+        # 且融合只用 P50 点预测、区间无声丢失。显式拒绝。
+        if req.prediction_mode == "quantile":
+            raise HTTPException(
+                status_code=422,
+                detail="prediction_mode=quantile 暂不支持多周期训练：分位推理与 horizons 请二选一",
+            )
 
     target_mode = str(payload.get("target_mode", "return")).strip().lower()
     if target_mode not in _ALLOWED_TARGET_MODE:

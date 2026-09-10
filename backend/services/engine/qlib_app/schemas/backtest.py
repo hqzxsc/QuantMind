@@ -18,7 +18,13 @@ def count_param_values(param_min: float, param_max: float, param_step: float) ->
 
 
 class QlibStrategyParams(BaseModel):
-    """Qlib 策略参数"""
+    """Qlib 策略参数
+
+    extra="allow"：官方模板声明的专有参数（momentum_weight / target_vol 等）
+    不在固定字段内，需原样透传到 builder，才能覆盖模板 kwargs。
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     topk: int = Field(50, description="选股数量", ge=5, le=200)
     short_topk: int = Field(50, description="做空选股数量", ge=0, le=200)
@@ -70,6 +76,16 @@ class QlibBacktestRequest(BaseModel):
     strategy_content: str | None = Field(
         None,
         description="策略代码（仅用于 CustomStrategy 模式）",
+    )
+    template_mode: bool = Field(
+        False,
+        description="官方模板模式：模板 JSON 声明的参数以 UI 值为准（而非模板代码硬编码值）。"
+        "由 _resolve_strategy_builder 命中模板时置位，非用户提供。",
+    )
+    template_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="官方模板 JSON params 声明的元数据（name → 声明 dict）。"
+        "template_mode 下这些参数允许 UI 覆盖；其余 kwargs 仍代码优先。",
     )
     model_id: str | None = Field(
         None,

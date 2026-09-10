@@ -539,6 +539,41 @@ class CustomStrategyBuilder(StrategyBuilder):
                         kwargs[key] = val
             # --- Parameter Merging & Filtering [END] ---
 
+            # 3. 官方模板模式（template_mode，仅回测快速模式命中官方模板时置位）：
+            #    调用方「显式传入」且模板 JSON 声明过、模板代码 kwargs 也已存在的
+            #    参数，以 strategy_params（UI 值）为准；未显式传入（如 pipeline/
+            #    定时任务用 schema 默认构造）保持代码优先，行为与改造前一致。
+            #    不注入代码中不存在的键（防策略类 __init__ TypeError，如历史
+            #    遗留 n_drop_ratio）。专家模式/AI-IDE template_mode=False 不变。
+            _tm = getattr(request, "template_mode", False)
+            _tp = getattr(request, "template_params", None)
+            if _tm is True and isinstance(_tp, dict) and _tp:
+                declared = set(_tp)
+                sp = getattr(request, "strategy_params", None)
+                _mfs = getattr(sp, "model_fields_set", None)
+                provided = set(_mfs) if isinstance(_mfs, (set, frozenset)) else set()
+                tmpl_kwargs = strategy["kwargs"]
+                for key in declared:
+                    if key in ("signal", "benchmark") or key not in original_kwargs:
+                        continue
+                    if key not in provided:
+                        continue
+                    val = getattr(sp, key, None)
+                    if val is None:
+                        continue
+                    if key == "n_drop" and val == 0:
+                        val = getattr(sp, "topk", None) or tmpl_kwargs.get("topk") or 50
+                    if tmpl_kwargs.get(key) == val:
+                        continue
+                    logger.info(
+                        "template_mode_param_from_ui",
+                        "Template mode: declared param takes UI value",
+                        param=key,
+                        code_value=tmpl_kwargs.get(key, "<absent>"),
+                        ui_value=val,
+                    )
+                    tmpl_kwargs[key] = val
+
         # 4. 如果类定义在动态模块中，优先回填 module_path，让 qlib 走标准反射链路。
         if (
             isinstance(strategy, dict)

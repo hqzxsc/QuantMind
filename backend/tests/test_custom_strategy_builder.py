@@ -143,6 +143,107 @@ def test_custom_strategy_builder_code_first_keeps_explicit_topk():
         assert result.topk == 10
 
 
+def test_template_mode_ui_overrides_pinned_param():
+    """模板模式：JSON 声明且代码里已存在的参数，UI 值必须覆盖模板硬编码。"""
+    builder = CustomStrategyBuilder()
+
+    class TopkStrategy:
+        def __init__(self, topk, n_drop=5, signal="<PRED>", **kwargs):
+            self.topk = topk
+            self.n_drop = n_drop
+
+    request = MagicMock(spec=QlibBacktestRequest)
+    request.strategy_content = "STRATEGY_CONFIG template"
+    request.template_mode = True
+    request.template_params = {"topk": {"default": 77}, "n_drop": {"default": 7}}
+    request.strategy_params = MagicMock()
+    request.strategy_params.topk = 77
+    request.strategy_params.n_drop = 7
+    # 模拟前端快速模式：显式送出的字段（pydantic model_fields_set）
+    request.strategy_params.model_fields_set = {"topk", "n_drop"}
+    for key in ["min_score", "max_weight", "stop_loss", "take_profit"]:
+        setattr(request.strategy_params, key, None)
+
+    builder._build_strategy_from_content = MagicMock(
+        return_value=(
+            {"class": "TopkStrategy", "kwargs": {"topk": 10, "n_drop": 5, "signal": "<PRED>"}},
+            {"TopkStrategy": TopkStrategy},
+        )
+    )
+    builder._validate_strategy_content = MagicMock()
+
+    result = builder.build(request, {}, None, "bt_test")
+    kwargs = result["kwargs"] if isinstance(result, dict) else vars(result)
+    assert kwargs["topk"] == 77
+    assert kwargs["n_drop"] == 7
+
+
+def test_template_mode_does_not_inject_undeclared_or_absent():
+    """模板模式：代码 kwargs 里没有的声明参数不得注入（防类 __init__ TypeError）。"""
+    builder = CustomStrategyBuilder()
+
+    class StrictStrategy:
+        def __init__(self, topk, signal="<PRED>"):
+            self.topk = topk
+
+    request = MagicMock(spec=QlibBacktestRequest)
+    request.strategy_content = "STRATEGY_CONFIG template"
+    request.template_mode = True
+    # n_drop_ratio 声明了但代码里没有，且类不接受 → 必须被跳过
+    request.template_params = {"n_drop_ratio": {"default": 0.2}, "topk": {"default": 50}}
+    request.strategy_params = MagicMock()
+    request.strategy_params.topk = 50
+    request.strategy_params.n_drop_ratio = 0.2
+    request.strategy_params.model_fields_set = {"topk", "n_drop_ratio"}
+    for key in ["n_drop", "min_score", "max_weight", "stop_loss", "take_profit"]:
+        setattr(request.strategy_params, key, None)
+
+    builder._build_strategy_from_content = MagicMock(
+        return_value=(
+            {"class": "StrictStrategy", "kwargs": {"topk": 30, "signal": "<PRED>"}},
+            {"StrictStrategy": StrictStrategy},
+        )
+    )
+    builder._validate_strategy_content = MagicMock()
+
+    result = builder.build(request, {}, None, "bt_test")
+    kwargs = result["kwargs"] if isinstance(result, dict) else vars(result)
+    assert "n_drop_ratio" not in kwargs
+    assert kwargs["topk"] == 50  # 声明且在代码 kwargs → UI 覆盖生效
+
+
+def test_template_mode_unsent_params_keep_code_first():
+    """模板模式但调用方未显式送参（如 pipeline 定时任务用 schema 默认构造）：
+    保持代码优先，与改造前行为一致。"""
+    builder = CustomStrategyBuilder()
+
+    class TopkStrategy:
+        def __init__(self, topk, n_drop=5, signal="<PRED>", **kwargs):
+            self.topk = topk
+
+    request = MagicMock(spec=QlibBacktestRequest)
+    request.strategy_content = "STRATEGY_CONFIG template"
+    request.template_mode = True
+    request.template_params = {"topk": {"default": 77}}
+    request.strategy_params = MagicMock()
+    request.strategy_params.topk = 50  # schema 默认（并非用户调整）
+    request.strategy_params.model_fields_set = set()  # 没有任何显式送字段
+    for key in ["n_drop", "min_score", "max_weight", "stop_loss", "take_profit"]:
+        setattr(request.strategy_params, key, None)
+
+    builder._build_strategy_from_content = MagicMock(
+        return_value=(
+            {"class": "TopkStrategy", "kwargs": {"topk": 10, "signal": "<PRED>"}},
+            {"TopkStrategy": TopkStrategy},
+        )
+    )
+    builder._validate_strategy_content = MagicMock()
+
+    result = builder.build(request, {}, None, "bt_test")
+    kwargs = result["kwargs"] if isinstance(result, dict) else vars(result)
+    assert kwargs["topk"] == 10  # 未送 → 代码值 10 保留
+
+
 def test_custom_strategy_builder_backfills_missing_topk():
     """代码缺失 topk 时，类支持则用 UI/默认值回填。"""
     builder = CustomStrategyBuilder()

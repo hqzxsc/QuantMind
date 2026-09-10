@@ -124,7 +124,7 @@ const RuntimeLayer: React.FC<RuntimeLayerProps> = ({
                                 <div className="mt-1 text-[11px] text-slate-300">在顶部选择已验证策略并启动，运行状态与参数将显示在这里</div>
                             </div>
                         ) : (
-                            <div className="lg:col-span-3 rounded-xl border border-slate-100 p-3 text-center">
+                            <div className="lg:col-span-3 rounded-xl border border-slate-100 p-3 text-center flex flex-col">
                                 <div className="text-xs font-bold text-slate-500 mb-2">运行策略</div>
                                 <div className="text-sm font-black text-slate-800 truncate" title={strategyName}>{strategyName}</div>
                                 <div className="mt-2 grid grid-cols-2 gap-2">
@@ -132,7 +132,7 @@ const RuntimeLayer: React.FC<RuntimeLayerProps> = ({
                                     <ParamCell label="生产批次交易日" value={latestRun?.prediction_trade_date || '-'} />
                                 </div>
                                 {Number.isFinite(progress) && (
-                                    <div className="mt-2.5">
+                                    <div className="mt-auto pt-2.5">
                                         <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
                                             <span>任务进度</span><span>{progress}%</span>
                                         </div>

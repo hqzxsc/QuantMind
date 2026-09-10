@@ -177,6 +177,33 @@ class SimulationFundSnapshotService:
             )
         return {"day_open_equity": day_open, "month_open_equity": month_open}
 
+    @staticmethod
+    async def _read_ledger_initial_equity(tenant_id: str, user_id: str) -> Decimal:
+        """从 PG 台账读账户初始权益（live 成交已同步写台账后，此处有真实值）。
+
+        settings 缺失时此前直接回退 total_asset，导致 initial=total、盈亏恒为 0。
+        """
+        try:
+            from backend.services.simulation.models.account import SimulationAccount
+            from backend.services.simulation.services.ledger_service import (
+                SimulationLedgerService,
+            )
+
+            account_id = SimulationLedgerService.build_account_id(tenant_id, user_id)
+            async with get_session(read_only=True) as session:
+                row = (
+                    await session.execute(
+                        select(SimulationAccount.initial_equity).where(
+                            SimulationAccount.account_id == account_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if row is not None and Decimal(str(row)) > 0:
+                    return Decimal(str(row))
+        except Exception as exc:
+            logger.debug("ledger initial equity lookup failed: %s", exc)
+        return Decimal("0")
+
     @classmethod
     async def capture_all(
         cls, redis: RedisClient, snapshot_date=None
@@ -206,6 +233,10 @@ class SimulationFundSnapshotService:
                 row["initial_capital"] = cls._read_settings_initial_cash(
                     redis, tenant_id, user_id
                 )
+                if row["initial_capital"] == 0:
+                    row["initial_capital"] = await cls._read_ledger_initial_equity(
+                        tenant_id, user_id
+                    )
                 if row["initial_capital"] == 0:
                     row["initial_capital"] = row["total_asset"]
             # 总盈亏 = 总资产 - 初始资金（手续费已从现金扣减，天然计入）

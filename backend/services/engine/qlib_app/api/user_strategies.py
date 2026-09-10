@@ -225,9 +225,55 @@ def _resolve_trade_service_url() -> str:
         hostname = (parsed.hostname or "").strip().lower()
         # 容器内若读到本地开发地址（127.0.0.1/localhost），会错误指向当前 engine 容器。
         if os.path.exists("/.dockerenv") and hostname in {"127.0.0.1", "localhost"}:
+            # OSS 单容器（SERVICE_MODE=all）下 trade 同进程监听 8002，直连本机；
+            # 只有分容器部署才走 quantmind-trade 域名。
+            if os.getenv("SERVICE_MODE", "").strip().lower() == "all":
+                return "http://127.0.0.1:8002/api/v1/real-trading/status"
             return "http://quantmind-trade:8002/api/v1/real-trading/status"
         return f"{direct.rstrip('/')}/api/v1/real-trading/status"
+    if os.getenv("SERVICE_MODE", "").strip().lower() == "all":
+        return "http://127.0.0.1:8002/api/v1/real-trading/status"
     return "http://quantmind-trade:8002/api/v1/real-trading/status"
+
+
+def _fetch_local_active_configs() -> list[dict[str, Any]]:
+    """直读 engine 激活写入的 Redis 活跃池（quantmind:active_strategies）。
+
+    策略列表的运行态/收益归因不再强依赖 trade 服务 HTTP（分容器域名在
+    OSS 单容器下不通、portfolios 表常为空）。trade HTTP 仅作实盘补充。
+    任何失败返回 []，调用方回退原逻辑。
+    """
+    try:
+        try:
+            redis = get_redis_sentinel_client()
+        except NameError:
+            return []
+        if redis is None:
+            return []
+        raw = redis.hgetall(ACTIVE_STRATEGIES_KEY) or {}
+    except Exception as exc:
+        logger.warning("local active strategies read failed: %s", exc)
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        items = raw.items() if isinstance(raw, dict) else []
+    except Exception:
+        return []
+    for field, payload in items:
+        try:
+            data = json.loads(payload) if isinstance(payload, (str, bytes)) else payload
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        data = dict(data)
+        try:
+            field_str = field.decode() if isinstance(field, bytes) else str(field)
+        except Exception:
+            field_str = str(field)
+        data.setdefault("strategy_id", field_str)
+        out.append(data)
+    return out
 
 
 def _get_user_id(request: Request) -> str | None:
@@ -566,6 +612,15 @@ async def list_user_strategies(
             sim_mode = "SIMULATION"
         if sim_mode == "SIMULATION":
             sim_fund = await _fetch_sim_fund_fallback(tenant_id, user_id)
+        # 本地活跃池（activate 写入，不依赖跨服务 HTTP，直接判定运行态）。
+        local_active_cfgs = _fetch_local_active_configs()
+        try:
+            my_uids = {
+                normalize_user_id(user_id),
+                str(user_id or "").strip(),
+            }
+        except Exception:
+            my_uids = {str(user_id or "").strip()}
 
         def _to_float(value: Any, default: float = 0.0) -> float:
             try:
@@ -600,7 +655,33 @@ async def list_user_strategies(
             elif active_strategy_name and item_name == active_strategy_name:
                 is_active_item = True
 
+            # 本地活跃池兜底：trade HTTP 不通时仍能判定运行态（同用户+租户才算）。
+            local_match = False
+            if not is_active_item and local_active_cfgs:
+                for cfg in local_active_cfgs:
+                    try:
+                        if str(cfg.get("tenant_id") or "default") != tenant_id:
+                            continue
+                        if str(cfg.get("user_id") or "") not in my_uids:
+                            continue
+                        cfg_sid = str(cfg.get("strategy_id") or "").strip()
+                        cfg_name = str(cfg.get("name") or "").strip().lower()
+                        cfg_type = str(cfg.get("strategy_type") or "").strip().lower()
+                        if (
+                            (cfg_sid and cfg_sid == item_id)
+                            or (cfg_type and cfg_type == item_strategy_type)
+                            or (cfg_name and cfg_name == item_name)
+                        ):
+                            local_match = True
+                            break
+                    except Exception:
+                        continue
+            is_active_item = is_active_item or local_match
+
             item_runtime_state = runtime_state if is_active_item else None
+            if item_runtime_state is None and local_match:
+                # 跨服务状态不可达时，本地激活记录即运行态。
+                item_runtime_state = "running"
             effective_status = item_runtime_state or _base_to_effective_status(
                 base_status
             )

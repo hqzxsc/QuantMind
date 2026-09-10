@@ -889,6 +889,7 @@ def backfill_inference_quality(horizon_days: int = 5, limit: int = 500) -> dict[
     data_trade_date <= 当前- horizon 且未在 qm_model_inference_quality 的日期。
     """
     from datetime import timedelta
+    from sqlalchemy import text
     from backend.services.engine.inference.inference_quality_backfill import (
         inference_quality_backfill,
     )
@@ -1080,7 +1081,16 @@ def dispatch_market_sync() -> dict[str, Any]:
         return {"status": "failed", "error": str(e)}
 
 
-@celery_app.task(name="engine.tasks.run_market_scheduled_sync")
+@celery_app.task(
+    name="engine.tasks.run_market_scheduled_sync",
+    # 上游数据源（yfinance 等）被限流时会把单个 ticker 拖到分钟级，整体超过全局
+    # 3600s 硬限制 → 进程被 SIGKILL；叠加 acks_late 会导致任务重新入队、再次超时，
+    # 形成死循环。这里收紧独立超时，并在派发即 ack，保证一次调度最多失败一次。
+    soft_time_limit=int(os.getenv("MARKET_SYNC_SOFT_TIME_LIMIT", "1800")),
+    time_limit=int(os.getenv("MARKET_SYNC_TIME_LIMIT", "2100")),
+    acks_late=False,
+    reject_on_worker_lost=False,
+)
 def run_market_scheduled_sync(market: str, cfg: dict[str, Any]) -> dict[str, Any]:
     """执行某市场的定时同步（由 dispatch_market_sync 派发）。"""
     try:

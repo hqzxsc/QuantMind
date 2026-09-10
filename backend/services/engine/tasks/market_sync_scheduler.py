@@ -145,14 +145,38 @@ def run_market_sync(market: str, cfg: dict[str, Any]) -> dict[str, Any]:
     result["result"] = run(**kwargs)
 
     if with_qlib:
-        try:
-            from backend.services.engine.qlib_data_builder import ensure_qlib_cache
+        # 数据拉取阶段若被上游限流拖长，再重建 qlib 缓存会超出任务硬超时被 SIGKILL。
+        # 这里按已耗时判断剩余时间是否够用，不够则跳过并在结果里标记 skipped。
+        elapsed = (datetime.now() - datetime.fromisoformat(result["started"])).total_seconds()
+        budget = float(os.getenv("MARKET_SYNC_SOFT_TIME_LIMIT", "1800"))
+        if elapsed > budget * 0.5:
+            logger.error(
+                "[SyncSchedule] %s 数据拉取已耗时 %.0fs，超过预算 %.0fs 的一半，跳过 qlib 缓存重建",
+                market,
+                elapsed,
+                budget,
+            )
+            result["qlib"] = {
+                "status": "skipped",
+                "reason": f"data stage took {elapsed:.0f}s, too long to rebuild qlib cache",
+            }
+        else:
+            try:
+                from backend.services.engine.qlib_data_builder import ensure_qlib_cache
 
-            qlib_market = {"US": "US", "HK": "HK", "BC": "CRYPTO", "FUTURES": "FUTURES"}[market]
-            result["qlib"] = {"status": "ok", "provider_uri": ensure_qlib_cache(market=qlib_market)}
-        except Exception as exc:  # noqa: BLE001
-            logger.error("%s 定时同步 qlib 缓存失败: %s", market, exc, exc_info=True)
-            result["qlib"] = {"status": "error", "reason": str(exc)}
+                qlib_market = {
+                    "US": "US",
+                    "HK": "HK",
+                    "BC": "CRYPTO",
+                    "FUTURES": "FUTURES",
+                }[market]
+                result["qlib"] = {
+                    "status": "ok",
+                    "provider_uri": ensure_qlib_cache(market=qlib_market),
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.error("%s 定时同步 qlib 缓存失败: %s", market, exc, exc_info=True)
+                result["qlib"] = {"status": "error", "reason": str(exc)}
 
     result["finished"] = datetime.now().isoformat()
     return result

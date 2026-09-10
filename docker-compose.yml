@@ -73,12 +73,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # 安全：宿主机侧仅监听回环，远程经 SSH 隧道访问；容器内仍需 0.0.0.0（见 main_oss.py）
+    # 安全：业务端口保持公网可达（登录/仪表盘用）；数据库/中间件端口仅回环。
+    # 容器内仍需 0.0.0.0 监听（见 main_oss.py），宿主机暴露面由本节控制。
     ports:
-      - "127.0.0.1:8000:8000"  # API Gateway
-      - "127.0.0.1:8001:8001"  # Engine (Qlib回测)
-      - "127.0.0.1:8002:8002"  # Trade (交易服务)
-      - "127.0.0.1:8003:8003"  # Stream (实时行情)
+      - "8000:8000"  # API Gateway
+      - "8001:8001"  # Engine (Qlib回测)
+      - "8002:8002"  # Trade (交易服务)
+      - "8003:8003"  # Stream (实时行情)
     environment:
       # 应用配置
       - APP_EDITION=oss

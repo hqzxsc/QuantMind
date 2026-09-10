@@ -86,7 +86,8 @@ def _resolve_parquet_path(data_dir: str, trade_date: str, market: str) -> str | 
     return None
 
 
-def _load_real_returns(data_dir: str, trade_date: str, market: str, horizon: int) -> pd.DataFrame:
+def _load_real_returns_snapshot(data_dir: str, trade_date: str, market: str,
+                                horizon: int) -> pd.DataFrame:
     """读特征快照，构造 T 日对未来 H 日真实收益（复用 train.py 标签构造）。
 
     返回 DataFrame: [symbol, label] where label = 未来 H 日收益（截面 rank 前原始值）。
@@ -128,6 +129,77 @@ def _load_real_returns(data_dir: str, trade_date: str, market: str, horizon: int
 
     df = df[df["label"].notna()][["symbol", "label"]].copy()
     df["symbol"] = df["symbol"].astype(str)
+    return df
+
+
+def _load_real_returns_quantdb(trade_date: str, horizon: int) -> pd.DataFrame:
+    """从 QuantDB 后复权日线构造 T 日 → 未来 H 个交易日的真实收益。
+
+    A 股训练/推理已改为直读 QuantDB，feature_snapshots 目录在新部署里是空的，
+    旧路径取不到数据时用这里兜底。symbol 统一转 prefix 口径，与 PG 中的
+    推理分数（engine_signal_scores）对齐。
+    """
+    import glob as _glob
+    import os as _os
+    from backend.shared.stock_utils import StockCodeUtil
+
+    data_dir = _os.getenv("QM_QUANTDB_DATA_DIR", "/data/quantdb")
+    base = _os.path.join(data_dir, "1_kline_data", "daily_backward")
+    if not _os.path.isdir(base):
+        base = _os.path.join(data_dir, "1_kline_data", "daily_unadjusted")
+    if not _os.path.isdir(base):
+        logger.warning("QuantDB 日线目录不存在: dir=%s", data_dir)
+        return pd.DataFrame(columns=["symbol", "label"])
+
+    start = str(trade_date).replace("-", "")
+    dts = sorted(
+        p.split("=", 1)[1]
+        for p in _os.listdir(base)
+        if p.startswith("dt=") and p.split("=", 1)[1].isdigit() and p.split("=", 1)[1] >= start
+    )
+    if len(dts) <= horizon:
+        logger.warning(
+            "QuantDB 无足够的未来交易日: date=%s horizon=%d available=%d",
+            trade_date,
+            horizon,
+            len(dts),
+        )
+        return pd.DataFrame(columns=["symbol", "label"])
+
+    d0, d1 = dts[0], dts[horizon]
+    frames = []
+    for d in (d0, d1):
+        files = sorted(_glob.glob(_os.path.join(base, f"dt={d}", "*.parquet")))
+        if not files:
+            return pd.DataFrame(columns=["symbol", "label"])
+        frames.append(
+            pd.concat(
+                [pq.read_table(f, columns=["symbol", "close"]).to_pandas() for f in files]
+            ).assign(_dt=d)
+        )
+
+    piv = pd.concat(frames).pivot_table(
+        index="symbol", columns="_dt", values="close", aggfunc="last"
+    )
+    if d0 not in piv.columns or d1 not in piv.columns:
+        return pd.DataFrame(columns=["symbol", "label"])
+
+    out = ((piv[d1] / piv[d0]) - 1.0).dropna().rename("label").reset_index()
+    out["symbol"] = out["symbol"].map(StockCodeUtil.to_prefix)
+    return out[["symbol", "label"]]
+
+
+def _load_real_returns(data_dir: str, trade_date: str, market: str,
+                       horizon: int) -> pd.DataFrame:
+    """真实收益入口：优先 feature_snapshots，取不到时回退 QuantDB（A 股）。"""
+    df = _load_real_returns_snapshot(data_dir, trade_date, market, horizon)
+    if not df.empty:
+        return df
+    if str(market or "").upper() in ("CN", "A", ""):
+        logger.info(
+            "特征快照无 %s/%s 的真实收益，回退 QuantDB 日线", trade_date, market
+        )
+        return _load_real_returns_quantdb(trade_date, horizon)
     return df
 
 
@@ -205,7 +277,10 @@ class InferenceQualityBackfill:
             return None
         df = pd.DataFrame([dict(r) for r in rows])
         df = df.rename(columns={"fusion_score": "score"})
-        df["symbol"] = df["symbol"].astype(str)
+        # 统一成 prefix 口径（PG 层），与 QuantDB 侧经 StockCodeUtil 转换后的 symbol 对齐
+        from backend.shared.stock_utils import StockCodeUtil
+
+        df["symbol"] = df["symbol"].map(lambda s: StockCodeUtil.to_prefix(str(s)))
         return df
 
     async def backfill_date(self, *, tenant_id: str = "default", user_id: str = "",

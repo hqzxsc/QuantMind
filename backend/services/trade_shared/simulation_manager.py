@@ -7,8 +7,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from backend.services.trade_shared.redis_client import RedisClient
+from backend.services.trade_shared.redis_client import RedisClient, redis_client
 from backend.services.trade_shared.trade_config import settings
+from backend.shared.simulation_account_keys import normalize_tenant
 from backend.shared.trade_account_cache import read_json_cache, write_json_cache
 
 logger = logging.getLogger(__name__)
@@ -19,10 +20,11 @@ logger = logging.getLogger(__name__)
 RESERVED_NON_NUMERIC_USER_ID = 0
 
 
-def require_sim_user_id(raw_user_id: str) -> int:
+def require_sim_user_id(raw_user_id: str, tenant_id: str = "default") -> int:
     """JWT sub 转模拟盘 int user_id。三处路由共用，禁止各自手写分叉。
 
     数字 sub 直接转 int；非数字（OSS 默认 admin 用户）归 0。
+    同时旁路记录 sub 反查映射（见 record_sim_sub），供 WS 推送定位主题。
     """
     from fastapi import HTTPException
 
@@ -30,13 +32,68 @@ def require_sim_user_id(raw_user_id: str) -> int:
         raise HTTPException(status_code=400, detail="Invalid user_id in token")
     raw = str(raw_user_id).strip()
     if raw.isdigit():
-        return int(raw)
-    logger.error(
-        "Non-numeric user_id mapped to reserved account 0: %s "
-        "(多用户部署下不同用户名会串号，请改用数字 sub)",
-        raw,
-    )
-    return RESERVED_NON_NUMERIC_USER_ID
+        sim_user_id = int(raw)
+    else:
+        logger.error(
+            "Non-numeric user_id mapped to reserved account 0: %s "
+            "(多用户部署下不同用户名会串号，请改用数字 sub)",
+            raw,
+        )
+        sim_user_id = RESERVED_NON_NUMERIC_USER_ID
+    record_sim_sub(sim_user_id, raw, tenant_id=tenant_id)
+    return sim_user_id
+
+
+# ── 模拟盘 uid -> JWT sub 反查映射 ────────────────────────────────────────
+# 前端 WS 订阅主题是 `strategy.{JWT sub}`（如 strategy.admin），而模拟账户键
+# 用的是数字 uid（非数字 sub 一律归 0）。仅凭账户键无法反推订阅主题，故在解析
+# 身份时旁路记一份映射；推送侧据此把消息发到前端真正订阅的主题上。
+# 非数字 sub 会多个名字映射到同一个 0 号账户，故用 SET 而非单值。
+SIM_SUB_MAP_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _sub_map_key(sim_user_id: int, tenant_id: str = "default") -> str:
+    return f"quantmind:sim:submap:{normalize_tenant(tenant_id)}:{sim_user_id}"
+
+
+def _shared_redis():
+    """取共享 Redis 客户端（未连接则先连），失败返回 None。"""
+    try:
+        if redis_client.client is None:
+            redis_client.connect()
+        return redis_client.client
+    except Exception as exc:
+        logger.debug("shared redis unavailable: %s", exc)
+        return None
+
+
+def record_sim_sub(sim_user_id: int, raw_user_id: str, tenant_id: str = "default") -> None:
+    """记录 sub 反查映射。纯旁路，任何失败都只记日志，不影响鉴权主流程。"""
+    try:
+        raw = str(raw_user_id or "").strip()
+        if not raw:
+            return
+        client = _shared_redis()
+        if client is None:
+            return
+        key = _sub_map_key(sim_user_id, tenant_id)
+        client.sadd(key, raw)
+        client.expire(key, SIM_SUB_MAP_TTL_SECONDS)
+    except Exception as exc:
+        logger.debug("record_sim_sub failed: %s", exc)
+
+
+def resolve_sim_subs(sim_user_id: int, tenant_id: str = "default") -> list[str]:
+    """读取某模拟盘 uid 对应的全部 JWT sub（可能多个串号到同一账户）。"""
+    try:
+        client = _shared_redis()
+        if client is None:
+            return []
+        members = client.smembers(_sub_map_key(sim_user_id, tenant_id)) or set()
+        return sorted(str(m) for m in members if str(m).strip())
+    except Exception as exc:
+        logger.debug("resolve_sim_subs failed: %s", exc)
+        return []
 
 
 class SimulationAccountManager:

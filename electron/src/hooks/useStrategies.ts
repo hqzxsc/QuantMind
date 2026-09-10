@@ -80,6 +80,7 @@ export const useStrategies = (options: UseStrategiesOptions = {}): UseStrategies
     
     const fingerprintRef = useRef<string | null>(null);
     const initializedRef = useRef<boolean>(false);
+    const fetchDataRef = useRef<(params?: { silent?: boolean }) => Promise<void>>(async () => {});
     const strategiesRef = useRef<Strategy[]>([]);
     const statsRef = useRef<StrategyStats>(stats);
     const subscribedTopicRef = useRef<string | null>(null);
@@ -234,6 +235,28 @@ export const useStrategies = (options: UseStrategiesOptions = {}): UseStrategies
     const refresh = useCallback(async () => {
         await fetchData({ silent: true });
     }, [fetchData]);
+
+    // 供 WS 推送回调使用：避免把 fetchData 放进订阅副作用的依赖里导致反复重订阅
+    useEffect(() => {
+        fetchDataRef.current = fetchData;
+    }, [fetchData]);
+
+    // 后端 strategy.* 推送（模拟盘实时盈亏快照）：WS 连上时前端轮询会被关掉，
+    // 只认推送。收到后以接口为准重新拉取，避免本地合并口径与后端漂移。
+    useEffect(() => {
+        if (!enableRealtime) {
+            return;
+        }
+
+        const handleStrategyUpdate = () => {
+            void fetchDataRef.current({ silent: true });
+        };
+
+        websocketService.addMessageHandler(MessageType.STRATEGY_UPDATE, handleStrategyUpdate);
+        return () => {
+            websocketService.removeMessageHandler(MessageType.STRATEGY_UPDATE, handleStrategyUpdate);
+        };
+    }, [enableRealtime]);
 
     const startStrategy = useCallback(async (id: string): Promise<boolean> => {
         const previousStrategies = strategies;

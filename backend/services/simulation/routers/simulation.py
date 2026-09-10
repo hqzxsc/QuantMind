@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _require_user_id(raw_user_id: str) -> int:
+def _require_user_id(raw_user_id: str, tenant_id: str = "default") -> int:
     """兼容别名，统一走 require_sim_user_id（OSS admin 归保留账户 0）。"""
-    return require_sim_user_id(raw_user_id)
+    return require_sim_user_id(raw_user_id, tenant_id=tenant_id)
 
 FUNDAMENTAL_PARQUET_PATH = "/app/db/custom/fundamental_aligned.parquet"
 _PARQUET_LATEST_PRICE_MAP: dict[str, float] | None = None
@@ -219,7 +219,7 @@ async def get_simulation_settings(
     redis: RedisClient = Depends(get_redis),
 ):
     manager = SimulationAccountManager(redis)
-    uid = _require_user_id(auth.user_id)
+    uid = _require_user_id(auth.user_id, auth.tenant_id)
     data = await manager.get_settings(
         user_id=uid,
         tenant_id=auth.tenant_id,
@@ -267,7 +267,7 @@ async def reset_simulation_account(
     否则会出现“资金已清零但控制台仍显示运行中”。
     """
     manager = SimulationAccountManager(redis)
-    uid = _require_user_id(auth.user_id)
+    uid = _require_user_id(auth.user_id, auth.tenant_id)
     if request.initial_cash is None:
         settings = await manager.get_settings(
             user_id=uid,
@@ -466,7 +466,7 @@ async def get_simulation_account(
     需用户在个人中心显式重置为 100 万，避免自动重置覆盖手动任务后的持仓。
     """
     manager = SimulationAccountManager(redis)
-    uid = _require_user_id(auth.user_id)
+    uid = _require_user_id(auth.user_id, auth.tenant_id)
     market = market.upper()
     account = await manager.get_account(uid, tenant_id=auth.tenant_id, market=market)
     if not account:
@@ -645,7 +645,7 @@ async def confirm_holding_sync(
     逻辑：根据识别出的股票和数量，拉取当前最新市价，并重新计算账户初始金额，使同步后的盈亏对齐。
     """
     manager = SimulationAccountManager(redis)
-    uid = _require_user_id(auth.user_id)
+    uid = _require_user_id(auth.user_id, auth.tenant_id)
 
     # OCR 同步即“重新对齐起点”：先清旧成交/快照/新台账，避免旧基线导致
     # today_pnl 脉冲、历史曲线串基线（与 reset 同口径）。

@@ -19,9 +19,9 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _require_user_id(raw_user_id: str) -> int:
+def _require_user_id(raw_user_id: str, tenant_id: str = "default") -> int:
     """兼容别名，统一走 require_sim_user_id（OSS admin 归保留账户 0）。"""
-    return require_sim_user_id(raw_user_id)
+    return require_sim_user_id(raw_user_id, tenant_id=tenant_id)
 
 
 @router.get("/trades", response_model=list[SimTradeResponse])
@@ -34,7 +34,7 @@ async def list_trades(
     db: AsyncSession = Depends(get_read_db),
     redis: RedisClient = Depends(get_redis),
 ):
-    user_id = _require_user_id(auth.user_id)
+    user_id = _require_user_id(auth.user_id, auth.tenant_id)
     service = SimTradeService(db, redis)
     trades = await service.list_trades(
         auth.tenant_id,
@@ -68,7 +68,7 @@ async def get_trade(
     auth: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = _require_user_id(auth.user_id)
+    user_id = _require_user_id(auth.user_id, auth.tenant_id)
     service = SimTradeService(db)
     trade = await service.get_trade(auth.tenant_id, user_id, trade_id)
     if not trade:
@@ -83,7 +83,7 @@ async def get_trade_stats(
     db: AsyncSession = Depends(get_read_db),
     redis: RedisClient = Depends(get_redis),
 ):
-    user_id = _require_user_id(auth.user_id)
+    user_id = _require_user_id(auth.user_id, auth.tenant_id)
     service = SimTradeService(db, redis)
     stats = await service.get_stats(auth.tenant_id, user_id, portfolio_id=portfolio_id)
     logger.info(

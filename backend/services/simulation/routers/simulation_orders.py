@@ -27,9 +27,9 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _require_user_id(raw_user_id: str) -> int:
+def _require_user_id(raw_user_id: str, tenant_id: str = "default") -> int:
     """兼容别名，统一走 require_sim_user_id（OSS admin 归保留账户 0）。"""
-    return require_sim_user_id(raw_user_id)
+    return require_sim_user_id(raw_user_id, tenant_id=tenant_id)
 
 
 @router.post("/orders", response_model=SimOrderResponse, status_code=status.HTTP_201_CREATED)
@@ -49,7 +49,7 @@ async def create_order(
     manager = SimulationAccountManager(redis)
     engine = SimulationExecutionEngine(db, manager)
 
-    user_id = _require_user_id(auth.user_id)
+    user_id = _require_user_id(auth.user_id, auth.tenant_id)
     order = await order_service.create_order(auth.tenant_id, user_id, data)
     order.status = OrderStatus.SUBMITTED
     await db.commit()
@@ -78,7 +78,7 @@ async def list_orders(
     auth: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = _require_user_id(auth.user_id)
+    user_id = _require_user_id(auth.user_id, auth.tenant_id)
     service = SimOrderService(db)
     orders = await service.list_orders(
         auth.tenant_id,
@@ -118,7 +118,7 @@ async def get_order(
     auth: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = _require_user_id(auth.user_id)
+    user_id = _require_user_id(auth.user_id, auth.tenant_id)
     service = SimOrderService(db)
     order = await service.get_order(auth.tenant_id, user_id, order_id)
     if not order:
@@ -133,7 +133,7 @@ async def cancel_order(
     auth: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = _require_user_id(auth.user_id)
+    user_id = _require_user_id(auth.user_id, auth.tenant_id)
     service = SimOrderService(db)
     order = await service.get_order(auth.tenant_id, user_id, order_id)
     if not order:

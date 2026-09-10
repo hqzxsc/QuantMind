@@ -35,8 +35,14 @@ class FundamentalAligner:
             self.full_path = self._project_root / self.parquet_path
 
         configured_features_path = os.getenv("FEATURES_DAILY_PATH", "").strip()
+        # QM_QUANTDB_DATA_DIR 指向 quantdb 根目录（容器内默认 /data/quantdb），
+        # 是 6_ml_datasets 的真实父目录；只写 /data/6_ml_datasets 会在容器里落空，
+        # 导致每次都回退到 2.7GB 的 fundamental_aligned.parquet（慢且缺部分列）。
+        quantdb_dir = os.getenv("QM_QUANTDB_DATA_DIR", "").strip()
         feature_candidates = [
             Path(configured_features_path) if configured_features_path else None,
+            Path(quantdb_dir) / "6_ml_datasets/features_daily" if quantdb_dir else None,
+            Path("/data/quantdb/6_ml_datasets/features_daily"),
             Path("/data/6_ml_datasets/features_daily"),
             self._project_root / self.DEFAULT_FEATURES_DAILY_PATH,
         ]

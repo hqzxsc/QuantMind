@@ -907,7 +907,7 @@ def build_specs() -> list[dict]:
                      f_equity_min=5e9, f_revenue_ttm_min=5e9, f_pe_ttm_min=0.0,
                      f_pe_ttm_max=45, f_amount_ma_5_min=5000),
         tips=["features_daily 没有 ROE 列，本模板用「净利润 + 净资产」绝对规模近似质量。",
-              "若要真正的 ROE 因子，需要把 fundamental_aligned.parquet 的 roe 列并入 features_daily。"],
+              "若要真正的 ROE 因子，需把 3_financial_data 的 roe 合并进 features_daily（经 quantdb_hub.fetch_financial）。"],
     )
 
     # ================= 03 成长与景气 =================

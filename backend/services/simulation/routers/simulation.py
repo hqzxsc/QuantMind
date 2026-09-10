@@ -1,6 +1,5 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, File, UploadFile
 from pydantic import BaseModel
@@ -21,7 +20,6 @@ from backend.shared.stock_utils import StockCodeUtil
 import logging
 import httpx
 from sqlalchemy import text
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -32,53 +30,33 @@ def _require_user_id(raw_user_id: str, tenant_id: str = "default") -> int:
     """兼容别名，统一走 require_sim_user_id（OSS admin 归保留账户 0）。"""
     return require_sim_user_id(raw_user_id, tenant_id=tenant_id)
 
-FUNDAMENTAL_PARQUET_PATH = "/app/db/custom/fundamental_aligned.parquet"
-_PARQUET_LATEST_PRICE_MAP: dict[str, float] | None = None
+def _to_quantdb_suffix(symbol: str) -> str:
+    """prefix(SH600036) → suffix(600036.SH)；返回空即无法归一化，原样返回。"""
+    suffix = StockCodeUtil.to_suffix(str(symbol or ""))
+    return suffix or str(symbol or "")
 
 
-def _load_latest_price_map_from_parquet() -> dict[str, float]:
-    global _PARQUET_LATEST_PRICE_MAP
-    if _PARQUET_LATEST_PRICE_MAP is not None:
-        return _PARQUET_LATEST_PRICE_MAP
-
+async def _get_latest_close_from_quantdb(symbol: str) -> float:
+    """从 QuantDB 未复权 K 线(daily_unadjusted)最新交易日读取收盘价。"""
     try:
-        df = pd.read_parquet(
-            FUNDAMENTAL_PARQUET_PATH,
-            columns=["trade_date", "symbol", "close", "adj_factor"],
+        from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
+
+        hub = QuantDBDataHub.get_instance()
+        if not hub.available:
+            return 0.0
+        end = date.today()
+        start = end - timedelta(days=90)
+        df = hub.fetch_daily_kline(
+            _to_quantdb_suffix(symbol), start, end, adjust="none"
         )
+        if df is None or df.empty or "close" not in df.columns:
+            return 0.0
+        df = df.dropna(subset=["close"])
         if df.empty:
-            _PARQUET_LATEST_PRICE_MAP = {}
-            return _PARQUET_LATEST_PRICE_MAP
-
-        latest_trade_date = df["trade_date"].max()
-        latest_df = df[df["trade_date"] == latest_trade_date].copy()
-        latest_df = latest_df.dropna(subset=["symbol", "close"])
-
-        _PARQUET_LATEST_PRICE_MAP = {
-            str(row["symbol"]): float(row["close"])
-            for _, row in latest_df.iterrows()
-        }
-        logger.info(
-            "Loaded OCR price map from parquet: %s symbols, latest_trade_date=%s",
-            len(_PARQUET_LATEST_PRICE_MAP),
-            latest_trade_date,
-        )
-    except Exception as e:
-        logger.error(f"Failed to load price map from parquet: {e}", exc_info=True)
-        _PARQUET_LATEST_PRICE_MAP = {}
-
-    return _PARQUET_LATEST_PRICE_MAP
-
-
-async def _get_latest_close_from_sdl(symbol: str) -> float:
-    """
-    从 fundamental_aligned.parquet 最新交易日读取未复权现价。
-    """
-    try:
-        price_map = _load_latest_price_map_from_parquet()
-        return float(price_map.get(symbol) or 0.0)
-    except Exception as e:
-        logger.error(f"Failed to fetch parquet price for {symbol}: {e}")
+            return 0.0
+        return float(df["close"].iloc[-1])
+    except Exception as exc:
+        logger.error("Failed to fetch quantdb price for %s: %s", symbol, exc)
 
     return 0.0
 
@@ -102,11 +80,11 @@ async def _get_latest_price(symbol: str) -> float:
     except Exception as e:
         logger.warning(f"Failed to fetch real-time price for {symbol}: {e}")
 
-    # Level 2: 数据库兜底
+    # Level 2: QuantDB 未复权 K 线兜底
     if price <= 0:
-        price = await _get_latest_close_from_sdl(symbol)
+        price = await _get_latest_close_from_quantdb(symbol)
         if price > 0:
-            logger.info(f"Fallback to SDL close for {symbol}: {price}")
+            logger.info(f"Fallback to QuantDB close for {symbol}: {price}")
 
     return price
 
@@ -123,7 +101,7 @@ async def _resolve_symbol_by_name(name: str) -> str | None:
         # 清理名称中的特殊字符，如 *ST
         clean_name = name.replace("*", "").strip()
         query = text("""
-            SELECT symbol FROM stock_daily_latest 
+            SELECT symbol FROM stock_daily_latest
             WHERE stock_name LIKE :name
             ORDER BY trade_date DESC LIMIT 1
         """)
@@ -618,7 +596,7 @@ async def ocr_sync_holdings(
 
         # OCR 未识别到有效价格时，才用后端价格源兜底
         if current_price <= 0:
-            current_price = await _get_latest_close_from_sdl(symbol)
+            current_price = await _get_latest_close_from_quantdb(symbol)
 
         results.append({
             **item,
@@ -692,7 +670,7 @@ async def confirm_holding_sync(
         except (TypeError, ValueError):
             price = 0.0
         if price <= 0:
-            price = await _get_latest_close_from_sdl(item.symbol)
+            price = await _get_latest_close_from_quantdb(item.symbol)
 
         if price <= 0:
             raise HTTPException(

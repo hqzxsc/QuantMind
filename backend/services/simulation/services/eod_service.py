@@ -290,6 +290,33 @@ async def _check_pending_orders() -> int:
         return 0
 
 
+def _redis_live_position_count(sim_key: str) -> int:
+    """读取 Redis 现有账户的持仓数（防空投影覆盖的判断依据）。"""
+    try:
+        if not redis_client.client:
+            return 0
+        from backend.shared.trade_account_cache import read_json_cache
+
+        current = read_json_cache(redis_client, sim_key) or {}
+        positions = current.get("positions") or {}
+        if isinstance(positions, str):
+            import json as _json
+
+            try:
+                positions = _json.loads(positions)
+            except Exception:
+                return 0
+        if not isinstance(positions, dict):
+            return 0
+        return sum(
+            1
+            for pos in positions.values()
+            if isinstance(pos, dict) and float(pos.get("volume") or 0) > 0
+        )
+    except Exception:
+        return 0
+
+
 def _rebuild_redis(
     *,
     account: SimulationAccount,
@@ -299,12 +326,21 @@ def _rebuild_redis(
 ) -> None:
     if not redis_client.client:
         return
+    sim_key = f"simulation:account:{tenant_id}:{str(user_id).strip()}"
+    # 空投影保护：ledger 为空（live 台账未建/迁移未跑）时 projection.positions 为空，
+    # 此时覆盖会把 Redis 里的实盘持仓清零（"回到初始状态"）。跳过并告警。
+    if not positions and _redis_live_position_count(sim_key) > 0:
+        logger.error(
+            "EOD rebuild skipped for %s: ledger projection empty but Redis holds live positions "
+            "(live fills not recorded to ledger?)",
+            sim_key,
+        )
+        return
     payload = SimulationProjectionService.build_cache_payload(
         account=account,
         positions=positions,
         source="eod_remarking",
     )
-    sim_key = f"simulation:account:{tenant_id}:{str(user_id).strip()}"
     write_json_cache(redis_client, sim_key, payload)
     write_trade_account_cache(redis_client, tenant_id, user_id, payload)
 

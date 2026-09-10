@@ -678,6 +678,34 @@ class SimulationExecutionEngine:
         order.execution_model = "synthetic_price"
         order.price_source = result.price_source
 
+        # live 成交同步写入 ledger 台账（持仓批次/资金流水/账户），与 SimTrade 同事务。
+        # 此前 live 路径从不写台账，PG 侧 lots/accounts 全空，EOD/策略监控等读 PG
+        # 处全部归零（"回到初始状态"）。失败随主事务回滚（已有 Redis 恢复兜底）。
+        try:
+            from backend.services.simulation.services.ledger_service import (
+                SimulationLedgerService,
+            )
+
+            ledger = SimulationLedgerService(self.db)
+            before_snapshot = (
+                dict(result.account_snapshot)
+                if isinstance(result.account_snapshot, dict)
+                else {}
+            )
+            await ledger.record_trade(
+                order=order,
+                trade=trade,
+                account_snapshot=before_snapshot,
+            )
+        except Exception as ledger_exc:  # noqa: BLE001
+            logger.error(
+                "Sim ledger record failed for order %s: %s",
+                order.order_id,
+                ledger_exc,
+                exc_info=True,
+            )
+            raise
+
         try:
             await self.db.commit()
         except Exception:

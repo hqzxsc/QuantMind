@@ -154,12 +154,16 @@ class StrategyMonitorPusher:
                     "total_return": total_return,
                 }
 
-                fp = _fingerprint(payload)
+                topics = [str(user)]
+                topics.extend(resolve_sim_subs(sim_uid, tenant))
+
+                # 指纹要把目标主题算进去：submap 是前端首次调用模拟盘接口后才
+                # 建立的，若只比对盈亏，新出现的 strategy.{sub} 主题会因为
+                # 「数据没变」而永远收不到第一条推送。
+                fp = _fingerprint(payload) + "|topics=" + ",".join(topics)
                 if self._last_fingerprints.get(key_str) == fp:
                     continue
 
-                topics = [str(user)]
-                topics.extend(resolve_sim_subs(sim_uid, tenant))
                 for topic_user in dict.fromkeys(topics):
                     if not topic_user:
                         continue

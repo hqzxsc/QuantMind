@@ -477,10 +477,10 @@ return 0
     async def get_account(
         self, user_id: int, tenant_id: str = "default", market: str = "CN"
     ) -> dict[str, Any] | None:
-        """Get simulation account state. PG 为主、Redis 只是缓存。
+        """Get simulation account state. PG 台账为主、Redis 只是缓存。
 
-        Redis 缺键时从 PG 自愈（sim_trades 回放 + fund 快照基线），并回填 Redis；
-        PG 也无任何记录时返回 None（表示账户从未创建，不自动建空账）。
+        Redis 缺键时从 ledger 投影自愈（lots→持仓+收盘重估），并回填 Redis；
+        台账也无记录时返回 None（表示账户从未创建，不自动建空账）。
         """
         if not self.redis.client:
             return None
@@ -491,7 +491,7 @@ return 0
         if data:
             return data
 
-        rebuilt = await self._rebuild_from_pg(user_id, tenant_id, market)
+        rebuilt = await self._rebuild_from_ledger(user_id, tenant_id, market)
         if rebuilt:
             write_json_cache(self.redis, key, rebuilt)
             logger.warning(
@@ -505,10 +505,80 @@ return 0
         # 不再自动初始化，返回 None 表示账户未创建
         return None
 
+    async def _rebuild_from_ledger(
+        self, user_id: int, tenant_id: str, market: str = "CN"
+    ) -> dict[str, Any] | None:
+        """确权：PG 台账为主。Redis 缺键时从 ledger 投影重建（lots→持仓+收盘重估）。
+
+        口径与 EOD 一致（收盘价重估市值），产出 payload 可直接回填 Redis。
+        无台账账户返回 None（不自动建空账）。
+        """
+        try:
+            from backend.services.simulation.services.eod_service import (
+                _load_close_price,
+            )
+            from backend.services.simulation.services.projection_service import (
+                SimulationProjectionService,
+            )
+            from backend.shared.database_manager_v2 import get_session as _get_session
+        except Exception as exc:
+            logger.warning("Simulation ledger rebuild unavailable: %s", exc)
+            return None
+
+        try:
+            async with _get_session() as session:
+                projection_svc = SimulationProjectionService(session)
+                projection = await projection_svc.load_projection(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    latest_price_loader=lambda symbol: _load_close_price(
+                        session, symbol
+                    ),
+                )
+                projection_account = projection.account
+                if projection_account is None:
+                    return None
+                positions = projection.positions or {}
+                long_mv = 0.0
+                short_mv = 0.0
+                for pos in positions.values():
+                    if not isinstance(pos, dict):
+                        continue
+                    mv = float(pos.get("market_value") or 0.0)
+                    if str(pos.get("side") or "long").strip().lower() == "short":
+                        short_mv += mv
+                    else:
+                        long_mv += mv
+                cash = float(projection_account.cash or 0.0)
+                # 口径与 EOD 一致：现金 + 多头市值 - 空头市值（Redis 缺键时
+                # short_proceeds 不可考，按 0 计；EOD 会补齐）。
+                total_asset = round(cash + long_mv - short_mv, 4)
+                projection_account.long_market_value = round(long_mv, 4)
+                projection_account.short_market_value = round(short_mv, 4)
+                projection_account.total_asset = total_asset
+                projection_account.equity = total_asset
+                return SimulationProjectionService.build_cache_payload(
+                    account=projection_account,
+                    positions=positions,
+                    source="ledger_rebuild",
+                )
+        except Exception as exc:
+            logger.warning(
+                "Simulation ledger rebuild failed tenant=%s user=%s: %s",
+                tenant_id,
+                user_id,
+                exc,
+            )
+            return None
+
     async def _rebuild_from_pg(
         self, user_id: int, tenant_id: str, market: str = "CN"
     ) -> dict[str, Any] | None:
-        """从 PG 重建模拟账户（trades 回放）。无任何 PG 记录时返回 None。"""
+        """【已降级：灾难恢复手工脚本】从 sim_trades 回放重建模拟账户。
+
+        日常链路不再调用（get_account 缺键走 _rebuild_from_ledger，对账走台账投影）。
+        仅当 ledger 台账整体丢失、需从成交流水手工重建时由运维显式调用。
+        无任何 PG 记录时返回 None。"""
         try:
             from sqlalchemy import text as _text
 

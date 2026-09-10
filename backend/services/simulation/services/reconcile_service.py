@@ -1,6 +1,6 @@
-"""模拟盘对账作业：Redis 账户 vs PG sim_trades 台账。
+"""模拟盘对账作业：Redis 账户 vs PG ledger 台账投影（确权：台账为主）。
 
-只报不改是默认值；SIM_RECONCILE_AUTOFIX=true 时才按 PG 回填 Redis。
+只报不改是默认值；SIM_RECONCILE_AUTOFIX=true 时才按台账投影回填 Redis。
 每天 03:20 跑一次（EOD 之后），由 trade 服务拉起。
 """
 
@@ -107,7 +107,7 @@ async def run_reconcile_once(
             live = _json.loads(live_raw) if live_raw else {}
             if not isinstance(live, dict):
                 live = {}
-            rebuilt = await manager._rebuild_from_pg(user_id, tenant_id, market)
+            rebuilt = await manager._rebuild_from_ledger(user_id, tenant_id, market)
             if not rebuilt:
                 continue
             diffs: list[dict[str, Any]] = []

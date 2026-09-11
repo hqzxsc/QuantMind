@@ -58,6 +58,10 @@ export const AdminSystemSettings: React.FC = () => {
         );
     }
 
+    const notInstalled = !!detail && detail.installed === false;
+    const noFramework = !!detail && detail.framework_ok === false;
+    const cannotEnable = notInstalled || noFramework;
+
     return (
         <div className="w-full space-y-4">
             <div>
@@ -88,20 +92,29 @@ export const AdminSystemSettings: React.FC = () => {
                             onChange={handleToggle}
                             checkedChildren="开启"
                             unCheckedChildren="关闭"
-                            disabled={detail && detail.installed === false}
+                            disabled={cannotEnable}
                         />
                         <Text className="text-[11px] text-slate-400">
-                            {detail && detail.installed === false ? '未安装' : enabled ? '运行中' : '已停用'}
+                            {notInstalled ? '未安装' : noFramework ? '缺框架' : enabled ? '运行中' : '已停用'}
                         </Text>
                     </Space>
                 </div>
-                {detail && detail.installed === false && (
+                {notInstalled && (
                     <Alert
                         type="warning"
                         showIcon
                         className="rounded-xl text-xs !py-2 !px-3 !mb-3"
                         message="模型未安装"
                         description={`未检测到 ${detail.model} 权重（/app/models/finbert-zh-base 缺失），开关已自动关闭且无法开启，不会持续扫描占用资源。请先执行 backend/scripts/download_finbert.py 离线下载。`}
+                    />
+                )}
+                {noFramework && !notInstalled && (
+                    <Alert
+                        type="warning"
+                        showIcon
+                        className="rounded-xl text-xs !py-2 !px-3 !mb-3"
+                        message="缺少 PyTorch 推理框架"
+                        description="权重已就绪，但当前镜像未包含 torch/transformers（离线镜像默认不装 PyTorch），开关已强制禁用。请在服务器上执行 sudo bash deploy/install-model-deps.sh 补装后重试。"
                     />
                 )}
                 <Divider className="!my-3" />

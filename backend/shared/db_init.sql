@@ -2239,6 +2239,108 @@ DELETE FROM qm_user_models
 WHERE model_id IN ('model_qlib', 'alpha158', 'sys-model_qlib', 'sys-alpha158');
 
 -- ========================
+-- 64. QM_STOCK_POOL 全局股票池（回测/训练/推理/模拟盘/实盘唯一事实源）
+-- 与 backend/shared/stock_pool/migrations/001_create_stock_pool.sql 保持一致；
+-- 启动期 ensure_tables 也会幂等补建，这里是新装环境的完整定义。
+-- 口径：成员 symbol 存后缀式 600036.SH；API 出入参前缀式，转换经 StockCodeUtil。
+-- ========================
+CREATE TABLE IF NOT EXISTS qm_stock_pool (
+    pool_id         TEXT PRIMARY KEY,
+    code            TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    market          TEXT NOT NULL DEFAULT 'CN',
+    pool_type       TEXT NOT NULL DEFAULT 'static',
+    scope           TEXT NOT NULL DEFAULT 'global',
+    tenant_id       TEXT,
+    owner_user_id   TEXT,
+    status          TEXT NOT NULL DEFAULT 'draft',
+    visibility      TEXT NOT NULL DEFAULT 'internal',
+    definition      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    refresh_policy  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    current_version INTEGER NOT NULL DEFAULT 0,
+    symbol_count    INTEGER NOT NULL DEFAULT 0,
+    checksum        TEXT,
+    source_kind     TEXT,
+    source_ref      TEXT,
+    is_system       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by      TEXT,
+    updated_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_qm_stock_pool_code
+    ON qm_stock_pool (scope, COALESCE(tenant_id, ''), code);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_list
+    ON qm_stock_pool (market, pool_type, status);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_scope
+    ON qm_stock_pool (scope, tenant_id, owner_user_id);
+
+CREATE TABLE IF NOT EXISTS qm_stock_pool_version (
+    id              BIGSERIAL PRIMARY KEY,
+    pool_id         TEXT NOT NULL REFERENCES qm_stock_pool(pool_id) ON DELETE CASCADE,
+    version         INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'published',
+    market          TEXT,
+    member_count    INTEGER NOT NULL DEFAULT 0,
+    checksum        TEXT,
+    storage_mode    TEXT NOT NULL DEFAULT 'table',
+    snapshot_path   TEXT,
+    changelog       TEXT,
+    published_by    TEXT,
+    published_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (pool_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_version_pool
+    ON qm_stock_pool_version (pool_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS qm_stock_pool_member (
+    id              BIGSERIAL PRIMARY KEY,
+    pool_id         TEXT NOT NULL REFERENCES qm_stock_pool(pool_id) ON DELETE CASCADE,
+    version         INTEGER NOT NULL,
+    symbol          TEXT NOT NULL,
+    name            TEXT,
+    weight          DOUBLE PRECISION,
+    industry        TEXT,
+    effective_from  DATE,
+    effective_to    DATE,
+    meta            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (pool_id, version, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_member_pool
+    ON qm_stock_pool_member (pool_id, version);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_member_symbol
+    ON qm_stock_pool_member (symbol);
+
+CREATE TABLE IF NOT EXISTS qm_stock_pool_binding (
+    id              BIGSERIAL PRIMARY KEY,
+    pool_id         TEXT NOT NULL REFERENCES qm_stock_pool(pool_id) ON DELETE CASCADE,
+    target_type     TEXT NOT NULL,
+    target_id       TEXT NOT NULL,
+    mode            TEXT NOT NULL DEFAULT 'filter',
+    priority        INTEGER NOT NULL DEFAULT 100,
+    tenant_id       TEXT,
+    user_id         TEXT,
+    created_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (pool_id, target_type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_binding_target
+    ON qm_stock_pool_binding (target_type, target_id);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_binding_pool
+    ON qm_stock_pool_binding (pool_id);
+
+-- ========================
 -- 默认管理员（admin / admin123）
 -- NOTE: 幂等，仅在不存在时创建，不覆盖用户已改密码；display_name / 头像由启动期 seed_data.py 负责
 -- ========================

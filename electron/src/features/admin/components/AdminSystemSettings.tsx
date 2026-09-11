@@ -71,7 +71,7 @@ export const AdminSystemSettings: React.FC = () => {
                 <Text className="text-slate-400 text-xs">基础设施与 AI 能力开关</Text>
             </div>
 
-            <Card className="rounded-2xl border-slate-200 shadow-sm" bodyStyle={{ padding: '16px' }} title={<span className="text-sm font-black text-slate-800 flex items-center gap-2"><RobotOutlined /> FinBERT 中文金融情感</span>} extra={<Tag color={enabled ? 'success' : 'default'} className="m-0 border-none text-[11px]">{enabled ? '已开启' : enabled === null ? '未知' : '已关闭'}</Tag>}>
+            <Card className="rounded-2xl border-slate-200 shadow-sm" styles={{ body: { padding: '16px' } }} title={<span className="text-sm font-black text-slate-800 flex items-center gap-2"><RobotOutlined /> FinBERT 中文金融情感</span>} extra={<Tag color={enabled ? 'success' : 'default'} className="m-0 border-none text-[11px]">{enabled ? '已开启' : enabled === null ? '未知' : '已关闭'}</Tag>}>
                 <div className="flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
                         <div className="text-sm font-bold text-slate-800">启用 FinBERT 情感分析</div>
@@ -121,7 +121,7 @@ export const AdminSystemSettings: React.FC = () => {
                 <Alert type="info" showIcon className="rounded-xl text-xs !py-2 !px-3" message="提示" description="首次开启需后台加载模型约 10-20s，期间新入库资讯仍走字典法；已入库历史需重建 enrichment 才会回填 FinBERT 置信度。" />
             </Card>
 
-            <Card className="rounded-2xl border-dashed border-slate-200 bg-slate-50/50" bodyStyle={{ padding: '12px 16px' }} title={<span className="text-sm font-bold text-slate-500">更多系统设置（占位）</span>}>
+            <Card className="rounded-2xl border-dashed border-slate-200 bg-slate-50/50" styles={{ body: { padding: '12px 16px' } }} title={<span className="text-sm font-bold text-slate-500">更多系统设置（占位）</span>}>
                 <Text className="text-xs text-slate-400">后续可在此集中管理：数据同步开关、模型推理并发、QuantDB 缓存 TTL 等。</Text>
             </Card>
         </div>

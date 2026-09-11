@@ -439,12 +439,18 @@ const AdminStockPool: React.FC = () => {
                 fmt: parseFmt === 'auto' ? undefined : parseFmt,
                 has_header: parseHasHeader,
                 column: parseColumn.trim() || undefined,
-                row_limit: 1000,
+                // 后端明细上限 20000；A 股全市场约 5000+ 只，必须一次取全，否则勾选数会被截断
+                row_limit: 20000,
             });
             setReport(res);
             setSelectedRows(
                 res.rows.filter((r) => r.status === 'matched' && !r.duplicate).map((r) => r.row_index),
             );
+            if (res.truncated) {
+                message.warning(
+                    `文件行数超出明细展示上限，仅展示前 ${res.rows.length} 行，勾选数以展示为准`,
+                );
+            }
             if (!poolName && parseFileName) {
                 setPoolName(parseFileName.replace(/\.[^.]+$/, '').slice(0, 60));
             }
@@ -462,6 +468,11 @@ const AdminStockPool: React.FC = () => {
         if (!report) return;
         if (!poolCode.trim() || !poolName.trim()) {
             message.warning('请填写股票池代码与名称');
+            return;
+        }
+        // 与后端 schemas.py 保持一致：code 直接用作 TXT 文件名，仅限 ASCII 安全字符
+        if (!/^[A-Za-z0-9_-]+$/.test(poolCode.trim())) {
+            message.warning('池代码仅限英文字母、数字、下划线与短横线');
             return;
         }
         if (selectedRows.length === 0) {
@@ -510,46 +521,55 @@ const AdminStockPool: React.FC = () => {
             {
                 title: '代码',
                 dataIndex: 'code',
-                width: 160,
+                width: 150,
+                align: 'center' as const,
                 render: (code: string, row: StockPool) => (
-                    <Space size={4}>
+                    <Space size={4} style={{ justifyContent: 'center', width: '100%' }}>
                         <Text strong>{code}</Text>
-                        {row.is_system && <Tag color="blue">内置</Tag>}
+                        {row.is_system && <Tag color="blue" style={{ margin: 0 }}>内置</Tag>}
                     </Space>
                 ),
             },
-            { title: '名称', dataIndex: 'name', width: 160 },
-            { title: '市场', dataIndex: 'market', width: 70 },
+            { title: '名称', dataIndex: 'name', width: 150, align: 'center' as const },
+            { title: '市场', dataIndex: 'market', width: 70, align: 'center' as const },
             {
                 title: '类型',
                 dataIndex: 'pool_type',
-                width: 100,
+                width: 110,
+                align: 'center' as const,
                 render: (t: string) => POOL_TYPE_LABEL[t] || t,
             },
             {
                 title: '状态',
                 dataIndex: 'status',
                 width: 90,
-                render: (s: string) => <Tag color={STATUS_COLOR[s] || 'default'}>{s}</Tag>,
+                align: 'center' as const,
+                render: (s: string) => (
+                    <Tag color={STATUS_COLOR[s] || 'default'} style={{ margin: 0 }}>
+                        {s}
+                    </Tag>
+                ),
             },
             {
                 title: '成员数',
                 dataIndex: 'symbol_count',
                 width: 90,
+                align: 'center' as const,
                 render: (n: number) => (n > 0 ? n : <Text type="secondary">0</Text>),
             },
             {
                 title: '校验和',
                 dataIndex: 'checksum',
-                width: 120,
+                width: 130,
+                align: 'center' as const,
                 render: (v: string) => (v ? <Text code>{v.slice(0, 10)}</Text> : '—'),
             },
             {
                 title: '操作',
                 key: 'actions',
-                width: 320,
+                align: 'left' as const,
                 render: (_: unknown, row: StockPool) => (
-                    <Space size={4} wrap>
+                    <Space size={4} wrap style={{ justifyContent: 'flex-start', width: '100%' }}>
                         <Button size="small" onClick={() => openDetail(row)}>
                             成员 / 引用
                         </Button>
@@ -567,7 +587,11 @@ const AdminStockPool: React.FC = () => {
                                 <Popconfirm title="归档该池？" onConfirm={() => handleArchive(row)} okText="归档">
                                     <Button size="small" icon={<WarningOutlined />} />
                                 </Popconfirm>
-                                <Popconfirm title="彻底删除（含成员 TXT）？" onConfirm={() => handleDelete(row)} okText="删除">
+                                <Popconfirm
+                                    title="彻底删除（含成员 TXT）？"
+                                    onConfirm={() => handleDelete(row)}
+                                    okText="删除"
+                                >
                                     <Button size="small" danger icon={<DeleteOutlined />} />
                                 </Popconfirm>
                             </>
@@ -586,15 +610,17 @@ const AdminStockPool: React.FC = () => {
             title: '类型',
             dataIndex: 'target_type',
             width: 110,
+            align: 'center' as const,
             render: (t: string) => TARGET_TYPE_LABEL[t] || t,
         },
-        { title: '目标 ID', dataIndex: 'target_id', ellipsis: true },
-        { title: '模式', dataIndex: 'mode', width: 90 },
-        { title: '优先级', dataIndex: 'priority', width: 80 },
+        { title: '目标 ID', dataIndex: 'target_id', ellipsis: true, align: 'center' as const },
+        { title: '模式', dataIndex: 'mode', width: 90, align: 'center' as const },
+        { title: '优先级', dataIndex: 'priority', width: 80, align: 'center' as const },
         {
             title: '操作',
             key: 'op',
             width: 90,
+            align: 'center' as const,
             render: (_: unknown, row: any) => (
                 <Popconfirm
                     title="解除该引用？"
@@ -610,18 +636,20 @@ const AdminStockPool: React.FC = () => {
 
     /** 上传解析报告明细 */
     const parseColumns = [
-        { title: '行号', dataIndex: 'row_index', width: 64 },
-        { title: '原文', dataIndex: 'raw', ellipsis: true },
+        { title: '行号', dataIndex: 'row_index', width: 64, align: 'center' as const },
+        { title: '原文', dataIndex: 'raw', ellipsis: true, align: 'center' as const },
         {
             title: '命中单元',
             dataIndex: 'token',
             width: 120,
+            align: 'center' as const,
             render: (v: string) => <Text code>{v || '—'}</Text>,
         },
         {
             title: '状态',
             dataIndex: 'status',
-            width: 104,
+            width: 120,
+            align: 'center' as const,
             render: (s: string, row: ParseRow) => {
                 const m = PARSE_STATUS_META[s] || { color: 'default', label: s };
                 return (
@@ -636,10 +664,13 @@ const AdminStockPool: React.FC = () => {
             title: '匹配方式',
             dataIndex: 'match_type',
             width: 116,
+            align: 'center' as const,
             render: (t: string) =>
                 t === 'exchange_fixed' ? (
                     <Tooltip title="文件里的交易所前缀有误，已按 6 位代码纠正">
-                        <Tag color="gold">{MATCH_TYPE_LABEL[t] || t}</Tag>
+                        <Tag color="gold" style={{ margin: 0 }}>
+                            {MATCH_TYPE_LABEL[t] || t}
+                        </Tag>
                     </Tooltip>
                 ) : (
                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -651,17 +682,42 @@ const AdminStockPool: React.FC = () => {
             title: '代码',
             dataIndex: 'api_symbol',
             width: 110,
+            align: 'center' as const,
             render: (v: string) => v || '—',
         },
-        { title: '名称', dataIndex: 'name', width: 130, render: (v: string) => v || '—' },
+        {
+            title: '名称',
+            dataIndex: 'name',
+            width: 130,
+            align: 'center' as const,
+            render: (v: string) => v || '—',
+        },
     ];
 
     return (
-        <div style={{ padding: 16 }}>
+        <div style={{ width: '100%', maxWidth: 1240, margin: '0 auto', padding: '20px 24px 40px' }}>
             <Card
-                title="全局股票池"
-                extra={
-                    <Space>
+                style={{ borderRadius: 12, boxShadow: '0 1px 3px rgba(15,23,42,0.06)' }}
+                styles={{ body: { padding: '20px 24px 24px' } }}
+            >
+                {/* 顶部左对齐：标题 + 操作区 */}
+                <div
+                    style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        flexWrap: 'wrap',
+                        gap: 12,
+                        marginBottom: 8,
+                    }}
+                >
+                    <div style={{ textAlign: 'left' }}>
+                        <div style={{ fontSize: 18, fontWeight: 800 }}>全局股票池</div>
+                        <div style={{ marginTop: 4, fontSize: 12, color: '#94a3b8' }}>
+                            回测 / 训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源 · 保存即生效
+                        </div>
+                    </div>
+                    <Space wrap style={{ justifyContent: 'flex-end' }}>
                         <Button icon={<ExperimentOutlined />} onClick={() => setResolveOpen(true)}>
                             解析调试
                         </Button>
@@ -678,8 +734,7 @@ const AdminStockPool: React.FC = () => {
                             新建股票池
                         </Button>
                     </Space>
-                }
-            >
+                </div>
                 <Tabs
                     defaultActiveKey="list"
                     items={[
@@ -691,7 +746,7 @@ const AdminStockPool: React.FC = () => {
                                     <Alert
                                         type="info"
                                         showIcon
-                                        style={{ marginBottom: 12 }}
+                                        style={{ marginBottom: 12, textAlign: 'left' }}
                                         message="股票池是回测 / 训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源"
                                         description={
                                             <span>
@@ -726,11 +781,20 @@ const AdminStockPool: React.FC = () => {
                                         />
                                     )}
 
-                                    <Space wrap style={{ marginBottom: 12 }}>
+                                    <Space
+                                        wrap
+                                        align="center"
+                                        size={8}
+                                        style={{
+                                            marginBottom: 12,
+                                            width: '100%',
+                                            justifyContent: 'flex-start',
+                                        }}
+                                    >
                                         <Select
                                             allowClear
                                             placeholder="市场"
-                                            style={{ width: 110 }}
+                                            style={{ width: 120 }}
                                             value={filters.market}
                                             onChange={(v) => patchFilters({ market: v })}
                                             options={(meta?.markets || ['CN', 'HK', 'US']).map((m) => ({ value: m, label: m }))}
@@ -738,7 +802,7 @@ const AdminStockPool: React.FC = () => {
                                         <Select
                                             allowClear
                                             placeholder="类型"
-                                            style={{ width: 140 }}
+                                            style={{ width: 150 }}
                                             value={filters.pool_type}
                                             onChange={(v) => patchFilters({ pool_type: v })}
                                             options={(meta?.pool_types || []).map((t) => ({ value: t, label: POOL_TYPE_LABEL[t] || t }))}
@@ -751,11 +815,20 @@ const AdminStockPool: React.FC = () => {
                                             onChange={(v) => patchFilters({ status: v })}
                                             options={(meta?.statuses || []).map((s) => ({ value: s, label: s }))}
                                         />
-                                        <Input.Search
-                                            placeholder="代码 / 名称"
+                                        <Input
+                                            className="stock-pool-search"
+                                            placeholder="代码 / 名称（回车搜索）"
                                             style={{ width: 220 }}
                                             allowClear
-                                            onSearch={(v) => patchFilters({ keyword: v || undefined })}
+                                            defaultValue={filters.keyword}
+                                            key={filters.keyword || 'empty'}
+                                            suffix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+                                            onPressEnter={(e) =>
+                                                patchFilters({ keyword: e.currentTarget.value || undefined })
+                                            }
+                                            onChange={(e) => {
+                                                if (!e.target.value) patchFilters({ keyword: undefined });
+                                            }}
                                         />
                                     </Space>
 
@@ -765,11 +838,15 @@ const AdminStockPool: React.FC = () => {
                                         loading={loading}
                                         columns={columns as any}
                                         dataSource={items}
+                                        className="stock-pool-table"
+                                        style={{ width: '100%' }}
+                                        tableLayout="fixed"
                                         pagination={{
                                             current: page,
                                             pageSize,
                                             total,
                                             showSizeChanger: true,
+                                            position: ['bottomRight'],
                                             onChange: (p, ps) => {
                                                 setPage(p);
                                                 setPageSize(ps);
@@ -787,7 +864,7 @@ const AdminStockPool: React.FC = () => {
                                     <Alert
                                         type="info"
                                         showIcon
-                                        style={{ marginBottom: 12 }}
+                                        style={{ marginBottom: 12, textAlign: 'left' }}
                                         message="上传 CSV / TXT，自动与 data/stocks/stocks_index.json 对比后生成股票池"
                                         description={
                                             <span>
@@ -800,9 +877,71 @@ const AdminStockPool: React.FC = () => {
                                         }
                                     />
 
+                                    {/* 步骤 1：目标股票池命名（置顶，先定名再解析） */}
+                                    <Card
+                                        size="small"
+                                        style={{ marginBottom: 16 }}
+                                        title={<div style={{ textAlign: 'center' }}>1. 目标股票池命名</div>}
+                                    >
+                                        <Row gutter={12} align="middle">
+                                            <Col span={6}>
+                                                <Input
+                                                    addonBefore="代码"
+                                                    value={poolCode}
+                                                    maxLength={64}
+                                                    onChange={(e) =>
+                                                        setPoolCode(e.target.value.replace(/[^A-Za-z0-9_-]/g, ''))
+                                                    }
+                                                    placeholder="my_pool"
+                                                />
+                                            </Col>
+                                            <Col span={6}>
+                                                <Input
+                                                    addonBefore="名称"
+                                                    value={poolName}
+                                                    onChange={(e) => setPoolName(e.target.value)}
+                                                    placeholder="我的自选池"
+                                                />
+                                            </Col>
+                                            <Col span={7}>
+                                                <Input
+                                                    addonBefore="描述"
+                                                    value={poolDesc}
+                                                    onChange={(e) => setPoolDesc(e.target.value)}
+                                                    placeholder="来源、维护方式、用途（可选）"
+                                                />
+                                            </Col>
+                                            <Col span={5}>
+                                                <Tooltip
+                                                    title={
+                                                        !report
+                                                            ? '先完成下方第 4 步解析，再一键生成'
+                                                            : selectedRows.length === 0
+                                                              ? '请在解析报告中勾选至少一只股票'
+                                                              : `生成 ${poolCode.trim() || '新股票池'}（${selectedRows.length} 只）`
+                                                    }
+                                                >
+                                                    <Button
+                                                        type="primary"
+                                                        block
+                                                        icon={<PlusOutlined />}
+                                                        loading={creating}
+                                                        onClick={handleCreateFromParse}
+                                                    >
+                                                        生成股票池
+                                                        {report ? `（${selectedRows.length} 只）` : ''}
+                                                    </Button>
+                                                </Tooltip>
+                                            </Col>
+                                        </Row>
+                                    </Card>
+
                                     <Row gutter={16}>
                                         <Col span={13}>
-                                            <Card size="small" title="1. 选择文件">
+                                            <Card
+                                                size="small"
+                                                title={<div style={{ textAlign: 'center' }}>2. 选择文件</div>}
+                                            >
                                                 <Upload.Dragger
                                                     accept=".csv,.txt,.tsv"
                                                     showUploadList={false}
@@ -851,7 +990,10 @@ const AdminStockPool: React.FC = () => {
                                         </Col>
 
                                         <Col span={11}>
-                                            <Card size="small" title="2. 解析选项">
+                                            <Card
+                                                size="small"
+                                                title={<div style={{ textAlign: 'center' }}>3. 解析选项</div>}
+                                            >
                                                 <Space direction="vertical" style={{ width: '100%' }} size={12}>
                                                     <div>
                                                         <Text type="secondary">文件格式</Text>
@@ -903,7 +1045,7 @@ const AdminStockPool: React.FC = () => {
 
                                     {report && (
                                         <>
-                                            <Divider orientation="left">3. 解析报告</Divider>
+                                            <Divider orientation="left">4. 解析报告</Divider>
                                             <Row gutter={12} style={{ marginBottom: 12 }}>
                                                 <Col span={4}>
                                                     <Statistic title="文件行数" value={report.summary.total} />
@@ -981,41 +1123,6 @@ const AdminStockPool: React.FC = () => {
                                                 pagination={{ pageSize: 50, showSizeChanger: true }}
                                             />
 
-                                            <Divider orientation="left">4. 生成股票池</Divider>
-                                            <Row gutter={12}>
-                                                <Col span={8}>
-                                                    <Input
-                                                        addonBefore="代码"
-                                                        value={poolCode}
-                                                        onChange={(e) => setPoolCode(e.target.value)}
-                                                        placeholder="my_pool"
-                                                    />
-                                                </Col>
-                                                <Col span={8}>
-                                                    <Input
-                                                        addonBefore="名称"
-                                                        value={poolName}
-                                                        onChange={(e) => setPoolName(e.target.value)}
-                                                        placeholder="我的自选池"
-                                                    />
-                                                </Col>
-                                            </Row>
-                                            <Input.TextArea
-                                                rows={2}
-                                                style={{ marginTop: 8 }}
-                                                value={poolDesc}
-                                                onChange={(e) => setPoolDesc(e.target.value)}
-                                                placeholder="描述（可选）：来源、维护方式、用途"
-                                            />
-                                            <Button
-                                                type="primary"
-                                                style={{ marginTop: 12 }}
-                                                icon={<PlusOutlined />}
-                                                loading={creating}
-                                                onClick={handleCreateFromParse}
-                                            >
-                                                生成股票池（{selectedRows.length} 只）
-                                            </Button>
                                         </>
                                     )}
                                 </>
@@ -1074,30 +1181,44 @@ const AdminStockPool: React.FC = () => {
             {/* 成员 / 引用 */}
             <Drawer
                 title={detail ? `${detail.code} · ${detail.name}` : '股票池'}
-                width={980}
+                width={640}
+                className="stock-pool-drawer"
                 open={detailOpen}
+                closable={false}
                 onClose={() => setDetailOpen(false)}
                 destroyOnClose
             >
                 {detail && (
                     <>
                         <Row gutter={12} style={{ marginBottom: 12 }}>
-                            <Col span={6}>
+                            <Col span={12}>
                                 <Statistic title="成员数" value={detail.symbol_count} />
                             </Col>
-                            <Col span={6}>
-                                <Statistic title="状态" value={detail.status} />
-                            </Col>
                             <Col span={12}>
-                                <Statistic
-                                    title="TXT 文件"
-                                    value={detail.file_path || '（尚未生成）'}
-                                    valueStyle={{ fontSize: 13, wordBreak: 'break-all' }}
-                                />
+                                <Statistic title="状态" value={detail.status} />
                             </Col>
                         </Row>
 
-                        <Descriptions size="small" column={2} bordered style={{ marginBottom: 12 }}>
+                        <div
+                            style={{
+                                marginBottom: 12,
+                                padding: '8px 12px',
+                                background: '#f8fafc',
+                                border: '1px solid #f1f5f9',
+                                borderRadius: 8,
+                            }}
+                        >
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                                TXT 文件
+                            </Text>
+                            <div>
+                                <Text code style={{ fontSize: 12, wordBreak: 'break-all' }}>
+                                    {detail.file_path || '（尚未生成）'}
+                                </Text>
+                            </div>
+                        </div>
+
+                        <Descriptions size="small" column={1} bordered style={{ marginBottom: 12 }}>
                             <Descriptions.Item label="pool_id">{detail.pool_id}</Descriptions.Item>
                             <Descriptions.Item label="市场 / 类型">
                                 {detail.market} / {POOL_TYPE_LABEL[detail.pool_type] || detail.pool_type}
@@ -1128,7 +1249,7 @@ const AdminStockPool: React.FC = () => {
 
                         <Divider orientation="left">成员（前缀式，一行一个）</Divider>
                         <Input.TextArea
-                            rows={12}
+                            rows={10}
                             value={memberDraft}
                             onChange={(e) => setMemberDraft(e.target.value)}
                             disabled={detail.is_system}
@@ -1169,9 +1290,9 @@ const AdminStockPool: React.FC = () => {
                             只登记<b>长生命周期</b>引用（策略 / 模型 / 模拟盘账户 / 实盘配置）。
                             回测与推理是一次性运行，不登记为 binding —— 它们的池校验和记在各自结果里。
                         </Paragraph>
-                        <Space wrap style={{ marginBottom: 8 }}>
+                        <Space wrap style={{ marginBottom: 8, width: '100%' }}>
                             <Select
-                                style={{ width: 130 }}
+                                style={{ width: 120 }}
                                 value={bindingTargetType}
                                 onChange={setBindingTargetType}
                                 options={[
@@ -1183,7 +1304,7 @@ const AdminStockPool: React.FC = () => {
                                 ]}
                             />
                             <Input
-                                style={{ width: 200 }}
+                                style={{ flex: 1, minWidth: 160 }}
                                 value={bindingTargetId}
                                 onChange={(e) => setBindingTargetId(e.target.value)}
                                 placeholder="目标 ID（如策略/模型 ID）"

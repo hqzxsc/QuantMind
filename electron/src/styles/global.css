@@ -1024,3 +1024,57 @@ html.platform-win32.os-win10 .module-grid-container {
 .admin-page .feature-search-center input.ant-input::placeholder {
   text-align: center;
 }
+
+/* 全局股票池搜索框：与下拉等高，输入文字与 placeholder 强制居中 */
+.admin-page .stock-pool-search.ant-input-affix-wrapper {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+}
+.admin-page .stock-pool-search input.ant-input {
+  text-align: center !important;
+}
+.admin-page .stock-pool-search input.ant-input::placeholder {
+  text-align: center !important;
+}
+.admin-page .stock-pool-search input.ant-input::-webkit-input-placeholder {
+  text-align: center !important;
+}
+.admin-page .stock-pool-search input.ant-input::-moz-placeholder {
+  text-align: center !important;
+}
+.admin-page .stock-pool-search input.ant-input:-ms-input-placeholder {
+  text-align: center !important;
+}
+
+/* 全局股票池表格分页：页码与每页条数水平居中对齐 */
+.admin-page .stock-pool-table .ant-pagination {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.admin-page .stock-pool-table .ant-pagination > li,
+.admin-page .stock-pool-table .ant-pagination .ant-pagination-options {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  line-height: 1 !important;
+}
+/* 强制页码项与条数选择器同高，避免 mini/默认尺寸混用错位 */
+.admin-page .stock-pool-table .ant-pagination .ant-pagination-item,
+.admin-page .stock-pool-table .ant-pagination .ant-pagination-prev,
+.admin-page .stock-pool-table .ant-pagination .ant-pagination-next {
+  height: 32px !important;
+  min-width: 32px !important;
+  line-height: 30px !important;
+}
+.admin-page .stock-pool-table .ant-pagination .ant-pagination-options .ant-select,
+.admin-page .stock-pool-table .ant-pagination .ant-pagination-options .ant-select-selector {
+  height: 32px !important;
+}
+.admin-page .stock-pool-table .ant-pagination .ant-pagination-options .ant-select-selection-item,
+.admin-page .stock-pool-table .ant-pagination .ant-pagination-options .ant-select-selection-placeholder {
+  line-height: 30px !important;
+}

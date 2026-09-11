@@ -35,6 +35,7 @@ const AdminPage: React.FC = () => {
             children: [
                 { key: 'data', label: '数据集目录' },
                 { key: 'qlib', label: 'Qlib 数据管理' },
+                { key: 'stock-pools', label: '全局股票池' },
                 { key: 'quotes', label: '数据源监控' },
                 { key: 'news', label: '新闻情感' },
             ]
@@ -54,8 +55,6 @@ const AdminPage: React.FC = () => {
             label: '推理引擎',
             children: [
                 { key: 'models', label: '模型管理' },
-                { key: 'stock-pools', label: '全局股票池' },
-                { key: 'feature-catalog', label: '特征字典' },
                 { key: 'inference', label: '推理监控（开发中）' },
             ]
         },
@@ -66,6 +65,7 @@ const AdminPage: React.FC = () => {
             children: [
                 { key: 'autodl-nodes', label: 'AutoDL 节点' },
                 { key: 'training-datasets', label: '模型训练数据集' },
+                { key: 'feature-catalog', label: '特征字典' },
             ]
         },
         { type: 'divider' as const },
@@ -144,7 +144,7 @@ const AdminPage: React.FC = () => {
                     {/* 资讯监控 / RD 因子挖掘等大屏页面用全宽，其余保留 1400px 阅读宽度 */}
                     <div
                         className={
-                            ['news', 'inference', 'tags', 'settings'].includes(currentKey)
+                            ['news', 'inference', 'tags', 'settings', 'stock-pools'].includes(currentKey)
                                 ? 'w-full animate-in fade-in slide-in-from-bottom-4 duration-500'
                                 : 'max-w-[1400px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500'
                         }

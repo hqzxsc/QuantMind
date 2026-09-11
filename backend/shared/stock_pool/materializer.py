@@ -45,9 +45,49 @@ def _safe_name(text: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(text))
 
 
-def pool_txt_name(scope: str, code: str, *, tenant_id: str | None = None,
-                  owner_user_id: str | None = None) -> str:
-    """TXT 文件名（不含路径）。global 直接用 code；私有池加归属前缀防互撞。"""
+def pool_subdir(
+    scope: str, *, tenant_id: str | None = None, owner_user_id: str | None = None
+) -> str:
+    """用户 / 租户池的子目录名；global 返回空串（根目录扁平存放）。
+
+    隔离靠目录：`/data/stock_pool/u00000001/<code>.txt`，
+    同用户同名天然唯一，不同用户同名天然互不可见。
+    """
+    if scope == "user" and owner_user_id:
+        return f"u{_safe_name(owner_user_id)}"
+    if scope == "tenant" and tenant_id:
+        return f"t{_safe_name(tenant_id)}"
+    return ""
+
+
+def _join_pool_dir(*parts: str) -> str:
+    """拼接池目录路径，并钳制在 pool_dir 之内（防路径穿越）。"""
+    base = pool_dir().resolve()
+    target = base.joinpath(*(p for p in parts if p)).resolve()
+    if target != base and base not in target.parents:
+        raise ValueError(f"股票池路径越界: {target}")
+    return str(target)
+
+
+def pool_txt_name(
+    scope: str,
+    code: str,
+    *,
+    tenant_id: str | None = None,
+    owner_user_id: str | None = None,
+) -> str:
+    """TXT 文件名（不含目录）。隔离由子目录承担，文件名只做安全清洗。"""
+    return f"{_safe_name(code)}.txt"
+
+
+def legacy_pool_txt_name(
+    scope: str,
+    code: str,
+    *,
+    tenant_id: str | None = None,
+    owner_user_id: str | None = None,
+) -> str:
+    """旧版扁平文件名（仅读兼容）：根目录 `u<uid>_<code>.txt`。"""
     name = _safe_name(code)
     if scope == "user" and owner_user_id:
         return f"u{_safe_name(owner_user_id)}_{name}.txt"
@@ -56,10 +96,63 @@ def pool_txt_name(scope: str, code: str, *, tenant_id: str | None = None,
     return f"{name}.txt"
 
 
-def pool_txt_path(scope: str, code: str, *, tenant_id: str | None = None,
-                  owner_user_id: str | None = None) -> str:
-    return str(pool_dir() / pool_txt_name(scope, code, tenant_id=tenant_id,
-                                          owner_user_id=owner_user_id))
+def pool_txt_path(
+    scope: str,
+    code: str,
+    *,
+    tenant_id: str | None = None,
+    owner_user_id: str | None = None,
+) -> str:
+    """新写入位置：global 根目录；user/tenant 进各自隔离子目录。"""
+    return _join_pool_dir(
+        pool_subdir(scope, tenant_id=tenant_id, owner_user_id=owner_user_id),
+        pool_txt_name(scope, code, tenant_id=tenant_id, owner_user_id=owner_user_id),
+    )
+
+
+def legacy_pool_txt_path(
+    scope: str,
+    code: str,
+    *,
+    tenant_id: str | None = None,
+    owner_user_id: str | None = None,
+) -> str:
+    """旧版扁平位置（仅读兼容，不再写入）。"""
+    return _join_pool_dir(
+        "",
+        legacy_pool_txt_name(
+            scope, code, tenant_id=tenant_id, owner_user_id=owner_user_id
+        ),
+    )
+
+
+def resolve_pool_txt(
+    scope: str,
+    code: str,
+    *,
+    file_path: str | None = None,
+    tenant_id: str | None = None,
+    owner_user_id: str | None = None,
+) -> str:
+    """读侧路径解析（优先级从高到低）：
+    DB file_path（存在）→ 新隔离子目录路径（存在）→ 旧扁平路径（存在）
+    → 新隔离子目录路径（默认写入位）。
+    旧路径命中时读兼容，下一次保存自动迁移到新位置。
+    """
+    if file_path and Path(file_path).exists():
+        return str(file_path)
+    new_path = pool_txt_path(
+        scope, code, tenant_id=tenant_id, owner_user_id=owner_user_id
+    )
+    if Path(new_path).exists():
+        return new_path
+    legacy_path = legacy_pool_txt_path(
+        scope, code, tenant_id=tenant_id, owner_user_id=owner_user_id
+    )
+    if legacy_path != new_path and Path(legacy_path).exists():
+        logger.info("股票池命中旧扁平路径（读兼容，下次保存迁移）: %s", legacy_path)
+        return legacy_path
+    return file_path or new_path
 
 
 def write_pool_txt(path: str | Path, api_symbols: Iterable[str], *, header: str = "") -> int:

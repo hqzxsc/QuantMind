@@ -9,13 +9,16 @@
 ## 模型
 
 ```
-qm_stock_pool（PG 单表，元信息）          /data/stock_pool/<code>.txt（成员，唯一事实源）
-├── pool_id / code / name / market       SH600036          ← 前缀式，一行一个
-├── scope（global / tenant / user）      SH600519          ← # 开头为注释，可手改
-├── pool_type（system_index/static/imported）
-├── status（active / archived）          内置池成分由 QuantDB 指数权重
-├── file_path / symbol_count / checksum  启动 + 每日自动刷新
-└── is_system / source_*                 私有池文件名带归属：u<uid>_<code>.txt
+qm_stock_pool（PG 单表，元信息）          /data/stock_pool/（成员，唯一事实源）
+├── pool_id / code / name / market       ├── <code>.txt（全局池，根目录扁平）
+├── scope（global / tenant / user）      ├── u<user_id>/<code>.txt（用户池目录隔离）
+├── pool_type（system_index/static/imported）  └── t<tenant_id>/<code>.txt（租户池目录隔离）
+├── status（active / archived）          SH600036          ← 前缀式，一行一个
+├── file_path / symbol_count / checksum  SH600519          ← # 开头为注释，可手改
+└── is_system / source_*                 内置池成分由 QuantDB 指数权重
+                                         启动 + 每日自动刷新
+                                         （旧版根目录 u<uid>_<code>.txt 仅读兼容，
+                                          下次保存自动迁移到隔离子目录）
 
 qm_stock_pool_binding（引用守卫：被引用的池不可归档/删除）
 ```

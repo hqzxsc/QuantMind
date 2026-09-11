@@ -1,9 +1,11 @@
 """全局股票池模块（Global Stock Pool, v2 简化版）。
 
 设计要点：
-- **TXT 即事实源**：每个池的成员是一个前缀式一行一个的 TXT
-  （`/data/stock_pool/<code>.txt`），人可读可手改，回测引擎和其他模块
-  可直接读取；编辑保存 → 重写 TXT → 立即生效，没有草稿/发布版本模型。
+- **TXT 即事实源**：每个池的成员是一个前缀式一行一个的 TXT。
+  全局池扁平存放（`/data/stock_pool/<code>.txt`），用户 / 租户池按
+  隔离子目录存放（`/data/stock_pool/u<user_id>/<code>.txt`），人可读可手改，
+  回测引擎和其他模块可直接读取；编辑保存 → 重写 TXT → 立即生效，
+  没有草稿/发布版本模型。
 - **PG 单表存元信息**：`qm_stock_pool`（列表/归属/市场/文件路径/计数），
   `qm_stock_pool_binding` 记录长生命周期引用（被引用的池不可删）。
 - **唯一读取入口**：所有功能统一经 `PoolResolver`；内置池目录（`builtins.py`）
@@ -63,11 +65,16 @@ from .filters import (
     intersect_symbols,
 )
 from .materializer import (
+    legacy_pool_txt_name,
+    legacy_pool_txt_path,
     materialize_snapshot,
     pool_dir,
+    pool_subdir,
+    pool_txt_name,
     pool_txt_path,
     qlib_data_dir,
     read_pool_txt,
+    resolve_pool_txt,
     write_pool_txt,
 )
 from .normalize import (
@@ -159,11 +166,16 @@ __all__ = [
     "filter_signals_by_pool",
     "intersect_symbols",
     # materializer
+    "legacy_pool_txt_name",
+    "legacy_pool_txt_path",
     "materialize_snapshot",
     "pool_dir",
+    "pool_subdir",
+    "pool_txt_name",
     "pool_txt_path",
     "qlib_data_dir",
     "read_pool_txt",
+    "resolve_pool_txt",
     "write_pool_txt",
     # normalize
     "checksum_symbols",

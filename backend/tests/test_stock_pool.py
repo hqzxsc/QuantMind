@@ -8,6 +8,7 @@ DB 相关（repository / seed / 库内池解析）留给集成测试。
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -236,12 +237,47 @@ class TestPoolTxt:
 
     def test_pool_txt_name_scoping(self):
         assert pool_txt_name("global", "csi300") == "csi300.txt"
-        # 私有池文件名必须带归属，不同用户同名不互撞
-        assert pool_txt_name("user", "my", owner_user_id="42") == "u42_my.txt"
-        assert pool_txt_name("user", "my", owner_user_id="7") != pool_txt_name(
-            "user", "my", owner_user_id="42"
-        )
+        # 隔离靠子目录：文件名不再带归属前缀，同名不互撞靠目录
+        assert pool_txt_name("user", "my", owner_user_id="42") == "my.txt"
         assert pool_txt_name("global", "a b/c").endswith("a_b_c.txt")
+
+    def test_pool_txt_path_user_isolated_by_subdir(self, tmp_path, monkeypatch):
+        from backend.shared.stock_pool.materializer import pool_subdir
+
+        monkeypatch.setenv("QM_STOCK_POOL_TXT_DIR", str(tmp_path))
+        assert pool_subdir("global") == ""
+        assert pool_subdir("user", owner_user_id="00000001") == "u00000001"
+        p1 = pool_txt_path("user", "my", owner_user_id="00000001")
+        p2 = pool_txt_path("user", "my", owner_user_id="00000002")
+        assert p1 == str(tmp_path / "u00000001" / "my.txt")
+        assert p2 == str(tmp_path / "u00000002" / "my.txt")
+        assert p1 != p2
+        # global 保持根目录扁平
+        assert pool_txt_path("global", "csi300") == str(tmp_path / "csi300.txt")
+
+    def test_resolve_pool_txt_prefers_new_and_falls_back_to_legacy(
+        self, tmp_path, monkeypatch
+    ):
+        from backend.shared.stock_pool.materializer import (
+            legacy_pool_txt_path,
+            resolve_pool_txt,
+        )
+
+        monkeypatch.setenv("QM_STOCK_POOL_TXT_DIR", str(tmp_path))
+        # 旧扁平文件读兼容
+        legacy = legacy_pool_txt_path("user", "my", owner_user_id="7")
+        assert legacy == str(tmp_path / "u7_my.txt")
+        Path(legacy).write_text("#x\nSH600036\n", encoding="utf-8")
+        assert resolve_pool_txt("user", "my", owner_user_id="7") == legacy
+        # 新隔离目录存在时优先
+        new = pool_txt_path("user", "my", owner_user_id="7")
+        Path(new).parent.mkdir(parents=True, exist_ok=True)
+        Path(new).write_text("#x\nSH600519\n", encoding="utf-8")
+        assert resolve_pool_txt("user", "my", owner_user_id="7") == new
+        # 都不存在时返回新位置（默认写入位）
+        assert resolve_pool_txt("user", "nope", owner_user_id="7") == pool_txt_path(
+            "user", "nope", owner_user_id="7"
+        )
 
     def test_pool_txt_path_uses_env_dir(self, tmp_path, monkeypatch):
         monkeypatch.setenv("QM_STOCK_POOL_TXT_DIR", str(tmp_path))

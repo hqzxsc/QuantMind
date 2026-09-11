@@ -1,7 +1,9 @@
 """后台管理 - 全局股票池（Admin Stock Pool, v2 简化版）。
 
-成员唯一事实源 = 前缀式 TXT（/data/stock_pool/<code>.txt，一行一个代码），
-编辑保存 → 重写 TXT → 立即生效，没有草稿/发布版本模型。
+成员唯一事实源 = 前缀式 TXT（一行一个代码）：全局池放
+`/data/stock_pool/<code>.txt`，用户 / 租户池按隔离子目录存放
+（`/data/stock_pool/u<user_id>/<code>.txt`），编辑保存 → 重写 TXT →
+立即生效，没有草稿/发布版本模型。
 PG 单表只存元信息；binding 表记录长生命周期引用（被引用的池不可删）。
 
 设计：读写分离

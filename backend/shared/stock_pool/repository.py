@@ -301,6 +301,7 @@ async def save_members(
     """
     from .materializer import (
         pool_txt_path,
+        resolve_pool_txt,
         to_api_members,
         write_pool_txt,
     )
@@ -325,9 +326,26 @@ async def save_members(
         accepted.append(norm[0])
 
     path = pool.file_path or pool_txt_path(
-        pool.scope, pool.code, tenant_id=pool.tenant_id, owner_user_id=pool.owner_user_id
+        pool.scope,
+        pool.code,
+        tenant_id=pool.tenant_id,
+        owner_user_id=pool.owner_user_id,
     )
-    write_pool_txt(path, to_api_members(accepted, mk), header=f"{pool.code} ({pool.name})")
+    if pool.scope != SCOPE_GLOBAL:
+        # 用户 / 租户池强制进隔离子目录；DB 里残留的旧扁平 file_path 仅读兼容，
+        # 本次保存即迁移到新位置并回写 file_path。
+        isolated = pool_txt_path(
+            pool.scope,
+            pool.code,
+            tenant_id=pool.tenant_id,
+            owner_user_id=pool.owner_user_id,
+        )
+        if Path(path).resolve() != Path(isolated).resolve():
+            logger.info("股票池 TXT 迁移到隔离目录: %s -> %s", path, isolated)
+        path = isolated
+    write_pool_txt(
+        path, to_api_members(accepted, mk), header=f"{pool.code} ({pool.name})"
+    )
 
     digest = checksum_symbols(accepted) if accepted else None
     await session.execute(
@@ -363,11 +381,14 @@ async def save_members(
 
 
 def read_members(pool: StockPool) -> list[str]:
-    """读成员 TXT（前缀式）。池没有 file_path（内置池未刷新）时按规则猜测路径。"""
-    from .materializer import pool_txt_path, read_pool_txt
+    """读成员 TXT（前缀式）。池没有 file_path（内置池未刷新）时按规则猜测路径。
+
+    猜测走 `resolve_pool_txt`：新隔离子目录优先，旧扁平路径读兼容。
+    """
+    from .materializer import read_pool_txt, resolve_pool_txt
 
     if not pool.file_path:
-        pool.file_path = pool_txt_path(
+        pool.file_path = resolve_pool_txt(
             pool.scope,
             pool.code,
             tenant_id=pool.tenant_id,

@@ -37,6 +37,7 @@ from .constants import SCOPE_GLOBAL
 from .materializer import (
     pool_txt_path,
     read_pool_txt,
+    resolve_pool_txt,
     write_pool_txt,
 )
 from .normalize import (
@@ -384,8 +385,12 @@ class PoolResolver:
         is_system = bool(data.get("is_system"))
         warnings: list[str] = []
 
-        file_path = data.get("file_path") or pool_txt_path(
-            scope, code, tenant_id=data.get("tenant_id"), owner_user_id=data.get("owner_user_id")
+        file_path = resolve_pool_txt(
+            scope,
+            code,
+            file_path=data.get("file_path"),
+            tenant_id=data.get("tenant_id"),
+            owner_user_id=data.get("owner_user_id"),
         )
         api = read_pool_txt(file_path)
 

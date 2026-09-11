@@ -1505,9 +1505,9 @@ class ManualExecutionService:
             )
             return []
         logger.info(
-            "实盘信号池过滤 pool_id=%s version=%s kept=%d dropped=%d",
+            "实盘信号池过滤 pool_id=%s checksum=%s kept=%d dropped=%d",
             outcome.pool_id,
-            outcome.pool_version,
+            outcome.pool_checksum,
             len(outcome.kept),
             outcome.dropped,
         )

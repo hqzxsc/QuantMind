@@ -1,6 +1,7 @@
-"""全局股票池模块 - P0 地基单测。
+"""全局股票池模块（v2：单表元信息 + TXT 成员）单测。
 
-覆盖不依赖数据库的纯逻辑：代码口径归一、内置池目录、ref 解析、物化。
+覆盖不依赖数据库的纯逻辑：代码口径归一、内置池目录、ref 解析、
+成员 TXT 读写、物化、信号过滤，以及消费方接入的静态护栏。
 DB 相关（repository / seed / 库内池解析）留给集成测试。
 """
 
@@ -20,15 +21,18 @@ from backend.shared.stock_pool.filters import (
 )
 from backend.shared.stock_pool.materializer import (
     materialize_snapshot,
+    pool_txt_name,
+    pool_txt_path,
     read_instruments,
+    read_pool_txt,
     write_instruments,
+    write_pool_txt,
 )
 from backend.shared.stock_pool.resolver import (
     PoolResolver,
     ResolveContext,
     register_index_provider,
 )
-from backend.shared.stock_pool.schemas import PoolMember
 
 resolver = PoolResolver()
 
@@ -121,15 +125,14 @@ class TestBuiltins:
         }
         assert sdk_whitelist <= sp_builtins.BUILTIN_CODES
 
-    def test_seed_rows_are_global_published_system_pools(self):
+    def test_seed_rows_are_global_active_system_pools(self):
         rows = sp_builtins.seed_rows()
         assert len(rows) == len(sp_builtins.BUILTIN_POOLS)
         for row in rows:
             assert row["scope"] == "global"
             assert row["is_system"] is True
-            assert row["status"] == "published"
             assert row["pool_id"] == f"sys_{row['code']}"
-            json.dumps(row["definition"])  # 必须可 JSON 序列化（入 JSONB）
+            json.dumps(row)  # 必须可 JSON 序列化（入 SQL 参数）
 
     def test_get_builtin_is_case_insensitive(self):
         assert sp_builtins.get_builtin("CSI300") is sp_builtins.get_builtin("csi300")
@@ -202,6 +205,49 @@ class TestResolverRefs:
 # ---------------------------------------------------------------------------
 # 物化
 # ---------------------------------------------------------------------------
+class TestPoolTxt:
+    """v2：成员 TXT 是唯一事实源，读写行为必须锁死。"""
+
+    def test_write_read_roundtrip_dedupes_and_keeps_order(self, tmp_path):
+        p = tmp_path / "p.txt"
+        n = write_pool_txt(p, ["SH600036", "SZ000001", "SH600036"])
+        assert n == 2  # 去重
+        assert read_pool_txt(p) == ["SH600036", "SZ000001"]
+
+    def test_comments_and_empty_lines_ignored(self, tmp_path):
+        p = tmp_path / "p.txt"
+        p.write_text("# generated\nSH600036\n\n  \n# tail\nSZ000001\n", encoding="utf-8")
+        assert read_pool_txt(p) == ["SH600036", "SZ000001"]
+
+    def test_line_with_comma_takes_first_cell(self, tmp_path):
+        """用户手改时粘进 csv 行也要容错（取第一格）。"""
+        p = tmp_path / "p.txt"
+        p.write_text("SH600036,贵州茅台\n", encoding="utf-8")
+        assert read_pool_txt(p) == ["SH600036"]
+
+    def test_missing_file_reads_empty_not_raise(self, tmp_path):
+        assert read_pool_txt(tmp_path / "nope.txt") == []
+
+    def test_atomic_write_leaves_no_tmp(self, tmp_path):
+        p = tmp_path / "p.txt"
+        write_pool_txt(p, ["SH600036"])
+        assert list(tmp_path.glob("*.tmp")) == []
+        assert p.read_text(encoding="utf-8").splitlines()[0].startswith("#")
+
+    def test_pool_txt_name_scoping(self):
+        assert pool_txt_name("global", "csi300") == "csi300.txt"
+        # 私有池文件名必须带归属，不同用户同名不互撞
+        assert pool_txt_name("user", "my", owner_user_id="42") == "u42_my.txt"
+        assert pool_txt_name("user", "my", owner_user_id="7") != pool_txt_name(
+            "user", "my", owner_user_id="42"
+        )
+        assert pool_txt_name("global", "a b/c").endswith("a_b_c.txt")
+
+    def test_pool_txt_path_uses_env_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("QM_STOCK_POOL_TXT_DIR", str(tmp_path))
+        assert pool_txt_path("global", "csi300") == str(tmp_path / "csi300.txt")
+
+
 class TestMaterializer:
     def test_write_and_read_instruments(self, tmp_path, monkeypatch):
         monkeypatch.setenv("QLIB_PROVIDER_URI", str(tmp_path))
@@ -233,8 +279,13 @@ class TestIndexProviderContract:
     `fetch_universe_stocks('000300.SH')` 会静默返回空。
 
     注：直接调用 `_from_builtin` 而非 `resolve_sync(code)`，
-    因为后者会先查库（DB 是 SSOT，内置目录是兜底），单测无数据库。
+    因为后者会先查库（DB 是元信息 SSOT，内置目录是兜底），单测无数据库。
+    内置池解析成功后会**自愈写成员 TXT**，测试目录用 env 隔离。
     """
+
+    @pytest.fixture(autouse=True)
+    def _isolate_pool_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("QM_STOCK_POOL_TXT_DIR", str(tmp_path / "pools"))
 
     def teardown_method(self):
         register_index_provider(None)
@@ -244,29 +295,32 @@ class TestIndexProviderContract:
         assert builtin is not None
         return builtin
 
-    def test_cn_builtin_passes_pool_code(self):
+    def test_cn_builtin_passes_pool_code(self, tmp_path):
         seen: list[tuple] = []
 
         def fake_provider(market, index_symbol, pool_code):
             seen.append((market, index_symbol, pool_code))
-            return [PoolMember(symbol="SH600036", weight=1.0)]
+            return ["SH600036"]
 
         register_index_provider(fake_provider)
-        snap = resolver._from_builtin(self._builtin("csi300"), ResolveContext(), None)
+        snap = resolver._from_builtin(self._builtin("csi300"), ResolveContext())
 
         assert seen == [("CN", "000300.SH", "csi300")]
         assert snap.symbols == ["600036.SH"]
-        assert snap.weights == {"600036.SH": 1.0}
+        # 自愈：成员写成前缀式 TXT（唯一事实源）
+        txt = tmp_path / "pools" / "csi300.txt"
+        assert txt.exists()
+        assert read_pool_txt(txt) == ["SH600036"]
 
     def test_all_a_builtin_passes_pool_code_without_index_symbol(self):
         seen: list[tuple] = []
 
         def fake_provider(market, index_symbol, pool_code):
             seen.append((market, index_symbol, pool_code))
-            return [PoolMember(symbol="SZ000001")]
+            return ["SZ000001"]
 
         register_index_provider(fake_provider)
-        snap = resolver._from_builtin(self._builtin("all_a"), ResolveContext(), None)
+        snap = resolver._from_builtin(self._builtin("all_a"), ResolveContext())
 
         assert seen == [("CN", None, "all_a")]
         assert snap.symbols == ["000001.SZ"]
@@ -276,17 +330,17 @@ class TestIndexProviderContract:
             raise RuntimeError("quantdb down")
 
         register_index_provider(boom)
-        snap = resolver._from_builtin(self._builtin("csi300"), ResolveContext(), None)
+        snap = resolver._from_builtin(self._builtin("csi300"), ResolveContext())
 
         assert snap.symbols == []
         assert snap.warnings
 
     def test_optional_source_builtin_labels_missing_source(self):
         register_index_provider(lambda market, index_symbol, pool_code: [])
-        snap = resolver._from_builtin(self._builtin("hk_main"), ResolveContext(), None)
+        snap = resolver._from_builtin(self._builtin("hk_main"), ResolveContext())
 
         assert snap.symbols == []
-        assert any("尚未接入" in w for w in snap.warnings)
+        assert any("未就绪" in w or "未接入" in w for w in snap.warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -556,7 +610,7 @@ class TestP3BacktestBridge:
     def _snapshot(self, **kw):
         from backend.shared.stock_pool.schemas import PoolSnapshot
 
-        base = {"pool_id": "sp_x", "code": "my_pool", "market": "CN", "version": 3}
+        base = {"pool_id": "sp_x", "code": "my_pool", "market": "CN"}
         base.update(kw)
         return PoolSnapshot(**base)
 
@@ -579,28 +633,9 @@ class TestP3BacktestBridge:
         path = materialize_snapshot(snap, start_date="2024-01-01", end_date="2024-12-31")
 
         assert path is not None
-        from pathlib import Path as _P
-
-        from backend.shared.stock_pool.constants import INSTRUMENT_FILE_PREFIX
-        from backend.shared.stock_pool.materializer import read_instruments
-
-        code_part = _P(path).name[len(INSTRUMENT_FILE_PREFIX) :][: -len(".txt")]
-        assert read_instruments(code_part) == ["sh600036", "sz000001"]
-        # 池文件必须与 Qlib 原生池区分开，避免覆盖 csi300.txt；
-        # 且文件名带版本/校验和标签（并发不同版本互不覆盖）。
-        assert "pool_my_pool__" in path
-
-    def test_materialize_filename_isolates_versions(self, tmp_path, monkeypatch):
-        """同一池的 v1 / v2（或复现跑旧版本）不得写同一个 instruments 文件。"""
-        monkeypatch.setenv("QLIB_PROVIDER_URI", str(tmp_path))
-        p1 = materialize_snapshot(
-            self._snapshot(version=1, checksum="aaa111", symbols=["600036.SH"])
-        )
-        p2 = materialize_snapshot(
-            self._snapshot(version=2, checksum="bbb222", symbols=["600036.SH"])
-        )
-        assert p1 is not None and p2 is not None
-        assert p1 != p2
+        # 池文件必须与 Qlib 原生池区分开，避免覆盖 csi300.txt
+        assert path.endswith("pool_my_pool.txt")
+        assert read_instruments("my_pool") == ["sh600036", "sz000001"]
 
     def test_pool_code_is_sanitized_for_filename(self, tmp_path, monkeypatch):
         monkeypatch.setenv("QLIB_PROVIDER_URI", str(tmp_path))
@@ -620,12 +655,10 @@ class TestP3BacktestBridge:
         assert req.pool_id == "pool:csi300"
         assert req.universe == "all"  # 默认不动，由运行时覆盖
 
-        req.pool_version = 7
         req.pool_checksum = "deadbeef"
         req.pool_warnings = ["索引为空"]
         dumped = req.dict()
         assert dumped["pool_id"] == "pool:csi300"
-        assert dumped["pool_version"] == 7
         assert dumped["pool_checksum"] == "deadbeef"
         assert dumped["pool_warnings"] == ["索引为空"]
 
@@ -647,7 +680,6 @@ class TestPoolSignalFilter:
             "pool_id": "sp_x",
             "code": "my_pool",
             "market": "CN",
-            "version": 5,
             "checksum": "cafe",
             "symbols": symbols,
             "api_symbols": api_symbols,
@@ -667,8 +699,7 @@ class TestPoolSignalFilter:
         assert out.dropped == 2
         assert out.applied is True
         assert out.empty_result is False
-        # 版本/校验和透传，供上层落库做可复现
-        assert out.pool_version == 5
+        # 校验和透传，供上层落库做可复现
         assert out.pool_checksum == "cafe"
 
     def test_suffix_and_prefix_both_match(self):
@@ -784,13 +815,11 @@ class TestP3TrainingBridge:
         cfg = DataCfg(
             pool_id="pool:csi300",
             pool_symbols=["600036.SH", "000001.SZ"],
-            pool_version=4,
             pool_checksum="abc",
         )
         dumped = cfg.model_dump()
         assert dumped["pool_id"] == "pool:csi300"
         assert dumped["pool_symbols"] == ["600036.SH", "000001.SZ"]
-        assert dumped["pool_version"] == 4
         assert dumped["pool_checksum"] == "abc"
 
     def test_data_cfg_defaults_have_no_pool(self):
@@ -953,7 +982,7 @@ class TestP4Governance:
 
         a = _legacy_pool_code("我的自选池", "42")
         b = _legacy_pool_code("我的自选池", "42")
-        assert a == b, "同名池重复保存（哪怕内容变了）必须命中同一条记录，走 publish 新版本"
+        assert a == b, "同名池重复保存（哪怕内容变了）必须命中同一条记录，直接覆盖成员 TXT"
         # 内容变化不再产生新 code：hash 不参与 code（历史 bug：同名池每次保存增殖一条）
         other_content = _legacy_pool_code("我的自选池", "42")
         assert a == other_content
@@ -1048,8 +1077,9 @@ class TestP4Governance:
             ("POST", "/create-from-members"): "/create-from-members",
             ("POST", "/sp_x/bindings"): "/{pool_id}/bindings",
             ("GET", "/sp_x/usages"): "/{pool_id}/usages",
-            ("POST", "/sp_x/publish"): "/{pool_id}/publish",
+            ("POST", "/sp_x/refresh"): "/{pool_id}/refresh",
             ("GET", "/sp_x/members"): "/{pool_id}/members",
+            ("PUT", "/sp_x/members"): "/{pool_id}/members",
         }
         for (method, url), want in expected.items():
             got = resolve(url, method)

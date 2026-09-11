@@ -146,7 +146,8 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
             # --- Global Stock Pool Resolution [START] ---
             # P3：pool_id 优先于 universe。解析 → 物化 instruments 文件 →
             # 覆盖 universe（后续 isfile 分支与 SimpleSignal 都能直接吃文件路径）。
-            # 空池**必须显式失败**，不能静默退化成全市场（那正是改造前的坑）。
+            # 成员来自池 TXT（保存即生效）。空池**必须显式失败**，
+            # 不能静默退化成全市场（那正是改造前的坑）。
             if getattr(request, "pool_id", None):
                 from backend.shared.stock_pool.materializer import (
                     materialize_snapshot,
@@ -164,7 +165,6 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                     ),
                     strict=True,
                 )
-                request.pool_version = snapshot.version
                 request.pool_checksum = snapshot.checksum
                 request.pool_warnings = list(snapshot.warnings or [])
 
@@ -192,7 +192,6 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                         "股票池已物化并覆盖 universe",
                         pool_id=request.pool_id,
                         pool_code=snapshot.code,
-                        pool_version=snapshot.version,
                         symbol_count=len(snapshot.symbols),
                         checksum=snapshot.checksum,
                         instruments_path=pool_path,

@@ -1,12 +1,12 @@
 """全局股票池 - 用户态只读接口（供各功能下拉选择）。
 
 与后台管理 `/api/v1/admin/stock-pools` 的分工：
-- 后台管理负责「写」（定义 / 成员 / 版本 / 发布）；
+- 后台管理负责「写」（建池 / 成员 / 刷新）；
 - 本路由只负责「读」，是回测 / 训练 / 推理 / 模拟盘 / 实盘 / 因子挖掘
   各功能页面选择股票池的统一数据源。
 
 可见性：`scope=global` 全平台可见；`tenant` / `user` 需身份匹配；
-`archived` 一律不可见。
+`archived` 一律不可见。成员读取的是 TXT（保存即可见，无发布环节）。
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from sqlalchemy import text
 
 from backend.services.engine.auth_context import get_authenticated_identity
 from backend.shared.database_manager_v2 import get_session
-from backend.shared.stock_pool import constants as sp_const
 from backend.shared.stock_pool import repository as repo
 from backend.shared.stock_pool.resolver import ResolveContext, resolver
 
@@ -65,8 +64,7 @@ async def list_pool_options(
                     text(
                         f"""
                     SELECT pool_id, code, name, description, market, pool_type,
-                           scope, status, current_version, symbol_count,
-                           checksum, is_system
+                           scope, status, symbol_count, checksum, is_system
                       FROM qm_stock_pool
                      WHERE {" AND ".join(where)}
                      ORDER BY is_system DESC, market ASC, code ASC
@@ -79,11 +77,7 @@ async def list_pool_options(
             .all()
         )
 
-    return {
-        "total": len(rows),
-        "items": [dict(r) for r in rows],
-        "member_table_max": sp_const.MEMBER_TABLE_MAX,
-    }
+    return {"total": len(rows), "items": [dict(r) for r in rows]}
 
 
 @router.get("", summary="股票池列表")
@@ -129,8 +123,8 @@ async def list_pools(
                     text(
                         f"""
                     SELECT pool_id, code, name, description, market, pool_type,
-                           scope, status, current_version, symbol_count,
-                           checksum, is_system, updated_at
+                           scope, status, symbol_count, checksum, is_system,
+                           file_path, updated_at
                       FROM qm_stock_pool
                      WHERE {clause}
                      ORDER BY is_system DESC, market ASC, code ASC
@@ -157,7 +151,6 @@ async def resolve_ref(
     request: Request,
     ref: str = Query(..., description="pool:csi300 / csi300 / list:SH600036 / all"),
     market: str | None = Query(None),
-    version: int | None = Query(None),
     preview_limit: int = Query(20, ge=0, le=500),
 ):
     _user_id, tenant_id = get_authenticated_identity(request)
@@ -165,14 +158,12 @@ async def resolve_ref(
     snap = await resolver.resolve(
         ref,
         ResolveContext(tenant_id=tenant_id, market=market),
-        version=version,
         strict=False,
     )
     return {
         "ref": ref,
         "pool_id": snap.pool_id,
         "code": snap.code,
-        "version": snap.version,
         "market": snap.market,
         "source": snap.source,
         "unfiltered": snap.unfiltered,
@@ -195,8 +186,8 @@ async def get_pool(request: Request, pool_id: str):
                     text(
                         f"""
                     SELECT pool_id, code, name, description, market, pool_type,
-                           scope, status, current_version, symbol_count,
-                           checksum, is_system, definition, refresh_policy,
+                           scope, status, symbol_count, checksum, is_system,
+                           file_path, source_kind, source_ref,
                            created_at, updated_at
                       FROM qm_stock_pool
                      WHERE pool_id = :pid AND {_VISIBILITY_CLAUSE}
@@ -212,17 +203,15 @@ async def get_pool(request: Request, pool_id: str):
             raise HTTPException(
                 status_code=404, detail=f"股票池不存在或无权访问: {pool_id}"
             )
-        versions = await repo.list_versions(session, pool_id, limit=10)
 
-    return {**dict(row), "versions": [v.model_dump() for v in versions]}
+    return dict(row)
 
 
-@router.get("/{pool_id}/members", summary="股票池成员（已发布版本）")
+@router.get("/{pool_id}/members", summary="股票池成员（读 TXT）")
 async def list_members(
     request: Request,
     pool_id: str,
-    version: int | None = Query(None),
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(500, ge=1, le=20000),
     offset: int = Query(0, ge=0),
 ):
     user_id, tenant_id = get_authenticated_identity(request)
@@ -234,8 +223,7 @@ async def list_members(
                 await session.execute(
                     text(
                         f"""
-                    SELECT market, current_version
-                      FROM qm_stock_pool
+                    SELECT * FROM qm_stock_pool
                      WHERE pool_id = :pid AND {_VISIBILITY_CLAUSE}
                     """
                     ),
@@ -249,33 +237,16 @@ async def list_members(
             raise HTTPException(
                 status_code=404, detail=f"股票池不存在或无权访问: {pool_id}"
             )
+        from backend.shared.stock_pool.schemas import StockPool
 
-        target_version = (
-            int(version) if version is not None else int(row["current_version"] or 0)
-        )
-        if target_version <= 0:
-            return {
-                "pool_id": pool_id,
-                "version": 0,
-                "total": 0,
-                "items": [],
-                "warning": "该池尚未发布任何版本；系统指数池的成分请用 /resolve 获取",
-            }
-
-        members, total = await repo.list_members(
-            session,
-            pool_id,
-            str(row["market"] or "CN"),
-            version=target_version,
-            limit=limit,
-            offset=offset,
-        )
+        pool = StockPool(**dict(row))
+        api_symbols = repo.read_members(pool)
 
     return {
         "pool_id": pool_id,
-        "version": target_version,
-        "total": total,
-        "items": [m.model_dump() for m in members],
+        "total": len(api_symbols),
+        "symbols": api_symbols[offset : offset + limit],
+        "checksum": pool.checksum,
         "limit": limit,
         "offset": offset,
     }

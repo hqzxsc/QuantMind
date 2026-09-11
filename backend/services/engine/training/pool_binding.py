@@ -40,7 +40,6 @@ def resolve_training_pool(payload: dict[str, Any] | None) -> dict[str, Any]:
     base = {
         "pool_id": pool_ref,
         "pool_symbols": None,
-        "pool_version": snapshot.version,
         "pool_checksum": snapshot.checksum,
     }
 
@@ -57,10 +56,9 @@ def resolve_training_pool(payload: dict[str, Any] | None) -> dict[str, Any]:
         )
 
     logger.info(
-        "训练池解析完成: pool_id=%s code=%s version=%s symbols=%d checksum=%s",
+        "训练池解析完成: pool_id=%s code=%s symbols=%d checksum=%s",
         pool_ref,
         snapshot.code,
-        snapshot.version,
         len(snapshot.symbols),
         snapshot.checksum,
     )

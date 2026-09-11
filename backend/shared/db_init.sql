@@ -2239,10 +2239,10 @@ DELETE FROM qm_user_models
 WHERE model_id IN ('model_qlib', 'alpha158', 'sys-model_qlib', 'sys-alpha158');
 
 -- ========================
--- 64. QM_STOCK_POOL 全局股票池（回测/训练/推理/模拟盘/实盘唯一事实源）
--- 与 backend/shared/stock_pool/migrations/001_create_stock_pool.sql 保持一致；
--- 启动期 ensure_tables 也会幂等补建，这里是新装环境的完整定义。
--- 口径：成员 symbol 存后缀式 600036.SH；API 出入参前缀式，转换经 StockCodeUtil。
+-- 64. QM_STOCK_POOL 全局股票池 v2（回测/训练/推理/模拟盘/实盘唯一事实源）
+-- 与 backend/shared/stock_pool/migrations/001_create_stock_pool.sql 保持一致。
+-- 成员唯一事实源 = 前缀式 TXT（/data/stock_pool/<code>.txt，一行一个，保存即生效）；
+-- 本表只存元信息；qm_stock_pool_binding 记录长生命周期引用（被引用不可删）。
 -- ========================
 CREATE TABLE IF NOT EXISTS qm_stock_pool (
     pool_id         TEXT PRIMARY KEY,
@@ -2254,11 +2254,8 @@ CREATE TABLE IF NOT EXISTS qm_stock_pool (
     scope           TEXT NOT NULL DEFAULT 'global',
     tenant_id       TEXT,
     owner_user_id   TEXT,
-    status          TEXT NOT NULL DEFAULT 'draft',
-    visibility      TEXT NOT NULL DEFAULT 'internal',
-    definition      JSONB NOT NULL DEFAULT '{}'::jsonb,
-    refresh_policy  JSONB NOT NULL DEFAULT '{}'::jsonb,
-    current_version INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'active',
+    file_path       TEXT,
     symbol_count    INTEGER NOT NULL DEFAULT 0,
     checksum        TEXT,
     source_kind     TEXT,
@@ -2278,46 +2275,6 @@ CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_list
 
 CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_scope
     ON qm_stock_pool (scope, tenant_id, owner_user_id);
-
-CREATE TABLE IF NOT EXISTS qm_stock_pool_version (
-    id              BIGSERIAL PRIMARY KEY,
-    pool_id         TEXT NOT NULL REFERENCES qm_stock_pool(pool_id) ON DELETE CASCADE,
-    version         INTEGER NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'published',
-    market          TEXT,
-    member_count    INTEGER NOT NULL DEFAULT 0,
-    checksum        TEXT,
-    storage_mode    TEXT NOT NULL DEFAULT 'table',
-    snapshot_path   TEXT,
-    changelog       TEXT,
-    published_by    TEXT,
-    published_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (pool_id, version)
-);
-
-CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_version_pool
-    ON qm_stock_pool_version (pool_id, version DESC);
-
-CREATE TABLE IF NOT EXISTS qm_stock_pool_member (
-    id              BIGSERIAL PRIMARY KEY,
-    pool_id         TEXT NOT NULL REFERENCES qm_stock_pool(pool_id) ON DELETE CASCADE,
-    version         INTEGER NOT NULL,
-    symbol          TEXT NOT NULL,
-    name            TEXT,
-    weight          DOUBLE PRECISION,
-    industry        TEXT,
-    effective_from  DATE,
-    effective_to    DATE,
-    meta            JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (pool_id, version, symbol)
-);
-
-CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_member_pool
-    ON qm_stock_pool_member (pool_id, version);
-
-CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_member_symbol
-    ON qm_stock_pool_member (symbol);
 
 CREATE TABLE IF NOT EXISTS qm_stock_pool_binding (
     id              BIGSERIAL PRIMARY KEY,

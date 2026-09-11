@@ -127,6 +127,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ QuantDB warm-up failed (non-fatal): {e}")
 
+    # 内置股票池成分 TXT 每日刷新 worker（启动即刷 + 按日期去重）
+    builtin_pool_task: asyncio.Task | None = None
+    try:
+        from backend.shared.stock_pool import run_builtin_pool_refresh_worker
+
+        builtin_pool_task = asyncio.create_task(
+            run_builtin_pool_refresh_worker(), name="builtin-pool-refresh"
+        )
+        logger.info("✅ Builtin stock-pool TXT refresh worker started")
+    except Exception as e:
+        logger.warning(f"⚠️ Builtin stock-pool refresh worker start skipped: {e}")
+
     # --- 此处 Yield，之后代码在 shutdown 时运行 ---
     try:
         from backend.shared.system_events import record_system_event_async
@@ -144,6 +156,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # --- 停止逻辑 ---
+    if builtin_pool_task and not builtin_pool_task.done():
+        builtin_pool_task.cancel()
     if vm_task and not vm_task.done():
         try:
             app.state.vectorized_matcher.stop()

@@ -1,46 +1,26 @@
-"""全局股票池 - 数据访问层（原生 SQL）。
+"""全局股票池 - 数据访问层（v2：单表元信息 + TXT 成员）。
 
-版本模型（draft → publish）：
-- `qm_stock_pool.current_version` = **已发布**版本号（0 表示从未发布）。
-- 成员编辑永远作用于 **staging 版本** = `current_version + 1`。
-- `publish()` 把 staging 提升为 current_version 并落版本记录；
-  未发布的编辑对线上消费方（resolver）不可见。
-- 已发布池被再次编辑后 `status` 回落 `draft`，表示「有未发布改动」。
+保存即生效：成员编辑 → 重写 TXT → 更新计数/校验和，没有草稿/发布。
+引用守卫：qm_stock_pool_binding 记录长生命周期引用，被引用的池不可归档。
 """
 
 from __future__ import annotations
 
 import logging
-import os
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 
 from sqlalchemy import text
 
-from .constants import (
-    MEMBER_TABLE_MAX,
-    SCOPE_GLOBAL,
-    STORAGE_SNAPSHOT,
-    STORAGE_TABLE,
-    STATUS_ARCHIVED,
-    STATUS_DRAFT,
-    STATUS_PUBLISHED,
-)
+from .constants import SCOPE_GLOBAL, STATUS_ACTIVE, STATUS_ARCHIVED
 from .normalize import (
     checksum_symbols,
     normalize_market,
     normalize_symbols,
-    to_api_symbol,
 )
-from .schemas import (
-    PoolMember,
-    PoolVersion,
-    StockPool,
-    StockPoolCreate,
-    StockPoolUpdate,
-)
+from .schemas import StockPool, StockPoolCreate, StockPoolUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +35,7 @@ _TABLES_READY = False
 # 建表
 # ---------------------------------------------------------------------------
 async def ensure_tables(session) -> None:
-    """幂等建表。SQL 文件是唯一事实源（main_oss 启动期也会执行同一份）。"""
+    """幂等建表/升级。SQL 文件是唯一事实源（main_oss 启动期执行同一份）。"""
     global _TABLES_READY
     if _TABLES_READY:
         return
@@ -70,6 +50,14 @@ async def ensure_tables(session) -> None:
     _TABLES_READY = True
 
 
+def ensure_tables_sync(session) -> None:
+    """同步版建表（main_oss 启动期使用）。"""
+    sql = _MIGRATION_SQL.read_text(encoding="utf-8")
+    for statement in _split_statements(sql):
+        session.execute(text(statement))
+    session.commit()
+
+
 def _split_statements(sql: str) -> list[str]:
     """按分号拆分 SQL 语句，跳过纯注释行。"""
     lines: list[str] = []
@@ -82,29 +70,8 @@ def _split_statements(sql: str) -> list[str]:
     return [s.strip() for s in body.split(";") if s.strip()]
 
 
-# ---------------------------------------------------------------------------
-# 行 → DTO
-# ---------------------------------------------------------------------------
 def _row_to_pool(row) -> StockPool:
-    data = dict(row)
-    return StockPool(**data)
-
-
-def _row_to_member(row, market: str) -> PoolMember:
-    data = dict(row)
-    symbol = data.get("symbol") or ""
-    data["api_symbol"] = to_api_symbol(symbol, market)
-    data.pop("pool_id", None)
-    data.pop("version", None)
-    data.pop("id", None)
-    data.pop("created_at", None)
-    return PoolMember(**data)
-
-
-def _row_to_version(row) -> PoolVersion:
-    data = dict(row)
-    data.pop("id", None)
-    return PoolVersion(**data)
+    return StockPool(**dict(row))
 
 
 def _now() -> datetime:
@@ -198,7 +165,7 @@ async def get_pool_by_code(
     """按 (scope, tenant, code) 查池。
 
     `owner_user_id` 传值时额外限定 owner —— **scope='user' 必须传**，
-    否则不同用户的同名私有池会互相命中（曾出现在旧池登记桥里）。
+    否则不同用户的同名私有池会互相命中。
     """
     sql = """
         SELECT * FROM qm_stock_pool
@@ -224,13 +191,11 @@ async def create_pool(
             """
             INSERT INTO qm_stock_pool (
                 pool_id, code, name, description, market, pool_type, scope,
-                tenant_id, owner_user_id, status, visibility, definition,
-                refresh_policy, source_kind, source_ref, is_system,
-                created_by, updated_by
+                tenant_id, owner_user_id, status, source_kind, source_ref,
+                is_system, created_by, updated_by
             ) VALUES (
                 :pool_id, :code, :name, :description, :market, :pool_type, :scope,
-                :tenant_id, :owner_user_id, :status, :visibility,
-                CAST(:definition AS JSONB), CAST(:refresh_policy AS JSONB),
+                :tenant_id, :owner_user_id, :status,
                 :source_kind, :source_ref, FALSE, :actor, :actor
             )
             """
@@ -245,10 +210,7 @@ async def create_pool(
             "scope": payload.scope,
             "tenant_id": payload.tenant_id,
             "owner_user_id": payload.owner_user_id,
-            "status": STATUS_DRAFT,
-            "visibility": "internal",
-            "definition": _json(payload.definition),
-            "refresh_policy": _json(payload.refresh_policy),
+            "status": STATUS_ACTIVE,
             "source_kind": payload.source_kind,
             "source_ref": payload.source_ref,
             "actor": actor,
@@ -272,18 +234,9 @@ async def update_pool(
     if payload.description is not None:
         sets.append("description = :description")
         params["description"] = payload.description
-    if payload.definition is not None:
-        sets.append("definition = CAST(:definition AS JSONB)")
-        params["definition"] = _json(payload.definition)
-    if payload.refresh_policy is not None:
-        sets.append("refresh_policy = CAST(:refresh_policy AS JSONB)")
-        params["refresh_policy"] = _json(payload.refresh_policy)
     if payload.status is not None:
         sets.append("status = :status")
         params["status"] = payload.status
-    if payload.visibility is not None:
-        sets.append("visibility = :visibility")
-        params["visibility"] = payload.visibility
 
     await session.execute(
         text(f"UPDATE qm_stock_pool SET {', '.join(sets)} WHERE pool_id = :pid"), params
@@ -309,7 +262,7 @@ async def set_pool_status(
 
 
 async def archive_pool(session, pool_id: str, actor: str = "system") -> list[str]:
-    """软删。返回阻止归档的引用描述（非空表示已被引用）。"""
+    """归档。返回阻止归档的引用描述（非空表示已被引用）。"""
     usages = await list_usages(session, pool_id)
     if usages:
         return [f"{u['target_type']}:{u['target_id']}" for u in usages]
@@ -317,286 +270,71 @@ async def archive_pool(session, pool_id: str, actor: str = "system") -> list[str
     return []
 
 
-async def delete_pool(session, pool_id: str) -> None:
-    """硬删（成员/版本/绑定由外键级联删除）。仅允许已归档的池。"""
+async def delete_pool(session, pool_id: str, *, unlink_txt: bool = True) -> None:
+    """硬删（binding 由外键级联删除）。仅允许已归档的池。成员 TXT 一并清理。"""
+    pool = await get_pool(session, pool_id)
     await session.execute(
         text("DELETE FROM qm_stock_pool WHERE pool_id = :pid"), {"pid": pool_id}
     )
     await session.commit()
+    if pool is not None and unlink_txt and pool.file_path:
+        try:
+            Path(pool.file_path).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("股票池 TXT 删除失败 %s: %s", pool.file_path, exc)
 
 
 # ---------------------------------------------------------------------------
-# 版本
+# 成员（TXT 即唯一事实源）
 # ---------------------------------------------------------------------------
-async def staging_version(session, pool_id: str) -> int:
-    row = (
-        await session.execute(
-            text("SELECT current_version FROM qm_stock_pool WHERE pool_id = :pid"),
-            {"pid": pool_id},
-        )
-    ).first()
-    current = int(row[0]) if row and row[0] is not None else 0
-    return current + 1
-
-
-async def has_draft_changes(session, pool_id: str) -> bool:
-    staging = await staging_version(session, pool_id)
-    count = (
-        await session.execute(
-            text(
-                "SELECT COUNT(*) FROM qm_stock_pool_member "
-                "WHERE pool_id = :pid AND version = :ver"
-            ),
-            {"pid": pool_id, "ver": staging},
-        )
-    ).scalar() or 0
-    return int(count) > 0
-
-
-async def list_versions(session, pool_id: str, limit: int = 50) -> list[PoolVersion]:
-    rows = (
-        (
-            await session.execute(
-                text(
-                    """
-                SELECT * FROM qm_stock_pool_version
-                 WHERE pool_id = :pid
-                 ORDER BY version DESC
-                 LIMIT :limit
-                """
-                ),
-                {"pid": pool_id, "limit": int(limit)},
-            )
-        )
-        .mappings()
-        .all()
-    )
-    return [_row_to_version(r) for r in rows]
-
-
-async def get_version(session, pool_id: str, version: int) -> PoolVersion | None:
-    row = (
-        (
-            await session.execute(
-                text(
-                    "SELECT * FROM qm_stock_pool_version WHERE pool_id = :pid AND version = :ver"
-                ),
-                {"pid": pool_id, "ver": int(version)},
-            )
-        )
-        .mappings()
-        .first()
-    )
-    return _row_to_version(row) if row else None
-
-
-# ---------------------------------------------------------------------------
-# 成员
-# ---------------------------------------------------------------------------
-async def list_members(
+async def save_members(
     session,
-    pool_id: str,
-    market: str = "CN",
+    pool: StockPool,
+    raw_symbols: Sequence[str],
     *,
-    version: int | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-) -> tuple[list[PoolMember], int]:
-    ver = (
-        int(version) if version is not None else await staging_version(session, pool_id)
-    )
-
-    total = (
-        await session.execute(
-            text(
-                "SELECT COUNT(*) FROM qm_stock_pool_member "
-                "WHERE pool_id = :pid AND version = :ver"
-            ),
-            {"pid": pool_id, "ver": ver},
-        )
-    ).scalar() or 0
-
-    sql = (
-        "SELECT * FROM qm_stock_pool_member "
-        "WHERE pool_id = :pid AND version = :ver ORDER BY symbol ASC"
-    )
-    params: dict[str, Any] = {"pid": pool_id, "ver": ver}
-    if limit is not None:
-        sql += " LIMIT :limit OFFSET :offset"
-        params["limit"] = int(limit)
-        params["offset"] = int(offset)
-
-    rows = (await session.execute(text(sql), params)).mappings().all()
-    return [_row_to_member(r, market) for r in rows], int(total)
-
-
-async def list_published_symbols(session, pool_id: str, version: int) -> list[str]:
-    """读取已发布版本的成员（后缀式）。仅 storage_mode='table' 有成员行。"""
-    rows = (
-        await session.execute(
-            text(
-                "SELECT symbol FROM qm_stock_pool_member "
-                "WHERE pool_id = :pid AND version = :ver ORDER BY symbol ASC"
-            ),
-            {"pid": pool_id, "ver": int(version)},
-        )
-    ).all()
-    return [str(r[0]) for r in rows]
-
-
-async def replace_members(
-    session,
-    pool_id: str,
-    members: Sequence[PoolMember],
-    market: str = "CN",
-    *,
-    changelog: str | None = None,
     actor: str = "system",
-) -> int:
-    """整体覆盖 staging 成员。返回写入条数。"""
-    mk = normalize_market(market)
-    ver = await staging_version(session, pool_id)
+) -> dict[str, Any]:
+    """覆盖式保存成员：归一化去重 → 写 TXT → 更新计数/校验和。立即生效。
 
-    await session.execute(
-        text(
-            "DELETE FROM qm_stock_pool_member WHERE pool_id = :pid AND version = :ver"
-        ),
-        {"pid": pool_id, "ver": ver},
+    返回 {accepted, rejected, duplicates, symbol_count, checksum, file_path}。
+    坏代码被拒绝并回传样本（不是静默丢掉）。
+    """
+    from .materializer import (
+        pool_txt_path,
+        to_api_members,
+        write_pool_txt,
     )
 
-    deduped = _dedupe_members(members, mk)
-    for chunk in _chunks(deduped, 500):
-        await session.execute(
-            text(
-                """
-                INSERT INTO qm_stock_pool_member (
-                    pool_id, version, symbol, name, weight, industry,
-                    effective_from, effective_to, meta
-                ) VALUES (
-                    :pool_id, :version, :symbol, :name, :weight, :industry,
-                    :effective_from, :effective_to, CAST(:meta AS JSONB)
-                )
-                """
-            ),
-            [
-                {
-                    "pool_id": pool_id,
-                    "version": ver,
-                    "symbol": m.symbol,
-                    "name": m.name,
-                    "weight": m.weight,
-                    "industry": m.industry,
-                    "effective_from": m.effective_from,
-                    "effective_to": m.effective_to,
-                    "meta": _json(m.meta),
-                }
-                for m in chunk
-            ],
-        )
+    mk = normalize_market(pool.market)
+    seen: set[str] = set()
+    accepted: list[str] = []
+    rejected: list[str] = []
+    duplicates = 0
+    for item in raw_symbols or []:
+        code = str(item or "").strip()
+        if not code:
+            continue
+        norm = normalize_symbols([code], mk)
+        if not norm:
+            rejected.append(code[:32])
+            continue
+        if norm[0] in seen:
+            duplicates += 1
+            continue
+        seen.add(norm[0])
+        accepted.append(norm[0])
 
-    # 有未发布改动 → 状态回落 draft（已归档的池不在此处复活）
+    path = pool.file_path or pool_txt_path(
+        pool.scope, pool.code, tenant_id=pool.tenant_id, owner_user_id=pool.owner_user_id
+    )
+    write_pool_txt(path, to_api_members(accepted, mk), header=f"{pool.code} ({pool.name})")
+
+    digest = checksum_symbols(accepted) if accepted else None
     await session.execute(
         text(
             """
             UPDATE qm_stock_pool
-               SET status = CASE WHEN status = :published THEN :draft ELSE status END,
-                   updated_at = NOW(),
-                   updated_by = :actor
-             WHERE pool_id = :pid
-            """
-        ),
-        {
-            "pid": pool_id,
-            "published": STATUS_PUBLISHED,
-            "draft": STATUS_DRAFT,
-            "actor": actor,
-        },
-    )
-    if changelog:
-        await session.execute(
-            text(
-                """
-                UPDATE qm_stock_pool
-                   SET refresh_policy = refresh_policy || CAST(:patch AS JSONB)
-                 WHERE pool_id = :pid
-                """
-            ),
-            {"pid": pool_id, "patch": _json({"pending_changelog": changelog})},
-        )
-    await session.commit()
-    return len(deduped)
-
-
-async def publish(
-    session,
-    pool_id: str,
-    *,
-    actor: str = "system",
-    changelog: str | None = None,
-    snapshot_path: str | None = None,
-) -> PoolVersion | None:
-    """把 staging 提升为已发布版本。storage_mode 由成员数阈值决定。"""
-    pool = await get_pool(session, pool_id)
-    if pool is None:
-        return None
-
-    ver = await staging_version(session, pool_id)
-    symbols = (
-        await session.execute(
-            text(
-                "SELECT symbol FROM qm_stock_pool_member "
-                "WHERE pool_id = :pid AND version = :ver ORDER BY symbol ASC"
-            ),
-            {"pid": pool_id, "ver": ver},
-        )
-    ).all()
-    symbol_list = [str(r[0]) for r in symbols]
-
-    storage_mode = (
-        STORAGE_TABLE if len(symbol_list) <= MEMBER_TABLE_MAX else STORAGE_SNAPSHOT
-    )
-    digest = checksum_symbols(symbol_list)
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO qm_stock_pool_version (
-                pool_id, version, status, market, member_count, checksum,
-                storage_mode, snapshot_path, changelog, published_by
-            ) VALUES (
-                :pid, :ver, :status, :market, :count, :checksum,
-                :storage, :snapshot, :changelog, :actor
-            )
-            ON CONFLICT (pool_id, version) DO UPDATE SET
-                member_count = EXCLUDED.member_count,
-                checksum = EXCLUDED.checksum,
-                storage_mode = EXCLUDED.storage_mode,
-                snapshot_path = EXCLUDED.snapshot_path,
-                changelog = EXCLUDED.changelog,
-                published_by = EXCLUDED.published_by,
-                published_at = NOW()
-            """
-        ),
-        {
-            "pid": pool_id,
-            "ver": ver,
-            "status": STATUS_PUBLISHED,
-            "market": pool.market,
-            "count": len(symbol_list),
-            "checksum": digest,
-            "storage": storage_mode,
-            "snapshot": snapshot_path,
-            "changelog": changelog,
-            "actor": actor,
-        },
-    )
-
-    await session.execute(
-        text(
-            """
-            UPDATE qm_stock_pool
-               SET current_version = :ver,
-                   status = :status,
+               SET file_path = :path,
                    symbol_count = :count,
                    checksum = :checksum,
                    updated_at = NOW(),
@@ -605,16 +343,37 @@ async def publish(
             """
         ),
         {
-            "pid": pool_id,
-            "ver": ver,
-            "status": STATUS_PUBLISHED,
-            "count": len(symbol_list),
+            "pid": pool.pool_id,
+            "path": path,
+            "count": len(accepted),
             "checksum": digest,
             "actor": actor,
         },
     )
     await session.commit()
-    return await get_version(session, pool_id, ver)
+    return {
+        "accepted": len(accepted),
+        "rejected": len(rejected),
+        "duplicates": duplicates,
+        "rejected_samples": rejected[:20],
+        "symbol_count": len(accepted),
+        "checksum": digest,
+        "file_path": path,
+    }
+
+
+def read_members(pool: StockPool) -> list[str]:
+    """读成员 TXT（前缀式）。池没有 file_path（内置池未刷新）时按规则猜测路径。"""
+    from .materializer import pool_txt_path, read_pool_txt
+
+    if not pool.file_path:
+        pool.file_path = pool_txt_path(
+            pool.scope,
+            pool.code,
+            tenant_id=pool.tenant_id,
+            owner_user_id=pool.owner_user_id,
+        )
+    return read_pool_txt(pool.file_path)
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +408,7 @@ async def list_pools_for_target(
                 text(
                     """
                     SELECT b.pool_id, b.mode, b.priority, p.code, p.name,
-                           p.market, p.status, p.current_version, p.symbol_count
+                           p.market, p.status, p.symbol_count
                       FROM qm_stock_pool_binding b
                       JOIN qm_stock_pool p ON p.pool_id = b.pool_id
                      WHERE b.target_type = :ttype AND b.target_id = :tid
@@ -741,41 +500,11 @@ async def bind_pool(
 # ---------------------------------------------------------------------------
 # 工具
 # ---------------------------------------------------------------------------
-def _json(value: Any) -> str:
-    import json
-
-    return json.dumps(value or {}, ensure_ascii=False)
-
-
 def _new_pool_id(code: str) -> str:
     import uuid
 
     return f"sp_{code[:24]}_{uuid.uuid4().hex[:8]}"
 
 
-def _dedupe_members(members: Iterable[PoolMember], market: str) -> list[PoolMember]:
-    seen: set[str] = set()
-    out: list[PoolMember] = []
-    for m in members:
-        codes = normalize_symbols([m.symbol], market)
-        if not codes:
-            continue
-        code = codes[0]
-        if code in seen:
-            continue
-        seen.add(code)
-        out.append(m.model_copy(update={"symbol": code, "api_symbol": None}))
-    return out
-
-
-def _chunks(items: Sequence[Any], size: int) -> Iterable[Sequence[Any]]:
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
-
-
-def snapshot_dir() -> Path:
-    return Path(os.getenv("QM_STOCK_POOL_SNAPSHOT_DIR", "/data/stock_pool"))
-
-
-def today() -> date:
-    return datetime.now(timezone.utc).date()
+def today() -> Any:
+    return _now().date()

@@ -1,43 +1,36 @@
 """全局股票池模块 - 常量与枚举。
 
-本模块是「全局股票池」的唯一事实源（SSOT）：
-- 内置系统池（csi300 等）以 seed 数据形式落 `qm_stock_pool`；
-- 所有功能（回测 / 训练 / 推理 / 模拟盘 / 实盘 / 因子挖掘 / 策略 SDK）
-  统一经 `PoolResolver` 读取，不再各自维护白名单。
+简化版设计（v2，文件优先）：
+- **成员唯一事实源 = TXT 文件**（前缀式一行一个，如 `SH600036`），
+  落在 `POOL_TXT_DIR`（默认 /data/stock_pool/<code>.txt）；
+- PG 只存**元信息**单表 `qm_stock_pool`（列表 / 归属 / 文件路径）与
+  引用表 `qm_stock_pool_binding`（被引用的池不可删）；
+- 无草稿/发布版本模型：编辑保存 → 重写 TXT → 立即生效；
+- 内置池（csi300 等）启动与每日从 QuantDB 指数权重刷新成同名 TXT；
+- 所有功能统一经 `PoolResolver` 读取，不再各自维护白名单。
 """
 
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# 存储策略
-# ---------------------------------------------------------------------------
-# 成员数不超过该阈值 → 逐行落 qm_stock_pool_member；
-# 超过 → 只写 parquet 快照（storage_mode='snapshot'）。
-MEMBER_TABLE_MAX = 2000
-
-# 快照落盘根目录（容器内）。与 QuantDB 数据卷同级，便于训练容器只读挂载。
-SNAPSHOT_DIR = "/data/stock_pool"
+# 成员 TXT 根目录（容器内）。与 QuantDB 数据卷同级，训练/回测可直接读。
+POOL_TXT_DIR_ENV = "QM_STOCK_POOL_TXT_DIR"
+POOL_TXT_DIR_DEFAULT = "/data/stock_pool"
 
 # 物化出的 Qlib instruments 文件名前缀，避免与 Qlib 原生池（csi300 等）冲突
 INSTRUMENT_FILE_PREFIX = "pool_"
 
+# 成员数量软上限（防止把行情接口拖死；TXT 本身没有大小问题）
+MEMBER_MAX = 20000
+
 # ---------------------------------------------------------------------------
 # 池类型
 # ---------------------------------------------------------------------------
-POOL_TYPE_SYSTEM_INDEX = "system_index"  # 指数成分池（成分来自 QuantDB 指数权重）
+POOL_TYPE_SYSTEM_INDEX = "system_index"  # 指数成分池（成分来自 QuantDB，刷新成 TXT）
 POOL_TYPE_STATIC = "static"  # 手工维护的固定成分
 POOL_TYPE_IMPORTED = "imported"  # 文件导入
-POOL_TYPE_DYNAMIC = "dynamic"  # 规则型动态池（一期仅预留定义，不实现刷新引擎）
-POOL_TYPE_ELIGIBILITY = "eligibility"  # 资格型池（如融资融券池）
 
 POOL_TYPES = frozenset(
-    {
-        POOL_TYPE_SYSTEM_INDEX,
-        POOL_TYPE_STATIC,
-        POOL_TYPE_IMPORTED,
-        POOL_TYPE_DYNAMIC,
-        POOL_TYPE_ELIGIBILITY,
-    }
+    {POOL_TYPE_SYSTEM_INDEX, POOL_TYPE_STATIC, POOL_TYPE_IMPORTED}
 )
 
 # ---------------------------------------------------------------------------
@@ -45,24 +38,17 @@ POOL_TYPES = frozenset(
 # ---------------------------------------------------------------------------
 SCOPE_GLOBAL = "global"  # 全平台，仅管理员可改
 SCOPE_TENANT = "tenant"  # 租户级（预留）
-SCOPE_USER = "user"  # 用户级（预留，当前仍由 stock_pool_files 承担）
+SCOPE_USER = "user"  # 用户私有池
 
 SCOPES = frozenset({SCOPE_GLOBAL, SCOPE_TENANT, SCOPE_USER})
 
 # ---------------------------------------------------------------------------
-# 状态
+# 状态（简化：只有可用 / 归档两态，编辑即生效，无 draft/published）
 # ---------------------------------------------------------------------------
-STATUS_DRAFT = "draft"
-STATUS_PUBLISHED = "published"
+STATUS_ACTIVE = "active"
 STATUS_ARCHIVED = "archived"
 
-STATUSES = frozenset({STATUS_DRAFT, STATUS_PUBLISHED, STATUS_ARCHIVED})
-
-# ---------------------------------------------------------------------------
-# 版本存储模式
-# ---------------------------------------------------------------------------
-STORAGE_TABLE = "table"
-STORAGE_SNAPSHOT = "snapshot"
+STATUSES = frozenset({STATUS_ACTIVE, STATUS_ARCHIVED})
 
 # ---------------------------------------------------------------------------
 # 绑定目标（哪个功能在用这个池）
@@ -106,9 +92,3 @@ MARKET_BC = "BC"
 MARKET_FUTURES = "FUTURES"
 
 MARKETS = frozenset({MARKET_CN, MARKET_HK, MARKET_US, MARKET_BC, MARKET_FUTURES})
-
-# ---------------------------------------------------------------------------
-# Redis 缓存（与项目其它 key 统一走 quantmind: 前缀）
-# ---------------------------------------------------------------------------
-CACHE_KEY_PREFIX = "quantmind:stock_pool:snapshot"
-CACHE_TTL_SECONDS = 3600

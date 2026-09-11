@@ -1,22 +1,26 @@
-"""全局股票池模块（Global Stock Pool）。
+"""全局股票池模块（Global Stock Pool, v2 简化版）。
 
-设计要点见 `docs`/本包 docstring：
-- **读写分离**：后台管理负责「写」（定义 / 成员 / 版本 / 发布），
-  所有功能统一经 `PoolResolver` 负责「读」。
-- **唯一事实源**：内置池目录（`builtins.py`）收敛原先散落的
-  `UNIVERSE_MAP` / `UNIVERSE_NAMES` / `_ALLOWED_UNIVERSES` 三份白名单。
-- **混合存储**：成员数 ≤ `MEMBER_TABLE_MAX`（2000）落成员表，
-  超过则落 parquet 快照（`materializer.py`）。
-- **口径统一**：库内成员一律后缀式 `600036.SH`，转换只经 `normalize.py`
-  （内部委托 `StockCodeUtil`），禁止手写切片。
+设计要点：
+- **TXT 即事实源**：每个池的成员是一个前缀式一行一个的 TXT
+  （`/data/stock_pool/<code>.txt`），人可读可手改，回测引擎和其他模块
+  可直接读取；编辑保存 → 重写 TXT → 立即生效，没有草稿/发布版本模型。
+- **PG 单表存元信息**：`qm_stock_pool`（列表/归属/市场/文件路径/计数），
+  `qm_stock_pool_binding` 记录长生命周期引用（被引用的池不可删）。
+- **唯一读取入口**：所有功能统一经 `PoolResolver`；内置池目录（`builtins.py`）
+  收敛原先 `UNIVERSE_MAP` / `_ALLOWED_UNIVERSES` / alpha_agent 白名单三份。
+- **内置池自动刷新**：启动 seed + 每日 worker 从 QuantDB 指数权重刷新成分
+  TXT（指数成分调整自动跟进）；resolver 读不到文件时还会自愈重拉。
+- **口径统一**：TXT/前端/API 一律前缀式 `SH600036`；进程内解析统一转
+  后缀式 `600036.SH`（DB/Qlib/parquet 层），转换只经 `normalize.py`。
 
 典型用法：
 
     from backend.shared.stock_pool import resolve_pool
 
     snap = await resolve_pool("pool:csi300", tenant_id=tid, user_id=uid)
-    symbols_prefix = snap.api_symbols   # ['SH600036', ...]
-    symbols_suffix = snap.symbols       # ['600036.SH', ...]
+    snap.api_symbols  # ['SH600036', ...] 前缀式
+    snap.symbols      # ['600036.SH', ...] 后缀式
+    snap.checksum     # 成员集合校验和（回测/训练结果落库用于复现）
 """
 
 from __future__ import annotations
@@ -25,17 +29,13 @@ from .constants import (
     BINDING_MODES,
     INSTRUMENT_FILE_PREFIX,
     MARKETS,
-    MEMBER_TABLE_MAX,
+    MEMBER_MAX,
     POOL_TYPES,
     SCOPES,
     SCOPE_GLOBAL,
-    SNAPSHOT_DIR,
-    STORAGE_SNAPSHOT,
-    STORAGE_TABLE,
-    STATUSES,
+    STATUS_ACTIVE,
     STATUS_ARCHIVED,
-    STATUS_DRAFT,
-    STATUS_PUBLISHED,
+    STATUSES,
     TARGET_BACKTEST,
     TARGET_FACTOR,
     TARGET_INFERENCE,
@@ -61,6 +61,14 @@ from .filters import (
     PoolFilterOutcome,
     filter_signals_by_pool,
     intersect_symbols,
+)
+from .materializer import (
+    materialize_snapshot,
+    pool_dir,
+    pool_txt_path,
+    qlib_data_dir,
+    read_pool_txt,
+    write_pool_txt,
 )
 from .normalize import (
     checksum_symbols,
@@ -96,22 +104,23 @@ from .resolver import (
 )
 from .schemas import (
     PoolBinding,
+    PoolBindingRequest,
     PoolCreateFromMembersRequest,
-    PoolImportRequest,
     PoolImportResult,
-    PoolMember,
-    PoolMembersReplace,
+    PoolMembersSave,
     PoolParseRequest,
     PoolSnapshot,
-    PoolVersion,
     StockPool,
     StockPoolCreate,
     StockPoolUpdate,
 )
 from .seed import (
+    pool_storage_ready,
+    refresh_builtin_txts,
+    refresh_builtin_txts_sync,
+    run_builtin_pool_refresh_worker,
     seed_builtin_pools,
     seed_builtin_pools_sync,
-    snapshot_dir_ready,
 )
 
 __all__ = [
@@ -119,17 +128,13 @@ __all__ = [
     "BINDING_MODES",
     "INSTRUMENT_FILE_PREFIX",
     "MARKETS",
-    "MEMBER_TABLE_MAX",
+    "MEMBER_MAX",
     "POOL_TYPES",
     "SCOPES",
     "SCOPE_GLOBAL",
-    "SNAPSHOT_DIR",
-    "STORAGE_SNAPSHOT",
-    "STORAGE_TABLE",
-    "STATUSES",
+    "STATUS_ACTIVE",
     "STATUS_ARCHIVED",
-    "STATUS_DRAFT",
-    "STATUS_PUBLISHED",
+    "STATUSES",
     "TARGET_BACKTEST",
     "TARGET_FACTOR",
     "TARGET_INFERENCE",
@@ -153,6 +158,13 @@ __all__ = [
     "PoolFilterOutcome",
     "filter_signals_by_pool",
     "intersect_symbols",
+    # materializer
+    "materialize_snapshot",
+    "pool_dir",
+    "pool_txt_path",
+    "qlib_data_dir",
+    "read_pool_txt",
+    "write_pool_txt",
     # normalize
     "checksum_symbols",
     "is_valid_symbol",
@@ -184,19 +196,20 @@ __all__ = [
     "resolver",
     # schemas
     "PoolBinding",
+    "PoolBindingRequest",
     "PoolCreateFromMembersRequest",
-    "PoolImportRequest",
     "PoolImportResult",
-    "PoolMember",
-    "PoolMembersReplace",
+    "PoolMembersSave",
     "PoolParseRequest",
     "PoolSnapshot",
-    "PoolVersion",
     "StockPool",
     "StockPoolCreate",
     "StockPoolUpdate",
     # seed
+    "pool_storage_ready",
+    "refresh_builtin_txts",
+    "refresh_builtin_txts_sync",
+    "run_builtin_pool_refresh_worker",
     "seed_builtin_pools",
     "seed_builtin_pools_sync",
-    "snapshot_dir_ready",
 ]

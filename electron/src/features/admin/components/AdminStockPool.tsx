@@ -1,8 +1,9 @@
 /**
- * 后台管理 - 全局股票池
+ * 后台管理 - 全局股票池（v2：TXT 即事实源，保存即生效）
  *
- * 股票池是回测 / 模型训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源。
- * 本页负责「写」：定义池、维护成员、发布版本、回滚；
+ * 股票池是回测 / 训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源。
+ * 每个池的成员是一个前缀式一行一个的 TXT（/data/stock_pool/<code>.txt）。
+ * 本页负责「写」：建池、上传解析导入、维护成员（保存即生效，无发布步骤）。
  * 读侧统一由后端 PoolResolver 提供（本页「解析调试」可直接验证）。
  */
 
@@ -18,7 +19,6 @@ import {
     Empty,
     Form,
     Input,
-    InputNumber,
     Modal,
     Popconfirm,
     Row,
@@ -43,19 +43,14 @@ import {
     InboxOutlined,
     PlusOutlined,
     ReloadOutlined,
-    RocketOutlined,
-    RollbackOutlined,
     SearchOutlined,
     WarningOutlined,
 } from '@ant-design/icons';
 import stockPoolService, {
-    ImportResult,
     ParseReport,
     ParseRow,
-    PoolMember,
     PoolMeta,
     PoolResolveResult,
-    PoolVersion,
     StockPool,
 } from '../services/stockPoolService';
 
@@ -91,13 +86,10 @@ const POOL_TYPE_LABEL: Record<string, string> = {
     system_index: '指数成分',
     static: '静态维护',
     imported: '文件导入',
-    dynamic: '动态规则',
-    eligibility: '资格池',
 };
 
 const STATUS_COLOR: Record<string, string> = {
-    published: 'green',
-    draft: 'orange',
+    active: 'green',
     archived: 'default',
 };
 
@@ -128,7 +120,6 @@ const AdminStockPool: React.FC = () => {
     const [pageSize, setPageSize] = useState(20);
 
     const [filters, setFilters] = useState<PoolFilters>({});
-
     const patchFilters = (patch: PoolFilters) => {
         setPage(1);
         setFilters({ ...filters, ...patch });
@@ -139,15 +130,12 @@ const AdminStockPool: React.FC = () => {
     const [createForm] = Form.useForm();
 
     // 详情 / 成员
-    const [detail, setDetail] = useState<(StockPool & { versions: PoolVersion[] }) | null>(null);
+    const [detail, setDetail] = useState<StockPool | null>(null);
     const [detailOpen, setDetailOpen] = useState(false);
-    const [memberScope, setMemberScope] = useState<'draft' | 'published'>('draft');
-    const [members, setMembers] = useState<PoolMember[]>([]);
-    const [memberTotal, setMemberTotal] = useState(0);
-    const [memberPage, setMemberPage] = useState(1);
+    const [members, setMembers] = useState<string[]>([]);
     const [memberLoading, setMemberLoading] = useState(false);
-    const [importText, setImportText] = useState('');
-    const [importing, setImporting] = useState(false);
+    const [memberDraft, setMemberDraft] = useState('');
+    const [savingMembers, setSavingMembers] = useState(false);
 
     // 解析调试
     const [resolveOpen, setResolveOpen] = useState(false);
@@ -171,10 +159,9 @@ const AdminStockPool: React.FC = () => {
     const [poolCode, setPoolCode] = useState('');
     const [poolName, setPoolName] = useState('');
     const [poolDesc, setPoolDesc] = useState('');
-    const [publishNow, setPublishNow] = useState(true);
     const [creating, setCreating] = useState(false);
 
-    // 引用（P4）
+    // 引用
     const [usages, setUsages] = useState<any[]>([]);
     const [usagesLoading, setUsagesLoading] = useState(false);
     const [bindingTargetType, setBindingTargetType] = useState('strategy');
@@ -209,8 +196,7 @@ const AdminStockPool: React.FC = () => {
     const loadHealth = useCallback(async () => {
         try {
             setHealth(await stockPoolService.health());
-        } catch (e) {
-            // 健康检查失败不打扰主流程
+        } catch {
             setHealth(null);
         }
     }, []);
@@ -234,7 +220,7 @@ const AdminStockPool: React.FC = () => {
                 pool_type: values.pool_type,
                 scope: 'global',
             });
-            message.success('股票池已创建（草稿）。请维护成员后发布。');
+            message.success('股票池已创建，请「成员」维护成分；保存即生效。');
             setCreateOpen(false);
             createForm.resetFields();
             loadPools();
@@ -244,103 +230,75 @@ const AdminStockPool: React.FC = () => {
         }
     };
 
+    const loadMembers = useCallback(async (poolId: string) => {
+        setMemberLoading(true);
+        try {
+            const res = await stockPoolService.getMembers(poolId);
+            const list = res.symbols || [];
+            setMembers(list);
+            setMemberDraft(list.join('\n'));
+        } catch (e: any) {
+            message.error(`加载成员失败: ${e?.response?.data?.detail || e?.message || e}`);
+        } finally {
+            setMemberLoading(false);
+        }
+    }, []);
+
     const openDetail = async (pool: StockPool) => {
         try {
             const data = await stockPoolService.getPool(pool.pool_id);
             setDetail(data);
-            setMemberScope(pool.current_version > 0 ? 'published' : 'draft');
-            setMemberPage(1);
-            setImportText('');
             setDetailOpen(true);
             setBindingTargetId('');
+            void loadMembers(pool.pool_id);
             void loadUsages(pool.pool_id);
         } catch (e: any) {
             message.error(`加载详情失败: ${e?.response?.data?.detail || e?.message || e}`);
         }
     };
 
-    const loadMembers = useCallback(
-        async (poolId: string, scope: 'draft' | 'published', p: number) => {
-            setMemberLoading(true);
-            try {
-                const res = await stockPoolService.listMembers(poolId, {
-                    scope,
-                    limit: 50,
-                    offset: (p - 1) * 50,
-                });
-                setMembers(res.items || []);
-                setMemberTotal(res.total || 0);
-            } catch (e: any) {
-                message.error(`加载成员失败: ${e?.response?.data?.detail || e?.message || e}`);
-            } finally {
-                setMemberLoading(false);
-            }
-        },
-        [],
-    );
+    const refreshDetail = async (poolId: string) => {
+        const refreshed = await stockPoolService.getPool(poolId);
+        setDetail(refreshed);
+    };
 
-    useEffect(() => {
-        if (detailOpen && detail) {
-            loadMembers(detail.pool_id, memberScope, memberPage);
-        }
-    }, [detailOpen, detail, memberScope, memberPage, loadMembers]);
-
-    const handleImport = async () => {
+    const handleSaveMembers = async () => {
         if (!detail) return;
-        const content = importText.trim();
-        if (!content) {
-            message.warning('请粘贴 CSV/TXT 内容');
+        const symbols = memberDraft
+            .split(/[\n,;]+/)
+            .map((s) => s.trim())
+            .filter((s) => s && !s.startsWith('#'));
+        if (!symbols.length) {
+            message.warning('成员为空；如确要清空请谨慎（空池会让消费方显式失败）');
             return;
         }
-        setImporting(true);
+        setSavingMembers(true);
         try {
-            const fmt: 'csv' | 'txt' = content.includes(',') ? 'csv' : 'txt';
-            const res: ImportResult = await stockPoolService.importMembers(
-                detail.pool_id,
-                { content, fmt, has_header: fmt === 'csv' },
-                false,
-            );
+            const res = await stockPoolService.saveMembers(detail.pool_id, { symbols });
             message.success(
-                `导入完成：接受 ${res.accepted}，拒绝 ${res.rejected}` +
-                    (res.rejected_samples?.length ? `（示例 ${res.rejected_samples.slice(0, 3).join(', ')}）` : ''),
+                `已保存并生效：${res.symbol_count} 只` +
+                    (res.rejected ? `，${res.rejected} 条被拒` : '') +
+                    (res.duplicates ? `，去重 ${res.duplicates} 条` : ''),
             );
-            setImportText('');
-            setMemberScope('draft');
-            setMemberPage(1);
-            const refreshed = await stockPoolService.getPool(detail.pool_id);
-            setDetail(refreshed);
+            await loadMembers(detail.pool_id);
+            await refreshDetail(detail.pool_id);
+            loadPools();
         } catch (e: any) {
-            message.error(`导入失败: ${e?.response?.data?.detail || e?.message || e}`);
+            message.error(`保存失败: ${e?.response?.data?.detail || e?.message || e}`);
         } finally {
-            setImporting(false);
+            setSavingMembers(false);
         }
     };
 
-    const handlePublish = async () => {
-        if (!detail) return;
+    const handleRefreshBuiltin = async (pool: StockPool) => {
         try {
-            const ver = await stockPoolService.publish(detail.pool_id, '后台管理发布');
-            message.success(`已发布 v${ver.version}（${ver.member_count} 只，${ver.storage_mode}）`);
-            const refreshed = await stockPoolService.getPool(detail.pool_id);
-            setDetail(refreshed);
-            setMemberScope('published');
+            const res = await stockPoolService.refreshPool(pool.pool_id);
+            message.success(`已刷新成分：${res.symbol_count} 只`);
+            await refreshDetail(pool.pool_id);
+            if (detailOpen && detail?.pool_id === pool.pool_id) void loadMembers(pool.pool_id);
             loadPools();
         } catch (e: any) {
-            message.error(`发布失败: ${e?.response?.data?.detail || e?.message || e}`);
-        }
-    };
-
-    const handleRollback = async (version: number) => {
-        if (!detail) return;
-        try {
-            const res = await stockPoolService.rollback(detail.pool_id, version, `回滚到 v${version}`);
-            message.success(`已回滚，生成新版本 v${res.new_version}`);
-            const refreshed = await stockPoolService.getPool(detail.pool_id);
-            setDetail(refreshed);
-            setMemberScope('published');
-            loadPools();
-        } catch (e: any) {
-            message.error(`回滚失败: ${e?.response?.data?.detail || e?.message || e}`);
+            message.error(`刷新失败: ${e?.response?.data?.detail || e?.message || e}`);
         }
     };
 
@@ -375,9 +333,7 @@ const AdminStockPool: React.FC = () => {
         }
     };
 
-    // ------------------------------------------------------------------
-    // 引用管理（P4）
-    // ------------------------------------------------------------------
+    // 引用管理
     const loadUsages = async (poolId: string) => {
         setUsagesLoading(true);
         try {
@@ -433,10 +389,7 @@ const AdminStockPool: React.FC = () => {
         }
     };
 
-    // ------------------------------------------------------------------
     // 上传解析导入
-    // ------------------------------------------------------------------
-    /** 读为 base64：保留原始字节，后端才能正确解码 Excel 导出的 GBK 文件 */
     const fileToBase64 = (file: File): Promise<string> =>
         new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -469,7 +422,7 @@ const AdminStockPool: React.FC = () => {
         } catch (e: any) {
             message.error(`读取文件失败: ${e?.message || e}`);
         }
-        return false; // 阻止 antd 自动上传，改为走后端解析接口
+        return false;
     };
 
     const handleRunParse = async () => {
@@ -489,7 +442,6 @@ const AdminStockPool: React.FC = () => {
                 row_limit: 1000,
             });
             setReport(res);
-            // 默认全选「已匹配」且非重复的行（以行号为 key，未匹配行不可勾选）
             setSelectedRows(
                 res.rows.filter((r) => r.status === 'matched' && !r.duplicate).map((r) => r.row_index),
             );
@@ -518,13 +470,12 @@ const AdminStockPool: React.FC = () => {
         }
         setCreating(true);
         try {
-            // 行号 → 规范代码；只提交被勾选且已匹配的行
             const byRow = new Map<number, ParseRow>();
             report.rows.forEach((r) => byRow.set(r.row_index, r));
-            const members = selectedRows
+            const symbols = selectedRows
                 .map((idx) => byRow.get(idx))
-                .filter((r): r is ParseRow => !!r && r.status === 'matched' && !!r.symbol)
-                .map((r) => ({ symbol: r.symbol as string, name: r.name || undefined }));
+                .filter((r): r is ParseRow => !!r && r.status === 'matched' && !!r.api_symbol)
+                .map((r) => r.api_symbol as string);
 
             const res = await stockPoolService.createPoolFromMembers({
                 code: poolCode.trim(),
@@ -532,14 +483,11 @@ const AdminStockPool: React.FC = () => {
                 description: poolDesc.trim() || undefined,
                 market: 'CN',
                 pool_type: 'imported',
-                members,
-                publish: publishNow,
-                changelog: `上传解析导入（${parseFileName || '粘贴内容'}）`,
+                symbols,
             });
             message.success(
-                `股票池 ${res.code} 已创建：${res.accepted} 只` +
-                    (res.rejected ? `，${res.rejected} 条被拒` : '') +
-                    (res.published ? `，已发布 v${res.version}` : '（未发布）'),
+                `股票池 ${res.pool.code} 已创建并可立即使用：${res.accepted} 只` +
+                    (res.rejected ? `，${res.rejected} 条被拒` : ''),
             );
             setReport(null);
             setSelectedRows([]);
@@ -570,71 +518,56 @@ const AdminStockPool: React.FC = () => {
                     </Space>
                 ),
             },
-            { title: '名称', dataIndex: 'name', width: 180 },
-            { title: '市场', dataIndex: 'market', width: 80 },
+            { title: '名称', dataIndex: 'name', width: 160 },
+            { title: '市场', dataIndex: 'market', width: 70 },
             {
                 title: '类型',
                 dataIndex: 'pool_type',
-                width: 110,
+                width: 100,
                 render: (t: string) => POOL_TYPE_LABEL[t] || t,
             },
             {
                 title: '状态',
                 dataIndex: 'status',
-                width: 130,
-                render: (s: string, row: StockPool) => (
-                    <Space size={4}>
-                        <Tag color={STATUS_COLOR[s] || 'default'}>{s}</Tag>
-                        {row.has_draft_changes && (
-                            <Tooltip title="存在未发布的草稿改动">
-                                <Tag color="gold">草稿</Tag>
-                            </Tooltip>
-                        )}
-                    </Space>
-                ),
-            },
-            {
-                title: '已发布版本',
-                dataIndex: 'current_version',
-                width: 110,
-                render: (v: number) => (v > 0 ? `v${v}` : '—'),
+                width: 90,
+                render: (s: string) => <Tag color={STATUS_COLOR[s] || 'default'}>{s}</Tag>,
             },
             {
                 title: '成员数',
                 dataIndex: 'symbol_count',
                 width: 90,
-                render: (n: number, row: StockPool) =>
-                    row.pool_type === 'system_index' ? (
-                        <Tooltip title="指数成分实时取自 QuantDB，不落成员表">
-                            <Text type="secondary">实时</Text>
-                        </Tooltip>
-                    ) : (
-                        n
-                    ),
+                render: (n: number) => (n > 0 ? n : <Text type="secondary">0</Text>),
+            },
+            {
+                title: '校验和',
+                dataIndex: 'checksum',
+                width: 120,
+                render: (v: string) => (v ? <Text code>{v.slice(0, 10)}</Text> : '—'),
             },
             {
                 title: '操作',
                 key: 'actions',
-                width: 260,
+                width: 320,
                 render: (_: unknown, row: StockPool) => (
                     <Space size={4} wrap>
                         <Button size="small" onClick={() => openDetail(row)}>
-                            成员 / 版本
+                            成员 / 引用
                         </Button>
-                        <Popconfirm
-                            title="发布为新版本？"
-                            description="发布后线上消费方（回测/训练/推理/模拟/实盘）才会看到该版本。"
-                            onConfirm={handlePublishFor(row)}
-                            okText="发布"
-                        >
-                            <Button size="small" type="primary" icon={<RocketOutlined />} />
-                        </Popconfirm>
+                        {row.is_system && (
+                            <Tooltip title="从 QuantDB 指数权重重新拉取成分并覆盖 TXT">
+                                <Button
+                                    size="small"
+                                    icon={<ReloadOutlined />}
+                                    onClick={() => handleRefreshBuiltin(row)}
+                                />
+                            </Tooltip>
+                        )}
                         {!row.is_system && (
                             <>
                                 <Popconfirm title="归档该池？" onConfirm={() => handleArchive(row)} okText="归档">
                                     <Button size="small" icon={<WarningOutlined />} />
                                 </Popconfirm>
-                                <Popconfirm title="彻底删除？" onConfirm={() => handleDelete(row)} okText="删除">
+                                <Popconfirm title="彻底删除（含成员 TXT）？" onConfirm={() => handleDelete(row)} okText="删除">
                                     <Button size="small" danger icon={<DeleteOutlined />} />
                                 </Popconfirm>
                             </>
@@ -644,68 +577,10 @@ const AdminStockPool: React.FC = () => {
             },
         ],
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [items],
+        [items, detailOpen, detail],
     );
 
-    function handlePublishFor(row: StockPool) {
-        return async () => {
-            try {
-                const ver = await stockPoolService.publish(row.pool_id, '后台管理发布');
-                message.success(`已发布 v${ver.version}（${ver.member_count} 只）`);
-                loadPools();
-            } catch (e: any) {
-                message.error(`发布失败: ${e?.response?.data?.detail || e?.message || e}`);
-            }
-        };
-    }
-
-    const memberColumns = [
-        {
-            title: '代码（API 口径）',
-            dataIndex: 'api_symbol',
-            width: 140,
-            render: (v: string, row: PoolMember) => v || row.symbol,
-        },
-        { title: '库内口径', dataIndex: 'symbol', width: 130 },
-        { title: '名称', dataIndex: 'name', width: 140 },
-        { title: '权重', dataIndex: 'weight', width: 90 },
-        { title: '行业', dataIndex: 'industry', width: 120 },
-    ];
-
-    const versionColumns = [
-        { title: '版本', dataIndex: 'version', width: 70, render: (v: number) => `v${v}` },
-        { title: '成员数', dataIndex: 'member_count', width: 80 },
-        { title: '存储', dataIndex: 'storage_mode', width: 90 },
-        { title: '校验和', dataIndex: 'checksum', width: 120 },
-        { title: '说明', dataIndex: 'changelog', ellipsis: true },
-        {
-            title: '发布人 / 时间',
-            key: 'published',
-            width: 190,
-            render: (_: unknown, row: PoolVersion) => (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                    {row.published_by || '-'} · {row.published_at ? String(row.published_at).slice(0, 19) : '-'}
-                </Text>
-            ),
-        },
-        {
-            title: '操作',
-            key: 'op',
-            width: 90,
-            render: (_: unknown, row: PoolVersion) => (
-                <Popconfirm
-                    title={`回滚到 v${row.version}？`}
-                    description="会生成一个新版本，历史版本保留。"
-                    onConfirm={() => handleRollback(row.version)}
-                    okText="回滚"
-                >
-                    <Button size="small" icon={<RollbackOutlined />} />
-                </Popconfirm>
-            ),
-        },
-    ];
-
-    /** 引用明细（P4） */
+    /** 引用明细 */
     const usageColumns = [
         {
             title: '类型',
@@ -724,9 +599,7 @@ const AdminStockPool: React.FC = () => {
                 <Popconfirm
                     title="解除该引用？"
                     description="解除后该池可能变为可删除。"
-                    onConfirm={() =>
-                        handleUnbind(detail?.pool_id || '', row.target_type, row.target_id)
-                    }
+                    onConfirm={() => handleUnbind(detail?.pool_id || '', row.target_type, row.target_id)}
                     okText="解除"
                 >
                     <Button size="small" danger icon={<DeleteOutlined />} />
@@ -750,10 +623,10 @@ const AdminStockPool: React.FC = () => {
             dataIndex: 'status',
             width: 104,
             render: (s: string, row: ParseRow) => {
-                const meta = PARSE_STATUS_META[s] || { color: 'default', label: s };
+                const m = PARSE_STATUS_META[s] || { color: 'default', label: s };
                 return (
                     <Space size={4}>
-                        <Tag color={meta.color}>{meta.label}</Tag>
+                        <Tag color={m.color}>{m.label}</Tag>
                         {row.duplicate && <Tag color="blue">重复</Tag>}
                     </Space>
                 );
@@ -815,93 +688,94 @@ const AdminStockPool: React.FC = () => {
                             label: '股票池列表',
                             children: (
                                 <>
-                <Alert
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 12 }}
-                    message="股票池是回测 / 训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源"
-                    description={
-                        <span>
-                            成员一律以「后缀式」入库（<Text code>600036.SH</Text>），API 出入参为前缀式（
-                            <Text code>SH600036</Text>）。编辑只影响草稿版本，<b>必须发布</b>后各功能才会消费到；
-                            成员数超过 {meta?.member_table_max ?? 2000} 时自动改用 parquet 快照存储。
-                        </span>
-                    }
-                />
+                                    <Alert
+                                        type="info"
+                                        showIcon
+                                        style={{ marginBottom: 12 }}
+                                        message="股票池是回测 / 训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源"
+                                        description={
+                                            <span>
+                                                每个池的成分就是一个 TXT（前缀式一行一个，如 <Text code>SH600036</Text>），
+                                                存于服务器 <Text code>{meta?.pool_txt_dir || '/data/stock_pool'}</Text>，
+                                                回测引擎等模块可直接读取。<b>编辑成员保存后立即生效，无需发布</b>；
+                                                内置指数池由系统每日自动刷新成分。
+                                            </span>
+                                        }
+                                    />
 
-                {health && (
-                    <Alert
-                        type={health.unhealthy > 0 ? 'warning' : 'success'}
-                        showIcon
-                        style={{ marginBottom: 12 }}
-                        message={`健康检查：共 ${health.total} 个池，${health.unhealthy} 个有告警（快照目录 ${health.snapshot_dir}）`}
-                        description={
-                            health.unhealthy > 0 ? (
-                                <Space direction="vertical" size={2}>
-                                    {(health.items || [])
-                                        .filter((i: any) => i.warnings?.length)
-                                        .slice(0, 6)
-                                        .map((i: any) => (
-                                            <Text key={i.pool_id} type="secondary" style={{ fontSize: 12 }}>
-                                                <Text code>{i.code}</Text>：{i.warnings.join('；')}
-                                            </Text>
-                                        ))}
-                                </Space>
-                            ) : null
-                        }
-                    />
-                )}
+                                    {health && (
+                                        <Alert
+                                            type={health.unhealthy > 0 ? 'warning' : 'success'}
+                                            showIcon
+                                            style={{ marginBottom: 12 }}
+                                            message={`健康检查：共 ${health.total} 个池，${health.unhealthy} 个有告警`}
+                                            description={
+                                                health.unhealthy > 0 ? (
+                                                    <Space direction="vertical" size={2}>
+                                                        {(health.items || [])
+                                                            .filter((i: any) => i.warnings?.length)
+                                                            .slice(0, 6)
+                                                            .map((i: any) => (
+                                                                <Text key={i.pool_id} type="secondary" style={{ fontSize: 12 }}>
+                                                                    <Text code>{i.code}</Text>：{i.warnings.join('；')}
+                                                                </Text>
+                                                            ))}
+                                                    </Space>
+                                                ) : null
+                                            }
+                                        />
+                                    )}
 
-                <Space wrap style={{ marginBottom: 12 }}>
-                    <Select
-                        allowClear
-                        placeholder="市场"
-                        style={{ width: 110 }}
-                        value={filters.market}
-                        onChange={(v) => patchFilters({ market: v })}
-                        options={(meta?.markets || ['CN', 'HK', 'US']).map((m) => ({ value: m, label: m }))}
-                    />
-                    <Select
-                        allowClear
-                        placeholder="类型"
-                        style={{ width: 140 }}
-                        value={filters.pool_type}
-                        onChange={(v) => patchFilters({ pool_type: v })}
-                        options={(meta?.pool_types || []).map((t) => ({ value: t, label: POOL_TYPE_LABEL[t] || t }))}
-                    />
-                    <Select
-                        allowClear
-                        placeholder="状态"
-                        style={{ width: 120 }}
-                        value={filters.status}
-                        onChange={(v) => patchFilters({ status: v })}
-                        options={(meta?.statuses || []).map((s) => ({ value: s, label: s }))}
-                    />
-                    <Input.Search
-                        placeholder="代码 / 名称"
-                        style={{ width: 220 }}
-                        allowClear
-                        onSearch={(v) => patchFilters({ keyword: v || undefined })}
-                    />
-                </Space>
+                                    <Space wrap style={{ marginBottom: 12 }}>
+                                        <Select
+                                            allowClear
+                                            placeholder="市场"
+                                            style={{ width: 110 }}
+                                            value={filters.market}
+                                            onChange={(v) => patchFilters({ market: v })}
+                                            options={(meta?.markets || ['CN', 'HK', 'US']).map((m) => ({ value: m, label: m }))}
+                                        />
+                                        <Select
+                                            allowClear
+                                            placeholder="类型"
+                                            style={{ width: 140 }}
+                                            value={filters.pool_type}
+                                            onChange={(v) => patchFilters({ pool_type: v })}
+                                            options={(meta?.pool_types || []).map((t) => ({ value: t, label: POOL_TYPE_LABEL[t] || t }))}
+                                        />
+                                        <Select
+                                            allowClear
+                                            placeholder="状态"
+                                            style={{ width: 120 }}
+                                            value={filters.status}
+                                            onChange={(v) => patchFilters({ status: v })}
+                                            options={(meta?.statuses || []).map((s) => ({ value: s, label: s }))}
+                                        />
+                                        <Input.Search
+                                            placeholder="代码 / 名称"
+                                            style={{ width: 220 }}
+                                            allowClear
+                                            onSearch={(v) => patchFilters({ keyword: v || undefined })}
+                                        />
+                                    </Space>
 
-                <Table
-                    rowKey="pool_id"
-                    size="small"
-                    loading={loading}
-                    columns={columns as any}
-                    dataSource={items}
-                    pagination={{
-                        current: page,
-                        pageSize,
-                        total,
-                        showSizeChanger: true,
-                        onChange: (p, ps) => {
-                            setPage(p);
-                            setPageSize(ps);
-                        },
-                    }}
-                />
+                                    <Table
+                                        rowKey="pool_id"
+                                        size="small"
+                                        loading={loading}
+                                        columns={columns as any}
+                                        dataSource={items}
+                                        pagination={{
+                                            current: page,
+                                            pageSize,
+                                            total,
+                                            showSizeChanger: true,
+                                            onChange: (p, ps) => {
+                                                setPage(p);
+                                                setPageSize(ps);
+                                            },
+                                        }}
+                                    />
                                 </>
                             ),
                         },
@@ -921,7 +795,7 @@ const AdminStockPool: React.FC = () => {
                                                 <Text code>600519.SH</Text> / <Text code>sh600519</Text>；
                                                 也可直接写中文简称（<Text code>贵州茅台</Text>、<Text code>万 科Ａ</Text> 均可）。
                                                 代码与名称可混排、列顺序随意。交易所写错会按代码自动纠正。
-                                                <b> 解析只出报告，确认后才落库。</b>
+                                                <b> 解析只出报告，确认后才落库；建完立即可被各功能消费。</b>
                                             </span>
                                         }
                                     />
@@ -938,12 +812,8 @@ const AdminStockPool: React.FC = () => {
                                                     <p className="ant-upload-drag-icon">
                                                         <InboxOutlined />
                                                     </p>
-                                                    <p className="ant-upload-text">
-                                                        点击或拖拽 CSV / TXT 文件到此处
-                                                    </p>
-                                                    <p className="ant-upload-hint">
-                                                        支持 UTF-8 / GBK（Excel 直接另存的 CSV 也能读）
-                                                    </p>
+                                                    <p className="ant-upload-text">点击或拖拽 CSV / TXT 文件到此处</p>
+                                                    <p className="ant-upload-hint">支持 UTF-8 / GBK（Excel 直接另存的 CSV 也能读）</p>
                                                 </Upload.Dragger>
                                                 {parseFileName && (
                                                     <div style={{ marginTop: 8 }}>
@@ -999,14 +869,8 @@ const AdminStockPool: React.FC = () => {
                                                     <div>
                                                         <Text type="secondary">CSV 首行为表头</Text>
                                                         <div style={{ marginTop: 4 }}>
-                                                            <Switch
-                                                                checked={parseHasHeader}
-                                                                onChange={setParseHasHeader}
-                                                            />
-                                                            <Text
-                                                                type="secondary"
-                                                                style={{ marginLeft: 8, fontSize: 12 }}
-                                                            >
+                                                            <Switch checked={parseHasHeader} onChange={setParseHasHeader} />
+                                                            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
                                                                 开启后自动跳过表头行
                                                             </Text>
                                                         </div>
@@ -1135,15 +999,6 @@ const AdminStockPool: React.FC = () => {
                                                         placeholder="我的自选池"
                                                     />
                                                 </Col>
-                                                <Col span={8}>
-                                                    <Space>
-                                                        <Text type="secondary">立即发布</Text>
-                                                        <Switch checked={publishNow} onChange={setPublishNow} />
-                                                        <Text type="secondary" style={{ fontSize: 12 }}>
-                                                            关闭则只存草稿
-                                                        </Text>
-                                                    </Space>
-                                                </Col>
                                             </Row>
                                             <Input.TextArea
                                                 rows={2}
@@ -1155,7 +1010,7 @@ const AdminStockPool: React.FC = () => {
                                             <Button
                                                 type="primary"
                                                 style={{ marginTop: 12 }}
-                                                icon={<RocketOutlined />}
+                                                icon={<PlusOutlined />}
                                                 loading={creating}
                                                 onClick={handleCreateFromParse}
                                             >
@@ -1179,11 +1034,7 @@ const AdminStockPool: React.FC = () => {
                 okText="创建"
                 destroyOnClose
             >
-                <Form
-                    form={createForm}
-                    layout="vertical"
-                    initialValues={{ market: 'CN', pool_type: 'static' }}
-                >
+                <Form form={createForm} layout="vertical" initialValues={{ market: 'CN', pool_type: 'static' }}>
                     <Form.Item
                         name="code"
                         label="代码"
@@ -1191,7 +1042,7 @@ const AdminStockPool: React.FC = () => {
                             { required: true, message: '请输入代码' },
                             { pattern: /^[A-Za-z0-9_-]+$/, message: '仅允许字母、数字、下划线与短横线' },
                         ]}
-                        extra="各功能引用标识，如 my_quality_pool；建议全局唯一"
+                        extra="各功能引用标识（也用作服务器上的 TXT 文件名），如 my_quality_pool"
                     >
                         <Input placeholder="my_quality_pool" />
                     </Form.Item>
@@ -1201,16 +1052,14 @@ const AdminStockPool: React.FC = () => {
                     <Row gutter={12}>
                         <Col span={12}>
                             <Form.Item name="market" label="市场" rules={[{ required: true }]}>
-                                <Select
-                                    options={(meta?.markets || ['CN']).map((m) => ({ value: m, label: m }))}
-                                />
+                                <Select options={(meta?.markets || ['CN']).map((m) => ({ value: m, label: m }))} />
                             </Form.Item>
                         </Col>
                         <Col span={12}>
                             <Form.Item name="pool_type" label="类型" rules={[{ required: true }]}>
                                 <Select
                                     options={(meta?.pool_types || [])
-                                        .filter((t) => t !== 'dynamic' && t !== 'system_index')
+                                        .filter((t) => t !== 'system_index')
                                         .map((t) => ({ value: t, label: POOL_TYPE_LABEL[t] || t }))}
                                 />
                             </Form.Item>
@@ -1222,7 +1071,7 @@ const AdminStockPool: React.FC = () => {
                 </Form>
             </Modal>
 
-            {/* 成员 / 版本 */}
+            {/* 成员 / 引用 */}
             <Drawer
                 title={detail ? `${detail.code} · ${detail.name}` : '股票池'}
                 width={980}
@@ -1234,19 +1083,16 @@ const AdminStockPool: React.FC = () => {
                     <>
                         <Row gutter={12} style={{ marginBottom: 12 }}>
                             <Col span={6}>
-                                <Statistic title="当前发布版本" value={detail.current_version || 0} prefix="v" />
-                            </Col>
-                            <Col span={6}>
-                                <Statistic title="已发布成员数" value={detail.symbol_count} />
+                                <Statistic title="成员数" value={detail.symbol_count} />
                             </Col>
                             <Col span={6}>
                                 <Statistic title="状态" value={detail.status} />
                             </Col>
-                            <Col span={6}>
+                            <Col span={12}>
                                 <Statistic
-                                    title="未发布改动"
-                                    value={detail.has_draft_changes ? '有' : '无'}
-                                    valueStyle={{ color: detail.has_draft_changes ? '#faad14' : undefined }}
+                                    title="TXT 文件"
+                                    value={detail.file_path || '（尚未生成）'}
+                                    valueStyle={{ fontSize: 13, wordBreak: 'break-all' }}
                                 />
                             </Col>
                         </Row>
@@ -1262,99 +1108,66 @@ const AdminStockPool: React.FC = () => {
                             </Descriptions.Item>
                         </Descriptions>
 
-                        {detail.pool_type === 'system_index' && (
+                        {detail.is_system && (
                             <Alert
                                 type="info"
                                 showIcon
                                 style={{ marginBottom: 12 }}
-                                message="指数成分池的成分由 QuantDB 指数权重实时提供，无需在此维护成员；发布仅用于固化版本快照。"
+                                message="内置指数池：成分由 QuantDB 指数权重每日自动刷新，不可手工编辑；如需自定义请新建 imported 池。"
+                                action={
+                                    <Button
+                                        size="small"
+                                        icon={<ReloadOutlined />}
+                                        onClick={() => handleRefreshBuiltin(detail)}
+                                    >
+                                        立即刷新
+                                    </Button>
+                                }
                             />
                         )}
 
-                        <Space style={{ marginBottom: 8 }} wrap>
-                            <Select
-                                value={memberScope}
-                                style={{ width: 160 }}
-                                onChange={(v) => {
-                                    setMemberScope(v);
-                                    setMemberPage(1);
-                                }}
-                                options={[
-                                    { value: 'draft', label: '草稿（可编辑）' },
-                                    { value: 'published', label: '已发布' },
-                                ]}
-                            />
-                            <Button
-                                icon={<RocketOutlined />}
-                                type="primary"
-                                onClick={handlePublish}
-                                disabled={memberScope === 'published' && !detail.has_draft_changes}
-                            >
-                                发布草稿为新版本
-                            </Button>
-                            <Button
-                                icon={<ExportOutlined />}
-                                href={stockPoolService.membersExportUrl(detail.pool_id, memberScope)}
-                                target="_blank"
-                            >
-                                导出 CSV
-                            </Button>
-                        </Space>
-
-                        <Table
-                            rowKey="symbol"
-                            size="small"
-                            loading={memberLoading}
-                            columns={memberColumns as any}
-                            dataSource={members}
-                            pagination={{
-                                current: memberPage,
-                                pageSize: 50,
-                                total: memberTotal,
-                                onChange: setMemberPage,
-                            }}
-                        />
-
-                        <Divider orientation="left">导入成员（覆盖草稿）</Divider>
-                        <Paragraph type="secondary" style={{ fontSize: 12 }}>
-                            支持 CSV（首行表头，列名 symbol/code/代码）或 TXT（每行一个代码）。
-                            代码可为 <Text code>SH600036</Text> / <Text code>600036.SH</Text> / <Text code>600036</Text>。
-                        </Paragraph>
+                        <Divider orientation="left">成员（前缀式，一行一个）</Divider>
                         <Input.TextArea
-                            rows={5}
-                            value={importText}
-                            onChange={(e) => setImportText(e.target.value)}
-                            placeholder={'symbol,name\n600036.SH,招商银行\n000001.SZ,平安银行'}
+                            rows={12}
+                            value={memberDraft}
+                            onChange={(e) => setMemberDraft(e.target.value)}
+                            disabled={detail.is_system}
+                            placeholder={'SH600036\nSZ000001\nSH600519'}
+                            style={{ fontFamily: 'monospace' }}
                         />
-                        <Space style={{ marginTop: 8 }}>
+                        <Space style={{ marginTop: 8 }} wrap>
                             <Button
                                 type="primary"
                                 icon={<CloudUploadOutlined />}
-                                loading={importing}
-                                onClick={handleImport}
+                                loading={savingMembers}
+                                disabled={detail.is_system}
+                                onClick={handleSaveMembers}
                             >
-                                导入到草稿
+                                保存成员（立即生效）
+                            </Button>
+                            <Button
+                                icon={<ExportOutlined />}
+                                href={stockPoolService.membersExportUrl(detail.pool_id)}
+                                target="_blank"
+                            >
+                                导出 TXT
+                            </Button>
+                            <Button
+                                icon={<ReloadOutlined />}
+                                loading={memberLoading}
+                                onClick={() => loadMembers(detail.pool_id)}
+                            >
+                                重新加载
                             </Button>
                             <Text type="secondary" style={{ fontSize: 12 }}>
-                                导入后需点「发布草稿为新版本」才会对各功能生效
+                                共 {members.length} 只 · 逗号/分号也可分隔 · 保存后回测 / 训练 / 推理立即读到
                             </Text>
                         </Space>
-
-                        <Divider orientation="left">版本历史</Divider>
-                        <Table
-                            rowKey="version"
-                            size="small"
-                            columns={versionColumns as any}
-                            dataSource={detail.versions || []}
-                            pagination={false}
-                            locale={{ emptyText: <Empty description="尚未发布任何版本" /> }}
-                        />
 
                         <Divider orientation="left">引用（被引用后不可删除）</Divider>
                         <Paragraph type="secondary" style={{ fontSize: 12 }}>
                             只登记<b>长生命周期</b>引用（策略 / 模型 / 模拟盘账户 / 实盘配置）。
-                            回测与推理是一次性运行，不登记为 binding —— 它们的池版本记在各自结果里，
-                            否则历史运行会让池永远删不掉。
+                            回测与推理是一次性运行，不登记为 binding —— 它们的池校验和记在各自结果里。
                         </Paragraph>
                         <Space wrap style={{ marginBottom: 8 }}>
                             <Select
@@ -1375,11 +1188,7 @@ const AdminStockPool: React.FC = () => {
                                 onChange={(e) => setBindingTargetId(e.target.value)}
                                 placeholder="目标 ID（如策略/模型 ID）"
                             />
-                            <Button
-                                icon={<PlusOutlined />}
-                                loading={bindingBusy}
-                                onClick={() => handleBind(detail.pool_id)}
-                            >
+                            <Button icon={<PlusOutlined />} loading={bindingBusy} onClick={() => handleBind(detail.pool_id)}>
                                 登记引用
                             </Button>
                         </Space>
@@ -1406,10 +1215,9 @@ const AdminStockPool: React.FC = () => {
                 destroyOnClose
             >
                 <Paragraph type="secondary" style={{ fontSize: 12 }}>
-                    验证各功能实际会拿到什么成分。支持 <Text code>pool:code</Text>、
-                    <Text code>pool:code@3</Text>、裸内置名 <Text code>csi300</Text>、
-                    <Text code>list:SH600036,SZ000001</Text>、<Text code>file:/path/x.txt</Text>、
-                    <Text code>all</Text>。
+                    验证各功能实际会拿到什么成分。支持 <Text code>pool:code</Text>、裸内置名{' '}
+                    <Text code>csi300</Text>、<Text code>list:SH600036,SZ000001</Text>、
+                    <Text code>file:/path/x.txt</Text>、<Text code>all</Text>。
                 </Paragraph>
                 <Space.Compact style={{ width: '100%' }}>
                     <Input
@@ -1429,9 +1237,7 @@ const AdminStockPool: React.FC = () => {
                             <Descriptions.Item label="来源">
                                 {SOURCE_LABEL[resolveResult.source] || resolveResult.source}
                             </Descriptions.Item>
-                            <Descriptions.Item label="池 / 版本">
-                                {resolveResult.code} {resolveResult.version ? `v${resolveResult.version}` : ''}
-                            </Descriptions.Item>
+                            <Descriptions.Item label="池">{resolveResult.code}</Descriptions.Item>
                             <Descriptions.Item label="成分数">{resolveResult.symbol_count}</Descriptions.Item>
                             <Descriptions.Item label="市场 / 口径">{resolveResult.market}</Descriptions.Item>
                             <Descriptions.Item label="不过滤">{String(resolveResult.unfiltered)}</Descriptions.Item>

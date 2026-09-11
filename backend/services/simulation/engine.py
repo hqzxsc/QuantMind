@@ -205,11 +205,11 @@ class SimulationEngine:
                     signals = [row["_ref"] for row in outcome.kept]
                     report.signal_count = len(signals)
                     logger.info(
-                        "SimulationEngine: 池过滤 pool_id=%s kept=%d dropped=%d version=%s",
+                        "SimulationEngine: 池过滤 pool_id=%s kept=%d dropped=%d checksum=%s",
                         outcome.pool_id,
                         len(outcome.kept),
                         outcome.dropped,
-                        outcome.pool_version,
+                        outcome.pool_checksum,
                     )
 
                 # 2. 加载策略配置

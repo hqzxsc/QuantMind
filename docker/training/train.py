@@ -247,7 +247,6 @@ def _pool_metadata(cfg: dict) -> dict:
     pool_id = str(data.get("pool_id") or "").strip()
     return {
         "pool_id": pool_id or None,
-        "pool_version": data.get("pool_version"),
         "pool_checksum": str(data.get("pool_checksum") or "").strip() or None,
         "pool_symbol_count": len(symbols) or None,
         "pool_filtered": bool(symbols),

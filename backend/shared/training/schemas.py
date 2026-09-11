@@ -85,10 +85,9 @@ class DataCfg(BaseModel):
     quantdb_dir: str | None = None
 
     # 全局股票池（P3）：编排器（有 DB 访问）解析后注入，训练容器据此过滤样本。
-    # 容器内没有 DB，所以只传已解析的代码列表 + 版本信息（用于结果可复现）。
+    # 容器内没有 DB，所以只传已解析的代码列表 + 内容校验和（用于结果可复现）。
     pool_id: str | None = None
     pool_symbols: list[str] | None = None
-    pool_version: int | None = None
     pool_checksum: str | None = None
 
 

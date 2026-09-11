@@ -1,10 +1,11 @@
-"""后台管理 - 全局股票池（Admin Stock Pool）。
+"""后台管理 - 全局股票池（Admin Stock Pool, v2 简化版）。
 
-所有功能（回测 / 训练 / 推理 / 模拟盘 / 实盘 / 因子挖掘 / Strategy Lab）
-共用的股票池定义与版本管理入口。
+成员唯一事实源 = 前缀式 TXT（/data/stock_pool/<code>.txt，一行一个代码），
+编辑保存 → 重写 TXT → 立即生效，没有草稿/发布版本模型。
+PG 单表只存元信息；binding 表记录长生命周期引用（被引用的池不可删）。
 
 设计：读写分离
-- 本路由负责「写」：定义池、维护成员、发布版本、回滚；
+- 本路由负责「写」：建池 / 改元信息 / 覆盖成员 / 导入 / 刷新内置池；
 - 读侧统一走 `backend.shared.stock_pool.PoolResolver`（见 /resolve 调试接口）。
 
 路径：`/api/v1/admin/stock-pools/*`（`require_admin` 路由级兜底）。
@@ -15,6 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -27,7 +29,6 @@ from backend.shared.stock_pool import builtins as sp_builtins
 from backend.shared.stock_pool import constants as sp_const
 from backend.shared.stock_pool import parser as sp_parser
 from backend.shared.stock_pool import repository as repo
-from backend.shared.stock_pool.materializer import write_instruments
 from backend.shared.stock_pool.normalize import (
     is_valid_symbol,
     normalize_market,
@@ -39,10 +40,7 @@ from backend.shared.stock_pool.resolver import ResolveContext, resolver
 from backend.shared.stock_pool.schemas import (
     PoolBindingRequest,
     PoolCreateFromMembersRequest,
-    PoolImportRequest,
-    PoolImportResult,
-    PoolMember,
-    PoolMembersReplace,
+    PoolMembersSave,
     PoolParseRequest,
     StockPool,
     StockPoolCreate,
@@ -66,11 +64,28 @@ async def _require_pool(session, pool_id: str) -> StockPool:
     return pool
 
 
+def _members_payload(pool: StockPool) -> dict[str, Any]:
+    """读 TXT → API 响应（成员就是文件内容，保存即可见）。"""
+    api_symbols = repo.read_members(pool)
+    return {
+        "pool_id": pool.pool_id,
+        "code": pool.code,
+        "market": pool.market,
+        "file_path": pool.file_path,
+        "total": len(api_symbols),
+        "checksum": pool.checksum,
+        "symbols": api_symbols,
+        "updated_at": pool.updated_at.isoformat() if pool.updated_at else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 元信息（必须声明在 /{pool_id} 之前）
 # ---------------------------------------------------------------------------
 @router.get("/meta", summary="股票池枚举与阈值元信息")
 async def get_pool_meta():
+    from backend.shared.stock_pool.materializer import pool_dir
+
     return {
         "markets": sorted(sp_const.MARKETS),
         "pool_types": sorted(sp_const.POOL_TYPES),
@@ -78,9 +93,8 @@ async def get_pool_meta():
         "statuses": sorted(sp_const.STATUSES),
         "target_types": sorted(sp_const.TARGET_TYPES),
         "binding_modes": sorted(sp_const.BINDING_MODES),
-        "member_table_max": sp_const.MEMBER_TABLE_MAX,
-        "storage_modes": [sp_const.STORAGE_TABLE, sp_const.STORAGE_SNAPSHOT],
-        "snapshot_dir": str(repo.snapshot_dir()),
+        "member_max": sp_const.MEMBER_MAX,
+        "pool_txt_dir": str(pool_dir()),
         "builtin_pools": [
             {
                 "code": p.code,
@@ -98,27 +112,22 @@ async def get_pool_meta():
 @router.get("/resolve", summary="解析调试：任意 ref → 解析结果")
 async def debug_resolve(
     ref: str = Query(
-        ..., description="池引用，如 pool:csi300 / csi300 / list:SH600036"
+        ..., description="池引用，如 pool:csi300 / csi300 / list:SH600036 / all"
     ),
     market: str | None = Query(None),
-    version: int | None = Query(None),
     preview_limit: int = Query(20, ge=0, le=500),
 ):
-    """排查「池为什么是空的」的第一入口：返回来源、版本、警告与样本。"""
-    snap = await resolver.resolve(
-        ref, ResolveContext(market=market), version=version, strict=False
-    )
+    """排查「池为什么是空的」的第一入口：返回来源、成员数、警告与样本。"""
+    snap = await resolver.resolve(ref, ResolveContext(market=market), strict=False)
     return {
         "ref": ref,
         "pool_id": snap.pool_id,
         "code": snap.code,
-        "version": snap.version,
         "market": snap.market,
         "source": snap.source,
         "unfiltered": snap.unfiltered,
         "symbol_count": len(snap.symbols),
         "checksum": snap.checksum,
-        "storage_mode": snap.storage_mode,
         "warnings": snap.warnings,
         "sample": snap.api_symbols[:preview_limit],
     }
@@ -133,8 +142,8 @@ async def pool_health():
                 await session.execute(
                     text(
                         """
-                    SELECT pool_id, code, market, pool_type, status,
-                           current_version, symbol_count, checksum, is_system
+                    SELECT pool_id, code, market, pool_type, scope, status,
+                           file_path, symbol_count, checksum, is_system
                       FROM qm_stock_pool
                      WHERE status <> 'archived'
                      ORDER BY is_system DESC, code ASC
@@ -148,38 +157,25 @@ async def pool_health():
 
         items: list[dict[str, Any]] = []
         for row in rows:
-            pool_id = str(row["pool_id"])
-            has_draft = await repo.has_draft_changes(session, pool_id)
-            bindings = await repo.count_bindings(session, pool_id)
             warnings: list[str] = []
-            if int(row["current_version"] or 0) <= 0:
-                warnings.append("尚未发布任何版本，线上不可消费")
+            file_path = str(row.get("file_path") or "")
+            if not file_path:
+                warnings.append("成员 TXT 尚未生成（编辑保存或刷新内置池后生成）")
+            elif not Path(file_path).exists():
+                warnings.append(f"成员 TXT 文件缺失: {file_path}")
             elif int(row["symbol_count"] or 0) == 0:
-                warnings.append("已发布版本成员为空")
-            if has_draft:
-                warnings.append("存在未发布的草稿改动")
-            if row["pool_type"] == sp_const.POOL_TYPE_SYSTEM_INDEX:
-                warnings.append("成分实时取自指数权重（不落成员表）")
-            elif bindings == 0:
+                warnings.append("成员 TXT 为空")
+            bindings = await repo.count_bindings(session, str(row["pool_id"]))
+            if not row["is_system"] and bindings == 0:
                 warnings.append(
-                    "无引用登记（如需「被引用不可删」保护，请登记 binding 或跑一次引用回填）"
+                    "无引用登记（如需「被引用不可删」保护，请登记 binding 或跑引用回填）"
                 )
-
-            items.append(
-                {
-                    **dict(row),
-                    "has_draft_changes": has_draft,
-                    "binding_count": bindings,
-                    "warnings": warnings,
-                }
-            )
+            items.append({**dict(row), "binding_count": bindings, "warnings": warnings})
 
     return {
         "total": len(items),
         "unhealthy": sum(1 for i in items if i["warnings"]),
         "bound_total": sum(i["binding_count"] for i in items),
-        "unbound": sum(1 for i in items if i["binding_count"] == 0),
-        "snapshot_dir": str(repo.snapshot_dir()),
         "items": items,
     }
 
@@ -209,19 +205,22 @@ async def list_pools(
             limit=limit,
             offset=offset,
         )
-        enriched: list[dict[str, Any]] = []
-        for pool in pools:
-            has_draft = await repo.has_draft_changes(session, pool.pool_id)
-            enriched.append({**pool.model_dump(), "has_draft_changes": has_draft})
-    return {"total": total, "items": enriched, "limit": limit, "offset": offset}
+    return {
+        "total": total,
+        "items": [p.model_dump() for p in pools],
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post("", summary="新建股票池")
 async def create_pool(payload: StockPoolCreate, request: Request):
-    if payload.pool_type == sp_const.POOL_TYPE_DYNAMIC:
+    if payload.pool_type not in sp_const.POOL_TYPES:
+        raise HTTPException(status_code=422, detail=f"未知池类型: {payload.pool_type}")
+    if payload.scope != "global":
         raise HTTPException(
             status_code=422,
-            detail="dynamic（规则型动态池）一期仅预留字段，尚未开放创建",
+            detail="后台管理仅创建全局池；用户私有池由旧池文件登记桥自动创建",
         )
     async with get_session() as session:
         await repo.ensure_tables(session)
@@ -235,41 +234,8 @@ async def create_pool(payload: StockPoolCreate, request: Request):
 
 
 # ---------------------------------------------------------------------------
-# 导入 / 导出（声明在 /{pool_id} 之前）
+# 上传解析（声明在 /{pool_id} 之前）
 # ---------------------------------------------------------------------------
-@router.post("/import", response_model=PoolImportResult, summary="导入文件新建股票池")
-async def import_new_pool(
-    request: Request,
-    pool_code: str = Query(..., min_length=1, max_length=64),
-    pool_name: str = Query(..., min_length=1, max_length=200),
-    market: str = Query("CN"),
-    description: str | None = Query(None),
-    publish: bool = Query(True, description="导入后是否立即发布"),
-    payload: PoolImportRequest = Body(...),
-):
-    async with get_session() as session:
-        await repo.ensure_tables(session)
-        existing = await repo.get_pool_by_code(session, pool_code)
-        if existing is not None:
-            raise HTTPException(status_code=409, detail=f"code 已存在: {pool_code}")
-
-        pool = await repo.create_pool(
-            session,
-            StockPoolCreate(
-                code=pool_code,
-                name=pool_name,
-                description=description,
-                market=market,
-                pool_type=sp_const.POOL_TYPE_IMPORTED,
-                source_kind="file_import",
-            ),
-            actor=_actor(request),
-        )
-        return await _import_members(
-            session, pool, payload, actor=_actor(request), publish=publish
-        )
-
-
 @router.post("/parse", summary="上传 CSV/TXT 解析（与 stocks_index.json 对比，不落库）")
 async def parse_uploaded_pool_file(payload: PoolParseRequest):
     """股票解析：把用户上传的文件解析成规范成分清单。
@@ -313,49 +279,28 @@ async def parse_uploaded_pool_file(payload: PoolParseRequest):
     return report.as_dict(row_limit=payload.row_limit)
 
 
-@router.post("/create-from-members", summary="用解析确认后的成员建池（可选立即发布）")
+@router.post("/create-from-members", summary="用解析确认后的成员建池（保存即生效）")
 async def create_pool_from_members(
     payload: PoolCreateFromMembersRequest, request: Request
 ):
-    """建池 + 落成员（+ 发布）。
+    """建池 + 写成员 TXT，一次完成，立即可被 resolver / 回测消费。
 
-    成员来自前端回传，服务端**重新校验**；名称一律以本地索引为准覆盖，
-    不接受客户端伪造的名称。
+    成员代码由前端回传，服务端**重新校验**（不信任客户端），坏代码拒绝并回传样本。
     """
-    if payload.pool_type == sp_const.POOL_TYPE_DYNAMIC:
-        raise HTTPException(
-            status_code=422, detail="dynamic（规则型动态池）一期尚未开放创建"
-        )
-    if not payload.members:
+    if not payload.symbols:
         raise HTTPException(status_code=422, detail="成员列表为空，无法建池")
 
-    index = sp_parser.load_stock_index()
     market = normalize_market(payload.market)
-
-    accepted: list[PoolMember] = []
+    valid: list[str] = []
     rejected: list[str] = []
-    seen: set[str] = set()
-
-    for item in payload.members:
-        symbol = to_storage_symbol(item.symbol, market)
-        if not symbol or not is_valid_symbol(symbol, market):
-            rejected.append(str(item.symbol))
-            continue
-        if symbol in seen:
-            continue
-        seen.add(symbol)
-
-        entry = index.by_symbol.get(symbol)
-        accepted.append(
-            PoolMember(
-                symbol=symbol,
-                name=(entry.name if entry else item.name),
-                weight=item.weight,
-                meta={**(item.meta or {}), "in_index": bool(entry)},
-            )
-        )
-
-    if not accepted:
+    for item in payload.symbols:
+        code = to_storage_symbol(str(item or ""), market)
+        if code and is_valid_symbol(code, market):
+            valid.append(code)
+        else:
+            rejected.append(str(item)[:32])
+    valid = normalize_symbols(valid, market)
+    if not valid:
         raise HTTPException(
             status_code=422,
             detail=f"成员全部校验失败（{len(rejected)} 条），示例: {rejected[:5]}",
@@ -380,169 +325,31 @@ async def create_pool_from_members(
             ),
             actor=_actor(request),
         )
-        await repo.replace_members(
-            session, pool.pool_id, accepted, market, actor=_actor(request)
-        )
-
-        version = None
-        if payload.publish:
-            snapshot_path = await _maybe_snapshot(session, pool, accepted)
-            ver = await repo.publish(
-                session,
-                pool.pool_id,
-                actor=_actor(request),
-                changelog=payload.changelog or f"上传解析导入（{len(accepted)} 只）",
-                snapshot_path=snapshot_path,
-            )
-            version = ver.version if ver else None
-            _best_effort_instruments(session, pool, accepted)
+        result = await repo.save_members(session, pool, valid, actor=_actor(request))
+        pool = await _require_pool(session, pool.pool_id)
 
     return {
         "success": True,
-        "pool_id": pool.pool_id,
-        "code": pool.code,
-        "accepted": len(accepted),
-        "rejected": len(rejected),
-        "rejected_samples": rejected[:20],
-        "in_index": sum(1 for m in accepted if (m.meta or {}).get("in_index")),
-        "version": version,
-        "published": bool(version),
+        "pool": pool.model_dump(),
+        "accepted": result["accepted"],
+        "rejected": result["rejected"],
+        "duplicates": result["duplicates"],
+        "rejected_samples": result["rejected_samples"],
+        "checksum": result["checksum"],
+        "file_path": result["file_path"],
     }
 
 
-async def _import_members(
-    session,
-    pool: StockPool,
-    payload: PoolImportRequest,
-    *,
-    actor: str,
-    publish: bool,
-) -> PoolImportResult:
-    parsed, rejected = _parse_symbols(payload, pool.market)
-    members = [PoolMember(symbol=s) for s in parsed]
-
-    await repo.replace_members(session, pool.pool_id, members, pool.market, actor=actor)
-
-    version = None
-    if publish:
-        snapshot_path = await _maybe_snapshot(session, pool, members)
-        ver = await repo.publish(
-            session,
-            pool.pool_id,
-            actor=actor,
-            changelog=payload.changelog or "文件导入",
-            snapshot_path=snapshot_path,
-        )
-        version = ver.version if ver else None
-        _best_effort_instruments(session, pool, members)
-
-    return PoolImportResult(
-        total=len(parsed) + len(rejected),
-        accepted=len(parsed),
-        rejected=len(rejected),
-        duplicates=0,
-        rejected_samples=rejected[:20],
-        version=version,
-    )
-
-
-def _parse_symbols(
-    payload: PoolImportRequest, market: str
-) -> tuple[list[str], list[str]]:
-    """解析 csv/txt 文本 → (合法代码列表, 被拒样本)。"""
-    raw: list[str] = []
-
-    if payload.fmt == "csv":
-        reader = csv.reader(io.StringIO(payload.content))
-        rows = [r for r in reader if r and any(c.strip() for c in r)]
-        if not rows:
-            return [], []
-        idx = 0
-        start = 0
-        if payload.has_header:
-            header = [c.strip().lower() for c in rows[0]]
-            candidates = [
-                payload.symbol_column,
-                "symbol",
-                "code",
-                "证券代码",
-                "代码",
-                "ticker",
-            ]
-            for cand in candidates:
-                if cand and cand.lower() in header:
-                    idx = header.index(cand.lower())
-                    break
-            start = 1
-        for r in rows[start:]:
-            if idx < len(r):
-                raw.append(r[idx].strip())
-    else:
-        for line in payload.content.splitlines():
-            parts = line.strip().split("\t")
-            if parts and parts[0] and not parts[0].startswith("#"):
-                raw.append(parts[0].strip())
-
-    rejected: list[str] = []
-    accepted: list[str] = []
-    for item in raw:
-        if not item:
-            continue
-        if not is_valid_symbol(item, market):
-            rejected.append(item)
-            continue
-        accepted.append(item)
-
-    return normalize_symbols(accepted, market), rejected
-
-
-async def _maybe_snapshot(
-    session, pool: StockPool, members: list[PoolMember]
-) -> str | None:
-    """成员数超阈值时落 parquet 快照，返回路径。"""
-    if len(members) <= sp_const.MEMBER_TABLE_MAX:
-        return None
-    from backend.shared.stock_pool.materializer import write_snapshot
-
-    version = await repo.staging_version(session, pool.pool_id)
-    try:
-        return write_snapshot(pool.pool_id, version, members)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("股票池快照写入失败 pool=%s: %s", pool.pool_id, exc)
-        raise HTTPException(
-            status_code=500,
-            detail=f"成员数 {len(members)} 超过阈值 {sp_const.MEMBER_TABLE_MAX}，"
-            f"但快照写入失败: {exc}",
-        ) from exc
-
-
-def _best_effort_instruments(
-    session, pool: StockPool, members: list[PoolMember]
-) -> None:
-    """物化 Qlib instruments 文件。失败只告警，不影响发布。"""
-    try:
-        write_instruments(pool.code, [m.symbol for m in members], pool.market)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("股票池 instruments 物化失败 pool=%s: %s", pool.code, exc)
-
-
 # ---------------------------------------------------------------------------
-# 详情 / 更新 / 删除
+# 详情 / 更新 / 归档 / 删除
 # ---------------------------------------------------------------------------
 @router.get("/{pool_id}", summary="股票池详情")
 async def get_pool_detail(pool_id: str):
     async with get_session() as session:
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
-        has_draft = await repo.has_draft_changes(session, pool_id)
-        versions = await repo.list_versions(session, pool_id, limit=20)
-        staging = await repo.staging_version(session, pool_id)
-    return {
-        **pool.model_dump(),
-        "has_draft_changes": has_draft,
-        "staging_version": staging,
-        "versions": [v.model_dump() for v in versions],
-    }
+        usages = await repo.list_usages(session, pool_id)
+    return {**pool.model_dump(), "binding_count": len(usages)}
 
 
 @router.patch("/{pool_id}", summary="更新股票池元信息")
@@ -550,12 +357,11 @@ async def update_pool(pool_id: str, payload: StockPoolUpdate, request: Request):
     async with get_session() as session:
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
-        if pool.is_system and payload.status == sp_const.STATUS_ARCHIVED:
-            raise HTTPException(status_code=409, detail="系统内置池不允许归档")
-        updated = await repo.update_pool(
-            session, pool_id, payload, actor=_actor(request)
-        )
-    assert updated is not None
+        if pool.is_system and payload.status is not None:
+            raise HTTPException(status_code=409, detail="内置系统池不可改状态")
+        updated = await repo.update_pool(session, pool_id, payload, actor=_actor(request))
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"股票池不存在: {pool_id}")
     return updated.model_dump()
 
 
@@ -565,12 +371,12 @@ async def archive_pool(pool_id: str, request: Request):
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
         if pool.is_system:
-            raise HTTPException(status_code=409, detail="系统内置池不允许归档")
+            raise HTTPException(status_code=409, detail="内置系统池不可归档")
         blockers = await repo.archive_pool(session, pool_id, actor=_actor(request))
     if blockers:
         raise HTTPException(
             status_code=409,
-            detail=f"该池仍被引用，无法归档: {', '.join(blockers)}",
+            detail=f"该池仍被 {len(blockers)} 处引用，不可归档: {blockers[:10]}",
         )
     return {"success": True, "pool_id": pool_id, "status": sp_const.STATUS_ARCHIVED}
 
@@ -581,204 +387,184 @@ async def delete_pool(pool_id: str):
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
         if pool.is_system:
-            raise HTTPException(status_code=409, detail="系统内置池不允许删除")
-        usages = await repo.list_usages(session, pool_id)
-        if usages:
+            raise HTTPException(status_code=409, detail="内置系统池不可删除")
+        if pool.status != sp_const.STATUS_ARCHIVED:
             raise HTTPException(
-                status_code=409,
-                detail=(
-                    "该池仍被引用，无法删除: "
-                    + ", ".join(f"{u['target_type']}:{u['target_id']}" for u in usages)
-                ),
+                status_code=409, detail="仅允许删除已归档的池（先归档再删除）"
             )
+        bindings = await repo.count_bindings(session, pool_id)
+        if bindings:
+            raise HTTPException(status_code=409, detail=f"仍被 {bindings} 处引用")
         await repo.delete_pool(session, pool_id)
     return {"success": True, "pool_id": pool_id}
 
 
 # ---------------------------------------------------------------------------
-# 成员
+# 成员（TXT 即事实源，保存即生效）
 # ---------------------------------------------------------------------------
-@router.get("/{pool_id}/members", summary="成员列表（默认草稿版本）")
-async def list_members(
-    pool_id: str,
-    scope: str = Query("draft", pattern="^(draft|published)$"),
-    limit: int = Query(200, ge=1, le=2000),
-    offset: int = Query(0, ge=0),
-):
+@router.get("/{pool_id}/members", summary="成员列表（读 TXT，前缀式）")
+async def get_members(pool_id: str):
     async with get_session() as session:
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
-
-        if scope == "published":
-            if pool.current_version <= 0:
-                return {"total": 0, "items": [], "version": 0, "scope": scope}
-            version = pool.current_version
-            members, total = await repo.list_members(
-                session,
-                pool_id,
-                pool.market,
-                version=version,
-                limit=limit,
-                offset=offset,
-            )
-        else:
-            version = await repo.staging_version(session, pool_id)
-            members, total = await repo.list_members(
-                session,
-                pool_id,
-                pool.market,
-                version=version,
-                limit=limit,
-                offset=offset,
-            )
-
-    return {
-        "total": total,
-        "items": [m.model_dump() for m in members],
-        "version": version,
-        "scope": scope,
-        "limit": limit,
-        "offset": offset,
-    }
+    return _members_payload(pool)
 
 
-@router.put("/{pool_id}/members", summary="整体覆盖草稿成员")
-async def replace_members(pool_id: str, payload: PoolMembersReplace, request: Request):
+@router.put("/{pool_id}/members", summary="整体覆盖成员（写 TXT，立即生效）")
+async def save_members(pool_id: str, payload: PoolMembersSave, request: Request):
     async with get_session() as session:
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
-        if pool.status == sp_const.STATUS_ARCHIVED:
-            raise HTTPException(status_code=409, detail="已归档的池不可编辑")
-
-        accepted: list[PoolMember] = []
-        rejected: list[str] = []
-        for m in payload.members:
-            if not is_valid_symbol(m.symbol, pool.market):
-                rejected.append(m.symbol)
-                continue
-            accepted.append(m)
-
-        count = await repo.replace_members(
-            session,
-            pool_id,
-            accepted,
-            pool.market,
-            changelog=payload.changelog,
-            actor=_actor(request),
-        )
-        staging = await repo.staging_version(session, pool_id)
-
-    return {
-        "success": True,
-        "accepted": count,
-        "rejected": len(rejected),
-        "rejected_samples": rejected[:20],
-        "staging_version": staging,
-    }
+        if pool.is_system:
+            raise HTTPException(
+                status_code=409,
+                detail="内置系统池成分由指数权重自动刷新，不可手改；"
+                "如需自定义请新建 imported 池",
+            )
+        raw = list(payload.symbols or [])
+        if not raw and payload.text:
+            raw = [
+                line.split(",")[0].split(";")[0].strip()
+                for line in payload.text.splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+        if not raw:
+            raise HTTPException(status_code=422, detail="symbols 与 text 至少提供一个")
+        if len(raw) > sp_const.MEMBER_MAX:
+            raise HTTPException(
+                status_code=422,
+                detail=f"成员数 {len(raw)} 超过上限 {sp_const.MEMBER_MAX}",
+            )
+        result = await repo.save_members(session, pool, raw, actor=_actor(request))
+        pool = await _require_pool(session, pool_id)
+    return {"success": True, **result, "pool": pool.model_dump()}
 
 
-@router.post(
-    "/{pool_id}/members/import",
-    response_model=PoolImportResult,
-    summary="向已有池导入成员（覆盖草稿）",
-)
+@router.post("/{pool_id}/members/import", summary="向已有池导入文本（覆盖成员）")
 async def import_members(
     pool_id: str,
     request: Request,
-    publish: bool = Query(True),
-    payload: PoolImportRequest = Body(...),
+    payload: dict = Body(..., description='{"content": "csv/txt 原始文本", "fmt": "csv|txt"}'),
 ):
+    content = str(payload.get("content") or "")
+    fmt = str(payload.get("fmt") or "txt").lower()
+    if not content.strip():
+        raise HTTPException(status_code=422, detail="content 为空")
+
+    raw: list[str] = []
+    if fmt == "csv":
+        reader = csv.reader(io.StringIO(content))
+        rows = [r for r in reader if r and any(c.strip() for c in r)]
+        idx, start = 0, 0
+        if rows:
+            header = [c.strip().lower() for c in rows[0]]
+            for cand in ("symbol", "code", "证券代码", "代码", "ticker"):
+                if cand in header:
+                    idx = header.index(cand)
+                    start = 1
+                    break
+        for r in rows[start:]:
+            if idx < len(r):
+                raw.append(r[idx].strip())
+    else:
+        for line in content.splitlines():
+            s = line.strip()
+            if s and not s.startswith("#"):
+                raw.append(s.split(",")[0].split("\t")[0].strip())
+
     async with get_session() as session:
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
-        if pool.status == sp_const.STATUS_ARCHIVED:
-            raise HTTPException(status_code=409, detail="已归档的池不可编辑")
-        return await _import_members(
-            session, pool, payload, actor=_actor(request), publish=publish
-        )
+        if pool.is_system:
+            raise HTTPException(status_code=409, detail="内置系统池不可导入覆盖")
+        result = await repo.save_members(session, pool, raw, actor=_actor(request))
+    return {"success": True, **result}
 
 
-@router.get(
-    "/{pool_id}/members/export",
-    summary="导出成员为 CSV",
-    response_class=PlainTextResponse,
-)
-async def export_members(
-    pool_id: str,
-    scope: str = Query("published", pattern="^(draft|published)$"),
-):
+@router.get("/{pool_id}/export", summary="导出成员（text/plain，一行一个前缀式代码）")
+async def export_members(pool_id: str):
     async with get_session() as session:
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
-        if scope == "published":
-            version = pool.current_version or await repo.staging_version(
-                session, pool_id
-            )
-        else:
-            version = await repo.staging_version(session, pool_id)
-        members, _ = await repo.list_members(
-            session, pool_id, pool.market, version=version
-        )
-
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["symbol", "name", "weight", "industry"])
-    for m in members:
-        writer.writerow(
-            [m.api_symbol or m.symbol, m.name or "", m.weight or "", m.industry or ""]
-        )
-
-    filename = f"{pool.code}_v{version}.csv"
+    data = _members_payload(pool)
+    body = "\n".join(data["symbols"]) + ("\n" if data["symbols"] else "")
     return PlainTextResponse(
-        content=buf.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        content=body,
+        headers={
+            "Content-Disposition": f'attachment; filename="pool_{pool.code}.txt"'
+        },
     )
+
+
+@router.post("/{pool_id}/refresh", summary="刷新内置池成分（从 QuantDB 重写 TXT）")
+async def refresh_builtin_pool(pool_id: str, request: Request):
+    async with get_session() as session:
+        await repo.ensure_tables(session)
+        pool = await _require_pool(session, pool_id)
+        if not pool.is_system:
+            raise HTTPException(status_code=409, detail="仅内置系统池支持自动刷新")
+        builtin = sp_builtins.get_builtin(pool.code)
+        if builtin is None:
+            raise HTTPException(status_code=404, detail=f"不在内置目录: {pool.code}")
+
+        from backend.shared.stock_pool.resolver import _fetch_builtin_symbols
+
+        symbols = _fetch_builtin_symbols(builtin)
+        if not symbols:
+            raise HTTPException(
+                status_code=503,
+                detail=f"{pool.code} 暂无成分（QuantDB 未就绪或数据源未接入），"
+                "TXT 保持不变",
+            )
+        result = await repo.save_members(session, pool, symbols, actor=_actor(request))
+        pool = await _require_pool(session, pool_id)
+    return {"success": True, **result, "pool": pool.model_dump()}
 
 
 @router.get("/{pool_id}/preview", summary="预览成分（含最新行情指标）")
 async def preview_pool(
     pool_id: str,
-    scope: str = Query("published", pattern="^(draft|published)$"),
     limit: int = Query(200, ge=1, le=2000),
 ):
     async with get_session() as session:
         await repo.ensure_tables(session)
         pool = await _require_pool(session, pool_id)
-        version = (
-            pool.current_version
-            if scope == "published" and pool.current_version > 0
-            else await repo.staging_version(session, pool_id)
-        )
-        members, total = await repo.list_members(
-            session, pool_id, pool.market, version=version, limit=limit
-        )
-        metrics = await _fetch_latest_metrics(
-            session, [m.symbol for m in members], pool.market
-        )
+        api_symbols = repo.read_members(pool)[:limit]
+        metrics = await _fetch_latest_metrics(session, api_symbols, pool.market)
+
+    index = None
+    try:
+        index = sp_parser.load_stock_index()
+    except Exception:  # noqa: BLE001 - 索引缺失不阻断预览
+        pass
 
     items = []
-    for m in members:
-        api_symbol = m.api_symbol or to_api_symbol(m.symbol, pool.market)
-        items.append({**m.model_dump(), "metrics": metrics.get(api_symbol, {})})
-
+    for api in api_symbols:
+        storage = to_storage_symbol(api, pool.market)
+        entry = index.by_symbol.get(storage) if index else None
+        items.append(
+            {
+                "symbol": storage,
+                "api_symbol": api,
+                "name": (entry.name if entry else None),
+                "metrics": metrics.get(api, {}),
+            }
+        )
     return {
         "pool_id": pool_id,
         "code": pool.code,
-        "version": version,
-        "total": total,
+        "total": len(items),
         "items": items,
         "metrics_available": bool(metrics),
     }
 
 
 async def _fetch_latest_metrics(
-    session, symbols: list[str], market: str
+    session, api_symbols: list[str], market: str
 ) -> dict[str, dict]:
     """尽力取最新行情指标；表/列缺失时返回空（不阻断预览）。"""
-    if not symbols or normalize_market(market) != sp_const.MARKET_CN:
+    if not api_symbols or normalize_market(market) != sp_const.MARKET_CN:
         return {}
-    api_symbols = [to_api_symbol(s, market) for s in symbols[:1000]]
     try:
         rows = (
             (
@@ -791,7 +577,7 @@ async def _fetch_latest_metrics(
                      WHERE symbol = ANY(:codes)
                     """
                     ),
-                    {"codes": api_symbols},
+                    {"codes": api_symbols[:1000]},
                 )
             )
             .mappings()
@@ -819,155 +605,9 @@ async def _fetch_latest_metrics(
 
 
 # ---------------------------------------------------------------------------
-# 版本：发布 / 回滚 / 列表 / diff
+# 引用（binding）
 # ---------------------------------------------------------------------------
-@router.post("/{pool_id}/publish", summary="发布草稿为新版本")
-async def publish_pool(
-    pool_id: str,
-    request: Request,
-    changelog: str | None = Query(None),
-):
-    async with get_session() as session:
-        await repo.ensure_tables(session)
-        pool = await _require_pool(session, pool_id)
-        if pool.status == sp_const.STATUS_ARCHIVED:
-            raise HTTPException(status_code=409, detail="已归档的池不可发布")
-
-        staging = await repo.staging_version(session, pool_id)
-        members, _ = await repo.list_members(
-            session, pool_id, pool.market, version=staging
-        )
-        if not members:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "草稿成员为空，拒绝发布。"
-                    "（系统指数池的成分由 QuantDB 实时提供，无需在此维护成员）"
-                ),
-            )
-
-        snapshot_path = await _maybe_snapshot(session, pool, members)
-        version = await repo.publish(
-            session,
-            pool_id,
-            actor=_actor(request),
-            changelog=changelog,
-            snapshot_path=snapshot_path,
-        )
-        _best_effort_instruments(session, pool, members)
-
-    assert version is not None
-    return version.model_dump()
-
-
-@router.get("/{pool_id}/versions", summary="版本列表")
-async def list_versions(pool_id: str, limit: int = Query(50, ge=1, le=200)):
-    async with get_session() as session:
-        await repo.ensure_tables(session)
-        await _require_pool(session, pool_id)
-        versions = await repo.list_versions(session, pool_id, limit=limit)
-    return {"total": len(versions), "items": [v.model_dump() for v in versions]}
-
-
-@router.post("/{pool_id}/rollback", summary="回滚到指定版本（生成新版本，不破坏历史）")
-async def rollback_pool(
-    pool_id: str,
-    request: Request,
-    version: int = Query(..., ge=1),
-    changelog: str | None = Query(None),
-):
-    async with get_session() as session:
-        await repo.ensure_tables(session)
-        pool = await _require_pool(session, pool_id)
-
-        target = await repo.get_version(session, pool_id, version)
-        if target is None:
-            raise HTTPException(status_code=404, detail=f"版本 v{version} 不存在")
-        if target.storage_mode == sp_const.STORAGE_SNAPSHOT and target.snapshot_path:
-            from backend.shared.stock_pool.materializer import read_snapshot
-
-            members = read_snapshot(target.snapshot_path)
-        else:
-            symbols = await repo.list_published_symbols(session, pool_id, version)
-            members = [PoolMember(symbol=s) for s in symbols]
-
-        if not members:
-            raise HTTPException(
-                status_code=422, detail=f"版本 v{version} 成员为空，无法回滚"
-            )
-
-        await repo.replace_members(
-            session,
-            pool_id,
-            members,
-            pool.market,
-            changelog=changelog or f"回滚到 v{version}",
-            actor=_actor(request),
-        )
-        snapshot_path = await _maybe_snapshot(session, pool, members)
-        new_version = await repo.publish(
-            session,
-            pool_id,
-            actor=_actor(request),
-            changelog=changelog or f"回滚到 v{version}",
-            snapshot_path=snapshot_path,
-        )
-        _best_effort_instruments(session, pool, members)
-
-    return {
-        "success": True,
-        "rolled_back_from": version,
-        "new_version": new_version.version if new_version else None,
-    }
-
-
-@router.get("/{pool_id}/diff", summary="两个版本的成员差异")
-async def diff_versions(
-    pool_id: str,
-    from_version: int = Query(..., alias="from", ge=1),
-    to_version: int = Query(..., alias="to", ge=1),
-    limit: int = Query(500, ge=1, le=5000),
-):
-    async with get_session() as session:
-        await repo.ensure_tables(session)
-        await _require_pool(session, pool_id)
-        left, right = await _symbols_of_versions(
-            session, pool_id, from_version, to_version
-        )
-
-    from_set, to_set = set(left), set(right)
-    added = sorted(to_set - from_set)
-    removed = sorted(from_set - to_set)
-    return {
-        "from": from_version,
-        "to": to_version,
-        "from_count": len(left),
-        "to_count": len(right),
-        "added_count": len(added),
-        "removed_count": len(removed),
-        "added": added[:limit],
-        "removed": removed[:limit],
-    }
-
-
-async def _symbols_of_versions(
-    session, pool_id: str, a: int, b: int
-) -> tuple[list[str], list[str]]:
-    out: list[str] = []
-    for version in (a, b):
-        ver = await repo.get_version(session, pool_id, version)
-        if ver is None:
-            raise HTTPException(status_code=404, detail=f"版本 v{version} 不存在")
-        if ver.storage_mode == sp_const.STORAGE_SNAPSHOT and ver.snapshot_path:
-            from backend.shared.stock_pool.materializer import read_snapshot
-
-            out.append([m.symbol for m in read_snapshot(ver.snapshot_path)])
-        else:
-            out.append(await repo.list_published_symbols(session, pool_id, version))
-    return out[0], out[1]
-
-
-@router.get("/{pool_id}/usages", summary="引用情况（策略 / 回测 / 模型 / 账户）")
+@router.get("/{pool_id}/usages", summary="引用情况（策略 / 模型 / 账户）")
 async def list_usages(pool_id: str, target_type: str | None = Query(None)):
     async with get_session() as session:
         await repo.ensure_tables(session)
@@ -976,38 +616,14 @@ async def list_usages(pool_id: str, target_type: str | None = Query(None)):
     return {"total": len(usages), "items": usages}
 
 
-# ---------------------------------------------------------------------------
-# 引用登记（P4）：没有写入口时 qm_stock_pool_binding 永远是空的，
-# 「被引用不可删」的守卫就是空转 —— 这一节让它真正生效。
-#
-# 语义约定：binding 只登记**长生命周期**引用（策略 / 模型 / 模拟盘账户 / 实盘配置 /
-# 因子），这类引用应当阻止删除。回测与推理是**一次性运行**，其可复现信息已随
-# `pool_version` / `pool_checksum` 落在各自的结果记录里，不登记为 binding，
-# 否则历史回测会让池永不可删，且绑定表随运行次数无界增长。
-# ---------------------------------------------------------------------------
 @router.post("/{pool_id}/bindings", summary="登记引用（策略/模型/账户等长生命周期绑定）")
-async def bind_pool(
-    pool_id: str,
-    request: Request,
-    payload: PoolBindingRequest = Body(...),
-):
-    if payload.target_type not in sp_const.TARGET_TYPES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"target_type 非法: {payload.target_type}；可选 {sorted(sp_const.TARGET_TYPES)}",
-        )
-    if payload.mode not in sp_const.BINDING_MODES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"mode 非法: {payload.mode}；可选 {sorted(sp_const.BINDING_MODES)}",
-        )
-
+async def bind_pool_endpoint(pool_id: str, payload: PoolBindingRequest, request: Request):
     async with get_session() as session:
         await repo.ensure_tables(session)
-        await _require_pool(session, pool_id)
+        pool = await _require_pool(session, pool_id)
         await repo.bind_pool(
             session,
-            pool_id,
+            pool.pool_id,
             payload.target_type,
             payload.target_id,
             mode=payload.mode,
@@ -1016,29 +632,22 @@ async def bind_pool(
             user_id=payload.user_id,
             actor=_actor(request),
         )
-        usages = await repo.list_usages(session, pool_id)
-    return {"success": True, "total": len(usages), "items": usages}
+    return {"success": True, "pool_id": pool_id}
 
 
 @router.delete("/{pool_id}/bindings/{target_type}/{target_id:path}", summary="解除引用")
-async def unbind_pool(pool_id: str, target_type: str, target_id: str):
-    if target_type not in sp_const.TARGET_TYPES:
-        raise HTTPException(status_code=422, detail=f"target_type 非法: {target_type}")
+async def unbind_pool_endpoint(pool_id: str, target_type: str, target_id: str):
     async with get_session() as session:
         await repo.ensure_tables(session)
-        await _require_pool(session, pool_id)
         removed = await repo.unbind_pool(session, pool_id, target_type, target_id)
-        remaining = await repo.list_usages(session, pool_id)
-    return {"success": True, "removed": removed, "total": len(remaining)}
+    return {"success": True, "removed": removed}
 
 
 @router.get("/bindings/by-target", summary="反查：某个策略/模型/账户绑了哪些池")
-async def list_bindings_for_target(
+async def list_pools_for_target(
     target_type: str = Query(...),
-    target_id: str = Query(...),
+    target_id: str = Query(..., min_length=1),
 ):
-    if target_type not in sp_const.TARGET_TYPES:
-        raise HTTPException(status_code=422, detail=f"target_type 非法: {target_type}")
     async with get_session() as session:
         await repo.ensure_tables(session)
         items = await repo.list_pools_for_target(session, target_type, target_id)
@@ -1052,10 +661,8 @@ async def reconcile_bindings(
 ):
     """扫描 `qm_user_models.metadata_json` 里记录的池，回填 model 类型 binding。
 
-    为什么需要它：binding 表原本没有任何写入口（`/usages` 恒为空，
-    「被引用不可删」的守卫是空转的）。P3 之后训练产物会在 metadata 里记
-    `pool_id`，因此可以反推回填，无需改动所有写路径。
-
+    metadata 里的 `pool_id` 是引用串（如 `pool:csi300`），先经 resolver 解析成
+    库内池再登记；解析不到（临时 list:/file: 或已删池）计入 unresolved。
     只处理长生命周期引用（model）；回测/推理是一次性运行，不入 binding。
     """
     async with get_session() as session:
@@ -1068,9 +675,7 @@ async def reconcile_bindings(
                         text(
                             """
                             SELECT tenant_id, user_id, model_id,
-                                   metadata_json ->> 'pool_id' AS pool_id,
-                                   metadata_json ->> 'pool_version' AS pool_version,
-                                   metadata_json ->> 'pool_checksum' AS pool_checksum
+                                   metadata_json ->> 'pool_id' AS pool_ref
                               FROM qm_user_models
                              WHERE metadata_json ->> 'pool_id' IS NOT NULL
                                AND metadata_json ->> 'pool_id' <> ''
@@ -1093,16 +698,19 @@ async def reconcile_bindings(
                 await session.execute(
                     text("SELECT pool_id, code FROM qm_stock_pool")
                 )
-            ).mappings().all()
+            )
+            .mappings()
+            .all()
         }
 
         created: list[dict[str, Any]] = []
         missing: list[str] = []
         for row in rows:
-            pool_id = str(row["pool_id"])
+            pool_ref = str(row["pool_ref"])
+            snap = resolver.resolve_sync(pool_ref)
+            pool_id = snap.pool_id if snap.source == "pool" else ""
             if pool_id not in known:
-                # metadata 里记的是 code（如 pool:csi300）或已被删除 → 跳过并报告
-                missing.append(pool_id)
+                missing.append(pool_ref)
                 continue
             item = {
                 "pool_id": pool_id,

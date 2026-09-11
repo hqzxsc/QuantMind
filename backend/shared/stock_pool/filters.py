@@ -38,7 +38,6 @@ class PoolFilterOutcome:
     empty_pool: bool = False
     empty_result: bool = False
     pool_id: str | None = None
-    pool_version: int | None = None
     pool_checksum: str | None = None
     pool_symbol_count: int = 0
     warnings: list[str] = field(default_factory=list)
@@ -51,7 +50,6 @@ class PoolFilterOutcome:
     def as_dict(self) -> dict[str, Any]:
         return {
             "pool_id": self.pool_id,
-            "pool_version": self.pool_version,
             "pool_checksum": self.pool_checksum,
             "pool_symbol_count": self.pool_symbol_count,
             "total_in": self.total_in,
@@ -104,7 +102,6 @@ def filter_signals_by_pool(
         return outcome
 
     outcome.pool_id = getattr(snapshot, "pool_id", None)
-    outcome.pool_version = getattr(snapshot, "version", None)
     outcome.pool_checksum = getattr(snapshot, "checksum", None)
     outcome.warnings = list(getattr(snapshot, "warnings", None) or [])
 
@@ -148,9 +145,9 @@ def filter_signals_by_pool(
         )
 
     logger.info(
-        "池过滤完成 pool_id=%s version=%s kept=%d dropped=%d pool_size=%d",
+        "池过滤完成 pool_id=%s checksum=%s kept=%d dropped=%d pool_size=%d",
         outcome.pool_id,
-        outcome.pool_version,
+        outcome.pool_checksum,
         len(kept),
         dropped,
         outcome.pool_symbol_count,

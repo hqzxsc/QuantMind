@@ -1,20 +1,20 @@
 -- ============================================================================
--- 全局股票池模块 (Global Stock Pool)
--- 幂等：全部 IF NOT EXISTS，可重复执行
+-- 全局股票池模块 (Global Stock Pool) v2 —— 单表元信息 + TXT 成员
+-- 幂等：可反复执行（启动期 ensure_tables 与升级脚本共用本文件）。
+--
+-- v2 破坏性简化（相对 v1）：
+--   - 成员唯一事实源 = TXT 文件（前缀式一行一个，/data/stock_pool/*.txt），
+--     不再建 qm_stock_pool_version / qm_stock_pool_member（存在则 DROP）；
+--   - 无草稿/发布版本模型；qm_stock_pool 增加 file_path 列（旧库 ALTER 补齐，
+--     残留的 current_version 列不再被读写，保留仅为避免迁移破坏）。
 --
 -- 口径约定（重要）：
---   成员 symbol 一律存「后缀式」600036.SH（QuantDB parquet / Qlib 口径）；
---   API 出入参走前缀式 SH600036，转换必须经 StockCodeUtil，禁止手写切片。
---
--- 存储策略（混合）：
---   成员数 <= qm_stock_pool_member 阈值（默认 2000）→ storage_mode='table'，
---   成员逐行落 qm_stock_pool_member；
---   超过阈值的大池（如 all_a）→ storage_mode='snapshot'，
---   成员落 parquet 快照（qm_stock_pool_version.snapshot_path），表中只存元信息。
+--   TXT 成员为前缀式 SH600036（人可读可手改）；进程内解析后统一经
+--   normalize.py 转后缀式 600036.SH（DB/Qlib/parquet 层）再消费。
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- 1. 池主表
+-- 1. 池元信息表（成员不在这里，在 file_path 指向的 TXT）
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS qm_stock_pool (
     pool_id         TEXT PRIMARY KEY,
@@ -26,11 +26,8 @@ CREATE TABLE IF NOT EXISTS qm_stock_pool (
     scope           TEXT NOT NULL DEFAULT 'global',
     tenant_id       TEXT,
     owner_user_id   TEXT,
-    status          TEXT NOT NULL DEFAULT 'draft',
-    visibility      TEXT NOT NULL DEFAULT 'internal',
-    definition      JSONB NOT NULL DEFAULT '{}'::jsonb,
-    refresh_policy  JSONB NOT NULL DEFAULT '{}'::jsonb,
-    current_version INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'active',
+    file_path       TEXT,
     symbol_count    INTEGER NOT NULL DEFAULT 0,
     checksum        TEXT,
     source_kind     TEXT,
@@ -41,6 +38,9 @@ CREATE TABLE IF NOT EXISTS qm_stock_pool (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 旧 v1 库升级路径（v2 新库无这两列时补齐；已存在则 no-op）
+ALTER TABLE qm_stock_pool ADD COLUMN IF NOT EXISTS file_path TEXT;
 
 -- 同 scope + tenant 下 code 唯一（tenant_id 为 NULL 时按空串归组）
 CREATE UNIQUE INDEX IF NOT EXISTS uq_qm_stock_pool_code
@@ -53,53 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_scope
     ON qm_stock_pool (scope, tenant_id, owner_user_id);
 
 -- ---------------------------------------------------------------------------
--- 2. 版本表（发布历史，可回滚）
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS qm_stock_pool_version (
-    id              BIGSERIAL PRIMARY KEY,
-    pool_id         TEXT NOT NULL REFERENCES qm_stock_pool(pool_id) ON DELETE CASCADE,
-    version         INTEGER NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'published',
-    market          TEXT,
-    member_count    INTEGER NOT NULL DEFAULT 0,
-    checksum        TEXT,
-    storage_mode    TEXT NOT NULL DEFAULT 'table',
-    snapshot_path   TEXT,
-    changelog       TEXT,
-    published_by    TEXT,
-    published_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (pool_id, version)
-);
-
-CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_version_pool
-    ON qm_stock_pool_version (pool_id, version DESC);
-
--- ---------------------------------------------------------------------------
--- 3. 成员表（仅 storage_mode='table' 的池使用）
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS qm_stock_pool_member (
-    id              BIGSERIAL PRIMARY KEY,
-    pool_id         TEXT NOT NULL REFERENCES qm_stock_pool(pool_id) ON DELETE CASCADE,
-    version         INTEGER NOT NULL,
-    symbol          TEXT NOT NULL,
-    name            TEXT,
-    weight          DOUBLE PRECISION,
-    industry        TEXT,
-    effective_from  DATE,
-    effective_to    DATE,
-    meta            JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (pool_id, version, symbol)
-);
-
-CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_member_pool
-    ON qm_stock_pool_member (pool_id, version);
-
-CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_member_symbol
-    ON qm_stock_pool_member (symbol);
-
--- ---------------------------------------------------------------------------
--- 4. 绑定表（哪个功能在用哪个池）
+-- 2. 引用表（哪个功能在用哪个池；被引用的池不可归档/删除）
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS qm_stock_pool_binding (
     id              BIGSERIAL PRIMARY KEY,
@@ -121,3 +75,9 @@ CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_binding_target
 
 CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_binding_pool
     ON qm_stock_pool_binding (pool_id);
+
+-- ---------------------------------------------------------------------------
+-- 3. v1 遗留表清理（v2 成员在 TXT、无版本模型）
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS qm_stock_pool_member;
+DROP TABLE IF EXISTS qm_stock_pool_version;

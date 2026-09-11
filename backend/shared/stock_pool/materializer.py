@@ -1,11 +1,13 @@
-"""全局股票池 - 物化层。
+"""全局股票池 - 文件层（v2）。
 
 职责：
-1. 大池（成员数 > MEMBER_TABLE_MAX）落 parquet 快照，供 resolver / 训练容器读取；
-2. 把任意池物化成 Qlib 可识别的 `instruments/pool_<code>.txt`，
-   使回测与 strategy_lab 能用同一个池名（`pool:<code>`）直接解析。
+1. **成员 TXT**（唯一事实源）：`<pool_dir>/<name>.txt`，前缀式一行一个
+   （`SH600036`），支持 `#` 注释行；原子写（tmp + os.replace），
+   人可用文本编辑器直接改，其他模块可直接读；
+2. **Qlib instruments 物化**：回测引擎需要 `sh600036\\tSTART\\tEND` 格式时
+   由 `materialize_snapshot` 生成，消费方共用，避免各自实现。
 
-不引入 engine 依赖：本模块只做「符号列表 → 文件」的纯函数式转换。
+不引入 engine 依赖：本模块只做「符号列表 ↔ 文件」的纯函数式转换。
 """
 
 from __future__ import annotations
@@ -14,19 +16,21 @@ import logging
 import os
 from datetime import date
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 from .constants import INSTRUMENT_FILE_PREFIX
-from .normalize import normalize_market, normalize_to_qlib
-from .schemas import PoolMember
+from .normalize import (
+    normalize_market,
+    normalize_symbols,
+    normalize_to_qlib,
+    to_api_symbol,
+)
 
 logger = logging.getLogger(__name__)
 
-SNAPSHOT_COLUMNS = ("symbol", "name", "weight", "industry")
 
-
-def snapshot_dir() -> Path:
-    return Path(os.getenv("QM_STOCK_POOL_SNAPSHOT_DIR", "/data/stock_pool"))
+def pool_dir() -> Path:
+    return Path(os.getenv("QM_STOCK_POOL_TXT_DIR", "/data/stock_pool"))
 
 
 def qlib_data_dir() -> Path:
@@ -35,81 +39,76 @@ def qlib_data_dir() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# parquet 快照
+# 成员 TXT
 # ---------------------------------------------------------------------------
-def snapshot_path(pool_id: str, version: int) -> Path:
-    return snapshot_dir() / f"{pool_id}_v{int(version)}.parquet"
+def _safe_name(text: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(text))
 
 
-def write_snapshot(pool_id: str, version: int, members: Sequence[PoolMember]) -> str:
-    """写 parquet 快照，返回绝对路径。"""
-    import pandas as pd
+def pool_txt_name(scope: str, code: str, *, tenant_id: str | None = None,
+                  owner_user_id: str | None = None) -> str:
+    """TXT 文件名（不含路径）。global 直接用 code；私有池加归属前缀防互撞。"""
+    name = _safe_name(code)
+    if scope == "user" and owner_user_id:
+        return f"u{_safe_name(owner_user_id)}_{name}.txt"
+    if scope == "tenant" and tenant_id:
+        return f"t{_safe_name(tenant_id)}_{name}.txt"
+    return f"{name}.txt"
 
-    target = snapshot_path(pool_id, version)
+
+def pool_txt_path(scope: str, code: str, *, tenant_id: str | None = None,
+                  owner_user_id: str | None = None) -> str:
+    return str(pool_dir() / pool_txt_name(scope, code, tenant_id=tenant_id,
+                                          owner_user_id=owner_user_id))
+
+
+def write_pool_txt(path: str | Path, api_symbols: Iterable[str], *, header: str = "") -> int:
+    """把成员（前缀式）写成 TXT。原子替换。返回行数。"""
+    target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    rows = [
-        {
-            "symbol": m.symbol,
-            "name": m.name,
-            "weight": m.weight,
-            "industry": m.industry,
-        }
-        for m in members
-    ]
-    df = pd.DataFrame(rows, columns=list(SNAPSHOT_COLUMNS))
-    df.to_parquet(target, index=False)
+    seen: set[str] = set()
+    lines: list[str] = []
+    for sym in api_symbols or []:
+        s = str(sym or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        lines.append(s)
 
-    logger.info(
-        "股票池快照已写入 pool_id=%s version=%s rows=%d path=%s",
-        pool_id,
-        version,
-        len(df),
-        target,
-    )
-    return str(target)
+    body = [f"# {header}" if header else "# stock pool members (prefix symbols, one per line)"]
+    body.extend(lines)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text("\n".join(body) + "\n", encoding="utf-8")
+    os.replace(tmp, target)
+    logger.info("股票池 TXT 已写入 %s: %d symbols", target, len(lines))
+    return len(lines)
 
 
-def read_snapshot(path: str | Path) -> list[PoolMember]:
-    """读 parquet 快照。文件缺失时返回空列表并给出警告（不抛异常）。"""
-    import pandas as pd
-
+def read_pool_txt(path: str | Path) -> list[str]:
+    """读成员 TXT（返回前缀式列表）。文件不存在返回空列表（不抛）。"""
     fp = Path(path)
     if not fp.exists():
-        logger.warning("股票池快照不存在: %s", fp)
         return []
-
-    df = pd.read_parquet(fp, columns=list(SNAPSHOT_COLUMNS))
-    members: list[PoolMember] = []
-    for row in df.to_dict("records"):
-        symbol = str(row.get("symbol") or "").strip()
-        if not symbol:
-            continue
-        members.append(
-            PoolMember(
-                symbol=symbol,
-                name=row.get("name"),
-                weight=_safe_float(row.get("weight")),
-                industry=row.get("industry"),
-            )
-        )
-    return members
-
-
-def _safe_float(value) -> float | None:
+    out: list[str] = []
     try:
-        if value is None:
-            return None
-        import math
-
-        f = float(value)
-        return f if math.isfinite(f) else None
-    except (TypeError, ValueError):
-        return None
+        text = fp.read_text(encoding="utf-8", errors="ignore")
+    except OSError as exc:
+        logger.warning("股票池 TXT 读取失败 %s: %s", fp, exc)
+        return []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        # 容错：带逗号的行（用户手改）取第一个单元格
+        s = s.split(",")[0].split(";")[0].split("\t")[0].strip()
+        if s:
+            out.append(s)
+    return out
 
 
 # ---------------------------------------------------------------------------
-# Qlib instruments 物化
+# Qlib instruments 物化（回测引擎消费格式）
 # ---------------------------------------------------------------------------
 def instrument_file(pool_code: str) -> Path:
     return qlib_data_dir() / "instruments" / f"{INSTRUMENT_FILE_PREFIX}{pool_code}.txt"
@@ -125,7 +124,7 @@ def write_instruments(
 ) -> str | None:
     """写 Qlib instruments 文件，格式 `sh600036\\tSTART\\tEND`。
 
-    symbols 为库内后缀式；写文件时转 Qlib 小写前缀口径。
+    symbols 为任意口径（前缀/后缀均可）；写文件时转 Qlib 小写前缀口径。
     """
     if not symbols:
         logger.warning("股票池 %s 成员为空，跳过 instruments 物化", pool_code)
@@ -186,20 +185,21 @@ def materialize_snapshot(
     """
     if snapshot is None or snapshot.unfiltered or snapshot.is_empty:
         return None
-    raw_code = getattr(snapshot, "code", None) or getattr(snapshot, "pool_id", "") or "pool"
-    # 池 code 可能含非法文件名字符，保守清洗
-    safe_code = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(raw_code))
-    # 文件名带上版本/校验和：并发回测同一池的不同版本（pool:x@1 vs @2）或
-    # 发布瞬间跑着的旧任务不会互相覆盖 instruments 文件，路径即版本快照。
-    tag = (
-        f"v{snapshot.version}"
-        if getattr(snapshot, "version", None)
-        else f"h{(snapshot.checksum or 'draft')[:10]}"
-    )
+    safe_code = _safe_name(getattr(snapshot, "code", None) or snapshot.pool_id or "pool")
     return write_instruments(
-        f"{safe_code}__{tag}",
-        list(snapshot.symbols),
+        safe_code,
+        list(snapshot.api_symbols or snapshot.symbols),
         getattr(snapshot, "market", "CN"),
         start_date=start_date,
         end_date=end_date,
     )
+
+
+def normalize_member_input(raw: Iterable[str], market: str = "CN") -> list[str]:
+    """任意来源的成员输入 → 后缀式去重列表（保序）。"""
+    return normalize_symbols(list(raw or []), market)
+
+
+def to_api_members(storage_symbols: Sequence[str], market: str) -> list[str]:
+    """后缀式 → 前缀式（写 TXT 用）。"""
+    return [to_api_symbol(s, market) for s in storage_symbols]

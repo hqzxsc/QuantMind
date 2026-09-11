@@ -760,11 +760,10 @@ class InferenceScriptRunner:
             return None, reason
         logger.info(
             "[InferenceScriptRunner] 池过滤: kept=%d dropped=%d pool_id=%s "
-            "version=%s checksum=%s run_id=%s",
+            "checksum=%s run_id=%s",
             len(outcome.kept),
             outcome.dropped,
             outcome.pool_id,
-            outcome.pool_version,
             outcome.pool_checksum,
             run_id,
         )

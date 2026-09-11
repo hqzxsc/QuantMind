@@ -328,7 +328,7 @@ class InferenceRunRequest(BaseModel):
     inference_date: date = Field(..., description="推理基准日期 YYYY-MM-DD")
     pool_id: str | None = Field(
         default=None,
-        description="全局股票池引用（P3），如 pool:csi300 / pool:my_pool@3。"
+        description="全局股票池引用（P3），如 pool:csi300 / my_pool / list:SH600036。"
         "非空时只对池内标的落信号；池为空或零命中会显式失败，不会退化为全市场。",
     )
 

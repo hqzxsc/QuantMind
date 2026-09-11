@@ -1,8 +1,8 @@
 /**
- * 后台管理 - 全局股票池服务
+ * 后台管理 - 全局股票池服务（v2：单表元信息 + TXT 成员，保存即生效）
  *
  * 与后端 `/api/v1/admin/stock-pools/*` 一一对应。
- * 读侧（各功能下拉）走后端 `/api/v1/stock-pools/*`，见 `stockPoolQueryService`。
+ * 读侧（各功能下拉）走后端 `/api/v1/stock-pools/*`。
  */
 
 import axios, { AxiosInstance } from 'axios';
@@ -15,15 +15,12 @@ export interface StockPool {
     name: string;
     description?: string | null;
     market: string;
-    pool_type: 'system_index' | 'static' | 'imported' | 'dynamic' | 'eligibility';
+    pool_type: 'system_index' | 'static' | 'imported';
     scope: 'global' | 'tenant' | 'user';
     tenant_id?: string | null;
     owner_user_id?: string | null;
-    status: 'draft' | 'published' | 'archived';
-    visibility: string;
-    definition: Record<string, any>;
-    refresh_policy: Record<string, any>;
-    current_version: number;
+    status: 'active' | 'archived';
+    file_path?: string | null;
     symbol_count: number;
     checksum?: string | null;
     source_kind?: string | null;
@@ -33,33 +30,24 @@ export interface StockPool {
     updated_by?: string | null;
     created_at?: string | null;
     updated_at?: string | null;
-    has_draft_changes?: boolean;
 }
 
-export interface PoolMember {
+export interface PoolPreviewItem {
     symbol: string;
-    api_symbol?: string | null;
+    api_symbol: string;
     name?: string | null;
-    weight?: number | null;
-    industry?: string | null;
-    effective_from?: string | null;
-    effective_to?: string | null;
-    meta?: Record<string, any>;
     metrics?: Record<string, any>;
 }
 
-export interface PoolVersion {
+export interface PoolMembersResult {
     pool_id: string;
-    version: number;
-    status: string;
-    market?: string | null;
-    member_count: number;
+    code: string;
+    market: string;
+    file_path?: string | null;
+    total: number;
     checksum?: string | null;
-    storage_mode: 'table' | 'snapshot';
-    snapshot_path?: string | null;
-    changelog?: string | null;
-    published_by?: string | null;
-    published_at?: string | null;
+    symbols: string[];
+    updated_at?: string | null;
 }
 
 export interface PoolMeta {
@@ -69,9 +57,8 @@ export interface PoolMeta {
     statuses: string[];
     target_types: string[];
     binding_modes: string[];
-    member_table_max: number;
-    storage_modes: string[];
-    snapshot_dir: string;
+    member_max: number;
+    pool_txt_dir: string;
     builtin_pools: Array<{
         code: string;
         name: string;
@@ -86,24 +73,24 @@ export interface PoolResolveResult {
     ref: string;
     pool_id: string;
     code: string;
-    version?: number | null;
     market: string;
     source: string;
     unfiltered: boolean;
     symbol_count: number;
     checksum?: string | null;
-    storage_mode?: string;
     warnings: string[];
     sample: string[];
 }
 
-export interface ImportResult {
-    total: number;
+export interface SaveMembersResult {
+    success: boolean;
     accepted: number;
     rejected: number;
     duplicates: number;
     rejected_samples: string[];
-    version?: number | null;
+    symbol_count: number;
+    checksum?: string | null;
+    file_path?: string | null;
 }
 
 /** 上传解析明细行 */
@@ -149,14 +136,13 @@ export interface ParseReport {
 
 export interface CreateFromMembersResult {
     success: boolean;
-    pool_id: string;
-    code: string;
+    pool: StockPool;
     accepted: number;
     rejected: number;
+    duplicates: number;
     rejected_samples: string[];
-    in_index: number;
-    version?: number | null;
-    published: boolean;
+    checksum?: string | null;
+    file_path?: string | null;
 }
 
 class StockPoolService {
@@ -223,7 +209,7 @@ class StockPoolService {
         return this.unwrap(resp);
     }
 
-    async getPool(poolId: string): Promise<StockPool & { versions: PoolVersion[]; staging_version: number }> {
+    async getPool(poolId: string): Promise<StockPool & { binding_count: number }> {
         const resp = await this.axiosInstance.get(`/admin/stock-pools/${encodeURIComponent(poolId)}`);
         return this.unwrap(resp);
     }
@@ -255,85 +241,61 @@ class StockPoolService {
         return this.unwrap(resp);
     }
 
-    async listMembers(
-        poolId: string,
-        params: { scope?: 'draft' | 'published'; limit?: number; offset?: number },
-    ): Promise<{ total: number; items: PoolMember[]; version: number; scope: string }> {
+    /** 成员就是 TXT 内容：读出来即可用（保存即生效，无发布环节） */
+    async getMembers(poolId: string): Promise<PoolMembersResult> {
         const resp = await this.axiosInstance.get(
             `/admin/stock-pools/${encodeURIComponent(poolId)}/members`,
-            { params },
         );
         return this.unwrap(resp);
     }
 
-    async replaceMembers(
+    /** 整体覆盖成员（symbols 或粘贴文本二选一），保存后立即生效 */
+    async saveMembers(
         poolId: string,
-        members: Array<{ symbol: string; name?: string; weight?: number }>,
-        changelog?: string,
-    ): Promise<{ success: boolean; accepted: number; rejected: number; staging_version: number }> {
+        payload: { symbols?: string[]; text?: string },
+    ): Promise<SaveMembersResult & { pool: StockPool }> {
         const resp = await this.axiosInstance.put(
             `/admin/stock-pools/${encodeURIComponent(poolId)}/members`,
-            { members, changelog },
+            payload,
         );
         return this.unwrap(resp);
     }
 
+    /** 向已有池导入 csv/txt 文本（覆盖成员） */
     async importMembers(
         poolId: string,
-        payload: { content: string; fmt: 'csv' | 'txt'; has_header?: boolean },
-        publish = true,
-    ): Promise<ImportResult> {
+        payload: { content: string; fmt: 'csv' | 'txt' },
+    ): Promise<SaveMembersResult> {
         const resp = await this.axiosInstance.post(
             `/admin/stock-pools/${encodeURIComponent(poolId)}/members/import`,
             payload,
-            { params: { publish } },
         );
         return this.unwrap(resp);
     }
 
-    async importNewPool(
-        payload: { content: string; fmt: 'csv' | 'txt'; has_header?: boolean },
-        params: { pool_code: string; pool_name: string; market?: string; description?: string; publish?: boolean },
-    ): Promise<ImportResult> {
-        const resp = await this.axiosInstance.post('/admin/stock-pools/import', payload, { params });
-        return this.unwrap(resp);
-    }
-
-    membersExportUrl(poolId: string, scope: 'draft' | 'published' = 'published'): string {
+    membersExportUrl(poolId: string): string {
         const prefix = this.baseURL || '';
-        return `${prefix}/admin/stock-pools/${encodeURIComponent(poolId)}/members/export?scope=${scope}`;
+        return `${prefix}/admin/stock-pools/${encodeURIComponent(poolId)}/export`;
     }
 
-    async publish(poolId: string, changelog?: string): Promise<PoolVersion> {
+    /** 内置池：从 QuantDB 重新拉成分并覆盖 TXT */
+    async refreshPool(poolId: string): Promise<SaveMembersResult & { pool: StockPool }> {
         const resp = await this.axiosInstance.post(
-            `/admin/stock-pools/${encodeURIComponent(poolId)}/publish`,
+            `/admin/stock-pools/${encodeURIComponent(poolId)}/refresh`,
             null,
-            { params: changelog ? { changelog } : undefined },
+            { timeout: 120000 },
         );
         return this.unwrap(resp);
     }
 
-    async listVersions(poolId: string, limit = 50): Promise<{ total: number; items: PoolVersion[] }> {
+    /** 预览成分（含最新行情指标） */
+    async preview(
+        poolId: string,
+        limit = 200,
+    ): Promise<{ total: number; items: PoolPreviewItem[]; metrics_available: boolean }> {
         const resp = await this.axiosInstance.get(
-            `/admin/stock-pools/${encodeURIComponent(poolId)}/versions`,
+            `/admin/stock-pools/${encodeURIComponent(poolId)}/preview`,
             { params: { limit } },
-        );
-        return this.unwrap(resp);
-    }
-
-    async rollback(poolId: string, version: number, changelog?: string): Promise<any> {
-        const resp = await this.axiosInstance.post(
-            `/admin/stock-pools/${encodeURIComponent(poolId)}/rollback`,
-            null,
-            { params: { version, ...(changelog ? { changelog } : {}) } },
-        );
-        return this.unwrap(resp);
-    }
-
-    async diffVersions(poolId: string, from: number, to: number): Promise<any> {
-        const resp = await this.axiosInstance.get(
-            `/admin/stock-pools/${encodeURIComponent(poolId)}/diff`,
-            { params: { from, to } },
         );
         return this.unwrap(resp);
     }
@@ -349,7 +311,7 @@ class StockPoolService {
     async bindPool(
         poolId: string,
         payload: { target_type: string; target_id: string; mode?: string; priority?: number },
-    ): Promise<{ success: boolean; total: number; items: any[] }> {
+    ): Promise<{ success: boolean }> {
         const resp = await this.axiosInstance.post(
             `/admin/stock-pools/${encodeURIComponent(poolId)}/bindings`,
             payload,
@@ -362,7 +324,7 @@ class StockPoolService {
         poolId: string,
         targetType: string,
         targetId: string,
-    ): Promise<{ success: boolean; removed: number; total: number }> {
+    ): Promise<{ success: boolean; removed: number }> {
         const resp = await this.axiosInstance.delete(
             `/admin/stock-pools/${encodeURIComponent(poolId)}/bindings/${encodeURIComponent(
                 targetType,
@@ -391,7 +353,7 @@ class StockPoolService {
         return this.unwrap(resp);
     }
 
-    async resolve(ref: string, opts?: { market?: string; version?: number }): Promise<PoolResolveResult> {
+    async resolve(ref: string, opts?: { market?: string }): Promise<PoolResolveResult> {
         const resp = await this.axiosInstance.get('/admin/stock-pools/resolve', {
             params: { ref, ...opts },
         });
@@ -417,16 +379,14 @@ class StockPoolService {
         return this.unwrap(resp);
     }
 
-    /** 用解析确认后的成员建池（可选立即发布） */
+    /** 用解析确认后的成员建池（保存即可用，无发布步骤） */
     async createPoolFromMembers(payload: {
         code: string;
         name: string;
         description?: string;
         market?: string;
         pool_type?: string;
-        members: Array<{ symbol: string; name?: string; weight?: number }>;
-        publish?: boolean;
-        changelog?: string;
+        symbols: string[];
     }): Promise<CreateFromMembersResult> {
         const resp = await this.axiosInstance.post(
             '/admin/stock-pools/create-from-members',

@@ -1,33 +1,37 @@
-"""全局股票池 - 内置池 seed（幂等）。
+"""全局股票池 - 内置池 seed 与 TXT 刷新（幂等）。
 
-把 `builtins.BUILTIN_POOLS` 写入 `qm_stock_pool`（scope=global, is_system=true）。
-幂等策略：以 `pool_id` 为主键做 upsert，只刷新「系统拥有」的字段
-（name / description / market / definition / refresh_policy / source_*），
-不覆盖 `status` / `current_version` 等人工与运行态字段。
+- `seed_builtin_pools*`：把 `builtins.BUILTIN_POOLS` upsert 进 `qm_stock_pool`
+  （scope=global, is_system=true），只刷新系统拥有字段，不动人工状态；
+- `refresh_builtin_txts*`：从 QuantDB 拉内置池成分写成成员 TXT（唯一事实源），
+  并同步 DB 计数/校验和。QuantDB 未就绪时跳过（resolver 有自愈兜底）；
+- `run_builtin_pool_refresh_worker`：每日（每 6h 检查、按日期去重）刷新一次，
+  指数成分调整自动跟进，无需人工发布。
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
-import os
+from datetime import datetime, timezone
 
 from sqlalchemy import text
 
-from .builtins import seed_rows
-from .repository import ensure_tables
+from .builtins import BUILTIN_POOLS, seed_rows
+from .materializer import pool_txt_path, to_api_members, write_pool_txt
+from .normalize import checksum_symbols, normalize_symbols
+from .repository import ensure_tables, ensure_tables_sync
+from .resolver import _fetch_builtin_symbols
 
 logger = logging.getLogger(__name__)
 
 _UPSERT_SQL = """
 INSERT INTO qm_stock_pool (
     pool_id, code, name, description, market, pool_type, scope,
-    tenant_id, owner_user_id, status, visibility, definition, refresh_policy,
-    source_kind, source_ref, is_system, created_by, updated_by
+    tenant_id, owner_user_id, status, source_kind, source_ref,
+    is_system, created_by, updated_by
 ) VALUES (
     :pool_id, :code, :name, :description, :market, :pool_type, :scope,
-    :tenant_id, :owner_user_id, :status, :visibility,
-    CAST(:definition AS JSONB), CAST(:refresh_policy AS JSONB),
+    :tenant_id, :owner_user_id, 'active',
     :source_kind, :source_ref, :is_system, :created_by, :updated_by
 )
 ON CONFLICT (pool_id) DO UPDATE SET
@@ -35,8 +39,6 @@ ON CONFLICT (pool_id) DO UPDATE SET
     description = EXCLUDED.description,
     market = EXCLUDED.market,
     pool_type = EXCLUDED.pool_type,
-    definition = EXCLUDED.definition,
-    refresh_policy = EXCLUDED.refresh_policy,
     source_kind = EXCLUDED.source_kind,
     source_ref = EXCLUDED.source_ref,
     is_system = EXCLUDED.is_system,
@@ -45,13 +47,56 @@ ON CONFLICT (pool_id) DO UPDATE SET
 """
 
 
-def _params(row: dict) -> dict:
-    params = dict(row)
-    params["definition"] = json.dumps(row.get("definition") or {}, ensure_ascii=False)
-    params["refresh_policy"] = json.dumps(
-        row.get("refresh_policy") or {}, ensure_ascii=False
+def _pool_row_updates_sync(session, pool_id: str, api_symbols: list[str]) -> None:
+    session.execute(
+        text(
+            """
+            UPDATE qm_stock_pool
+               SET file_path = :path, symbol_count = :count, checksum = :checksum,
+                   updated_at = NOW()
+             WHERE pool_id = :pid
+            """
+        ),
+        {
+            "pid": pool_id,
+            "path": pool_txt_path("global", pool_id.removeprefix("sys_")),
+            "count": len(api_symbols),
+            "checksum": checksum_symbols(sorted(api_symbols)) if api_symbols else None,
+        },
     )
-    return params
+
+
+def refresh_builtin_txts_sync() -> int:
+    """刷新全部内置池成分 TXT（同步，启动期 / worker 使用）。返回成功刷新数。"""
+    from backend.shared.database_pool import get_db
+
+    ok = 0
+    try:
+        with get_db() as session:
+            for builtin in BUILTIN_POOLS:
+                symbols = _fetch_builtin_symbols(builtin)
+                if not symbols:
+                    logger.info("内置池 %s 暂无成分（数据源未就绪，保留现状）", builtin.code)
+                    continue
+                api = to_api_members(normalize_symbols(symbols, builtin.market), builtin.market)
+                path = pool_txt_path("global", builtin.code)
+                try:
+                    write_pool_txt(path, api, header=f"builtin {builtin.code} ({builtin.name})")
+                except OSError as exc:
+                    logger.warning("内置池 TXT 写入失败 %s: %s", path, exc)
+                    continue
+                _pool_row_updates_sync(session, f"sys_{builtin.code}", api)
+                ok += 1
+            session.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("内置池 TXT 刷新失败（不影响启动）: %s", exc)
+        return 0
+    logger.info("内置池成分 TXT 刷新完成: %d/%d", ok, len(BUILTIN_POOLS))
+    return ok
+
+
+async def refresh_builtin_txts() -> int:
+    return await asyncio.to_thread(refresh_builtin_txts_sync)
 
 
 async def seed_builtin_pools(session) -> int:
@@ -63,7 +108,7 @@ async def seed_builtin_pools(session) -> int:
         try:
             # 逐行 savepoint：单行失败（如 code 已被非系统池占用）不拖垮整批
             async with session.begin_nested():
-                await session.execute(text(_UPSERT_SQL), _params(row))
+                await session.execute(text(_UPSERT_SQL), row)
             ok += 1
         except Exception as exc:  # noqa: BLE001
             logger.warning("内置池 seed 跳过 %s: %s", row.get("pool_id"), exc)
@@ -86,11 +131,11 @@ def seed_builtin_pools_sync() -> int:
     ok = 0
     try:
         with get_db() as session:
-            _ensure_tables_sync(session)
+            ensure_tables_sync(session)
             for row in rows:
                 try:
                     with session.begin_nested():
-                        session.execute(text(_UPSERT_SQL), _params(row))
+                        session.execute(text(_UPSERT_SQL), row)
                     ok += 1
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("内置池 seed 跳过 %s: %s", row.get("pool_id"), exc)
@@ -102,32 +147,31 @@ def seed_builtin_pools_sync() -> int:
         return 0
 
 
-def _ensure_tables_sync(session) -> None:
-    from pathlib import Path
+def pool_storage_ready() -> str | None:
+    """确保成员 TXT 目录存在（启动期调用），返回路径。"""
+    from .materializer import pool_dir
 
-    sql_path = (
-        Path(__file__).resolve().parent / "migrations" / "001_create_stock_pool.sql"
-    )
-    raw = sql_path.read_text(encoding="utf-8")
-    lines = [
-        line
-        for line in raw.splitlines()
-        if line.strip() and not line.strip().startswith("--")
-    ]
-    for statement in "\n".join(lines).split(";"):
-        if statement.strip():
-            session.execute(text(statement.strip()))
-    session.commit()
-
-
-def snapshot_dir_ready() -> str | None:
-    """确保快照目录存在（启动期调用），返回路径。"""
-    from pathlib import Path
-
-    target = Path(os.getenv("QM_STOCK_POOL_SNAPSHOT_DIR", "/data/stock_pool"))
+    target = pool_dir()
     try:
         target.mkdir(parents=True, exist_ok=True)
         return str(target)
     except OSError as exc:
-        logger.warning("股票池快照目录创建失败 %s: %s", target, exc)
+        logger.warning("股票池 TXT 目录创建失败 %s: %s", target, exc)
         return None
+
+
+async def run_builtin_pool_refresh_worker(check_interval_seconds: int = 6 * 3600) -> None:
+    """每日刷新内置池 TXT（按日期去重；启动后先跑一次）。"""
+    last_run_date = ""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            today = now.strftime("%Y%m%d")
+            if today != last_run_date:
+                last_run_date = today
+                await refresh_builtin_txts()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("内置池 TXT 刷新 worker 失败: %s", exc)
+        await asyncio.sleep(max(300, int(check_interval_seconds or 21600)))

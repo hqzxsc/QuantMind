@@ -165,7 +165,7 @@ def get_builtin(code: str) -> BuiltinPool | None:
 
 
 def seed_rows() -> list[dict]:
-    """生成 qm_stock_pool 的 seed 行。"""
+    """生成 qm_stock_pool 的 seed 行（成员不在库里，TXT 由 seed 刷新生成）。"""
     rows: list[dict] = []
     for pool in BUILTIN_POOLS:
         rows.append(
@@ -179,14 +179,6 @@ def seed_rows() -> list[dict]:
                 "scope": SCOPE_GLOBAL,
                 "tenant_id": None,
                 "owner_user_id": None,
-                "status": "published",
-                "visibility": "public",
-                "definition": {
-                    "kind": "index_weights",
-                    "index_symbol": pool.index_symbol,
-                    "optional_source": pool.optional_source,
-                },
-                "refresh_policy": {"mode": "on_write", "depends_on": ["index_weights"]},
                 "source_kind": "quantdb_index_weights",
                 "source_ref": pool.index_symbol,
                 "is_system": True,
@@ -195,17 +187,3 @@ def seed_rows() -> list[dict]:
             }
         )
     return rows
-
-
-# 说明：一期不实现 dynamic 规则引擎，仅预留 definition/refresh_policy 的键位，
-# 二期接入规则 DSL 时直接复用，不需要改表结构。
-RESERVED_DEFINITION_KEYS: tuple[str, ...] = (
-    "kind",  # index_weights | static_list | rules
-    "index_symbol",  # index_weights 型：指数代码
-    "base_pool",  # rules 型：基准池
-    "rules",  # rules 型：规则列表
-    "filters",  # rules 型：过滤条件
-    "exclude_st",
-    "min_listed_days",
-    "min_market_cap",
-)

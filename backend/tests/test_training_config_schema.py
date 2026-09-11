@@ -34,7 +34,6 @@ def _full_legacy_config() -> dict:
             # P3：全局股票池（编排器解析后注入；容器内无 DB）
             "pool_id": None,
             "pool_symbols": None,
-            "pool_version": None,
             "pool_checksum": None,
         },
         "model": {
@@ -133,7 +132,6 @@ def test_empty_config_key_surface_snapshot():
         # P3：全局股票池
         "pool_id",
         "pool_symbols",
-        "pool_version",
         "pool_checksum",
     }
     assert set(out["model"].keys()) == {

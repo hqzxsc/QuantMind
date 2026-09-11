@@ -136,6 +136,14 @@ RUN mkdir -p /data/models /data/qlib_data /data/uploads /data/strategies /tmp \
     && mkdir -p /root/.qlib/qlib_data
 # Qlib features 符号链接在运行时由 entrypoint 或首次访问时创建（数据卷挂载后才存在）
 
+# 依赖指纹戳（构建/打包侧经 deploy/req-fingerprint.sh 计算后以 --build-arg 注入）。
+# 供 full-deploy / update 比对「最新代码 requirements 指纹 vs 本镜像指纹」，
+# 一致→复用，不一致→重建。不传则为 unknown，视为无指纹。
+# 放在文件末尾：ARG 值变化只影响此元数据层，不会打断上方依赖层的构建缓存链
+#（真正由依赖引起的变化，本就会从对应 COPY/ARG 层开始正常失效重建）。
+ARG QM_REQ_SHA=unknown
+LABEL qm.req.sha=${QM_REQ_SHA}
+
 # 暴露端口
 EXPOSE 8000 8001 8002 8003
 

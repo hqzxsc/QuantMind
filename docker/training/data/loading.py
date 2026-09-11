@@ -98,6 +98,7 @@ def load_data(
     factor_source: str | None = None,
     quantdb_dir: str | None = None,
     factor_field_sources: dict[str, str] | None = None,
+    pool_symbols: list[str] | None = None,
 ) -> tuple:
     local_root = Path(local_dir).expanduser() if local_dir else None
     if local_root is None:
@@ -294,6 +295,27 @@ def load_data(
         df["symbol"] = df["symbol"].astype(str).str.zfill(6)
         df = df[~df["symbol"].str.startswith(("4", "8"))].copy()
         logger.info(f"After symbol filter: {len(df)} rows")
+
+        # 全局股票池过滤（P3）：编排器已把池解析成 6 位代码列表随 config.yaml 传入。
+        # 严格语义：池非空但零命中时直接报错，避免「训练出一个全市场模型却以为
+        # 训的是池内模型」这种静默错配。
+        if pool_symbols:
+            wanted = {str(s).split(".")[0].zfill(6) for s in pool_symbols if str(s).strip()}
+            if not wanted:
+                raise RuntimeError("pool_symbols 非空但无法解析出任何代码")
+            before_pool = len(df)
+            df = df[df["symbol"].isin(wanted)].copy()
+            logger.info(
+                "After pool filter: %d rows (pool=%d symbols, before=%d)",
+                len(df),
+                len(wanted),
+                before_pool,
+            )
+            if df.empty:
+                raise RuntimeError(
+                    f"股票池过滤后无数据：池内 {len(wanted)} 只标的在训练区间/数据源内无记录"
+                    "（请检查池成分与训练时间窗是否匹配）"
+                )
 
         # 过滤 ST/*ST 股票
         if "is_st" in df.columns:

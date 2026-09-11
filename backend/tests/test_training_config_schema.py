@@ -31,6 +31,11 @@ def _full_legacy_config() -> dict:
             "factor_catalog_published_at": None,
             "factor_coverage": {},
             "quantdb_dir": None,
+            # P3：全局股票池（编排器解析后注入；容器内无 DB）
+            "pool_id": None,
+            "pool_symbols": None,
+            "pool_version": None,
+            "pool_checksum": None,
         },
         "model": {
             "type": "xgboost",
@@ -125,6 +130,11 @@ def test_empty_config_key_surface_snapshot():
         "factor_catalog_published_at",
         "factor_coverage",
         "quantdb_dir",
+        # P3：全局股票池
+        "pool_id",
+        "pool_symbols",
+        "pool_version",
+        "pool_checksum",
     }
     assert set(out["model"].keys()) == {
         "type",

@@ -359,6 +359,15 @@ try:
 except ImportError as e:
     logger.error(f"❌ Failed to load Qlib Backtest router: {e}")
 
+# 4.0 全局股票池（用户态只读；写侧在 /api/v1/admin/stock-pools）
+try:
+    from backend.services.engine.routers.stock_pool import router as stock_pool_router
+
+    app.include_router(stock_pool_router, prefix="/api/v1")
+    logger.info("✅ Stock Pool router loaded")
+except ImportError as e:
+    logger.error(f"❌ Failed to load Stock Pool router: {e}")
+
 # 4.1 高级分析
 try:
     from backend.services.engine.qlib_app.api.analysis import router as analysis_router

@@ -326,6 +326,11 @@ class SetStrategyBindingRequest(BaseModel):
 class InferenceRunRequest(BaseModel):
     model_id: str
     inference_date: date = Field(..., description="推理基准日期 YYYY-MM-DD")
+    pool_id: str | None = Field(
+        default=None,
+        description="全局股票池引用（P3），如 pool:csi300 / pool:my_pool@3。"
+        "非空时只对池内标的落信号；池为空或零命中会显式失败，不会退化为全市场。",
+    )
 
 
 class InferenceSettingsRequest(BaseModel):
@@ -2250,6 +2255,7 @@ async def _execute_single_day_inference(
     batch_id: str | None = None,
     symbols: list[str] | None = None,
     persist: bool = True,
+    pool_id: str | None = None,
 ) -> dict[str, Any]:
     """单日推理执行体：预检 → 数据回退 → 执行 → 落库 → 返回 run payload。
 
@@ -2414,6 +2420,7 @@ async def _execute_single_day_inference(
                 resolved_model=resolved.to_dict(),
                 symbols=symbols,
                 persist=persist,
+                pool_id=pool_id,
             )
         )
     except Exception as exc:
@@ -2583,6 +2590,7 @@ async def run_model_inference(
         requested_date=payload.inference_date,
         tenant_id=tenant_id,
         user_id=user_id,
+        pool_id=getattr(payload, "pool_id", None),
     )
 
 

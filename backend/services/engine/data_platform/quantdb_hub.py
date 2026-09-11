@@ -38,6 +38,8 @@ from typing import Optional
 
 import pandas as pd
 
+from backend.shared.stock_pool.builtins import cn_index_names, cn_index_symbols
+
 logger = logging.getLogger(__name__)
 
 # 环境变量：QuantDB 数据目录
@@ -1114,28 +1116,15 @@ class QuantDBDataHub:
 
     # ------------------------------------------------------------------
     # 宇宙/股票池
+    #
+    # P2：改由 backend.shared.stock_pool.builtins 派生（唯一事实源），
+    # 不再在本文件硬编码。cn_index_symbols() 与改造前的 8 条逐条一致：
+    # csi300/csi500/csi1000/sse50/gem/star/csi800/all_a。
+    # 新增池（hs300_ext/hk_main/us_sp500）标注 optional_source，不进这里。
     # ------------------------------------------------------------------
-    UNIVERSE_MAP: dict[str, str | None] = {
-        "csi300": "000300.SH",
-        "csi500": "000905.SH",
-        "csi1000": "000852.SH",
-        "sse50": "000016.SH",
-        "gem": "399006.SZ",
-        "star": "000688.SH",
-        "csi800": "000906.SH",
-        "all_a": None,
-    }
+    UNIVERSE_MAP: dict[str, str | None] = dict(cn_index_symbols())
 
-    UNIVERSE_NAMES: dict[str, str] = {
-        "csi300": "沪深300",
-        "csi500": "中证500",
-        "csi1000": "中证1000",
-        "sse50": "上证50",
-        "gem": "创业板",
-        "star": "科创板",
-        "csi800": "中证800",
-        "all_a": "全部A股",
-    }
+    UNIVERSE_NAMES: dict[str, str] = dict(cn_index_names())
 
     def fetch_universe_stocks(self, universe: str) -> pd.DataFrame:
         """返回指定股票池的股票代码列表。

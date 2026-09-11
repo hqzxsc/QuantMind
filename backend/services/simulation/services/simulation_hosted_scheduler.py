@@ -41,6 +41,8 @@ _DEFAULT_LIVE_TRADE_CONFIG: dict[str, Any] = {
     "max_price_deviation": 0.02,
     "max_orders_per_cycle": 20,
     "trigger_window_seconds": 90,
+    # 全局股票池（P3）：非空时信号与调仓只在该池内进行（严格语义）
+    "pool_id": None,
 }
 
 
@@ -82,6 +84,8 @@ def _normalize_live_trade_config(value: Any) -> dict[str, Any]:
     ]
     merged["order_type"] = str(merged.get("order_type") or "MARKET").upper()
     merged["rebalance_days"] = max(1, _to_int(merged.get("rebalance_days"), 3))
+    # 全局股票池（P3）：空串归一为 None，避免下游把 "" 当成池引用去解析
+    merged["pool_id"] = str(merged.get("pool_id") or "").strip() or None
     merged["max_orders_per_cycle"] = max(
         1, _to_int(merged.get("max_orders_per_cycle"), 20)
     )

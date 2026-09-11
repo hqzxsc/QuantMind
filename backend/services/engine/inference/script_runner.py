@@ -719,6 +719,57 @@ class InferenceScriptRunner:
 
         return env
 
+    def _pool_filter_signals(
+        self,
+        signals: list[dict],
+        *,
+        pool_id: str | None,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+    ) -> tuple[list[dict] | None, str | None]:
+        """按全局股票池裁剪信号。返回 (kept, error_reason)：
+
+        - 未指定池 → (signals, None)，不做任何过滤；
+        - 池为空或零命中 → (None, 原因)，调用方须显式失败，
+          **绝不静默退化为全市场**（与「单股补推」的宽松兜底刻意不同）。
+        """
+        if not pool_id:
+            return signals, None
+
+        from backend.shared.stock_pool.filters import filter_signals_by_pool
+        from backend.shared.stock_pool.resolver import (
+            ResolveContext,
+            resolver as pool_resolver,
+        )
+
+        snapshot = pool_resolver.resolve_sync(
+            pool_id,
+            ResolveContext(tenant_id=tenant_id, user_id=user_id),
+            strict=True,
+        )
+        outcome = filter_signals_by_pool(signals, snapshot)
+        if outcome.empty_pool or outcome.empty_result:
+            reason = "; ".join(outcome.warnings) or "池过滤后无信号"
+            logger.error(
+                "[InferenceScriptRunner] 池过滤失败 pool_id=%s run_id=%s: %s",
+                pool_id,
+                run_id,
+                reason,
+            )
+            return None, reason
+        logger.info(
+            "[InferenceScriptRunner] 池过滤: kept=%d dropped=%d pool_id=%s "
+            "version=%s checksum=%s run_id=%s",
+            len(outcome.kept),
+            outcome.dropped,
+            outcome.pool_id,
+            outcome.pool_version,
+            outcome.pool_checksum,
+            run_id,
+        )
+        return outcome.kept, None
+
     def _execute_fallback(
         self,
         date: str,
@@ -730,6 +781,7 @@ class InferenceScriptRunner:
         fallback_reason: str,
         prediction_trade_date: str,
         persist: bool = True,
+        pool_id: str | None = None,
     ) -> ExecutionResult:
         """执行 inference_alpha158.py 兜底推理脚本。persist=False 时只返回内存信号，不写库不发布。"""
         fallback_path = self.fallback_model_dir / self.fallback_script_name
@@ -887,6 +939,31 @@ class InferenceScriptRunner:
         logger.info(
             f"[InferenceScriptRunner] alpha158 兜底成功，{len(signals)} 条信号, run_id={run_id}"
         )
+        # 兜底路径同样必须过池（否则池过滤会被 exit=2 兜底静默绕过）
+        kept, pool_error = self._pool_filter_signals(
+            signals,
+            pool_id=pool_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            run_id=run_id,
+        )
+        if kept is None:
+            return ExecutionResult(
+                success=False,
+                exit_code=0,
+                stdout=fb_stdout,
+                stderr=fb_stderr,
+                error=pool_error or "池过滤后无信号",
+                run_id=run_id,
+                fallback_used=True,
+                fallback_reason=fallback_reason,
+                failure_stage="pool_filter",
+                active_model_id=self.fallback_model_id,
+                active_data_source=self.fallback_data_dir,
+                data_trade_date=date,
+                prediction_trade_date=prediction_trade_date,
+            )
+        signals = kept
         if persist:
             self._persist_and_publish(
                 run_id,
@@ -932,6 +1009,7 @@ class InferenceScriptRunner:
         redis_client=None,
         symbols: list[str] | None = None,
         persist: bool = True,
+        pool_id: str | None = None,
     ) -> ExecutionResult:
         """
         执行 inference.py 脚本，解析信号输出，写库并发布 Redis Stream。
@@ -946,6 +1024,9 @@ class InferenceScriptRunner:
                       的股票落库与返回，用于「单股补推」；为 None 时全市场（原行为）。
         persist     : 为 False 时跳过 _persist_and_publish 与 Redis 标记，仅返回
                       内存信号（个股独立轻路线：结果只在前端缓存，不记入后端/DB）。
+        pool_id     : 全局股票池引用（P3）。非空时把信号裁到池内，**严格语义**：
+                      池解析为空或信号零命中都会显式失败，不会静默退化为全市场。
+                      过滤发生在 symbols 之前，两者可叠加。
         """
         script_path = self.primary_model_dir / self.primary_script_name
         primary_meta = self._read_primary_metadata()
@@ -991,6 +1072,7 @@ class InferenceScriptRunner:
                     fallback_reason=fallback_reason,
                     prediction_trade_date=prediction_trade_date,
                     persist=persist,
+                    pool_id=pool_id,
                 )
 
         if data_source in ("parquet", "quantdb_factors"):
@@ -1070,6 +1152,7 @@ class InferenceScriptRunner:
                 fallback_reason=fallback_reason,
                 prediction_trade_date=prediction_trade_date,
                 persist=persist,
+                pool_id=pool_id,
             )
 
         # 注入平台环境变量
@@ -1184,6 +1267,7 @@ class InferenceScriptRunner:
                     fallback_reason=fallback_reason,
                     prediction_trade_date=prediction_trade_date,
                     persist=persist,
+                    pool_id=pool_id,
                 )
 
             logger.error(
@@ -1217,6 +1301,33 @@ class InferenceScriptRunner:
                 active_model_id=self.primary_model_id,
                 active_data_source=self.primary_data_dir,
             )
+
+        # --- 全局股票池过滤（P3）[START] ---
+        # 严格语义：池为空或零命中都视为失败，绝不静默退化为全市场。
+        # 放在「单股补推」之前，因此两者可叠加（先按池裁，再按指定股票裁）。
+        kept, pool_error = self._pool_filter_signals(
+            signals,
+            pool_id=pool_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            run_id=run_id,
+        )
+        if kept is None:
+            return ExecutionResult(
+                success=False,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                error=pool_error or "池过滤后无信号",
+                run_id=run_id,
+                failure_stage="pool_filter",
+                active_model_id=self.primary_model_id,
+                active_data_source=self.primary_data_dir,
+                data_trade_date=date,
+                prediction_trade_date=prediction_trade_date,
+            )
+        signals = kept
+        # --- 全局股票池过滤（P3）[END] ---
 
         # 单股补推：非空 symbols 时仅保留目标股票，后续落库/返回只针对这些股票。
         # 推理脚本仍对全池出分（不改子进程与模板），只裁剪写库与返回，

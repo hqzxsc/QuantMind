@@ -1,0 +1,1472 @@
+/**
+ * 后台管理 - 全局股票池
+ *
+ * 股票池是回测 / 模型训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源。
+ * 本页负责「写」：定义池、维护成员、发布版本、回滚；
+ * 读侧统一由后端 PoolResolver 提供（本页「解析调试」可直接验证）。
+ */
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+    Alert,
+    Button,
+    Card,
+    Col,
+    Descriptions,
+    Divider,
+    Drawer,
+    Empty,
+    Form,
+    Input,
+    InputNumber,
+    Modal,
+    Popconfirm,
+    Row,
+    Select,
+    Space,
+    Statistic,
+    Switch,
+    Table,
+    Tabs,
+    Tag,
+    Tooltip,
+    Typography,
+    Upload,
+    message,
+} from 'antd';
+import {
+    CloudUploadOutlined,
+    DeleteOutlined,
+    ExperimentOutlined,
+    ExportOutlined,
+    FileSearchOutlined,
+    InboxOutlined,
+    PlusOutlined,
+    ReloadOutlined,
+    RocketOutlined,
+    RollbackOutlined,
+    SearchOutlined,
+    WarningOutlined,
+} from '@ant-design/icons';
+import stockPoolService, {
+    ImportResult,
+    ParseReport,
+    ParseRow,
+    PoolMember,
+    PoolMeta,
+    PoolResolveResult,
+    PoolVersion,
+    StockPool,
+} from '../services/stockPoolService';
+
+const { Text, Paragraph } = Typography;
+
+const MATCH_TYPE_LABEL: Record<string, string> = {
+    code: '纯代码',
+    symbol: '后缀式',
+    prefix: '前缀式',
+    exchange_fixed: '交易所已纠正',
+    name: '名称',
+    name_loose: '名称(去ST)',
+    none: '—',
+};
+
+const PARSE_STATUS_META: Record<string, { color: string; label: string }> = {
+    matched: { color: 'green', label: '已匹配' },
+    not_in_index: { color: 'orange', label: '不在索引' },
+    unrecognized: { color: 'red', label: '无法识别' },
+};
+
+const TARGET_TYPE_LABEL: Record<string, string> = {
+    strategy: '策略',
+    training: '模型',
+    simulation: '模拟盘账户',
+    live: '实盘配置',
+    factor: '因子',
+    backtest: '回测（一次性）',
+    inference: '推理（一次性）',
+};
+
+const POOL_TYPE_LABEL: Record<string, string> = {
+    system_index: '指数成分',
+    static: '静态维护',
+    imported: '文件导入',
+    dynamic: '动态规则',
+    eligibility: '资格池',
+};
+
+const STATUS_COLOR: Record<string, string> = {
+    published: 'green',
+    draft: 'orange',
+    archived: 'default',
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+    pool: '库内池',
+    builtin: '内置池',
+    inline: '内联列表',
+    file: '本地文件',
+    all: '不过滤（全市场）',
+    missing: '未找到',
+    unsupported: '需上游解析',
+    unresolved: '解析失败',
+};
+
+interface PoolFilters {
+    market?: string;
+    pool_type?: string;
+    status?: string;
+    keyword?: string;
+}
+
+const AdminStockPool: React.FC = () => {
+    const [meta, setMeta] = useState<PoolMeta | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [items, setItems] = useState<StockPool[]>([]);
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
+
+    const [filters, setFilters] = useState<PoolFilters>({});
+
+    const patchFilters = (patch: PoolFilters) => {
+        setPage(1);
+        setFilters({ ...filters, ...patch });
+    };
+
+    // 新建
+    const [createOpen, setCreateOpen] = useState(false);
+    const [createForm] = Form.useForm();
+
+    // 详情 / 成员
+    const [detail, setDetail] = useState<(StockPool & { versions: PoolVersion[] }) | null>(null);
+    const [detailOpen, setDetailOpen] = useState(false);
+    const [memberScope, setMemberScope] = useState<'draft' | 'published'>('draft');
+    const [members, setMembers] = useState<PoolMember[]>([]);
+    const [memberTotal, setMemberTotal] = useState(0);
+    const [memberPage, setMemberPage] = useState(1);
+    const [memberLoading, setMemberLoading] = useState(false);
+    const [importText, setImportText] = useState('');
+    const [importing, setImporting] = useState(false);
+
+    // 解析调试
+    const [resolveOpen, setResolveOpen] = useState(false);
+    const [resolveRef, setResolveRef] = useState('pool:csi300');
+    const [resolveResult, setResolveResult] = useState<PoolResolveResult | null>(null);
+    const [resolving, setResolving] = useState(false);
+
+    // 健康
+    const [health, setHealth] = useState<any>(null);
+
+    // 上传解析导入
+    const [parseFileName, setParseFileName] = useState<string>('');
+    const [parseBase64, setParseBase64] = useState<string>('');
+    const [parseText, setParseText] = useState<string>('');
+    const [parseFmt, setParseFmt] = useState<'auto' | 'csv' | 'txt'>('auto');
+    const [parseHasHeader, setParseHasHeader] = useState(true);
+    const [parseColumn, setParseColumn] = useState<string>('');
+    const [parseRunning, setParseRunning] = useState(false);
+    const [report, setReport] = useState<ParseReport | null>(null);
+    const [selectedRows, setSelectedRows] = useState<number[]>([]);
+    const [poolCode, setPoolCode] = useState('');
+    const [poolName, setPoolName] = useState('');
+    const [poolDesc, setPoolDesc] = useState('');
+    const [publishNow, setPublishNow] = useState(true);
+    const [creating, setCreating] = useState(false);
+
+    // 引用（P4）
+    const [usages, setUsages] = useState<any[]>([]);
+    const [usagesLoading, setUsagesLoading] = useState(false);
+    const [bindingTargetType, setBindingTargetType] = useState('strategy');
+    const [bindingTargetId, setBindingTargetId] = useState('');
+    const [bindingBusy, setBindingBusy] = useState(false);
+
+    const loadMeta = useCallback(async () => {
+        try {
+            setMeta(await stockPoolService.getMeta());
+        } catch (e: any) {
+            message.error(`加载元信息失败: ${e?.message || e}`);
+        }
+    }, []);
+
+    const loadPools = useCallback(async () => {
+        setLoading(true);
+        try {
+            const res = await stockPoolService.listPools({
+                ...filters,
+                limit: pageSize,
+                offset: (page - 1) * pageSize,
+            });
+            setItems(res.items || []);
+            setTotal(res.total || 0);
+        } catch (e: any) {
+            message.error(`加载股票池失败: ${e?.message || e}`);
+        } finally {
+            setLoading(false);
+        }
+    }, [filters, page, pageSize]);
+
+    const loadHealth = useCallback(async () => {
+        try {
+            setHealth(await stockPoolService.health());
+        } catch (e) {
+            // 健康检查失败不打扰主流程
+            setHealth(null);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadMeta();
+    }, [loadMeta]);
+
+    useEffect(() => {
+        loadPools();
+    }, [loadPools]);
+
+    const handleCreate = async () => {
+        try {
+            const values = await createForm.validateFields();
+            await stockPoolService.createPool({
+                code: values.code,
+                name: values.name,
+                description: values.description,
+                market: values.market,
+                pool_type: values.pool_type,
+                scope: 'global',
+            });
+            message.success('股票池已创建（草稿）。请维护成员后发布。');
+            setCreateOpen(false);
+            createForm.resetFields();
+            loadPools();
+        } catch (e: any) {
+            if (e?.errorFields) return;
+            message.error(`创建失败: ${e?.response?.data?.detail || e?.message || e}`);
+        }
+    };
+
+    const openDetail = async (pool: StockPool) => {
+        try {
+            const data = await stockPoolService.getPool(pool.pool_id);
+            setDetail(data);
+            setMemberScope(pool.current_version > 0 ? 'published' : 'draft');
+            setMemberPage(1);
+            setImportText('');
+            setDetailOpen(true);
+            setBindingTargetId('');
+            void loadUsages(pool.pool_id);
+        } catch (e: any) {
+            message.error(`加载详情失败: ${e?.response?.data?.detail || e?.message || e}`);
+        }
+    };
+
+    const loadMembers = useCallback(
+        async (poolId: string, scope: 'draft' | 'published', p: number) => {
+            setMemberLoading(true);
+            try {
+                const res = await stockPoolService.listMembers(poolId, {
+                    scope,
+                    limit: 50,
+                    offset: (p - 1) * 50,
+                });
+                setMembers(res.items || []);
+                setMemberTotal(res.total || 0);
+            } catch (e: any) {
+                message.error(`加载成员失败: ${e?.response?.data?.detail || e?.message || e}`);
+            } finally {
+                setMemberLoading(false);
+            }
+        },
+        [],
+    );
+
+    useEffect(() => {
+        if (detailOpen && detail) {
+            loadMembers(detail.pool_id, memberScope, memberPage);
+        }
+    }, [detailOpen, detail, memberScope, memberPage, loadMembers]);
+
+    const handleImport = async () => {
+        if (!detail) return;
+        const content = importText.trim();
+        if (!content) {
+            message.warning('请粘贴 CSV/TXT 内容');
+            return;
+        }
+        setImporting(true);
+        try {
+            const fmt: 'csv' | 'txt' = content.includes(',') ? 'csv' : 'txt';
+            const res: ImportResult = await stockPoolService.importMembers(
+                detail.pool_id,
+                { content, fmt, has_header: fmt === 'csv' },
+                false,
+            );
+            message.success(
+                `导入完成：接受 ${res.accepted}，拒绝 ${res.rejected}` +
+                    (res.rejected_samples?.length ? `（示例 ${res.rejected_samples.slice(0, 3).join(', ')}）` : ''),
+            );
+            setImportText('');
+            setMemberScope('draft');
+            setMemberPage(1);
+            const refreshed = await stockPoolService.getPool(detail.pool_id);
+            setDetail(refreshed);
+        } catch (e: any) {
+            message.error(`导入失败: ${e?.response?.data?.detail || e?.message || e}`);
+        } finally {
+            setImporting(false);
+        }
+    };
+
+    const handlePublish = async () => {
+        if (!detail) return;
+        try {
+            const ver = await stockPoolService.publish(detail.pool_id, '后台管理发布');
+            message.success(`已发布 v${ver.version}（${ver.member_count} 只，${ver.storage_mode}）`);
+            const refreshed = await stockPoolService.getPool(detail.pool_id);
+            setDetail(refreshed);
+            setMemberScope('published');
+            loadPools();
+        } catch (e: any) {
+            message.error(`发布失败: ${e?.response?.data?.detail || e?.message || e}`);
+        }
+    };
+
+    const handleRollback = async (version: number) => {
+        if (!detail) return;
+        try {
+            const res = await stockPoolService.rollback(detail.pool_id, version, `回滚到 v${version}`);
+            message.success(`已回滚，生成新版本 v${res.new_version}`);
+            const refreshed = await stockPoolService.getPool(detail.pool_id);
+            setDetail(refreshed);
+            setMemberScope('published');
+            loadPools();
+        } catch (e: any) {
+            message.error(`回滚失败: ${e?.response?.data?.detail || e?.message || e}`);
+        }
+    };
+
+    const handleArchive = async (pool: StockPool) => {
+        try {
+            await stockPoolService.archivePool(pool.pool_id);
+            message.success('已归档');
+            loadPools();
+        } catch (e: any) {
+            message.error(`归档失败: ${e?.response?.data?.detail || e?.message || e}`);
+        }
+    };
+
+    const handleDelete = async (pool: StockPool) => {
+        try {
+            await stockPoolService.deletePool(pool.pool_id);
+            message.success('已删除');
+            loadPools();
+        } catch (e: any) {
+            message.error(`删除失败: ${e?.response?.data?.detail || e?.message || e}`);
+        }
+    };
+
+    const handleResolve = async () => {
+        setResolving(true);
+        try {
+            setResolveResult(await stockPoolService.resolve(resolveRef));
+        } catch (e: any) {
+            message.error(`解析失败: ${e?.response?.data?.detail || e?.message || e}`);
+        } finally {
+            setResolving(false);
+        }
+    };
+
+    // ------------------------------------------------------------------
+    // 引用管理（P4）
+    // ------------------------------------------------------------------
+    const loadUsages = async (poolId: string) => {
+        setUsagesLoading(true);
+        try {
+            const res = await stockPoolService.usages(poolId);
+            setUsages(res.items || []);
+        } catch (e: any) {
+            message.error(`加载引用失败: ${e?.response?.data?.detail || e?.message || e}`);
+        } finally {
+            setUsagesLoading(false);
+        }
+    };
+
+    const handleBind = async (poolId: string) => {
+        if (!bindingTargetId.trim()) {
+            message.warning('请填写目标 ID');
+            return;
+        }
+        setBindingBusy(true);
+        try {
+            await stockPoolService.bindPool(poolId, {
+                target_type: bindingTargetType,
+                target_id: bindingTargetId.trim(),
+            });
+            message.success('引用已登记（该池将被保护，不可删除）');
+            setBindingTargetId('');
+            await loadUsages(poolId);
+        } catch (e: any) {
+            message.error(`登记失败: ${e?.response?.data?.detail || e?.message || e}`);
+        } finally {
+            setBindingBusy(false);
+        }
+    };
+
+    const handleUnbind = async (poolId: string, targetType: string, targetId: string) => {
+        try {
+            await stockPoolService.unbindPool(poolId, targetType, targetId);
+            message.success('引用已解除');
+            await loadUsages(poolId);
+        } catch (e: any) {
+            message.error(`解除失败: ${e?.response?.data?.detail || e?.message || e}`);
+        }
+    };
+
+    const handleReconcile = async () => {
+        try {
+            const res = await stockPoolService.reconcileBindings(true);
+            message.info(
+                `引用回填预览：扫描 ${res.scanned} 条模型记录，可绑定 ${res.bound}，` +
+                    `无法解析 ${res.unresolved}${res.unresolved_samples?.length ? `（示例 ${res.unresolved_samples.slice(0, 3).join(', ')}）` : ''}`,
+            );
+        } catch (e: any) {
+            message.error(`回填失败: ${e?.response?.data?.detail || e?.message || e}`);
+        }
+    };
+
+    // ------------------------------------------------------------------
+    // 上传解析导入
+    // ------------------------------------------------------------------
+    /** 读为 base64：保留原始字节，后端才能正确解码 Excel 导出的 GBK 文件 */
+    const fileToBase64 = (file: File): Promise<string> =>
+        new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const bytes = new Uint8Array(reader.result as ArrayBuffer);
+                let binary = '';
+                const CHUNK = 0x8000;
+                for (let i = 0; i < bytes.length; i += CHUNK) {
+                    binary += String.fromCharCode.apply(
+                        null,
+                        Array.from(bytes.subarray(i, i + CHUNK)) as unknown as number[],
+                    );
+                }
+                resolve(btoa(binary));
+            };
+            reader.onerror = () => reject(reader.error);
+            reader.readAsArrayBuffer(file);
+        });
+
+    const handleBeforeUpload = async (file: File) => {
+        try {
+            const b64 = await fileToBase64(file);
+            setParseBase64(b64);
+            setParseFileName(file.name);
+            setParseText('');
+            const ext = (file.name.split('.').pop() || '').toLowerCase();
+            if (ext === 'csv' || ext === 'txt') setParseFmt(ext as 'csv' | 'txt');
+            setReport(null);
+            setSelectedRows([]);
+        } catch (e: any) {
+            message.error(`读取文件失败: ${e?.message || e}`);
+        }
+        return false; // 阻止 antd 自动上传，改为走后端解析接口
+    };
+
+    const handleRunParse = async () => {
+        if (!parseBase64 && !parseText.trim()) {
+            message.warning('请先选择文件或粘贴内容');
+            return;
+        }
+        setParseRunning(true);
+        try {
+            const res = await stockPoolService.parsePoolFile({
+                content_base64: parseBase64 || undefined,
+                content_text: parseBase64 ? undefined : parseText,
+                filename: parseFileName || undefined,
+                fmt: parseFmt === 'auto' ? undefined : parseFmt,
+                has_header: parseHasHeader,
+                column: parseColumn.trim() || undefined,
+                row_limit: 1000,
+            });
+            setReport(res);
+            // 默认全选「已匹配」且非重复的行（以行号为 key，未匹配行不可勾选）
+            setSelectedRows(
+                res.rows.filter((r) => r.status === 'matched' && !r.duplicate).map((r) => r.row_index),
+            );
+            if (!poolName && parseFileName) {
+                setPoolName(parseFileName.replace(/\.[^.]+$/, '').slice(0, 60));
+            }
+            message.success(
+                `解析完成：匹配 ${res.summary.matched} / 重复 ${res.summary.duplicates} / 未匹配 ${res.summary.unmatched}`,
+            );
+        } catch (e: any) {
+            message.error(`解析失败: ${e?.response?.data?.detail || e?.message || e}`);
+        } finally {
+            setParseRunning(false);
+        }
+    };
+
+    const handleCreateFromParse = async () => {
+        if (!report) return;
+        if (!poolCode.trim() || !poolName.trim()) {
+            message.warning('请填写股票池代码与名称');
+            return;
+        }
+        if (selectedRows.length === 0) {
+            message.warning('请至少保留一只股票');
+            return;
+        }
+        setCreating(true);
+        try {
+            // 行号 → 规范代码；只提交被勾选且已匹配的行
+            const byRow = new Map<number, ParseRow>();
+            report.rows.forEach((r) => byRow.set(r.row_index, r));
+            const members = selectedRows
+                .map((idx) => byRow.get(idx))
+                .filter((r): r is ParseRow => !!r && r.status === 'matched' && !!r.symbol)
+                .map((r) => ({ symbol: r.symbol as string, name: r.name || undefined }));
+
+            const res = await stockPoolService.createPoolFromMembers({
+                code: poolCode.trim(),
+                name: poolName.trim(),
+                description: poolDesc.trim() || undefined,
+                market: 'CN',
+                pool_type: 'imported',
+                members,
+                publish: publishNow,
+                changelog: `上传解析导入（${parseFileName || '粘贴内容'}）`,
+            });
+            message.success(
+                `股票池 ${res.code} 已创建：${res.accepted} 只` +
+                    (res.rejected ? `，${res.rejected} 条被拒` : '') +
+                    (res.published ? `，已发布 v${res.version}` : '（未发布）'),
+            );
+            setReport(null);
+            setSelectedRows([]);
+            setParseBase64('');
+            setParseText('');
+            setParseFileName('');
+            setPoolCode('');
+            setPoolName('');
+            setPoolDesc('');
+            loadPools();
+        } catch (e: any) {
+            message.error(`建池失败: ${e?.response?.data?.detail || e?.message || e}`);
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    const columns = useMemo(
+        () => [
+            {
+                title: '代码',
+                dataIndex: 'code',
+                width: 160,
+                render: (code: string, row: StockPool) => (
+                    <Space size={4}>
+                        <Text strong>{code}</Text>
+                        {row.is_system && <Tag color="blue">内置</Tag>}
+                    </Space>
+                ),
+            },
+            { title: '名称', dataIndex: 'name', width: 180 },
+            { title: '市场', dataIndex: 'market', width: 80 },
+            {
+                title: '类型',
+                dataIndex: 'pool_type',
+                width: 110,
+                render: (t: string) => POOL_TYPE_LABEL[t] || t,
+            },
+            {
+                title: '状态',
+                dataIndex: 'status',
+                width: 130,
+                render: (s: string, row: StockPool) => (
+                    <Space size={4}>
+                        <Tag color={STATUS_COLOR[s] || 'default'}>{s}</Tag>
+                        {row.has_draft_changes && (
+                            <Tooltip title="存在未发布的草稿改动">
+                                <Tag color="gold">草稿</Tag>
+                            </Tooltip>
+                        )}
+                    </Space>
+                ),
+            },
+            {
+                title: '已发布版本',
+                dataIndex: 'current_version',
+                width: 110,
+                render: (v: number) => (v > 0 ? `v${v}` : '—'),
+            },
+            {
+                title: '成员数',
+                dataIndex: 'symbol_count',
+                width: 90,
+                render: (n: number, row: StockPool) =>
+                    row.pool_type === 'system_index' ? (
+                        <Tooltip title="指数成分实时取自 QuantDB，不落成员表">
+                            <Text type="secondary">实时</Text>
+                        </Tooltip>
+                    ) : (
+                        n
+                    ),
+            },
+            {
+                title: '操作',
+                key: 'actions',
+                width: 260,
+                render: (_: unknown, row: StockPool) => (
+                    <Space size={4} wrap>
+                        <Button size="small" onClick={() => openDetail(row)}>
+                            成员 / 版本
+                        </Button>
+                        <Popconfirm
+                            title="发布为新版本？"
+                            description="发布后线上消费方（回测/训练/推理/模拟/实盘）才会看到该版本。"
+                            onConfirm={handlePublishFor(row)}
+                            okText="发布"
+                        >
+                            <Button size="small" type="primary" icon={<RocketOutlined />} />
+                        </Popconfirm>
+                        {!row.is_system && (
+                            <>
+                                <Popconfirm title="归档该池？" onConfirm={() => handleArchive(row)} okText="归档">
+                                    <Button size="small" icon={<WarningOutlined />} />
+                                </Popconfirm>
+                                <Popconfirm title="彻底删除？" onConfirm={() => handleDelete(row)} okText="删除">
+                                    <Button size="small" danger icon={<DeleteOutlined />} />
+                                </Popconfirm>
+                            </>
+                        )}
+                    </Space>
+                ),
+            },
+        ],
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [items],
+    );
+
+    function handlePublishFor(row: StockPool) {
+        return async () => {
+            try {
+                const ver = await stockPoolService.publish(row.pool_id, '后台管理发布');
+                message.success(`已发布 v${ver.version}（${ver.member_count} 只）`);
+                loadPools();
+            } catch (e: any) {
+                message.error(`发布失败: ${e?.response?.data?.detail || e?.message || e}`);
+            }
+        };
+    }
+
+    const memberColumns = [
+        {
+            title: '代码（API 口径）',
+            dataIndex: 'api_symbol',
+            width: 140,
+            render: (v: string, row: PoolMember) => v || row.symbol,
+        },
+        { title: '库内口径', dataIndex: 'symbol', width: 130 },
+        { title: '名称', dataIndex: 'name', width: 140 },
+        { title: '权重', dataIndex: 'weight', width: 90 },
+        { title: '行业', dataIndex: 'industry', width: 120 },
+    ];
+
+    const versionColumns = [
+        { title: '版本', dataIndex: 'version', width: 70, render: (v: number) => `v${v}` },
+        { title: '成员数', dataIndex: 'member_count', width: 80 },
+        { title: '存储', dataIndex: 'storage_mode', width: 90 },
+        { title: '校验和', dataIndex: 'checksum', width: 120 },
+        { title: '说明', dataIndex: 'changelog', ellipsis: true },
+        {
+            title: '发布人 / 时间',
+            key: 'published',
+            width: 190,
+            render: (_: unknown, row: PoolVersion) => (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                    {row.published_by || '-'} · {row.published_at ? String(row.published_at).slice(0, 19) : '-'}
+                </Text>
+            ),
+        },
+        {
+            title: '操作',
+            key: 'op',
+            width: 90,
+            render: (_: unknown, row: PoolVersion) => (
+                <Popconfirm
+                    title={`回滚到 v${row.version}？`}
+                    description="会生成一个新版本，历史版本保留。"
+                    onConfirm={() => handleRollback(row.version)}
+                    okText="回滚"
+                >
+                    <Button size="small" icon={<RollbackOutlined />} />
+                </Popconfirm>
+            ),
+        },
+    ];
+
+    /** 引用明细（P4） */
+    const usageColumns = [
+        {
+            title: '类型',
+            dataIndex: 'target_type',
+            width: 110,
+            render: (t: string) => TARGET_TYPE_LABEL[t] || t,
+        },
+        { title: '目标 ID', dataIndex: 'target_id', ellipsis: true },
+        { title: '模式', dataIndex: 'mode', width: 90 },
+        { title: '优先级', dataIndex: 'priority', width: 80 },
+        {
+            title: '操作',
+            key: 'op',
+            width: 90,
+            render: (_: unknown, row: any) => (
+                <Popconfirm
+                    title="解除该引用？"
+                    description="解除后该池可能变为可删除。"
+                    onConfirm={() =>
+                        handleUnbind(detail?.pool_id || '', row.target_type, row.target_id)
+                    }
+                    okText="解除"
+                >
+                    <Button size="small" danger icon={<DeleteOutlined />} />
+                </Popconfirm>
+            ),
+        },
+    ];
+
+    /** 上传解析报告明细 */
+    const parseColumns = [
+        { title: '行号', dataIndex: 'row_index', width: 64 },
+        { title: '原文', dataIndex: 'raw', ellipsis: true },
+        {
+            title: '命中单元',
+            dataIndex: 'token',
+            width: 120,
+            render: (v: string) => <Text code>{v || '—'}</Text>,
+        },
+        {
+            title: '状态',
+            dataIndex: 'status',
+            width: 104,
+            render: (s: string, row: ParseRow) => {
+                const meta = PARSE_STATUS_META[s] || { color: 'default', label: s };
+                return (
+                    <Space size={4}>
+                        <Tag color={meta.color}>{meta.label}</Tag>
+                        {row.duplicate && <Tag color="blue">重复</Tag>}
+                    </Space>
+                );
+            },
+        },
+        {
+            title: '匹配方式',
+            dataIndex: 'match_type',
+            width: 116,
+            render: (t: string) =>
+                t === 'exchange_fixed' ? (
+                    <Tooltip title="文件里的交易所前缀有误，已按 6 位代码纠正">
+                        <Tag color="gold">{MATCH_TYPE_LABEL[t] || t}</Tag>
+                    </Tooltip>
+                ) : (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                        {MATCH_TYPE_LABEL[t] || t}
+                    </Text>
+                ),
+        },
+        {
+            title: '代码',
+            dataIndex: 'api_symbol',
+            width: 110,
+            render: (v: string) => v || '—',
+        },
+        { title: '名称', dataIndex: 'name', width: 130, render: (v: string) => v || '—' },
+    ];
+
+    return (
+        <div style={{ padding: 16 }}>
+            <Card
+                title="全局股票池"
+                extra={
+                    <Space>
+                        <Button icon={<ExperimentOutlined />} onClick={() => setResolveOpen(true)}>
+                            解析调试
+                        </Button>
+                        <Button icon={<CloudUploadOutlined />} onClick={handleReconcile}>
+                            引用回填预览
+                        </Button>
+                        <Button icon={<SearchOutlined />} onClick={loadHealth}>
+                            健康检查
+                        </Button>
+                        <Button icon={<ReloadOutlined />} onClick={loadPools}>
+                            刷新
+                        </Button>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                            新建股票池
+                        </Button>
+                    </Space>
+                }
+            >
+                <Tabs
+                    defaultActiveKey="list"
+                    items={[
+                        {
+                            key: 'list',
+                            label: '股票池列表',
+                            children: (
+                                <>
+                <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="股票池是回测 / 训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源"
+                    description={
+                        <span>
+                            成员一律以「后缀式」入库（<Text code>600036.SH</Text>），API 出入参为前缀式（
+                            <Text code>SH600036</Text>）。编辑只影响草稿版本，<b>必须发布</b>后各功能才会消费到；
+                            成员数超过 {meta?.member_table_max ?? 2000} 时自动改用 parquet 快照存储。
+                        </span>
+                    }
+                />
+
+                {health && (
+                    <Alert
+                        type={health.unhealthy > 0 ? 'warning' : 'success'}
+                        showIcon
+                        style={{ marginBottom: 12 }}
+                        message={`健康检查：共 ${health.total} 个池，${health.unhealthy} 个有告警（快照目录 ${health.snapshot_dir}）`}
+                        description={
+                            health.unhealthy > 0 ? (
+                                <Space direction="vertical" size={2}>
+                                    {(health.items || [])
+                                        .filter((i: any) => i.warnings?.length)
+                                        .slice(0, 6)
+                                        .map((i: any) => (
+                                            <Text key={i.pool_id} type="secondary" style={{ fontSize: 12 }}>
+                                                <Text code>{i.code}</Text>：{i.warnings.join('；')}
+                                            </Text>
+                                        ))}
+                                </Space>
+                            ) : null
+                        }
+                    />
+                )}
+
+                <Space wrap style={{ marginBottom: 12 }}>
+                    <Select
+                        allowClear
+                        placeholder="市场"
+                        style={{ width: 110 }}
+                        value={filters.market}
+                        onChange={(v) => patchFilters({ market: v })}
+                        options={(meta?.markets || ['CN', 'HK', 'US']).map((m) => ({ value: m, label: m }))}
+                    />
+                    <Select
+                        allowClear
+                        placeholder="类型"
+                        style={{ width: 140 }}
+                        value={filters.pool_type}
+                        onChange={(v) => patchFilters({ pool_type: v })}
+                        options={(meta?.pool_types || []).map((t) => ({ value: t, label: POOL_TYPE_LABEL[t] || t }))}
+                    />
+                    <Select
+                        allowClear
+                        placeholder="状态"
+                        style={{ width: 120 }}
+                        value={filters.status}
+                        onChange={(v) => patchFilters({ status: v })}
+                        options={(meta?.statuses || []).map((s) => ({ value: s, label: s }))}
+                    />
+                    <Input.Search
+                        placeholder="代码 / 名称"
+                        style={{ width: 220 }}
+                        allowClear
+                        onSearch={(v) => patchFilters({ keyword: v || undefined })}
+                    />
+                </Space>
+
+                <Table
+                    rowKey="pool_id"
+                    size="small"
+                    loading={loading}
+                    columns={columns as any}
+                    dataSource={items}
+                    pagination={{
+                        current: page,
+                        pageSize,
+                        total,
+                        showSizeChanger: true,
+                        onChange: (p, ps) => {
+                            setPage(p);
+                            setPageSize(ps);
+                        },
+                    }}
+                />
+                                </>
+                            ),
+                        },
+                        {
+                            key: 'parse',
+                            label: '上传解析导入',
+                            children: (
+                                <>
+                                    <Alert
+                                        type="info"
+                                        showIcon
+                                        style={{ marginBottom: 12 }}
+                                        message="上传 CSV / TXT，自动与 data/stocks/stocks_index.json 对比后生成股票池"
+                                        description={
+                                            <span>
+                                                代码支持 <Text code>600519</Text> / <Text code>SH600519</Text> /{' '}
+                                                <Text code>600519.SH</Text> / <Text code>sh600519</Text>；
+                                                也可直接写中文简称（<Text code>贵州茅台</Text>、<Text code>万 科Ａ</Text> 均可）。
+                                                代码与名称可混排、列顺序随意。交易所写错会按代码自动纠正。
+                                                <b> 解析只出报告，确认后才落库。</b>
+                                            </span>
+                                        }
+                                    />
+
+                                    <Row gutter={16}>
+                                        <Col span={13}>
+                                            <Card size="small" title="1. 选择文件">
+                                                <Upload.Dragger
+                                                    accept=".csv,.txt,.tsv"
+                                                    showUploadList={false}
+                                                    beforeUpload={handleBeforeUpload}
+                                                    disabled={parseRunning}
+                                                >
+                                                    <p className="ant-upload-drag-icon">
+                                                        <InboxOutlined />
+                                                    </p>
+                                                    <p className="ant-upload-text">
+                                                        点击或拖拽 CSV / TXT 文件到此处
+                                                    </p>
+                                                    <p className="ant-upload-hint">
+                                                        支持 UTF-8 / GBK（Excel 直接另存的 CSV 也能读）
+                                                    </p>
+                                                </Upload.Dragger>
+                                                {parseFileName && (
+                                                    <div style={{ marginTop: 8 }}>
+                                                        <Tag color="blue">{parseFileName}</Tag>
+                                                        <Button
+                                                            size="small"
+                                                            type="link"
+                                                            onClick={() => {
+                                                                setParseBase64('');
+                                                                setParseFileName('');
+                                                                setReport(null);
+                                                            }}
+                                                        >
+                                                            清除
+                                                        </Button>
+                                                    </div>
+                                                )}
+
+                                                <Divider plain style={{ margin: '12px 0' }}>
+                                                    或直接粘贴内容
+                                                </Divider>
+                                                <Input.TextArea
+                                                    rows={5}
+                                                    value={parseText}
+                                                    onChange={(e) => {
+                                                        setParseText(e.target.value);
+                                                        if (e.target.value) {
+                                                            setParseBase64('');
+                                                            setParseFileName('');
+                                                        }
+                                                    }}
+                                                    placeholder={'600519\n贵州茅台\nSH600036\n300750,宁德时代'}
+                                                />
+                                            </Card>
+                                        </Col>
+
+                                        <Col span={11}>
+                                            <Card size="small" title="2. 解析选项">
+                                                <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                                                    <div>
+                                                        <Text type="secondary">文件格式</Text>
+                                                        <Select
+                                                            style={{ width: '100%', marginTop: 4 }}
+                                                            value={parseFmt}
+                                                            onChange={setParseFmt}
+                                                            options={[
+                                                                { value: 'auto', label: '自动识别（推荐）' },
+                                                                { value: 'csv', label: 'CSV / 逗号分隔' },
+                                                                { value: 'txt', label: 'TXT / 每行一个' },
+                                                            ]}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <Text type="secondary">CSV 首行为表头</Text>
+                                                        <div style={{ marginTop: 4 }}>
+                                                            <Switch
+                                                                checked={parseHasHeader}
+                                                                onChange={setParseHasHeader}
+                                                            />
+                                                            <Text
+                                                                type="secondary"
+                                                                style={{ marginLeft: 8, fontSize: 12 }}
+                                                            >
+                                                                开启后自动跳过表头行
+                                                            </Text>
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <Text type="secondary">强制指定列（可选）</Text>
+                                                        <Input
+                                                            style={{ marginTop: 4 }}
+                                                            value={parseColumn}
+                                                            onChange={(e) => setParseColumn(e.target.value)}
+                                                            placeholder="列名（如 code）或列序号（如 0）"
+                                                        />
+                                                        <Text type="secondary" style={{ fontSize: 12 }}>
+                                                            留空则逐行扫描所有列，自动找出股票
+                                                        </Text>
+                                                    </div>
+                                                    <Button
+                                                        type="primary"
+                                                        block
+                                                        icon={<FileSearchOutlined />}
+                                                        loading={parseRunning}
+                                                        onClick={handleRunParse}
+                                                    >
+                                                        开始解析
+                                                    </Button>
+                                                </Space>
+                                            </Card>
+                                        </Col>
+                                    </Row>
+
+                                    {report && (
+                                        <>
+                                            <Divider orientation="left">3. 解析报告</Divider>
+                                            <Row gutter={12} style={{ marginBottom: 12 }}>
+                                                <Col span={4}>
+                                                    <Statistic title="文件行数" value={report.summary.total} />
+                                                </Col>
+                                                <Col span={4}>
+                                                    <Statistic
+                                                        title="匹配（唯一）"
+                                                        value={report.summary.matched}
+                                                        valueStyle={{ color: '#3f8600' }}
+                                                    />
+                                                </Col>
+                                                <Col span={4}>
+                                                    <Statistic
+                                                        title="重复行"
+                                                        value={report.summary.duplicates}
+                                                        valueStyle={{ color: '#1677ff' }}
+                                                    />
+                                                </Col>
+                                                <Col span={4}>
+                                                    <Statistic
+                                                        title="未匹配"
+                                                        value={report.summary.unmatched}
+                                                        valueStyle={{ color: report.summary.unmatched ? '#cf1322' : undefined }}
+                                                    />
+                                                </Col>
+                                                <Col span={4}>
+                                                    <Statistic
+                                                        title="其中不在索引"
+                                                        value={report.summary.not_in_index}
+                                                        valueStyle={{ color: '#d46b08' }}
+                                                    />
+                                                </Col>
+                                                <Col span={4}>
+                                                    <Statistic title="勾选保留" value={selectedRows.length} />
+                                                </Col>
+                                            </Row>
+
+                                            {report.warnings.length > 0 && (
+                                                <Alert
+                                                    type="warning"
+                                                    showIcon
+                                                    style={{ marginBottom: 12 }}
+                                                    message="解析告警"
+                                                    description={
+                                                        <Space direction="vertical" size={2}>
+                                                            {report.warnings.slice(0, 8).map((w, i) => (
+                                                                <Text key={i} style={{ fontSize: 12 }}>
+                                                                    {w}
+                                                                </Text>
+                                                            ))}
+                                                        </Space>
+                                                    }
+                                                />
+                                            )}
+
+                                            <Text type="secondary" style={{ fontSize: 12 }}>
+                                                索引：{report.index_source || '未找到'}（{report.index_size} 条） · 编码{' '}
+                                                {report.encoding || 'utf-8'}
+                                                {report.truncated ? ' · 明细已截断展示' : ''}
+                                            </Text>
+
+                                            <Table
+                                                rowKey="row_index"
+                                                size="small"
+                                                style={{ marginTop: 8 }}
+                                                columns={parseColumns as any}
+                                                dataSource={report.rows}
+                                                rowSelection={{
+                                                    selectedRowKeys: selectedRows,
+                                                    onChange: (keys) => setSelectedRows(keys as number[]),
+                                                    getCheckboxProps: (row: ParseRow) => ({
+                                                        disabled: row.status !== 'matched',
+                                                    }),
+                                                }}
+                                                pagination={{ pageSize: 50, showSizeChanger: true }}
+                                            />
+
+                                            <Divider orientation="left">4. 生成股票池</Divider>
+                                            <Row gutter={12}>
+                                                <Col span={8}>
+                                                    <Input
+                                                        addonBefore="代码"
+                                                        value={poolCode}
+                                                        onChange={(e) => setPoolCode(e.target.value)}
+                                                        placeholder="my_pool"
+                                                    />
+                                                </Col>
+                                                <Col span={8}>
+                                                    <Input
+                                                        addonBefore="名称"
+                                                        value={poolName}
+                                                        onChange={(e) => setPoolName(e.target.value)}
+                                                        placeholder="我的自选池"
+                                                    />
+                                                </Col>
+                                                <Col span={8}>
+                                                    <Space>
+                                                        <Text type="secondary">立即发布</Text>
+                                                        <Switch checked={publishNow} onChange={setPublishNow} />
+                                                        <Text type="secondary" style={{ fontSize: 12 }}>
+                                                            关闭则只存草稿
+                                                        </Text>
+                                                    </Space>
+                                                </Col>
+                                            </Row>
+                                            <Input.TextArea
+                                                rows={2}
+                                                style={{ marginTop: 8 }}
+                                                value={poolDesc}
+                                                onChange={(e) => setPoolDesc(e.target.value)}
+                                                placeholder="描述（可选）：来源、维护方式、用途"
+                                            />
+                                            <Button
+                                                type="primary"
+                                                style={{ marginTop: 12 }}
+                                                icon={<RocketOutlined />}
+                                                loading={creating}
+                                                onClick={handleCreateFromParse}
+                                            >
+                                                生成股票池（{selectedRows.length} 只）
+                                            </Button>
+                                        </>
+                                    )}
+                                </>
+                            ),
+                        },
+                    ]}
+                />
+            </Card>
+
+            {/* 新建 */}
+            <Modal
+                title="新建股票池"
+                open={createOpen}
+                onOk={handleCreate}
+                onCancel={() => setCreateOpen(false)}
+                okText="创建"
+                destroyOnClose
+            >
+                <Form
+                    form={createForm}
+                    layout="vertical"
+                    initialValues={{ market: 'CN', pool_type: 'static' }}
+                >
+                    <Form.Item
+                        name="code"
+                        label="代码"
+                        rules={[
+                            { required: true, message: '请输入代码' },
+                            { pattern: /^[A-Za-z0-9_-]+$/, message: '仅允许字母、数字、下划线与短横线' },
+                        ]}
+                        extra="各功能引用标识，如 my_quality_pool；建议全局唯一"
+                    >
+                        <Input placeholder="my_quality_pool" />
+                    </Form.Item>
+                    <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+                        <Input placeholder="优质成长池" />
+                    </Form.Item>
+                    <Row gutter={12}>
+                        <Col span={12}>
+                            <Form.Item name="market" label="市场" rules={[{ required: true }]}>
+                                <Select
+                                    options={(meta?.markets || ['CN']).map((m) => ({ value: m, label: m }))}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                            <Form.Item name="pool_type" label="类型" rules={[{ required: true }]}>
+                                <Select
+                                    options={(meta?.pool_types || [])
+                                        .filter((t) => t !== 'dynamic' && t !== 'system_index')
+                                        .map((t) => ({ value: t, label: POOL_TYPE_LABEL[t] || t }))}
+                                />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Form.Item name="description" label="描述">
+                        <Input.TextArea rows={3} placeholder="用途、维护方式、数据来源" />
+                    </Form.Item>
+                </Form>
+            </Modal>
+
+            {/* 成员 / 版本 */}
+            <Drawer
+                title={detail ? `${detail.code} · ${detail.name}` : '股票池'}
+                width={980}
+                open={detailOpen}
+                onClose={() => setDetailOpen(false)}
+                destroyOnClose
+            >
+                {detail && (
+                    <>
+                        <Row gutter={12} style={{ marginBottom: 12 }}>
+                            <Col span={6}>
+                                <Statistic title="当前发布版本" value={detail.current_version || 0} prefix="v" />
+                            </Col>
+                            <Col span={6}>
+                                <Statistic title="已发布成员数" value={detail.symbol_count} />
+                            </Col>
+                            <Col span={6}>
+                                <Statistic title="状态" value={detail.status} />
+                            </Col>
+                            <Col span={6}>
+                                <Statistic
+                                    title="未发布改动"
+                                    value={detail.has_draft_changes ? '有' : '无'}
+                                    valueStyle={{ color: detail.has_draft_changes ? '#faad14' : undefined }}
+                                />
+                            </Col>
+                        </Row>
+
+                        <Descriptions size="small" column={2} bordered style={{ marginBottom: 12 }}>
+                            <Descriptions.Item label="pool_id">{detail.pool_id}</Descriptions.Item>
+                            <Descriptions.Item label="市场 / 类型">
+                                {detail.market} / {POOL_TYPE_LABEL[detail.pool_type] || detail.pool_type}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="校验和">{detail.checksum || '—'}</Descriptions.Item>
+                            <Descriptions.Item label="来源">
+                                {detail.source_kind || '—'} {detail.source_ref ? `(${detail.source_ref})` : ''}
+                            </Descriptions.Item>
+                        </Descriptions>
+
+                        {detail.pool_type === 'system_index' && (
+                            <Alert
+                                type="info"
+                                showIcon
+                                style={{ marginBottom: 12 }}
+                                message="指数成分池的成分由 QuantDB 指数权重实时提供，无需在此维护成员；发布仅用于固化版本快照。"
+                            />
+                        )}
+
+                        <Space style={{ marginBottom: 8 }} wrap>
+                            <Select
+                                value={memberScope}
+                                style={{ width: 160 }}
+                                onChange={(v) => {
+                                    setMemberScope(v);
+                                    setMemberPage(1);
+                                }}
+                                options={[
+                                    { value: 'draft', label: '草稿（可编辑）' },
+                                    { value: 'published', label: '已发布' },
+                                ]}
+                            />
+                            <Button
+                                icon={<RocketOutlined />}
+                                type="primary"
+                                onClick={handlePublish}
+                                disabled={memberScope === 'published' && !detail.has_draft_changes}
+                            >
+                                发布草稿为新版本
+                            </Button>
+                            <Button
+                                icon={<ExportOutlined />}
+                                href={stockPoolService.membersExportUrl(detail.pool_id, memberScope)}
+                                target="_blank"
+                            >
+                                导出 CSV
+                            </Button>
+                        </Space>
+
+                        <Table
+                            rowKey="symbol"
+                            size="small"
+                            loading={memberLoading}
+                            columns={memberColumns as any}
+                            dataSource={members}
+                            pagination={{
+                                current: memberPage,
+                                pageSize: 50,
+                                total: memberTotal,
+                                onChange: setMemberPage,
+                            }}
+                        />
+
+                        <Divider orientation="left">导入成员（覆盖草稿）</Divider>
+                        <Paragraph type="secondary" style={{ fontSize: 12 }}>
+                            支持 CSV（首行表头，列名 symbol/code/代码）或 TXT（每行一个代码）。
+                            代码可为 <Text code>SH600036</Text> / <Text code>600036.SH</Text> / <Text code>600036</Text>。
+                        </Paragraph>
+                        <Input.TextArea
+                            rows={5}
+                            value={importText}
+                            onChange={(e) => setImportText(e.target.value)}
+                            placeholder={'symbol,name\n600036.SH,招商银行\n000001.SZ,平安银行'}
+                        />
+                        <Space style={{ marginTop: 8 }}>
+                            <Button
+                                type="primary"
+                                icon={<CloudUploadOutlined />}
+                                loading={importing}
+                                onClick={handleImport}
+                            >
+                                导入到草稿
+                            </Button>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                                导入后需点「发布草稿为新版本」才会对各功能生效
+                            </Text>
+                        </Space>
+
+                        <Divider orientation="left">版本历史</Divider>
+                        <Table
+                            rowKey="version"
+                            size="small"
+                            columns={versionColumns as any}
+                            dataSource={detail.versions || []}
+                            pagination={false}
+                            locale={{ emptyText: <Empty description="尚未发布任何版本" /> }}
+                        />
+
+                        <Divider orientation="left">引用（被引用后不可删除）</Divider>
+                        <Paragraph type="secondary" style={{ fontSize: 12 }}>
+                            只登记<b>长生命周期</b>引用（策略 / 模型 / 模拟盘账户 / 实盘配置）。
+                            回测与推理是一次性运行，不登记为 binding —— 它们的池版本记在各自结果里，
+                            否则历史运行会让池永远删不掉。
+                        </Paragraph>
+                        <Space wrap style={{ marginBottom: 8 }}>
+                            <Select
+                                style={{ width: 130 }}
+                                value={bindingTargetType}
+                                onChange={setBindingTargetType}
+                                options={[
+                                    { value: 'strategy', label: '策略' },
+                                    { value: 'training', label: '模型' },
+                                    { value: 'simulation', label: '模拟盘账户' },
+                                    { value: 'live', label: '实盘配置' },
+                                    { value: 'factor', label: '因子' },
+                                ]}
+                            />
+                            <Input
+                                style={{ width: 200 }}
+                                value={bindingTargetId}
+                                onChange={(e) => setBindingTargetId(e.target.value)}
+                                placeholder="目标 ID（如策略/模型 ID）"
+                            />
+                            <Button
+                                icon={<PlusOutlined />}
+                                loading={bindingBusy}
+                                onClick={() => handleBind(detail.pool_id)}
+                            >
+                                登记引用
+                            </Button>
+                        </Space>
+                        <Table
+                            rowKey={(r: any) => `${r.target_type}:${r.target_id}`}
+                            size="small"
+                            loading={usagesLoading}
+                            columns={usageColumns as any}
+                            dataSource={usages}
+                            pagination={false}
+                            locale={{ emptyText: <Empty description="暂无引用登记" /> }}
+                        />
+                    </>
+                )}
+            </Drawer>
+
+            {/* 解析调试 */}
+            <Modal
+                title="股票池解析调试"
+                open={resolveOpen}
+                onCancel={() => setResolveOpen(false)}
+                footer={null}
+                width={760}
+                destroyOnClose
+            >
+                <Paragraph type="secondary" style={{ fontSize: 12 }}>
+                    验证各功能实际会拿到什么成分。支持 <Text code>pool:code</Text>、
+                    <Text code>pool:code@3</Text>、裸内置名 <Text code>csi300</Text>、
+                    <Text code>list:SH600036,SZ000001</Text>、<Text code>file:/path/x.txt</Text>、
+                    <Text code>all</Text>。
+                </Paragraph>
+                <Space.Compact style={{ width: '100%' }}>
+                    <Input
+                        value={resolveRef}
+                        onChange={(e) => setResolveRef(e.target.value)}
+                        placeholder="pool:csi300"
+                        onPressEnter={handleResolve}
+                    />
+                    <Button type="primary" loading={resolving} onClick={handleResolve}>
+                        解析
+                    </Button>
+                </Space.Compact>
+
+                {resolveResult && (
+                    <div style={{ marginTop: 12 }}>
+                        <Descriptions size="small" column={2} bordered>
+                            <Descriptions.Item label="来源">
+                                {SOURCE_LABEL[resolveResult.source] || resolveResult.source}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="池 / 版本">
+                                {resolveResult.code} {resolveResult.version ? `v${resolveResult.version}` : ''}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="成分数">{resolveResult.symbol_count}</Descriptions.Item>
+                            <Descriptions.Item label="市场 / 口径">{resolveResult.market}</Descriptions.Item>
+                            <Descriptions.Item label="不过滤">{String(resolveResult.unfiltered)}</Descriptions.Item>
+                            <Descriptions.Item label="校验和">{resolveResult.checksum || '—'}</Descriptions.Item>
+                        </Descriptions>
+                        {resolveResult.warnings?.length > 0 && (
+                            <Alert
+                                type="warning"
+                                showIcon
+                                style={{ marginTop: 8 }}
+                                message="解析告警"
+                                description={
+                                    <Space direction="vertical" size={2}>
+                                        {resolveResult.warnings.map((w, i) => (
+                                            <Text key={i} style={{ fontSize: 12 }}>
+                                                {w}
+                                            </Text>
+                                        ))}
+                                    </Space>
+                                }
+                            />
+                        )}
+                        <div style={{ marginTop: 8 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                                样本（API 前缀式）：
+                            </Text>
+                            <Paragraph style={{ fontSize: 12 }}>
+                                {(resolveResult.sample || []).join(', ') || '（空）'}
+                            </Paragraph>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+        </div>
+    );
+};
+
+export default AdminStockPool;

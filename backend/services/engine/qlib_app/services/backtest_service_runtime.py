@@ -143,6 +143,65 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
             )
             self._set_deterministic_seed(self._resolve_seed(request.seed))
 
+            # --- Global Stock Pool Resolution [START] ---
+            # P3：pool_id 优先于 universe。解析 → 物化 instruments 文件 →
+            # 覆盖 universe（后续 isfile 分支与 SimpleSignal 都能直接吃文件路径）。
+            # 空池**必须显式失败**，不能静默退化成全市场（那正是改造前的坑）。
+            if getattr(request, "pool_id", None):
+                from backend.shared.stock_pool.materializer import (
+                    materialize_snapshot,
+                )
+                from backend.shared.stock_pool.resolver import (
+                    ResolveContext,
+                    resolver as pool_resolver,
+                )
+
+                snapshot = await pool_resolver.resolve(
+                    request.pool_id,
+                    ResolveContext(
+                        tenant_id=getattr(request, "tenant_id", None),
+                        user_id=getattr(request, "user_id", None),
+                    ),
+                    strict=True,
+                )
+                request.pool_version = snapshot.version
+                request.pool_checksum = snapshot.checksum
+                request.pool_warnings = list(snapshot.warnings or [])
+
+                if snapshot.unfiltered:
+                    task_log.info(
+                        "pool_resolved_unfiltered",
+                        "股票池解析为不过滤（等价 universe=all）",
+                        pool_id=request.pool_id,
+                    )
+                else:
+                    pool_path = materialize_snapshot(
+                        snapshot,
+                        start_date=request.start_date,
+                        end_date=request.end_date,
+                    )
+                    if not pool_path:
+                        raise ValueError(
+                            f"股票池 {request.pool_id} 解析为空池，拒绝回测"
+                            "（避免静默退化为全市场）。"
+                            f"告警: {'; '.join(snapshot.warnings) or '无'}"
+                        )
+                    request.universe = pool_path
+                    task_log.info(
+                        "pool_resolved",
+                        "股票池已物化并覆盖 universe",
+                        pool_id=request.pool_id,
+                        pool_code=snapshot.code,
+                        pool_version=snapshot.version,
+                        symbol_count=len(snapshot.symbols),
+                        checksum=snapshot.checksum,
+                        instruments_path=pool_path,
+                    )
+
+                for _w in request.pool_warnings:
+                    task_log.warning("pool_warning", _w, pool_id=request.pool_id)
+            # --- Global Stock Pool Resolution [END] ---
+
             # --- Storage Resolution [START] ---
             try:
                 from backend.shared.storage_resolver import get_storage_resolver

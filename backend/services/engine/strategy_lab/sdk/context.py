@@ -18,23 +18,18 @@ from typing import Any, Callable, Iterable, Sequence
 
 import pandas as pd
 
+from backend.shared.stock_pool.builtins import BUILTIN_CODES
+
 from .position import Position
 
 # ---------------------------------------------------------------------------
 # Attribute schema — declared centrally so we can validate user code.
 # ---------------------------------------------------------------------------
-_ALLOWED_UNIVERSES: frozenset[str] = frozenset(
-    {
-        "csi300",
-        "csi500",
-        "csi800",
-        "csi1000",
-        "hs300_ext",
-        "all_a",
-        "hk_main",
-        "us_sp500",
-    }
-)
+# P2：股票池白名单由 shared.stock_pool.builtins 派生（唯一事实源）。
+# 改造前这里硬编码 8 个池，与 quantdb_hub.UNIVERSE_MAP 不一致
+# （多了 hs300_ext/hk_main/us_sp500，少了 sse50/gem/star），
+# 导致「SDK 能写、回测解析静默查空」。现在两边同源。
+_ALLOWED_UNIVERSES: frozenset[str] = frozenset(BUILTIN_CODES)
 _ALLOWED_EXECUTION_MODELS: frozenset[str] = frozenset({"a_share_strict", "simple"})
 _ALLOWED_ENGINES: frozenset[str] = frozenset({"qlib"})
 

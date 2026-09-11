@@ -234,6 +234,26 @@ def _save_model(model: Any, model_type: str, out_dir: Path) -> str:
         return "model.pkl"
 
 
+def _pool_metadata(cfg: dict) -> dict:
+    """全局股票池（P3/P4）写入 metadata，供两处用途：
+
+    1. 模型可复现：训练用的是哪一版池（pool_id + version + checksum）；
+    2. 引用回填：`/admin/stock-pools/bindings/reconcile` 扫描
+       `qm_user_models.metadata_json.pool_id` 反推 binding，让「被引用不可删」
+       的守卫对既有模型也生效。
+    """
+    data = cfg.get("data", {}) or {}
+    symbols = data.get("pool_symbols") or []
+    pool_id = str(data.get("pool_id") or "").strip()
+    return {
+        "pool_id": pool_id or None,
+        "pool_version": data.get("pool_version"),
+        "pool_checksum": str(data.get("pool_checksum") or "").strip() or None,
+        "pool_symbol_count": len(symbols) or None,
+        "pool_filtered": bool(symbols),
+    }
+
+
 def _get_model_framework(model_type: str) -> str:
     """返回模型框架名。"""
     mapping = {
@@ -1002,6 +1022,8 @@ def main() -> int:
             factor_source=factor_source or None,
             quantdb_dir=str((cfg.get("data", {}) or {}).get("quantdb_dir") or "").strip() or None,
             factor_field_sources=(cfg.get("data", {}) or {}).get("factor_field_sources") or None,
+            # 全局股票池（P3）：编排器已把池解析成代码列表随 config.yaml 传入
+            pool_symbols=(cfg.get("data", {}) or {}).get("pool_symbols") or None,
         )
 
         # ── 行业编码开关：load_data 只负责 merge 列，不会自动进入特征集 ──
@@ -1213,6 +1235,8 @@ def main() -> int:
                 "factor_catalog_version": str((cfg.get("data", {}) or {}).get("factor_catalog_version") or "") or None,
                 "factor_schema_hash": str((cfg.get("data", {}) or {}).get("factor_schema_hash") or "") or None,
                 "quantdb_dir": str((cfg.get("data", {}) or {}).get("quantdb_dir") or "") or None,
+                # 全局股票池（P3/P4）：记录池版本以便复现 + 供引用回填
+                **_pool_metadata(cfg),
                 "factor_field_sources": (cfg.get("data", {}) or {}).get("factor_field_sources") or {},
                 "factor_catalog_published_at": str((cfg.get("data", {}) or {}).get("factor_catalog_published_at") or "") or None,
                 "factor_coverage": (cfg.get("data", {}) or {}).get("factor_coverage") or {},
@@ -1423,6 +1447,8 @@ def main() -> int:
                 "factor_catalog_version": str((cfg.get("data", {}) or {}).get("factor_catalog_version") or "") or None,
                 "factor_schema_hash": str((cfg.get("data", {}) or {}).get("factor_schema_hash") or "") or None,
                 "quantdb_dir": str((cfg.get("data", {}) or {}).get("quantdb_dir") or "") or None,
+                # 全局股票池（P3/P4）：记录池版本以便复现 + 供引用回填
+                **_pool_metadata(cfg),
                 "factor_field_sources": (cfg.get("data", {}) or {}).get("factor_field_sources") or {},
                 "factor_catalog_published_at": str((cfg.get("data", {}) or {}).get("factor_catalog_published_at") or "") or None,
                 "factor_coverage": (cfg.get("data", {}) or {}).get("factor_coverage") or {},

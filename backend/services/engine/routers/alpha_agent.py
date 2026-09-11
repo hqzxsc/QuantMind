@@ -22,11 +22,16 @@ from backend.services.engine.auth_context import (
 from backend.services.engine.qlib_app.services.rd_agent_persistence import (
     RDAgentFactorPersistence,
 )
+from backend.shared.stock_pool.builtins import cn_index_symbols
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/alpha-agent", tags=["AlphaAgent"])
 persistence = RDAgentFactorPersistence()
+
+# P2：CN 可选股票池由 shared.stock_pool.builtins 派生（唯一事实源），
+# 与 quantdb_hub.UNIVERSE_MAP / Strategy Lab 白名单同源，不再各写一份。
+_VALID_CN_UNIVERSES: list[str] = list(cn_index_symbols().keys())
 
 _running_backtests: set[str] = set()
 # 回测子进程句柄 + 取消标记：cancel 接口据此真正 kill 子进程
@@ -187,7 +192,7 @@ async def start_evolution(
         ) from e
 
     # Validate universe
-    valid_universes = ["csi300", "csi500", "csi1000", "sse50", "gem", "star", "csi800", "all_a"]
+    valid_universes = _VALID_CN_UNIVERSES
     if universe not in valid_universes:
         raise HTTPException(
             status_code=400,

@@ -42,6 +42,13 @@ from backend.services.engine.data_platform.quantdb_factor_reader import (
 
 logger = logging.getLogger(__name__)
 
+
+def _training_pool_fields(payload: dict) -> dict:
+    """训练池字段（P3）：解析失败/空池时抛错，拒绝提交。"""
+    from backend.services.engine.training.pool_binding import resolve_training_pool
+
+    return resolve_training_pool(payload)
+
 _TRAINING_IMAGE = (os.getenv("TRAINING_IMAGE") or "quantmind-trainer:latest").strip()
 # 训练容器启动前补齐的依赖（空格分隔的包名）。训练镜像可能落后于仓库依赖
 # （如 QuantDB 因子目录读取所需的 duckdb），缺失会在 load_data 时 ImportError 秒挂。
@@ -585,6 +592,8 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                     factor_catalog_published_at=str(payload.get("factor_catalog_published_at") or "") or None,
                     factor_coverage=dict(payload.get("factor_coverage") or {}),
                     quantdb_dir=market_mount_dir if factor_source else None,
+                    # 全局股票池（P3）：容器无 DB，池成分在这里解析后传入
+                    **_training_pool_fields(payload),
                 ),
                 model=ModelCfg(
                     type=payload.get("model_type", "lightgbm"),

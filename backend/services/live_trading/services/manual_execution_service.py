@@ -211,6 +211,32 @@ def _normalize_trading_mode(value: Any) -> str:
     return mode
 
 
+def _resolve_pool_id_from_prepared(
+    prepared: "PreparedManualExecution",
+) -> str | None:
+    """从执行上下文里取全局股票池引用（P3）。
+
+    优先级：`live_trade_config.pool_id`（策略上保存的持仓池配置）→
+    `request_payload.pool_id`（本次请求显式指定）。
+    两者都没有则返回 None（保持旧行为：不做池过滤）。
+    """
+    strategy = prepared.strategy if isinstance(prepared.strategy, dict) else {}
+    cfg = strategy.get("live_trade_config")
+    if isinstance(cfg, str) and cfg.strip():
+        try:
+            cfg = json.loads(cfg)
+        except Exception:  # noqa: BLE001
+            cfg = None
+    if isinstance(cfg, dict):
+        pool_ref = str(cfg.get("pool_id") or "").strip()
+        if pool_ref:
+            return pool_ref
+
+    payload = prepared.request_payload if isinstance(prepared.request_payload, dict) else {}
+    pool_ref = str(payload.get("pool_id") or "").strip()
+    return pool_ref or None
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         number = float(value)
@@ -1441,6 +1467,60 @@ class ManualExecutionService:
         run_id: str,
         model_id: str | None = None,
         data_trade_date: str | None = None,
+        pool_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """取信号行，并按全局股票池裁剪（P3）。
+
+        池解析为空或零命中 → 返回空列表并**由调用方判为空信号**（实盘不会下单），
+        不会退化成「全市场信号」。
+        """
+        rows = await self._load_signal_rows_raw(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            run_id=run_id,
+            model_id=model_id,
+            data_trade_date=data_trade_date,
+        )
+        if not pool_id or not rows:
+            return rows
+
+        from backend.shared.stock_pool.filters import filter_signals_by_pool
+        from backend.shared.stock_pool.resolver import (
+            ResolveContext,
+            resolver as pool_resolver,
+        )
+
+        snapshot = await pool_resolver.resolve(
+            str(pool_id),
+            ResolveContext(tenant_id=tenant_id, user_id=user_id),
+        )
+        outcome = filter_signals_by_pool(rows, snapshot)
+        if outcome.empty_pool or outcome.empty_result:
+            logger.error(
+                "实盘信号池过滤：池为空或零命中，拒绝下单 pool_id=%s tenant=%s user=%s reason=%s",
+                pool_id,
+                tenant_id,
+                user_id,
+                "; ".join(outcome.warnings),
+            )
+            return []
+        logger.info(
+            "实盘信号池过滤 pool_id=%s version=%s kept=%d dropped=%d",
+            outcome.pool_id,
+            outcome.pool_version,
+            len(outcome.kept),
+            outcome.dropped,
+        )
+        return outcome.kept
+
+    async def _load_signal_rows_raw(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+        model_id: str | None = None,
+        data_trade_date: str | None = None,
     ) -> list[dict[str, Any]]:
         async with get_session(read_only=True) as session:
             rows = (
@@ -1640,6 +1720,7 @@ class ManualExecutionService:
             run_id=prepared.run_id,
             model_id=prepared.model_id,
             data_trade_date=prepared.run.get("data_trade_date"),
+            pool_id=_resolve_pool_id_from_prepared(prepared),
         )
         if not signal_rows:
             raise HTTPException(status_code=400, detail="当前推理批次无可用信号明细")
@@ -2092,6 +2173,7 @@ class ManualExecutionService:
             run_id=prepared.run_id,
             model_id=prepared.model_id,
             data_trade_date=prepared.run.get("data_trade_date"),
+            pool_id=_resolve_pool_id_from_prepared(prepared),
         )
         strategy_params = _normalize_strategy_params(prepared.strategy)
         execution_plan = _build_execution_plan_from_signals(
@@ -2479,6 +2561,7 @@ class ManualExecutionService:
                     run_id=run_id,
                     model_id=prepared.model_id,
                     data_trade_date=prepared.run.get("data_trade_date"),
+                    pool_id=_resolve_pool_id_from_prepared(prepared),
                 )
                 if not signal_rows:
                     error_msg = "推理结果无可执行信号"

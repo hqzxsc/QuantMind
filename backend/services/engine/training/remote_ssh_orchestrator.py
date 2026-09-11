@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from backend.services.engine.training.orchestrator_base import TrainingOrchestrator, REGISTRY
+from backend.services.engine.training.pool_binding import resolve_training_pool
 from backend.services.engine.training.training_log_stream import TrainingRunLogStream
 from backend.services.api.training_explain import DEFAULT_EXPLAIN_CFG
 
@@ -666,6 +667,8 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
                 "factor_field_sources": dict(payload.get("factor_field_sources") or {}),
                 "factor_catalog_published_at": str(payload.get("factor_catalog_published_at") or "") or None,
                 "factor_coverage": dict(payload.get("factor_coverage") or {}),
+                # 全局股票池（P3）：远端容器无 DB，池成分在本机解析后传入
+                **resolve_training_pool(payload),
             },
             "model": {
                 "type": payload.get("model_type", "lightgbm"),

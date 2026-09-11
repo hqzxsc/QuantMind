@@ -107,6 +107,23 @@ class QlibBacktestRequest(BaseModel):
     benchmark: str = Field("SH000300", description="基准指数", alias="benchmark_symbol")
     universe: str = Field("all", description="股票池")
 
+    # 全局股票池（P3）：优先于 universe。解析后回填 pool_version/pool_checksum，
+    # 用于结果可复现（universe 是字符串、可能随文件路径变化，池版本不会）。
+    pool_id: str | None = Field(
+        None,
+        description="全局股票池引用，如 pool:csi300 / pool:my_pool@3 / csi300。"
+        "提供后解析并物化为 instruments 文件，覆盖 universe。",
+    )
+    pool_version: int | None = Field(
+        default=None, description="解析命中的池版本（输出字段，由引擎回填）"
+    )
+    pool_checksum: str | None = Field(
+        default=None, description="解析命中的池成员校验和（输出字段，由引擎回填）"
+    )
+    pool_warnings: list[str] = Field(
+        default_factory=list, description="池解析告警（输出字段，由引擎回填）"
+    )
+
     # 交易成本费率（A股标准）
     commission: float = Field(0.00025, description="券商佣金费率", ge=0)
     min_commission: float = Field(5.0, description="最低佣金(元)", ge=0)

@@ -592,12 +592,29 @@ def _ensure_seed_admin():
         )
 
 
+def _ensure_stock_pool() -> None:
+    """启动期确保全局股票池表结构 + 内置池 seed（幂等，失败仅告警）。
+
+    全局股票池是回测 / 训练 / 推理 / 模拟盘 / 实盘共用的唯一事实源；
+    内置池（csi300 等）以 seed 数据落库，收敛原先散落的多份白名单。
+    """
+    try:
+        from backend.shared.stock_pool import seed_builtin_pools_sync, snapshot_dir_ready
+
+        snapshot_dir_ready()
+        seed_builtin_pools_sync()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("全局股票池初始化失败（不影响启动）: %s", e)
+
+
 def main():
     """主入口"""
     # 启动前确保数据库表结构完整
     _ensure_database_schema()
     # 启动期确保默认管理员账号存在（幂等，失败不影响启动）
     _ensure_seed_admin()
+    # 启动期确保全局股票池表结构与内置池 seed（幂等，失败不影响启动）
+    _ensure_stock_pool()
 
     service_mode = os.getenv("SERVICE_MODE", "all").lower().strip()
     ports = get_service_ports()

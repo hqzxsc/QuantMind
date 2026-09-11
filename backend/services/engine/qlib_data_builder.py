@@ -319,10 +319,14 @@ class QlibDataBuilder:
 
         logger.info("Qlib[%s] instruments: %d symbols -> %s", self._market, len(qlib_symbols), inst_file)
 
-        # 各市场股票池成分文件（仅 A 股有 UNIVERSE_MAP，其他市场跳过）
-        universes = getattr(self._hub, "UNIVERSE_MAP", {}) or {}
-        if self._market == "CN" and universes:
-            self._build_universe_instruments(inst_dir, start_date, end_date, set(qlib_symbols))
+        # 各市场股票池成分文件（P2：仅 A 股有内置指数池，其他市场跳过）
+        if self._market == "CN":
+            from backend.shared.stock_pool.builtins import cn_index_symbols
+
+            if cn_index_symbols():
+                self._build_universe_instruments(
+                    inst_dir, start_date, end_date, set(qlib_symbols)
+                )
         return len(qlib_symbols)
 
     def _collect_raw_symbols(self) -> set[str]:
@@ -388,8 +392,15 @@ class QlibDataBuilder:
     def _build_universe_instruments(
         self, inst_dir: Path, start_date: str, end_date: str, known: set[str]
     ) -> None:
-        """为 csi300/csi500/... 生成 Qlib instruments 文件。"""
-        universes = getattr(self._hub, "UNIVERSE_MAP", {}) or {}
+        """为内置 A 股股票池生成 Qlib instruments 文件。
+
+        P2：池目录直读 shared.stock_pool.builtins（唯一事实源），
+        不再依赖 hub 上的 UNIVERSE_MAP 属性；只处理 CN 且有指数来源的池，
+        避免把 HK/US 池写进 A 股 qlib 缓存。
+        """
+        from backend.shared.stock_pool.builtins import cn_index_symbols
+
+        universes = cn_index_symbols()
         for universe in universes:
             try:
                 df = self._hub.fetch_universe_stocks(universe)

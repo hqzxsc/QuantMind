@@ -61,6 +61,7 @@ const AdminFeatureCatalog = lazy(() => import('./features/admin/components/Admin
 const AdminTrainingDatasets = lazy(() => import('./features/admin/components/AdminTrainingDatasets').then(m => ({ default: m.AdminTrainingDatasets })));
 const AdminAutoDLNodes = lazy(() => import('./features/admin/components/AdminAutoDLNodes').then(m => ({ default: m.AdminAutoDLNodes })));
 const AdminSystemSettings = lazy(() => import('./features/admin/components/AdminSystemSettings').then(m => ({ default: m.AdminSystemSettings })));
+const AdminStockPool = lazy(() => import('./features/admin/components/AdminStockPool'));
 const ComingSoonPage = lazy(() => import('./features/admin/components/ComingSoonPage').then(m => ({ default: m.ComingSoonPage })));
 const AlphaResearchPage = lazy(() => import('./features/alpha-research/pages/AlphaResearchPage'));
 const SkillsCenterPage = lazy(() => import('./features/skills-center/pages/SkillsCenterPage'));
@@ -705,6 +706,7 @@ export default function App() {
                     <Route path="data" element={<Suspense fallback={<Spin size="large" />}><AdminDataManagement /></Suspense>} />
                     <Route path="qlib" element={<Suspense fallback={<Spin size="large" />}><AdminQlibDataPanel /></Suspense>} />
                     <Route path="strategies" element={<Suspense fallback={<Spin size="large" />}><AdminStrategyTemplates /></Suspense>} />
+                    <Route path="stock-pools" element={<Suspense fallback={<Spin size="large" />}><AdminStockPool /></Suspense>} />
                     <Route path="news" element={<Suspense fallback={<Spin size="large" />}><AdminNewsEmotion /></Suspense>} />
                     <Route path="tags" element={<Navigate to="/admin/news" replace />} />
                     <Route path="finbert" element={<Navigate to="/admin/news" replace />} />

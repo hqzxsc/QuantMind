@@ -4,6 +4,7 @@ Simulation Engine - 统一模拟盘引擎
 """
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -103,6 +104,7 @@ class SimulationEngine:
         strategy_id: str,
         run_id: str | None = None,
         params_override: dict[str, Any] | None = None,
+        pool_id: str | None = None,
     ) -> ExecutionReport:
         """
         执行一次模拟盘调仓周期。
@@ -160,6 +162,55 @@ class SimulationEngine:
                     market.value,
                     len(signals),
                 )
+
+                # 1.6 全局股票池过滤（P3）：严格语义，池为空或零命中即终止本轮，
+                # 绝不放行全市场信号（否则模拟盘会买进池外标的）。
+                override_pool = (
+                    params_override.get("pool_id")
+                    if isinstance(params_override, dict)
+                    else None
+                )
+                effective_pool_id = pool_id or override_pool
+                if effective_pool_id:
+                    from backend.shared.stock_pool.filters import (
+                        filter_signals_by_pool,
+                    )
+                    from backend.shared.stock_pool.resolver import (
+                        ResolveContext,
+                        resolver as pool_resolver,
+                    )
+
+                    pool_snapshot = await pool_resolver.resolve(
+                        str(effective_pool_id),
+                        ResolveContext(tenant_id=tenant, user_id=uid),
+                    )
+                    outcome = filter_signals_by_pool(
+                        [
+                            {"symbol": s.symbol, "score": getattr(s, "score", 0.0), "_ref": s}
+                            for s in signals
+                        ],
+                        pool_snapshot,
+                    )
+                    if outcome.empty_pool or outcome.empty_result:
+                        reason = "; ".join(outcome.warnings) or "池过滤后无信号"
+                        logger.error(
+                            "SimulationEngine: 池过滤失败 pool_id=%s tenant=%s user=%s: %s",
+                            effective_pool_id,
+                            tenant,
+                            uid,
+                            reason,
+                        )
+                        report.error = f"股票池过滤失败: {reason}"
+                        return report
+                    signals = [row["_ref"] for row in outcome.kept]
+                    report.signal_count = len(signals)
+                    logger.info(
+                        "SimulationEngine: 池过滤 pool_id=%s kept=%d dropped=%d version=%s",
+                        outcome.pool_id,
+                        len(outcome.kept),
+                        outcome.dropped,
+                        outcome.pool_version,
+                    )
 
                 # 2. 加载策略配置
                 strategy_config = await self._load_strategy_config(

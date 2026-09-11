@@ -54,6 +54,7 @@ const AdminPage: React.FC = () => {
             label: '推理引擎',
             children: [
                 { key: 'models', label: '模型管理' },
+                { key: 'stock-pools', label: '全局股票池' },
                 { key: 'feature-catalog', label: '特征字典' },
                 { key: 'inference', label: '推理监控（开发中）' },
             ]

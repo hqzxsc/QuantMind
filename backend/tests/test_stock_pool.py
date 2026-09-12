@@ -899,7 +899,7 @@ class TestP3TrainingBridge:
 
         # load_data 接收池成分并在 symbol 归一化之后过滤
         assert "pool_symbols: list[str] | None = None," in loading
-        assert 'df["symbol"].isin(wanted)' in loading
+        assert "isin(wanted)" in loading
         # 池内零命中必须报错，不能训出「以为是池内、实际全市场」的模型
         assert "股票池过滤后无数据" in loading
         # train.py 必须把 config.yaml 里的池成分透传给 load_data
@@ -919,7 +919,7 @@ class TestP3TrainingBridge:
 
         norm_idx = loading.index(".str.zfill(6)")
         pool_idx = loading.index("pool_symbols:")
-        filter_idx = loading.index('df["symbol"].isin(wanted)')
+        filter_idx = loading.index("isin(wanted)")
         assert norm_idx < filter_idx
         assert pool_idx < filter_idx
 

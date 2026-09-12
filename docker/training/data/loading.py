@@ -389,8 +389,12 @@ def load_data(
         if "symbol" not in df.columns:
             raise RuntimeError("股票池过滤需要 symbol 列，但当前数据无该列")
         before_pool = len(df)
-        df["symbol"] = df["symbol"].astype(str).str.zfill(6)
-        df = df[df["symbol"].isin(wanted)].copy()
+        # 双口径匹配：直读分支 symbol 为前缀式（SH600036），parquet 分支为
+        # 6 位数字——zfill 对 8 位前缀是空操作，单用 6 位集合会零命中误杀。
+        _sym_up = df["symbol"].astype(str).str.upper()
+        _sym6 = _sym_up.str.replace(r"^(SH|SZ|BJ)", "", regex=True)
+        _wanted_prefix = {_to_prefix_symbol(s) for s in pool_symbols if str(s).strip()}
+        df = df[_sym6.isin(wanted) | _sym_up.isin(_wanted_prefix)].copy()
         logger.info(
             "After pool filter: %d rows (pool=%d symbols, before=%d)",
             len(df),

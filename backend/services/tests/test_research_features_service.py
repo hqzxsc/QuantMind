@@ -35,6 +35,25 @@ class _FakeHub:
                 return pd.DataFrame(rows)
         raise RuntimeError("view not found")
 
+    def fetch_latest_rows(self, view, symbols, *, dt=None, lookback=None, columns=None):
+        """按视图名返回预置行的 DataFrame（新 QuantDBHub 直读接口）。"""
+        import pandas as pd
+
+        self.queries.append(f"SELECT * FROM {view}")
+        rows = self._rows_by_view.get(view)
+        if rows is None:
+            raise RuntimeError("view not found")
+        df = pd.DataFrame(rows)
+        if "symbol" in df.columns:
+            wanted = {str(s) for s in symbols}
+            df = df[df["symbol"].isin(wanted)]
+        if columns:
+            keep = [c for c in columns if c in df.columns]
+            if "symbol" in df.columns:
+                keep = ["symbol", *keep]
+            df = df[list(dict.fromkeys(c for c in keep if c in df.columns))]
+        return df.reset_index(drop=True)
+
 
 def _install_hub(monkeypatch, hub):
     monkeypatch.setattr(svc, "_get_hub", lambda: hub)

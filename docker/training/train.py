@@ -1524,7 +1524,7 @@ QuantMind Parquet 数据源推理脚本 (inference.py 模板)
 exit code：
     0  = 成功
     1  = 致命错误（模型/元数据损坏）
-    2  = 该日期无可用数据（触发 alpha158 兜底）
+    2  = 该日期无可用数据（触发兜底）
 """
 from __future__ import annotations
 import argparse, json, logging, os, sys

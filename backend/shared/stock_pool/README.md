@@ -123,7 +123,7 @@ POST   /bindings/reconcile       从模型 metadata 回填引用
 |---|---|---|
 | 回测 | `QlibBacktestRequest.pool_id` → 解析 → 物化 instruments 覆盖 universe | 空池拒绝回测 |
 | 训练 | 编排器（有 DB）解析 → `config.yaml` 传 `pool_symbols` → 容器内过滤 | 池非空零命中直接报错 |
-| 推理 | `script_runner.execute(pool_id=...)`（含 alpha158 兜底路径） | 空池/零命中显式失败 |
+| 推理 | `script_runner.execute(pool_id=...)` | 空池/零命中显式失败 |
 | 模拟盘 | `run_cycle(pool_id=...)`；调度器从 `trade:active_strategy` 读配置 | 零命中终止本轮 |
 | 实盘 | `live_trade_config.pool_id` / 请求 `pool_id` → `_load_signal_rows` 裁剪 | 零命中拒单 |
 | SDK/因子 | `_ALLOWED_UNIVERSES` / alpha_agent 白名单从 builtins 派生 | 不再三份各写 |

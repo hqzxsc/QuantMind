@@ -76,7 +76,7 @@ run-training → submit_training_job → LocalDockerOrchestrator
 - **表**：`qm_user_models`（status: candidate/syncing/ready/active/archived/failed, metadata_json, metrics_json, is_default）
 - **用户模型**：`/api/v1/models`（用户态 CRUD）
 - **市场分段**：model_id=`mdl_{market_lower}_{run}_{digest}`，非CN存 `models/users/{tenant}/{user}/{market_lower}/`，market∈CN/a_share、HK、US、CRYPTO、FUTURES
-- **系统模型回退**：primary=model_qlib、fallback=alpha158
+- **系统模型回退**：系统内置 `model_qlib/alpha158` 已废弃，不再有隐式回退
 - **融合模型**：`/api/v1/models/ensemble/create` 百分位加权合成；目录含 `ensemble_config.json` + `inference.py`；无 pred 时 `generate_ensemble_pred` 自动用子模型 pred 融合生成
 
 ## 推理链路

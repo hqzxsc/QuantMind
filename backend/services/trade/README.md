@@ -334,8 +334,8 @@ psql "$DATABASE_URL" -f backend/migrations/add_margin_trading_fields.sql
   其中 `REAL` 额外要求 `QMT Agent` 心跳与 PostgreSQL 账户快照已上报，`SHADOW` 不阻断该项。
 - 交易准备度检测前部固定追加 4 个基础必需项：
   `Redis`、`PostgreSQL`、`内部密钥`、`用户标识`，保持与原启动前自检的核心上下文一致。
-- `MODELS_PRODUCTION` 未显式配置时，`trade` 默认按生产路径 `/app/models/production/model_qlib` 检测模型，
-  避免误回退到历史相对路径 `model_qlib`。
+- `MODELS_PRODUCTION` 未显式配置时，`trade` 默认按生产根目录 `/app/models/production` 检测模型
+  （系统内置 `model_qlib` 已废弃，不再指向具体模型子目录）。
 - `SIMULATION` 的交易准备度会保留 4 个基础必需项（`Redis`、`PostgreSQL`、`内部密钥`、`用户标识`），并额外校验 `模型推理数据库已准备就绪`、`模拟盘进程池`、`实时行情服务已就绪`；其中模型数据库项也会出现在 `/api/v1/real-trading/preflight` 的模拟盘自检列表中，避免前端切换阶段后丢失模型相关结果。
 - 控制面增强：`POST /api/v1/real-trading/start` 在 `REAL/SHADOW/SIMULATION` 全模式下
   会按模式执行启动门禁：

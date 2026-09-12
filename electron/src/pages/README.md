@@ -138,7 +138,7 @@
   - 草稿会自动保存到本地 `localStorage`，便于刷新后恢复训练配置；恢复提示已做去重，避免开发环境下的双重提示；
   - 训练提交改为用户态接口 `POST /api/v1/models/run-training`，并全量透传 `target/label/context/early_stopping` 等字段；
   - 训练状态轮询改为 `GET /api/v1/models/training-runs/{run_id}`，查询按 `tenant_id + user_id + run_id` 严格隔离；
-  - 第 3 步参数配置新增 `display_name`，用于模型命名与管理页展示，默认示例为 `19_T3_Alpha158_Base`，并会写入请求预览、训练结果和模型元数据；
+  - 第 3 步参数配置新增 `display_name`，用于模型命名与管理页展示，默认示例为 `19_T3_L1_Base`，并会写入请求预览、训练结果和模型元数据；
   - 训练页主滚动区底部已预留 30px 安全留白，避免被底部浮动导航栏遮挡，保证每一步内容都能完整滚动查看；
   - 结果展示严格以后端 `result.metrics/artifacts/summary/metadata` 为准：若回调结果缺关键字段，页面显示“结果不完整/失败原因”，不再填充默认 `rmse/auc` 占位值。
   - 结果区新增 `model_registration` 展示（`syncing/ready/failed`），并支持一键“设为默认模型”（`PATCH /api/v1/models/default`）。
@@ -166,7 +166,7 @@
 - `trading/tabs/StrategyManagement.tsx` 的实盘策略模型区域已简化为只读展示：
   - 页面不再提供单独的策略绑定选择/保存/解除入口；
   - 默认模型直接读取模型管理页设置的用户默认模型，并自动作为当前生效模型；
-  - 若未设置默认模型，则回退到系统兜底模型 `model_qlib`。
+  - 若未设置默认模型，则不再回退系统模型（系统内置 `model_qlib` 已废弃）。
   - 默认模型名称会以更弱化的 inline pill 形式与策略标签同排展示，仅保留模型名称本身。
 - `ModelRegistryPage.tsx` 已新增模型操作限制：系统内置模型（`tenant_id === 'system'`）不再提供“归档”功能入口，且在代码逻辑层也同步拦截了对系统模型的归档操作。
 - `ModelRegistryPage.tsx` 的排名结果 Drawer 已修复 Electron 顶部拖拽区域（`window-drag`）对关闭按钮的点击拦截问题：

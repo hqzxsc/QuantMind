@@ -36,7 +36,6 @@
 - `backend/services/engine/inference/templates/inference_parquet.py`
 - `backend/services/engine/inference/script_runner.py`
 - `docker/training/train.py`
-- `models/production/model_qlib/inference.py`（兼容入口）
 - `backend/services/tests/test_engine_inference_unified_flow.py`（回归测试）
 
 ## 修复记录（2026-03-27，自动推理 Celery 任务）

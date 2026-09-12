@@ -190,7 +190,7 @@ export const SettingsPage: React.FC = () => {
     setIsDirty(true);
   };
 
-  /** L1 categories from QuantDB when available, else the static Alpha158 reference list */
+  /** L1 categories from QuantDB when available, else the static reference list */
   const activeDirections = l1Directions.length > 0 ? l1Directions : REFERENCE_MINING_DIRECTIONS;
 
   if (isLoading) {
@@ -664,7 +664,7 @@ export const SettingsPage: React.FC = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Compass className="h-5 w-5" />
-                {l1Directions.length > 0 ? 'L1 因子类别' : '挖掘方向（参考 Alpha158(20)）'}
+                {l1Directions.length > 0 ? 'L1 因子类别' : '挖掘方向（内置参考）'}
               </CardTitle>
               <p className="text-sm text-muted-foreground mt-1">
                 {l1Directions.length > 0

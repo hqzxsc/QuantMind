@@ -186,78 +186,35 @@ async def lifespan(app: FastAPI):
             run_simulation_corporate_action_task(),
             name="simulation-corporate-action",
         )
-        # 模拟盘对账：Redis vs PG 台账，每天 03:20 只报不改
-        # （SIM_RECONCILE_AUTOFIX=true 才回填，默认关闭）
+        # 模拟盘持久化权益结算（对账确权→行情重估→权益持久化，默认 30s 周期，
+        # 无交易时段门控，启动即执行首周期）。取代旧的三个独立 worker：
+        # 每日 03:20 reconcile、300s fund snapshot、仅交易时段运行的 remark——
+        # 三者组合在服务器重启后（尤其盘外）无人刷新权益数据。
         try:
-            from backend.services.simulation.services.reconcile_service import (
-                run_simulation_reconcile_worker,
+            from backend.services.simulation.services.equity_settlement_worker import (
+                SimulationEquitySettlementWorker,
+                settle_enabled,
+                settle_interval_seconds,
             )
 
-            reconcile_task = asyncio.create_task(
-                run_simulation_reconcile_worker(), name="simulation-reconcile"
-            )
-            app.state.simulation_reconcile_task = reconcile_task
-            logger.info("Simulation reconcile worker started (daily 03:20)")
-        except Exception as e:
-            logger.error(
-                "trade simulation reconcile worker start failed: %s", e, exc_info=True
-            )
-        # 模拟盘资金快照只读周期采集（仅 capture_all upsert，不做 init/reset；
-        # 旧 simulation_fund_snapshot_task 已删除，此处用 fund_snapshot_service 内
-        # 已有的 SimulationFundSnapshotWorker 重建定时持久化，避免 Redis 丢失）。
-        try:
-            from backend.services.simulation.services.fund_snapshot_service import (
-                SimulationFundSnapshotWorker,
-            )
-
-            sim_snapshot_enabled = os.getenv(
-                "SIM_FUND_SNAPSHOT_ENABLED", "true"
-            ).strip().lower() not in {"0", "false", "no", "off"}
-            if sim_snapshot_enabled:
-                sim_snapshot_interval = int(
-                    os.getenv("SIM_FUND_SNAPSHOT_INTERVAL_SECONDS", "300")
+            if settle_enabled():
+                equity_settle_worker = SimulationEquitySettlementWorker(
+                    redis_client, interval_seconds=settle_interval_seconds()
                 )
-                sim_fund_snapshot_worker = SimulationFundSnapshotWorker(
-                    redis_client, interval_seconds=sim_snapshot_interval
-                )
-                await sim_fund_snapshot_worker.start()
-                app.state.sim_fund_snapshot_worker = sim_fund_snapshot_worker
+                await equity_settle_worker.start()
+                app.state.sim_equity_settle_worker = equity_settle_worker
                 logger.info(
-                    "Simulation fund snapshot worker started (interval=%ss)",
-                    sim_fund_snapshot_worker.interval_seconds,
+                    "Simulation equity settlement worker started (interval=%ss)",
+                    equity_settle_worker.interval_seconds,
                 )
             else:
                 logger.info(
-                    "Simulation fund snapshot worker disabled "
-                    "(SIM_FUND_SNAPSHOT_ENABLED=false)"
+                    "Simulation equity settlement worker disabled "
+                    "(SIM_EQUITY_SETTLE_ENABLED=false)"
                 )
         except Exception as e:
             logger.error(
-                "trade sim fund snapshot worker start failed: %s", e, exc_info=True
-            )
-        # 模拟账户盘中重估（仅改现价/市值，不碰现金成本；交易时段外自动跳过）
-        try:
-            from backend.services.simulation.services.account_remark_service import (
-                SimulationRemarkWorker,
-                remark_enabled,
-                remark_interval_seconds,
-            )
-
-            if remark_enabled():
-                sim_remark_worker = SimulationRemarkWorker(
-                    redis_client, interval_seconds=remark_interval_seconds()
-                )
-                await sim_remark_worker.start()
-                app.state.sim_remark_worker = sim_remark_worker
-                logger.info(
-                    "Simulation remark worker started (interval=%ss)",
-                    sim_remark_worker.interval_seconds,
-                )
-            else:
-                logger.info("Simulation remark worker disabled (SIM_REMARK_ENABLED=false)")
-        except Exception as e:
-            logger.error(
-                "trade sim remark worker start failed: %s", e, exc_info=True
+                "trade sim equity settlement worker start failed: %s", e, exc_info=True
             )
         # 策略监控推送源：把模拟盘实时盈亏写进 strategy_events，驱动仪表盘
         # 「策略监控」卡片刷新（WS 连上时前端会关掉轮询，只认推送）。
@@ -414,13 +371,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("trade simulation scheduler stop failed: %s", e)
 
-    # 停止模拟盘资金快照周期采集
-    sim_snapshot_worker = getattr(app.state, "sim_fund_snapshot_worker", None)
-    if sim_snapshot_worker is not None:
+    # 停止模拟盘持久化权益结算 worker
+    equity_settle_worker = getattr(app.state, "sim_equity_settle_worker", None)
+    if equity_settle_worker is not None:
         try:
-            await sim_snapshot_worker.stop()
+            await equity_settle_worker.stop()
         except Exception as e:
-            logger.warning("trade sim fund snapshot worker stop failed: %s", e)
+            logger.warning("trade sim equity settlement worker stop failed: %s", e)
 
     # 停止策略监控推送源
     strategy_push_worker = getattr(app.state, "sim_strategy_push_worker", None)

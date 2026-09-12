@@ -1,7 +1,7 @@
 """模拟盘对账作业：Redis 账户 vs PG ledger 台账投影（确权：台账为主）。
 
-只报不改是默认值；SIM_RECONCILE_AUTOFIX=true 时才按台账投影回填 Redis。
-每天 03:20 跑一次（EOD 之后），由 trade 服务拉起。
+SIM_RECONCILE_AUTOFIX 默认 true：按台账投影回填 Redis（持久化对账语义）。
+主入口是权益结算 worker 的 30s 周期调用；每日 03:20 的独立 worker 已下线。
 """
 
 from __future__ import annotations
@@ -181,7 +181,8 @@ async def run_reconcile_once(
 
 
 def autofix_enabled() -> bool:
-    return os.getenv("SIM_RECONCILE_AUTOFIX", "false").strip().lower() in {
+    # 默认 true：权益结算 worker 每 30s 以 PG 台账为准确权 Redis（持久化对账）。
+    return os.getenv("SIM_RECONCILE_AUTOFIX", "true").strip().lower() in {
         "1",
         "true",
         "yes",

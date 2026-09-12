@@ -13,7 +13,8 @@ and checks that endpoint handlers are properly guarded:
 """
 
 import pytest
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
+from fastapi.params import Depends as DependsParam
 from fastapi.testclient import TestClient
 
 
@@ -63,7 +64,7 @@ class TestAdminRouterAuth:
         for sub in admin_routes:
             deps = getattr(sub, "dependencies", [])
             assert any(
-                isinstance(d, Depends) for d in deps
+                isinstance(d, DependsParam) for d in deps
             ), f"Sub-router {sub.prefix or sub.tags} has no Depends in dependencies: {deps}"
 
 

@@ -44,6 +44,19 @@ async def init_admin_data(db: AsyncSession):
     result = await db.execute(stmt)
     admin_user = result.scalar_one_or_none()
 
+    # 2.1 历史坏数据自愈：db_init.sql 曾 seed user_id='admin'，规范应为 00000001。
+    # 用户名登录不受影响，但 JWT sub 与全链路 user_id 口径会错。
+    if admin_user is not None and admin_user.user_id != "00000001":
+        from backend.shared.admin_identity import fix_admin_user_id
+
+        logger.warning(
+            "检测到 admin user_id=%r，纠正为 00000001", admin_user.user_id
+        )
+        await fix_admin_user_id()
+        await db.expire_all()
+        result = await db.execute(stmt)
+        admin_user = result.scalar_one_or_none()
+
     import bcrypt
 
     if not admin_user:

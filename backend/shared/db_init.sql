@@ -2302,7 +2302,7 @@ CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_binding_pool
 -- NOTE: 幂等，仅在不存在时创建，不覆盖用户已改密码；display_name / 头像由启动期 seed_data.py 负责
 -- ========================
 INSERT INTO users (user_id, tenant_id, username, email, password_hash, is_active, is_admin, is_verified, is_locked, login_count, created_at, updated_at, is_deleted)
-VALUES ('admin', 'default', 'admin', 'admin@quantmind.local',
+VALUES ('00000001', 'default', 'admin', 'admin@quantmind.local',
         '$2b$12$B/yjK9cT.wx4BlB9j.r/t.dADjCbmutIXoDM7PdKZmV6ypuYiiUvW',
         TRUE, TRUE, TRUE, FALSE, 0, NOW(), NOW(), FALSE)
 ON CONFLICT (user_id) DO NOTHING;

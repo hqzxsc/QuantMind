@@ -235,6 +235,18 @@ class TestPoolTxt:
         assert list(tmp_path.glob("*.tmp")) == []
         assert p.read_text(encoding="utf-8").splitlines()[0].startswith("#")
 
+    def test_read_instruments_file_qlib_format_takes_first_column(self, tmp_path):
+        """Qlib 标准格式 `sym\\tSTART\\tEND` 必须只取首列（整行当代码会卡死回测）."""
+        from backend.shared.stock_pool.materializer import read_instruments_file
+
+        p = tmp_path / "pool_x.txt"
+        p.write_text(
+            "# pool_x\nsh600036\t2016-01-04\t2026-09-02\n\nSZ000001\t2016-01-04\t2026-09-02\n",
+            encoding="utf-8",
+        )
+        assert read_instruments_file(p) == ["sh600036", "SZ000001"]
+        assert read_instruments_file(tmp_path / "missing.txt") == []
+
     def test_pool_txt_name_scoping(self):
         assert pool_txt_name("global", "csi300") == "csi300.txt"
         # 隔离靠子目录：文件名不再带归属前缀，同名不互撞靠目录

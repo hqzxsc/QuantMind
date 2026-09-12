@@ -80,6 +80,21 @@ task_logger.info(
 )
 
 
+def _qlib_universe(universe):
+    """Qlib universe 兼容层：池 instruments 文件路径 → 符号列表。
+
+    - qlib 的 `D.instruments(str)` 只认市场短名（csi300/all/…），不认任意
+      文件路径；池物化文件又是 `sym\\tSTART\\tEND` 标准格式，整行不能当代码。
+    - 文件路径一律经 `read_instruments_file` 只取首列转成 list（qlib 原生支持
+      list）；市场名 / 'all' 原样透传，走 qlib 原生路径。
+    """
+    if universe and isinstance(universe, str) and os.path.isfile(universe):
+        from backend.shared.stock_pool.materializer import read_instruments_file
+
+        return read_instruments_file(universe)
+    return universe
+
+
 class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
     """Qlib 回测运行逻辑 mixin"""
 
@@ -734,7 +749,7 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                 if pred_instruments:
                     vectorized_universe = pred_instruments[: int(os.getenv("QLIB_SIGNAL_MAX_INSTRUMENTS", "2000"))]
                 else:
-                    vectorized_universe = D.instruments(request.universe)
+                    vectorized_universe = D.instruments(_qlib_universe(request.universe))
 
                 price_df = D.features(
                     vectorized_universe,
@@ -1283,7 +1298,7 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
         raw_prefix = {self._to_qlib_prefix_code(c) for c in pred_codes}
         try:
             qlib_instruments = D.list_instruments(
-                D.instruments(str(request.universe) or "all"), as_list=True
+                D.instruments(_qlib_universe(str(request.universe) or "all")), as_list=True
             )
         except Exception:
             qlib_instruments = []
@@ -1898,14 +1913,10 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
             feature = f"${feature}"
 
         try:
-            # If universe is a local file path, read instruments directly
+            # universe 是池文件路径时走兼容层解析（只取首列符号）；
+            # 市场名 / 'all' 原样走 qlib 原生路径
             if request.universe and os.path.isfile(request.universe):
-                instrument_list = []
-                with open(request.universe, encoding="utf-8") as fp:
-                    for line in fp:
-                        code = line.strip()
-                        if code and not code.startswith("#"):
-                            instrument_list.append(code)
+                instrument_list = _qlib_universe(request.universe)
                 instrument_list = exclude_bj_instruments(instrument_list)
                 task_logger.info(
                     "pool_loaded",

@@ -254,11 +254,27 @@ def read_instruments(pool_code: str) -> list[str]:
     fp = instrument_file(pool_code)
     if not fp.exists():
         return []
+    return read_instruments_file(fp)
+
+
+def read_instruments_file(path: str | Path) -> list[str]:
+    """Qlib instruments 文件兼容解析（消费侧统一入口）。
+
+    标准格式为 `sym\\tSTART\\tEND`（qlib 的 D.instruments 只认市场短名，
+    不认任意文件路径；且整行不能直接当代码用）。只取首列，跳过 `#`
+    注释与空行；成员 TXT（前缀式一行一个）同样兼容。
+    """
+    fp = Path(path)
+    if not fp.exists():
+        return []
     out: list[str] = []
-    for line in fp.read_text(encoding="utf-8").splitlines():
-        parts = line.strip().split("\t")
-        if parts and parts[0]:
-            out.append(parts[0])
+    for line in fp.read_text(encoding="utf-8", errors="ignore").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        first = s.split("\t")[0].split(",")[0].strip()
+        if first:
+            out.append(first)
     return out
 
 

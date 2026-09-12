@@ -36,6 +36,8 @@ import {
   systemModelToUserModel,
 } from './modelRegistryUtils';
 import { InferenceCenterPanel } from './modelRegistryPanels';
+import { StockPoolPickerModal } from '../components/backtest/StockPoolPickerModal';
+import type { StockPoolOption } from '../services/stockPoolOptionService';
 import { StockForecastChart } from '../features/inference-center/components/StockForecastChart';
 import { ModelScoreCurveGrid } from '../features/inference-center/components/ModelScoreCurveGrid';
 import { InferenceHistoryPanel } from '../components/inference/InferenceHistoryPanel';
@@ -94,6 +96,7 @@ export const InferenceCenterPage: React.FC = () => {
   const [inferPoolRef, setInferPoolRef] = useState<string | null>(null);
   const [inferPoolName, setInferPoolName] = useState<string>('');
   const [inferPoolId, setInferPoolId] = useState<string | null>(null);
+  const [inferPoolPickerOpen, setInferPoolPickerOpen] = useState(false);
 
   // ─────────────────────────────────────────────────────────────
   // 模块 2：个股预测推理 (Individual Stock Inference) 状态
@@ -599,6 +602,39 @@ export const InferenceCenterPage: React.FC = () => {
                     <span className="text-xs font-bold text-slate-700">目标</span>
                     <span className="text-[13px] font-black text-blue-700 font-mono">T+{horizonDays}</span>
                   </div>
+                  {/* 单日推理股票池：仅裁信号范围，不进 pred.parquet */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!inferPoolRef) setInferPoolPickerOpen(true);
+                      else {
+                        setInferPoolRef(null);
+                        setInferPoolName('');
+                        setInferPoolId(null);
+                      }
+                    }}
+                    title={inferPoolRef ? `股票池: ${inferPoolName || inferPoolRef}（点击恢复全市场）` : '全市场（点击选择股票池）'}
+                    className={clsx(
+                      'border rounded-xl px-3 h-9 flex items-center gap-1.5 whitespace-nowrap transition-colors',
+                      inferPoolRef ? 'bg-blue-50 border-blue-300' : 'bg-slate-50 border-slate-200 hover:border-blue-200'
+                    )}
+                  >
+                    <Layers size={12} className={inferPoolRef ? 'text-blue-600' : 'text-slate-400'} />
+                    <span className="text-xs font-bold text-slate-700">股票池</span>
+                    <span className={clsx('text-[13px] font-black max-w-[160px] truncate', inferPoolRef ? 'text-blue-700' : 'text-slate-500')}>
+                      {inferPoolRef ? (inferPoolName || inferPoolRef) : '全市场'}
+                    </span>
+                  </button>
+                  {inferPoolRef && (
+                    <button
+                      type="button"
+                      onClick={() => setInferPoolPickerOpen(true)}
+                      title="更换股票池"
+                      className="border border-blue-200 bg-white rounded-xl px-2 h-9 flex items-center whitespace-nowrap text-xs font-bold text-blue-600 hover:bg-blue-50 transition-colors"
+                    >
+                      更换
+                    </button>
+                  )}
                   <div className={clsx(
                     'border rounded-xl px-3 h-9 flex items-center whitespace-nowrap',
                     selectedModel.is_default ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'
@@ -676,18 +712,23 @@ export const InferenceCenterPage: React.FC = () => {
                 historyDateFilter={historyDateFilter}
                 onHistoryDateFilterChange={setHistoryDateFilter}
                 onDeleteHistory={handleDeleteHistory}
-                poolRef={inferPoolRef}
-                poolName={inferPoolName}
-                selectedPoolId={inferPoolId}
-                onPoolChange={(ref, name, id) => {
-                  setInferPoolRef(ref);
-                  setInferPoolName(name);
-                  setInferPoolId(id);
-                }}
               />
             ) : (
               <InferenceHistoryPanel modelId={selectedModel.model_id} onDelete={handleDeleteHistory} />
             )}
+            <StockPoolPickerModal
+              open={inferPoolPickerOpen}
+              onClose={() => setInferPoolPickerOpen(false)}
+              selectedPoolId={inferPoolId}
+              market="CN"
+              title="推理股票池"
+              onSelect={(pool: StockPoolOption) => {
+                setInferPoolRef(`pool:${pool.code}`);
+                setInferPoolName(pool.name);
+                setInferPoolId(pool.pool_id);
+                setInferPoolPickerOpen(false);
+              }}
+            />
           </div>
         </div>
       )}

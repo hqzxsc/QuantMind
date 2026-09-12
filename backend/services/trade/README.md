@@ -229,8 +229,6 @@
   - `shortable_symbols_count`
   - `last_short_check_at`
 - CI 门禁已纳入以下必跑测试集（`scripts/ops/ci/p2_ci_quality_gate.py`）：
-  - `backend/services/tests/test_qmt_agent_async_reconcile.py`
-  - `backend/services/tests/test_trade_long_short_risk_and_bridge.py`
   - `backend/services/tests/test_trade_long_short_integration_chain.py`
   - `backend/services/tests/test_trade_trading_precheck.py`
 

@@ -73,6 +73,16 @@ def factor_source_dir(source: str = _DEFAULT_SOURCE, market: str = "CN") -> Path
     return reader.source_path(source)
 
 
+def user_dataset_dir(dataset: str = _DEFAULT_SOURCE) -> Path:
+    """用户自定义数据集目录。
+
+    宿主 ``./data/quantcustom/6_ml_datasets/<dataset>/dt=YYYYMMDD/data.parquet``，
+    容器内 ``/data/quantcustom/6_ml_datasets/<dataset>``（QM_QUANTCUSTOM_DATA_DIR）。
+    因子挖掘、历史补全等用户产出写这里，经后台「字段发现 + 草稿发布」后可用于训练。
+    """
+    return factor_source_dir(dataset, market="CUSTOM")
+
+
 def list_factor_partitions(
     source: str = _DEFAULT_SOURCE, market: str = "CN"
 ) -> list[Path]:
@@ -183,11 +193,17 @@ def merge_factor_into_source(
     feature_name: str,
     source: str = _DEFAULT_SOURCE,
     market: str = "CN",
+    *,
+    create_missing: bool = False,
 ) -> int:
     """把单列因子按交易日合并写回 QuantDB 因子分区（原子替换），返回非空值数。
 
     仅触碰因子列覆盖到的 ``dt=`` 分区；symbol 以 6 位代码对齐，
     因此不受 Qlib（sh600036）/QuantDB（600036.SH）口径差异影响。
+
+    因子挖掘/历史补全等用户产出应写用户自定义数据集（``market="CUSTOM"``，
+    即 ``QM_QUANTCUSTOM_DATA_DIR/6_ml_datasets/<source>``），不要写官方库。
+    ``create_missing=True`` 时分区不存在会新建（仅含 symbol/date/因子列）。
     """
     if factor_df is None or factor_df.empty:
         return 0
@@ -212,17 +228,28 @@ def merge_factor_into_source(
     total = 0
     for dt_str, group in df.groupby("_dt"):
         part = root / f"dt={dt_str}" / "data.parquet"
-        if not part.is_file():
+        pair = group[["symbol", "_code6", feature_name]].drop_duplicates("_code6")
+        if part.is_file():
+            base = pd.read_parquet(part, engine="pyarrow")
+            base["_code6"] = base["symbol"].map(_code6)
+            base = base.drop(columns=[feature_name], errors="ignore")
+            merged = base.merge(
+                pair[["_code6", feature_name]], on="_code6", how="left"
+            ).drop(columns=["_code6"])
+        elif create_missing:
+            part.parent.mkdir(parents=True, exist_ok=True)
+            merged = pd.DataFrame(
+                {
+                    "symbol": pair["symbol"].map(
+                        lambda v: StockCodeUtil.to_suffix(str(v))
+                    ),
+                    "date": pd.to_datetime(dt_str),
+                    feature_name: pair[feature_name].to_numpy(),
+                }
+            ).drop_duplicates("symbol")
+        else:
             logger.warning("分区不存在，跳过合并: %s", part)
             continue
-        base = pd.read_parquet(part, engine="pyarrow")
-        base["_code6"] = base["symbol"].map(_code6)
-        base = base.drop(columns=[feature_name], errors="ignore")
-        merged = base.merge(
-            group[["_code6", feature_name]].drop_duplicates("_code6"),
-            on="_code6",
-            how="left",
-        ).drop(columns=["_code6"])
         tmp = part.parent / f".tmp-{part.name}"
         try:
             merged.to_parquet(tmp, index=False, engine="pyarrow")
@@ -230,5 +257,11 @@ def merge_factor_into_source(
         finally:
             tmp.unlink(missing_ok=True)
         total += int(merged[feature_name].notna().sum())
-    logger.info("因子 %s 已合并回 QuantDB %s: %d 个非空值", feature_name, source, total)
+    logger.info(
+        "因子 %s 已合并回 QuantDB[%s] %s: %d 个非空值",
+        feature_name,
+        market,
+        source,
+        total,
+    )
     return total

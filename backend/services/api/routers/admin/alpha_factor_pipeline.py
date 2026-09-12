@@ -4,7 +4,7 @@
 1. 从 rd_agent_factors 读取因子
 2. 提取 Qlib 表达式
 3. 用 Qlib 计算因子值
-4. 合并回 QuantDB 因子分区 (6_ml_datasets/l1_factors)
+4. 写入用户自定义数据集 (data/quantcustom/6_ml_datasets/l1_factors)
 5. 注册到特征目录 (qm_feature_*)
 """
 
@@ -34,8 +34,9 @@ router = APIRouter(
 )
 
 # ── 路径配置 ──
-# 因子写回统一走 QuantDB 因子分区（6_ml_datasets/l1_factors），
-# 不再写 db/feature_snapshots/model_features_*.parquet 旧入口。
+# 因子挖掘/历史补全属用户产出，统一写用户自定义数据集
+# （data/quantcustom/6_ml_datasets/l1_factors），不写官方 QuantDB，也不再写
+# db/feature_snapshots/model_features_*.parquet 旧入口。
 # Qlib 目录统一走 qlib_paths 解析（固定目录优先）
 try:
     from backend.shared.qlib_paths import resolve_qlib_provider_uri
@@ -165,20 +166,26 @@ def compute_factor_via_qlib(expression: str, feature_name: str) -> pd.DataFrame:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# QuantDB 因子分区合并
+# 用户自定义数据集写入
 # ═══════════════════════════════════════════════════════════════════
 
 
 def merge_factor_into_parquet(factor_df: pd.DataFrame, feature_name: str) -> int:
-    """将因子列合并回 QuantDB l1_factors 分区，返回非空值数。
+    """将因子列写入用户自定义数据集，返回非空值数。
 
-    仅追加/覆盖单列，按 6 位代码对齐 symbol，兼容 Qlib（sh600036）与
-    QuantDB（600036.SH）两种口径。旧的 model_features parquet 入口已废弃。
+    因子挖掘与历史补全是用户产出，落 ``data/quantcustom/6_ml_datasets/l1_factors``
+    （CUSTOM 市场），不写官方 QuantDB ``6_ml_datasets/l1_factors``。仅追加/覆盖单列，
+    按 6 位代码对齐 symbol；分区不存在时按 (symbol,date) 新建，之后经后台
+    「字段发现 + 草稿发布」注册为可用训练源。
     """
     from backend.shared.feature_source import merge_factor_into_source
 
     return merge_factor_into_source(
-        factor_df, feature_name, source="l1_factors", market="CN"
+        factor_df,
+        feature_name,
+        source="l1_factors",
+        market="CUSTOM",
+        create_missing=True,
     )
 
 
@@ -285,7 +292,7 @@ async def promote_factors(req: PromoteRequest):
     流程：
     1. 从 rd_agent_factors 读取因子
     2. 提取 Qlib 表达式
-    3. 计算因子值并合并回 QuantDB 因子分区
+    3. 计算因子值并写入用户自定义数据集
     4. 注册到特征目录
     5. 可选：自动触发训练
     """
@@ -337,7 +344,7 @@ async def promote_factors(req: PromoteRequest):
             # 3. 计算因子值
             factor_df = compute_factor_via_qlib(expression, feature_key)
 
-            # 4. 合并回 QuantDB 因子分区
+            # 4. 写入用户自定义数据集
             non_null = merge_factor_into_parquet(factor_df, feature_key)
 
             # 5. 注册到特征目录

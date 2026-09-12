@@ -26,21 +26,21 @@ class TestStreamAppCreation:
         """验证 /health 端点已注册"""
         from backend.services.stream.main import app
 
-        routes = [r.path for r in app.routes]
+        routes = [getattr(r, "path", None) for r in app.routes]
         assert "/health" in routes
 
     def test_root_endpoint_registered(self):
         """验证 / 端点已注册"""
         from backend.services.stream.main import app
 
-        routes = [r.path for r in app.routes]
+        routes = [getattr(r, "path", None) for r in app.routes]
         assert "/" in routes
 
     def test_websocket_endpoint_registered(self):
         """验证 /ws WebSocket 端点已注册"""
         from backend.services.stream.main import app
 
-        ws_routes = [r.path for r in app.routes if hasattr(r, "path")]
+        ws_routes = [getattr(r, "path", None) for r in app.routes]
         assert "/ws" in ws_routes, f"未找到 /ws 端点，当前路由: {ws_routes}"
 
     def test_cors_middleware_configured(self):
@@ -57,7 +57,8 @@ class TestStreamRouterRegistration:
     def _get_route_paths(self):
         from backend.services.stream.main import app
 
-        return [r.path for r in app.routes if hasattr(r, "path")]
+        # 新版 FastAPI included router 不展开为带 path 的 Route，统一用 OpenAPI 路径。
+        return list(app.openapi().get("paths", {}).keys())
 
     def test_quotes_routes_registered(self):
         """验证行情查询路由已注册"""

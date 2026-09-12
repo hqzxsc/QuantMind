@@ -161,8 +161,8 @@ class TestComputeRollingSignals:
         assert [b["symbol"] for b in result["buys"]] == ["000001.SZ"]
 
 
-GET_REDIS_PATH = "backend.services.trade.redis_client.get_redis"
-ROLLING_MODULE = "backend.services.trade.services.tdx_rolling_trade_service"
+GET_REDIS_PATH = "backend.services.trade_shared.redis_client.get_redis"
+ROLLING_MODULE = "backend.services.live_trading.services.tdx_rolling_trade_service"
 
 
 def _redis_holding(saved: dict | None):
@@ -222,7 +222,7 @@ class TestLoadPositionsFromPaper:
         fake_manager = MagicMock()
         fake_manager.get_account = AsyncMock(return_value=account)
         with patch(
-            "backend.services.trade.services.simulation_manager.SimulationAccountManager",
+            "backend.services.trade_shared.simulation_manager.SimulationAccountManager",
             return_value=fake_manager,
         ):
             positions, error = await svc.load_positions_from_paper("default", "00000001")
@@ -240,7 +240,7 @@ class TestLoadPositionsFromPaper:
         fake_manager = MagicMock()
         fake_manager.get_account = AsyncMock(return_value=None)
         with patch(
-            "backend.services.trade.services.simulation_manager.SimulationAccountManager",
+            "backend.services.trade_shared.simulation_manager.SimulationAccountManager",
             return_value=fake_manager,
         ):
             _, error = await svc.load_positions_from_paper("default", "00000001")
@@ -272,7 +272,7 @@ class TestRunRollingPushExecuteMode:
                 return_value={"buys": buys, "sells": sells, "holds": []}
             )),
             patch(
-                "backend.services.trade.services.tdx_signal_push_service._batch_lookup_names",
+                "backend.services.live_trading.services.tdx_signal_push_service._batch_lookup_names",
                 new=MagicMock(return_value={}),
             ),
             patch.object(svc, "place_paper_orders", new=AsyncMock(return_value=(buys, []))),
@@ -345,7 +345,7 @@ class TestRunRollingPushExecuteMode:
                 return_value={"buys": [], "sells": [], "holds": []}
             )),
             patch(
-                "backend.services.trade.services.tdx_signal_push_service._batch_lookup_names",
+                "backend.services.live_trading.services.tdx_signal_push_service._batch_lookup_names",
                 new=MagicMock(return_value={}),
             ),
         ):

@@ -26,14 +26,14 @@ class TestAPIAppCreation:
         """验证 /health 端点已注册"""
         from backend.services.api.main import app
 
-        routes = [r.path for r in app.routes]
+        routes = [getattr(r, "path", None) for r in app.routes]
         assert "/health" in routes
 
     def test_root_endpoint_registered(self):
         """验证 / 端点已注册"""
         from backend.services.api.main import app
 
-        routes = [r.path for r in app.routes]
+        routes = [getattr(r, "path", None) for r in app.routes]
         assert "/" in routes
 
     def test_cors_middleware_configured(self):
@@ -50,7 +50,8 @@ class TestAPIRouterRegistration:
     def _get_route_paths(self):
         from backend.services.api.main import app
 
-        return [r.path for r in app.routes if hasattr(r, "path")]
+        # 新版 FastAPI included router 不展开为带 path 的 Route，统一用 OpenAPI 路径。
+        return list(app.openapi().get("paths", {}).keys())
 
     def test_auth_routes_registered(self):
         """验证认证路由已注册"""

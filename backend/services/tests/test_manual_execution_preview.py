@@ -88,7 +88,7 @@ def test_build_execution_plan_applies_fundamental_constraints_and_keeps_explicit
     ]
 
     monkeypatch.setattr(
-        "backend.services.trade.services.manual_execution_service.fundamental_aligner.filter_instruments",
+        "backend.services.live_trading.services.manual_execution_service.fundamental_aligner.filter_instruments",
         lambda _dt, symbols, constraints=None: [s for s in symbols if s == "600001.SH"],
     )
 
@@ -241,7 +241,7 @@ async def test_create_hosted_task_uses_latest_default_model_run_and_db_signals(m
         }
 
     monkeypatch.setattr(
-        "backend.services.trade.services.manual_execution_service._build_execution_plan_from_signals",
+        "backend.services.live_trading.services.manual_execution_service._build_execution_plan_from_signals",
         _fake_plan,
     )
     monkeypatch.setattr(service, "_persist_task", AsyncMock(return_value={"task_id": "hosted_1", "status": "queued"}))
@@ -382,7 +382,7 @@ async def test_get_default_model_hosted_status_distinguishes_latest_run_reasons(
         lambda **kwargs: (date(2026, 4, 11), date(2026, 4, 17)),
     )
     monkeypatch.setattr(
-        "backend.services.trade.services.manual_execution_service.datetime",
+        "backend.services.live_trading.services.manual_execution_service.datetime",
         SimpleNamespace(
             now=lambda _tz=None: SimpleNamespace(date=lambda: date(2026, 4, 14))
         ),
@@ -434,7 +434,7 @@ async def test_get_default_model_hosted_status_accepts_explicit_system_model(mon
         lambda **kwargs: (date(2026, 4, 11), date(2026, 4, 17)),
     )
     monkeypatch.setattr(
-        "backend.services.trade.services.manual_execution_service.datetime",
+        "backend.services.live_trading.services.manual_execution_service.datetime",
         SimpleNamespace(
             now=lambda _tz=None: SimpleNamespace(date=lambda: date(2026, 4, 14))
         ),

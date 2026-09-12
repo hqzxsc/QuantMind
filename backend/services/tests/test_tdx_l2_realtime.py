@@ -166,7 +166,7 @@ def _patched_redis() -> RedisClient:
 class TestL2Config:
     def test_defaults_are_conservative(self):
         # Act: 无 Redis 连接时兜底默认值
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", RedisClient()):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", RedisClient()):
             cfg = load_l2_config()
         # Assert
         assert cfg["enabled"] is False
@@ -179,7 +179,7 @@ class TestL2Config:
         # Arrange
         rc = _patched_redis()
         # Act
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             save_l2_config({"pool_size": 999, "buy_trigger": 70, "enabled": True})
             cfg = load_l2_config()
         # Assert
@@ -191,7 +191,7 @@ class TestL2Config:
         # Arrange
         rc = _patched_redis()
         # Act
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             cfg = save_l2_config({"hack": "x", "buy_trigger": 66})
         # Assert
         assert "hack" not in cfg
@@ -203,7 +203,7 @@ class TestCooldown:
         # Arrange
         redis = MagicMock()
         redis.get.return_value = str(time.time())
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", redis):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", redis):
             # Act
             blocked = is_cooldown("SH600000", cooldown_min=30)
         # Assert
@@ -213,7 +213,7 @@ class TestCooldown:
         # Arrange
         redis = MagicMock()
         redis.get.return_value = str(time.time() - 3600)
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", redis):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", redis):
             # Act
             blocked = is_cooldown("SH600000", cooldown_min=30)
         # Assert
@@ -222,7 +222,7 @@ class TestCooldown:
     def test_set_cooldown_writes_timestamp(self):
         # Arrange
         redis = MagicMock()
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", redis):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", redis):
             # Act
             set_cooldown("SH600000", 30)
         # Assert
@@ -237,7 +237,7 @@ class TestOrderQuotePersistence:
         # Arrange
         rc = _patched_redis()
         # Act
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             from backend.services.live_trading.services.tdx_l2_realtime import (
                 load_order_quotes,
                 load_symbol_quotes,
@@ -250,7 +250,7 @@ class TestOrderQuotePersistence:
                 market_detail="上证 3512.34 vs MA20 3400 (之上)", index_above=True,
             )
         # Assert: 每笔委托一条 + 每只最新一条
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             quotes = load_order_quotes()
             sym_quotes = load_symbol_quotes()
         assert "1001" in quotes
@@ -264,7 +264,7 @@ class TestOrderQuotePersistence:
     def test_merge_order_states_adds_filled_price(self):
         # Arrange
         rc = _patched_redis()
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             from backend.services.live_trading.services.tdx_l2_realtime import (
                 load_order_quotes,
                 merge_order_states,
@@ -280,7 +280,7 @@ class TestOrderQuotePersistence:
                 [{"order_id": "2001", "status": "filled", "filled_price": 10.42, "filled_volume": 200}]
             )
         # Assert: 决策时行情与成交均价双口径并存
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             rec = load_order_quotes()["2001"]
         assert rec["quote_price"] == 10.5
         assert rec["filled_price"] == 10.42
@@ -289,7 +289,7 @@ class TestOrderQuotePersistence:
     def test_merge_ignores_unknown_order(self):
         # Arrange
         rc = _patched_redis()
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             from backend.services.live_trading.services.tdx_l2_realtime import merge_order_states
 
             merge_order_states([{"order_id": "9999", "status": "filled"}])
@@ -311,7 +311,7 @@ class TestInflightRegistry:
         )
 
         # Act
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             save_inflight("SH600000", {"side": "buy", "volume": 100, "order_id": "3001", "plan_id": "p3", "ts": 1.0, "retries": 0})
             rec = load_inflight("SH600000")
             all_records = list_inflight()
@@ -330,7 +330,7 @@ class TestInflightRegistry:
             save_inflight,
         )
 
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             save_inflight("SH600000", {"side": "buy", "volume": 100, "order_id": "a", "ts": 1.0, "retries": 0})
             save_inflight("SZ000001", {"side": "sell", "volume": 100, "order_id": "b", "ts": 1.0, "retries": 0})
             records = list_inflight()
@@ -358,11 +358,11 @@ class TestRetryInflightOrders:
             save_inflight,
         )
 
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             for sym, rec in inflight.items():
                 save_inflight(sym, rec)
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc), \
-             patch("backend.services.trade.services.tdx_l2_realtime.tdx_pusher") as pusher:
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc), \
+             patch("backend.services.live_trading.services.tdx_l2_realtime.tdx_pusher") as pusher:
             pusher.place_order = AsyncMock(
                 return_value={"orders": [{"status": "submitted", "order_id": "9001"}]}
             )
@@ -505,7 +505,7 @@ class TestLoopStability:
         from backend.services.trade.services import tdx_l2_capture_task as cap
         from backend.services.live_trading.services.tdx_l2_realtime import save_l2_config
 
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc):
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
             save_l2_config({
                 "enabled": True, "interval_sec": 1,
                 "buy_trigger": 65, "sell_trigger": 45, "cooldown_min": 0,
@@ -543,11 +543,11 @@ class TestLoopStability:
 
         svc.load_positions_from_tdx = AsyncMock(side_effect=stop_after_cycles)
 
-        with patch("backend.services.trade.services.tdx_l2_realtime.trade_redis", rc), \
-             patch("backend.services.trade.services.tdx_l2_realtime.tdx_pusher") as pusher, \
-             patch("backend.services.trade.services.tdx_l2_realtime.asyncio.sleep", AsyncMock()), \
-             patch("backend.services.trade.services.tdx_rolling_trade_service.TdxRollingTradeService", return_value=svc), \
-             patch("backend.services.trade.services.tdx_rolling_trade_service.load_rolling_config", return_value=("tdx", 10000.0, "tdx")), \
+        with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc), \
+             patch("backend.services.live_trading.services.tdx_l2_realtime.tdx_pusher") as pusher, \
+             patch("backend.services.live_trading.services.tdx_l2_realtime.asyncio.sleep", AsyncMock()), \
+             patch("backend.services.live_trading.services.tdx_rolling_trade_service.TdxRollingTradeService", return_value=svc), \
+             patch("backend.services.live_trading.services.tdx_rolling_trade_service.load_rolling_config", return_value=("tdx", 10000.0, "tdx")), \
              patch("backend.services.trade.services.member_gate.is_paid_member", AsyncMock(return_value=True)), \
              patch("backend.services.trade.services.tdx_l2_capture_task.l2_status", cap.l2_status):
             with pytest.raises(asyncio.CancelledError):

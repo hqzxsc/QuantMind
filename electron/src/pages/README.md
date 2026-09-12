@@ -124,6 +124,7 @@
 - `trading/tabs/SettingsCenter.tsx` 在接收 `access_key/secret_key` 后会统一 `trim()`，避免复制或接口返回内容携带尾随空白影响本地 Agent 配置。
 - `ModelTrainingPage.tsx` 已改为“训练工作台”而非演示页：
   - 页面外壳已对齐回测中心风格，并复用 `config/pageLayout.ts` 的统一边距、标题栏和容器配置；
+  - 第 1 步新增训练股票池选择（`全市场` / `自定义`弹窗，共用 `StockPoolPickerModal`），以 `pool:<code>` 经 `pool_id` 透传后端 `resolve_training_pool` 解析成 DataCfg 池字段，空池拒绝提交；选择持久化进草稿，执行页摘要同步展示；
   - 第 1 步特征选择改为折叠面板，默认展开动量模块，并始终只保留一个模块展开；
   - 第 2 步单独展示 `T+N` 训练目标与标签 horizon，不再复用回测周期字段；
   - 支持 `T+1 / T+3 / T+5 / T+10` 快捷预设，并实时预览标签公式与生效日期；

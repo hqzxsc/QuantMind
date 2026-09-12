@@ -112,6 +112,7 @@
 - QlibQuickBacktest 股票池接入全局股票池（2026-09-12）：
   - 移除 `中证800` 预设，改为 5 按钮：`全部 / 沪深300 / 中证500 / 中证1000 / 自定义`（其余预设保持直选不变）。
   - `自定义` 按钮点击弹股票池弹窗（用户态 `GET /api/v1/stock-pools/options`，自定义在上、内置在下），选择后以 `pool:<code>` 经 `pool_id` 透传后端解析物化，优先于 universe。
+  - 弹窗已抽为共用组件 `StockPoolPickerModal`（回测 / 训练共用），数据服务为 `services/stockPoolOptionService.ts`。
 - 回测历史导出能力增强（2026-03-11）：
   - 历史列表操作区统一为两种导出：`导出CSV` 与 `导出JSON`。
   - `导出CSV` 保持走后端导出接口；`导出JSON` 直接导出该回测 `getResult` 的原始 JSON 数据，便于排障与复盘。

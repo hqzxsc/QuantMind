@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Brain, ChevronRight, Play, Settings2, BarChart, Database,
-  Copy, Sparkles, RefreshCcw, Target, Upload
+  Copy, Sparkles, RefreshCcw, Target, Upload, Layers
 } from 'lucide-react';
 import {
   Button, Space, Tag, Typography, message, Card, Select, Modal, Alert, Tooltip
@@ -19,6 +19,8 @@ import { TrainingTarget, TrainingParams, TrainingContext, TrainingStatus, Traini
 import { AdminModelFeatureDataCoverage, QuantDBTrainingSource } from '../features/admin/types';
 import { adminService } from '../features/admin/services/adminService';
 import { FeatureSelector } from './training/FeatureSelector';
+import { StockPoolPickerModal } from '../components/backtest/StockPoolPickerModal';
+import type { StockPoolOption } from '../services/stockPoolOptionService';
 import { TrainingTargetConfig } from './training/TrainingTargetConfig';
 import { ParameterConfig } from './training/ParameterConfig';
 import { TrainingConsole } from './training/TrainingConsole';
@@ -68,6 +70,10 @@ interface FormState {
   displayName: string;
   displayNameMode: 'auto' | 'manual';
   draftHydrated: boolean;
+  /** 股票池引用（如 pool:csi300），为空表示全市场训练 */
+  poolRef: string | null;
+  poolName: string | null;
+  poolId: string | null;
 }
 
 interface ImportPreview {
@@ -86,6 +92,7 @@ type FormAction =
   | { type: 'SET_CONTEXT'; payload: TrainingContext }
   | { type: 'SET_DISPLAY_NAME'; payload: { name: string; mode: 'auto' | 'manual' } }
   | { type: 'SET_WFA'; payload: WfaConfig }
+  | { type: 'SET_POOL'; payload: { ref: string | null; name: string | null; id: string | null } }
   | { type: 'SET_FEATURE_CATEGORIES'; payload: FeatureCategory[] }
   | { type: 'SET_MARKET_CONTEXT'; payload: { market: AppMarket; benchmark: string } };
 
@@ -125,9 +132,14 @@ function formReducer(state: FormState, action: FormAction): FormState {
         displayNameMode: p.displayNameMode || 'auto',
         displayName: p.displayName || state.displayName,
         wfaConfig: restoredWfa,
+        poolRef: p.poolRef || null,
+        poolName: p.poolName || null,
+        poolId: p.poolId || null,
         draftHydrated: true,
       };
     }
+    case 'SET_POOL':
+      return { ...state, poolRef: action.payload.ref, poolName: action.payload.name, poolId: action.payload.id };
     case 'SET_FEATURES':
       return { ...state, selectedFeatures: action.payload };
     case 'SET_TIME':
@@ -170,6 +182,9 @@ export const ModelTrainingPage: React.FC = () => {
     context: DEFAULT_CONTEXT,
     displayName: buildAutoDisplayName(dayjs(), DEFAULT_TARGET, 0, undefined, currentMarket, DEFAULT_PARAMS.model_type),
     displayNameMode: 'auto' as const,
+    poolRef: null,
+    poolName: null,
+    poolId: null,
     draftHydrated: false,
   });
 
@@ -199,6 +214,8 @@ export const ModelTrainingPage: React.FC = () => {
   const maxTimeMinutes = 720;
   // 因子筛选开关与阈值（默认开启，后端默认 ic_icir: top-80 / |IC|≥0.01 / |ICIR|≥0.15 / 相关性<0.9）
   const [factorFilter, setFactorFilter] = useState<TrainingFactorFilterConfig>({ ...DEFAULT_FACTOR_FILTER });
+  // 股票池（第一步数据范围）：null 表示全市场训练，否则为 pool:<code> 引用
+  const [poolPickerOpen, setPoolPickerOpen] = useState(false);
 
   const timersRef = useRef<number[]>([]);
   const pollTimerRef = useRef<number | null>(null);
@@ -243,8 +260,8 @@ export const ModelTrainingPage: React.FC = () => {
     ? `${dataCoverage.min_date} ～ ${dataCoverage.max_date}`
     : '等待数据源状态';
   const requestPreview = useMemo(
-    () => buildTrainingRequest(selectedFeatures, featureCategories, timePeriods, target, params, context, displayName, currentMarket, wfaConfig),
-    [selectedFeatures, featureCategories, timePeriods, target, params, context, displayName, currentMarket, wfaConfig]
+    () => buildTrainingRequest(selectedFeatures, featureCategories, timePeriods, target, params, context, displayName, currentMarket, wfaConfig, formState.poolRef),
+    [selectedFeatures, featureCategories, timePeriods, target, params, context, displayName, currentMarket, wfaConfig, formState.poolRef]
   );
   // 训练节点
   const selectedNodeObj = useMemo(
@@ -398,11 +415,14 @@ export const ModelTrainingPage: React.FC = () => {
       params,
       context,
       wfa: wfaConfig,
+      poolRef: formState.poolRef,
+      poolName: formState.poolName,
+      poolId: formState.poolId,
       lastSavedAt: new Date().toISOString(),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
     setDraftSavedAt(draft.lastSavedAt);
-  }, [formState.draftHydrated, displayName, displayNameMode, selectedFeatures, timePeriods, target, params, context, wfaConfig]);
+  }, [formState.draftHydrated, formState.poolRef, formState.poolName, formState.poolId, displayName, displayNameMode, selectedFeatures, timePeriods, target, params, context, wfaConfig]);
 
   const clearTimers = () => {
     timersRef.current.forEach(t => window.clearTimeout(t));
@@ -859,7 +879,38 @@ export const ModelTrainingPage: React.FC = () => {
 
                 <AnimatePresence mode="wait">
                   <motion.div key={currentStep} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
-                    {currentStep === 0 && <FeatureSelector categories={featureCategories} selectedFeatures={selectedFeatures} onChange={(f) => dispatch({ type: 'SET_FEATURES', payload: f })} loading={featureCatalogLoading} onGuide={() => navigate('/admin/training-datasets')} />}
+                    {currentStep === 0 && (
+                      <>
+                        <Card className="rounded-3xl border-slate-200 shadow-sm mb-4" styles={{ body: { padding: 20 } }}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <Layers size={18} className="text-indigo-500" />
+                            <Typography.Title level={4} className="!mb-0 !text-slate-900">训练股票池</Typography.Title>
+                          </div>
+                          <Typography.Paragraph className="!mb-3 !mt-2 !text-xs !text-slate-500 leading-relaxed">
+                            限定训练样本的股票范围。默认全市场；选择自定义池后训练只用池内成分（后端解析，空池拒绝提交）。
+                          </Typography.Paragraph>
+                          <Space wrap>
+                            <Button
+                              type={formState.poolRef ? 'default' : 'primary'}
+                              onClick={() => dispatch({ type: 'SET_POOL', payload: { ref: null, name: null, id: null } })}
+                            >
+                              全市场
+                            </Button>
+                            <Button
+                              type={formState.poolRef ? 'primary' : 'default'}
+                              icon={<Layers size={14} />}
+                              onClick={() => setPoolPickerOpen(true)}
+                            >
+                              {formState.poolRef ? (formState.poolName || formState.poolRef) : '自定义股票池'}
+                            </Button>
+                            {formState.poolRef && (
+                              <Tag color="blue" className="!m-0 font-mono">{formState.poolRef}</Tag>
+                            )}
+                          </Space>
+                        </Card>
+                        <FeatureSelector categories={featureCategories} selectedFeatures={selectedFeatures} onChange={(f) => dispatch({ type: 'SET_FEATURES', payload: f })} loading={featureCatalogLoading} onGuide={() => navigate('/admin/training-datasets')} />
+                      </>
+                    )}
                     {currentStep === 1 && <TrainingTargetConfig target={target} timePeriods={timePeriods} onTargetChange={(t) => dispatch({ type: 'SET_TARGET', payload: t })} onTimeChange={(k, v) => dispatch({ type: 'SET_TIME', key: k, value: v })} dataCoverage={dataCoverage} factorFilter={factorFilter} onFactorFilterChange={setFactorFilter} multiHorizon={(target.horizonDaysList?.length ?? 0) >= 2} />}
                     {currentStep === 2 && <ParameterConfig params={params} context={context} onParamsChange={(p) => dispatch({ type: 'SET_PARAMS', payload: p })} onContextChange={(c) => dispatch({ type: 'SET_CONTEXT', payload: c })} displayName={displayName} onDisplayNameChange={(n, m) => dispatch({ type: 'SET_DISPLAY_NAME', payload: { name: n, mode: m } })} autoDisplayName={autoDisplayName} market={currentMarket} target={target} onTargetChange={(t) => dispatch({ type: 'SET_TARGET', payload: t })} wfa={wfaConfig} onWfaChange={(w) => dispatch({ type: 'SET_WFA', payload: w })} />}
                     {currentStep === 3 && <TrainingConsole trainingStatus={trainingStatus} executionStage={executionStage} progress={progress} logs={logs} backendRunStatus={backendRunStatus} result={result} requestPreview={requestPreview} totalDays={totalDays} trainDays={trainDays} valDays={valDays} testDays={testDays} target={target} factorFilter={factorFilter} onGoToResult={() => setCurrentStep(4)} />}
@@ -915,6 +966,17 @@ export const ModelTrainingPage: React.FC = () => {
           </div>
         )}
       </Modal>
+      <StockPoolPickerModal
+        open={poolPickerOpen}
+        onClose={() => setPoolPickerOpen(false)}
+        selectedPoolId={formState.poolId}
+        market={currentMarket === 'CN' ? 'CN' : undefined}
+        title="训练股票池"
+        onSelect={(pool: StockPoolOption) => {
+          dispatch({ type: 'SET_POOL', payload: { ref: `pool:${pool.code}`, name: pool.name, id: pool.pool_id } });
+          setPoolPickerOpen(false);
+        }}
+      />
     </div>
   );
 };

@@ -216,6 +216,8 @@ export interface TrainingRequestPayload {
   effectiveTradeDate: string;
   trainingWindow: string;
   wfa?: WfaConfig;
+  /** 全局股票池引用（如 pool:csi300），为空表示全市场训练 */
+  pool_id?: string | null;
 }
 
 export interface TrainingResult {
@@ -305,6 +307,10 @@ export interface TrainingDraft {
   params: TrainingParams;
   context: TrainingContext;
   wfa?: WfaConfig;
+  /** 股票池引用（如 pool:csi300），为空表示全市场 */
+  poolRef?: string | null;
+  poolName?: string | null;
+  poolId?: string | null;
   lastSavedAt: string;
 }
 
@@ -1030,6 +1036,7 @@ export const buildTrainingRequest = (
   displayName: string,
   market?: string,
   wfa?: WfaConfig,
+  poolId?: string | null,
 ): TrainingRequestPayload => {
   const finalFeatures = Array.from(new Set(selectedFeatures));
   const labelFormula = buildLabelFormula(target);
@@ -1053,6 +1060,7 @@ export const buildTrainingRequest = (
     effectiveTradeDate,
     trainingWindow,
     wfa: wfa?.enabled ? wfa : undefined,
+    pool_id: poolId?.trim() || null,
   };
 };
 
@@ -1190,6 +1198,12 @@ export const buildBackendTrainingPayload = (
     // Stacking 集成参数
     payload.n_folds = request.params.n_folds ?? 3;
     payload.meta_alpha = request.params.meta_alpha ?? 1.0;
+  }
+
+  // 全局股票池引用：后端 resolve_training_pool 解析成 DataCfg 池字段；
+  // 为空表示全市场训练（保持旧行为）
+  if (request.pool_id?.trim()) {
+    payload.pool_id = request.pool_id.trim();
   }
 
   // WFA 稳定性诊断配置

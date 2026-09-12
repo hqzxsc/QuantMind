@@ -379,6 +379,10 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
         # prediction_mode 永远回落 point，导致训练时选了「收益率分位推理」
         # 但模型 metadata 始终是 point，推理中心提示未启用分位推理。
         "prediction_mode": req.prediction_mode,
+        # 全局股票池引用透传：orchestrator 侧 resolve_training_pool 解析成
+        # DataCfg 池字段（成分在编排器侧解析后随 config.yaml 进容器）。
+        # 为空表示全市场训练（保持旧行为）。
+        "pool_id": str(payload.get("pool_id") or "").strip() or None,
     }
     # Stacking 集成参数 + Optuna 超参搜索 + 截面预处理（显式透传）
     if "n_folds" in payload:
@@ -809,6 +813,11 @@ async def submit_training_job(
 
     tenant_id = str(current_user.get("tenant_id") or "default")
     user_id = str(current_user.get("user_id") or current_user.get("sub") or "unknown")
+
+    # 身份注入：orchestrator 侧 resolve_training_pool 需要 tenant/user 来解析
+    # 用户级私有池（global 池不需要，但带着无副作用）。
+    normalized_payload["tenant_id"] = tenant_id
+    normalized_payload["user_id"] = user_id
 
     # ── 多周期训练：创建 parent job + 每周期一个 child job ──
     horizons = normalized_payload.get("horizons")

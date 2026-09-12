@@ -272,6 +272,9 @@ export const TrainingConsole: React.FC<TrainingConsoleProps> = ({
                   <div className="text-slate-700 font-medium truncate">
                     {requestPreview.selectedFeatures?.length || 0} 个因子 · {requestPreview.context?.benchmark || '000300.SH'}
                   </div>
+                  <div className="mt-1 text-[11px] text-slate-600 truncate" title={requestPreview.pool_id || '全市场'}>
+                    股票池：{requestPreview.pool_id || '全市场'}
+                  </div>
                   {(factorFilter?.enabled ?? DEFAULT_FACTOR_FILTER.enabled) ? (
                     <div className="mt-1 text-[10px] text-amber-600">
                       将按 IC/ICIR 筛选（|IC|≥{factorFilter?.icThreshold ?? DEFAULT_FACTOR_FILTER.icThreshold} · top-{factorFilter?.nTop ?? DEFAULT_FACTOR_FILTER.nTop}）

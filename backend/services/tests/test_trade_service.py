@@ -294,7 +294,7 @@ class TestTradeTenantIsolation:
         from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import trading_orders
 
-        auth = AuthContext(user_id="invalid-user", tenant_id="tenant-a", raw_sub="invalid-user", roles=[])
+        auth = AuthContext(user_id="", tenant_id="tenant-a", raw_sub="", roles=[])
 
         with pytest.raises(HTTPException) as exc:
             await trading_orders.get_order(
@@ -313,7 +313,7 @@ class TestTradeTenantIsolation:
         from backend.services.trade_shared.deps import AuthContext
         from backend.services.trade.routers import trading_history
 
-        auth = AuthContext(user_id="invalid-user", tenant_id="tenant-b", raw_sub="invalid-user", roles=[])
+        auth = AuthContext(user_id="", tenant_id="tenant-b", raw_sub="", roles=[])
 
         with pytest.raises(HTTPException) as exc:
             await trading_history.get_trade(
@@ -372,7 +372,7 @@ class TestTradeTenantIsolation:
 
         monkeypatch.setattr(OrderService, "list_orders", fake_list_orders)
 
-        auth = AuthContext(user_id=1001, tenant_id="tenant-a", raw_sub="1001", roles=[])
+        auth = AuthContext(user_id="1001", tenant_id="tenant-a", raw_sub="1001", roles=[])
         start_date = datetime(2026, 3, 1, 0, 0, 0, tzinfo=timezone.utc)
         end_date = datetime(2026, 3, 19, 23, 59, 59, tzinfo=timezone.utc)
 
@@ -391,7 +391,7 @@ class TestTradeTenantIsolation:
         )
 
         assert captured["tenant_id"] == "tenant-a"
-        assert captured["user_id"] == 1001
+        assert captured["user_id"] == "1001"
         assert captured["start_date"] == start_date
         assert captured["end_date"] == end_date
         assert captured["limit"] == 20
@@ -400,7 +400,7 @@ class TestTradeTenantIsolation:
     @pytest.mark.asyncio
     async def test_simulation_orders_list_orders_forwards_date_range(self, monkeypatch):
         from backend.services.trade_shared.deps import AuthContext
-        from backend.services.trade.routers import simulation_orders
+        from backend.services.simulation.routers import simulation_orders
         from backend.services.simulation.services.order_service import SimOrderService
 
         captured = {}
@@ -431,7 +431,7 @@ class TestTradeTenantIsolation:
 
         monkeypatch.setattr(SimOrderService, "list_orders", fake_list_orders)
 
-        auth = AuthContext(user_id=2002, tenant_id="tenant-b", raw_sub="2002", roles=[])
+        auth = AuthContext(user_id="2002", tenant_id="tenant-b", raw_sub="2002", roles=[])
         start_date = datetime(2026, 3, 1, 0, 0, 0, tzinfo=timezone.utc)
         end_date = datetime(2026, 3, 19, 23, 59, 59, tzinfo=timezone.utc)
 
@@ -448,7 +448,7 @@ class TestTradeTenantIsolation:
         )
 
         assert captured["tenant_id"] == "tenant-b"
-        assert captured["user_id"] == 2002
+        assert captured["user_id"] == "2002"
         assert captured["portfolio_id"] == 22
         assert captured["status"] == "filled"
         assert captured["symbol"] == "600519.SH"
@@ -535,7 +535,7 @@ class TestTradeTenantIsolation:
 
         monkeypatch.setattr(TradeService, "list_trades", fake_list_trades)
 
-        auth = AuthContext(user_id=1001, tenant_id="tenant-a", raw_sub="1001", roles=[])
+        auth = AuthContext(user_id="1001", tenant_id="tenant-a", raw_sub="1001", roles=[])
         await trading_history.list_trades(
             trading_mode="real",
             auth=auth,

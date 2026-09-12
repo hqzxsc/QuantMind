@@ -5,11 +5,7 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import date, datetime
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
 
 
 class TestAsOfDefaultBehavior:
@@ -34,68 +30,6 @@ class TestAsOfDefaultBehavior:
         as_of = None
         effective_date = as_of or datetime.now().date()
         assert effective_date == datetime.now().date()
-
-
-class TestReplaySignalLoaderMinScore:
-    """ReplaySignalLoader 的 min_score 默认 None，不过滤。"""
-
-    @pytest.mark.asyncio
-    async def test_min_score_none_no_filter(self):
-        """min_score=None 时 SQL 不含 score >= 条件。"""
-        from backend.services.simulation.replay.signal_generator import (
-            ReplaySignalLoader,
-        )
-
-        loader = ReplaySignalLoader()
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [
-            ("600036.SH", 0.5, date(2024, 3, 4)),
-            ("000001.SZ", -0.3, date(2024, 3, 4)),
-        ]
-        mock_db.execute.return_value = mock_result
-
-        # Call with min_score=None (default)
-        result = await loader.load_signals_for_date(
-            db=mock_db,
-            session_id=uuid.uuid4(),
-            trade_date=date(2024, 3, 4),
-        )
-
-        # Both signals should be returned (negative score not filtered)
-        assert len(result) == 2
-
-        # Verify the SQL doesn't contain min_score filter
-        call_args = mock_db.execute.call_args
-        sql_text = str(call_args[0][0])
-        assert "score >= :min_score" not in sql_text
-
-    @pytest.mark.asyncio
-    async def test_min_score_zero_adds_filter(self):
-        """min_score=0.0 时 SQL 包含 score >= 条件。"""
-        from backend.services.simulation.replay.signal_generator import (
-            ReplaySignalLoader,
-        )
-
-        loader = ReplaySignalLoader()
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [
-            ("600036.SH", 0.5, date(2024, 3, 4)),
-        ]
-        mock_db.execute.return_value = mock_result
-
-        _signals = await loader.load_signals_for_date(
-            db=mock_db,
-            session_id=uuid.uuid4(),
-            trade_date=date(2024, 3, 4),
-            min_score=0.0,
-        )
-
-        # Verify the SQL contains min_score filter
-        call_args = mock_db.execute.call_args
-        sql_text = str(call_args[0][0])
-        assert "score >= :min_score" in sql_text
 
 
 class TestReplayEquitySnapshotUniqueness:

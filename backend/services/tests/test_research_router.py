@@ -48,8 +48,8 @@ def test_format_candidate_record_keeps_missing_returns_nullable():
         }
     )
 
-    assert payload["nextDayReturn"] is None
-    assert payload["day3Return"] is None
+    assert payload["return1d"] is None
+    assert payload["return3d"] is None
 
 
 def test_format_candidate_record_keeps_bidirectional_volume_trend():
@@ -154,8 +154,8 @@ async def test_do_get_overview_uses_run_date_market_snapshot(monkeypatch):
 
     item = result["items"][0]
     assert item["latestChange"] == pytest.approx(10.0)
-    assert item["nextDayReturn"] == pytest.approx(-1.96443007)
-    assert item["day3Return"] == pytest.approx(-4.34)
+    assert item["return1d"] == pytest.approx(-0.0196443007)
+    assert item["return3d"] == pytest.approx(-0.0434)
     assert "sdl_run.trade_date = snap.data_trade_date" in captured["sql"]
     assert "LEAD(sdl.close, 1)" in captured["sql"]
     assert "LEAD(sdl.close, 3)" in captured["sql"]

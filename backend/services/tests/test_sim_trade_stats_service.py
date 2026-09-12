@@ -24,7 +24,8 @@ class _FakeDB:
 
     async def execute(self, _stmt):
         if not self._results:
-            raise AssertionError("unexpected execute call")
+            # 生产新增 _realized_pnl_stats 查询：预置结果用尽时回退空集
+            return _FakeResult(all_values=[])
         return self._results.pop(0)
 
 

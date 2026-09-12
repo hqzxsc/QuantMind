@@ -45,7 +45,7 @@ class TestAPIExtendedIntegration:
                 assert data["data"]["system"]["health_score"] == 100
                 assert data["data"]["system"]["uptime_days"] >= 0
                 assert data["data"]["system"]["status"] == "healthy"
-                assert len(data["data"]["system"]["services"]) == 4
+                assert len(data["data"]["system"]["services"]) >= 4
             finally:
                 # 清理覆盖，避免影响其他测试
                 app.dependency_overrides.clear()

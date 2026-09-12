@@ -10,12 +10,15 @@
 --
 -- 本脚本幂等，可重复执行。DO 块单事务；逐表异常隔离，老版本缺表时跳过。
 -- 注意：整数型 user_id 列（strategies/replay_sessions 等存 users.id）不受
--- 影响，无需处理。Redis ':admin' 键与 JWT 刷新不在 SQL 范围
+-- 影响，无需处理。Redis 键与 JWT 刷新不在 SQL 范围
 --（latest 指针带 24h TTL，训练 active 标记下次运行覆盖；用户重登一次即可），
 -- 全量迁移（含 Redis/池目录）请跑 backend/scripts/migrate_legacy_user_ids.py。
 --
 -- FK 说明：4 个指向 users(user_id) 的约束为即时检查，子表先改则子侧校验
 -- 失败、父表先改则父侧校验失败，故先卸后建（原名，与 db_init.sql 一致）。
+--
+-- 写法约束：全文件不得出现百分号字符（psycopg2 fallback 路径会误解析，
+-- 故用 quote_ident 拼接 + NOTICE 字符串连接）。
 
 DO $$
 DECLARE
@@ -34,9 +37,10 @@ BEGIN
     -- 1. 卸 FK（IF EXISTS，老库无约束也不报错）
     FOREACH f SLICE 1 IN ARRAY fk LOOP
         BEGIN
-            EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', f[1], f[2]);
+            EXECUTE 'ALTER TABLE ' || quote_ident(f[1])
+                || ' DROP CONSTRAINT IF EXISTS ' || quote_ident(f[2]);
         EXCEPTION WHEN OTHERS THEN
-            RAISE NOTICE 'upgrade_v1.0.6: drop FK % skipped: %', f[2], SQLERRM;
+            RAISE NOTICE 'upgrade_v1.0.6 drop FK skipped';
         END;
     END LOOP;
 
@@ -49,13 +53,15 @@ BEGIN
         ORDER BY table_name
     LOOP
         BEGIN
-            EXECUTE format('UPDATE %I SET user_id = ''00000001'' WHERE user_id = ''admin''', t);
+            EXECUTE 'UPDATE ' || quote_ident(t)
+                || ' SET user_id = ' || quote_literal('00000001')
+                || ' WHERE user_id = ' || quote_literal('admin');
             GET DIAGNOSTICS n = ROW_COUNT;
             IF n > 0 THEN
-                RAISE NOTICE 'upgrade_v1.0.6: %: % rows admin→00000001', t, n;
+                RAISE NOTICE 'upgrade_v1.0.6 sweep done';
             END IF;
         EXCEPTION WHEN OTHERS THEN
-            RAISE NOTICE 'upgrade_v1.0.6: sweep % skipped: %', t, SQLERRM;
+            RAISE NOTICE 'upgrade_v1.0.6 sweep skipped';
         END;
     END LOOP;
 
@@ -64,21 +70,20 @@ BEGIN
         UPDATE users SET user_id = '00000001' WHERE user_id = 'admin';
         GET DIAGNOSTICS n = ROW_COUNT;
         IF n > 0 THEN
-            RAISE NOTICE 'upgrade_v1.0.6: users: % rows admin→00000001', n;
+            RAISE NOTICE 'upgrade_v1.0.6 users row fixed';
         END IF;
     EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE 'upgrade_v1.0.6: sweep users skipped: %', SQLERRM;
+        RAISE NOTICE 'upgrade_v1.0.6 sweep users skipped';
     END;
 
     -- 4. 原名建回 FK
     FOREACH f SLICE 1 IN ARRAY fk LOOP
         BEGIN
-            EXECUTE format(
-                'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (user_id) REFERENCES users(user_id)',
-                f[1], f[2]
-            );
+            EXECUTE 'ALTER TABLE ' || quote_ident(f[1])
+                || ' ADD CONSTRAINT ' || quote_ident(f[2])
+                || ' FOREIGN KEY (user_id) REFERENCES users(user_id)';
         EXCEPTION WHEN OTHERS THEN
-            RAISE NOTICE 'upgrade_v1.0.6: add FK % skipped: %', f[2], SQLERRM;
+            RAISE NOTICE 'upgrade_v1.0.6 add FK skipped';
         END;
     END LOOP;
 END $$;

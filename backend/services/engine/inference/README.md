@@ -65,11 +65,11 @@
 
 执行器统一为 `InferenceRouterService + InferenceScriptRunner`，并支持用户模型动态解析：
 
-1. 解析优先级：`显式 model_id > 策略绑定 > 用户默认 > model_qlib > alpha158`
+1. 解析优先级：`显式 model_id > 策略绑定 > 用户默认`
 2. 用户模型目录：`models/users/{tenant}/{user}/{model_id}`
-3. 系统主模型目录：`models/production/model_qlib`，主数据源：`db/qlib_data`
-4. 系统兜底模型目录：`models/production/alpha158`，兜底数据源：`db/qlib_data`（运行时会解析为 `/app/db/qlib_data`）
-5. 用户模型失败时会回落系统链路，保持 `model_qlib -> alpha158` 兜底
+3. 系统主模型/兜底模型 `model_qlib`、`alpha158` 已废弃：不再有隐式系统模型；
+   仅在显式配置 `PRIMARY_MODEL_ID/FALLBACK_MODEL_ID` 与对应目录时生效
+4. 用户模型失败时不再回落系统链路
 4. 结果统一写入 `engine_feature_runs/engine_signal_scores` 并写 Redis 完成标记 `qm:inference:completed:{prediction_trade_date}`
 5. 同步写入最新可消费版本键 `qm:signal:latest:{tenant_id}:{user_id}`，交易侧 runner 会据此丢弃旧 `run_id` 的过期信号，确保只消费最新推理结果
 5. 脚本写库链路在 `DATABASE_URL` 为 `postgresql+asyncpg://...` 时，会自动转换为同步驱动 `postgresql+psycopg2://...` 执行写入，避免 `greenlet_spawn` 异常

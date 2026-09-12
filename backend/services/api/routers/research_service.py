@@ -1126,10 +1126,6 @@ async def _do_get_overview(
 def _humanize_model_name(model_id: str) -> str:
     if not model_id:
         return "Unknown Model"
-    if model_id == "alpha158":
-        return "Alpha158 (Baseline)"
-    if model_id == "model_qlib":
-        return "Qlib LightGBM"
     if model_id.startswith("mdl_train_"):
         parts = model_id.split("_")
         if len(parts) >= 3:

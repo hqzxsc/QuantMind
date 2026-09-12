@@ -30,7 +30,7 @@ QuantMind 融合模型推理脚本 (inference_ensemble_src.py)
 exit code：
     0  = 成功
     1  = 致命错误（模型/配置损坏）
-    2  = 该日期无可用数据（触发 alpha158 兜底）
+    2  = 该日期无可用数据（触发兜底）
 """
 from __future__ import annotations
 

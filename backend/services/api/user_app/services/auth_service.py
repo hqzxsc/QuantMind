@@ -498,13 +498,10 @@ class AuthService:
 
             logger.info(f"User registered: {user_id}")
 
-        # 为新用户自动注册系统模型
+        # 为新用户自动注册系统模型（若配置了 PRIMARY_MODEL_ID）
         try:
             from backend.shared.model_registry import model_registry_service
             await model_registry_service._ensure_system_default_record(
-                tenant_id=user_data.tenant_id, user_id=user_id
-            )
-            await model_registry_service._ensure_fallback_model_record(
                 tenant_id=user_data.tenant_id, user_id=user_id
             )
             logger.info(f"System models registered for user: {user_id}")

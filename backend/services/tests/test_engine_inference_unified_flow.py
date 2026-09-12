@@ -94,15 +94,6 @@ def test_runner_expected_feature_dim_from_metadata_feature_columns(tmp_path: Pat
     assert runner._resolve_expected_feature_dim() == 6
 
 
-def test_runner_alpha158_fallback_defaults_to_qlib_data(tmp_path: Path):
-    model_dir = tmp_path / "model_qlib"
-    model_dir.mkdir(parents=True, exist_ok=True)
-
-    runner = InferenceScriptRunner(models_production=str(model_dir))
-
-    assert runner.fallback_data_dir.endswith("db/qlib_data")
-
-
 def test_runner_can_disable_model_fallback(monkeypatch, tmp_path: Path):
     model_dir = tmp_path / "alpha158"
     model_dir.mkdir(parents=True, exist_ok=True)

@@ -83,10 +83,10 @@ API 进程仅负责入队或同步请求处理，不再保留 `BackgroundTasks` 
 “明日信号生成”支持三种触发方式：管理员手动触发 `POST /api/v1/admin/models/run-inference`、策略激活后按当前 `tenant_id + user_id(8位)` 异步触发一次推理、以及 Celery Beat 00:00 自动兜底 `engine.tasks.auto_inference_if_needed`（周一至周五，见 `celery_config.beat_schedule`）。
 生产部署必须同时运行 `celery-worker` 与 `celery-beat`；仅启动 worker 不会触发 00:00 自动推理。
 如需因硬件压力临时暂停自动推理，可在运行环境设置 `AUTO_INFERENCE_ENABLED=false`（仅关闭 Beat 定时调度，不影响手动触发）。
-推理链路已升级为“多用户模型解析 + 系统兜底”：
-- 解析优先级：`显式 model_id > 策略绑定 > 用户默认 > model_qlib > alpha158`
+推理链路已升级为“多用户模型解析”：
+- 解析优先级：`显式 model_id > 策略绑定 > 用户默认`
 - 用户模型目录：`models/users/{tenant_id}/{user_id}/{model_id}`
-- 系统兜底目录：`model_qlib / alpha158`
+- 系统内置 `model_qlib / alpha158` 已废弃，不再有隐式兜底模型
 四条入口统一输出：`fallback_used/fallback_reason/active_model_id/effective_model_id/model_source/active_data_source`；
 `pipeline` 会将这些字段同时保存在 `inference_result` 和 `result_json` 顶层。
 

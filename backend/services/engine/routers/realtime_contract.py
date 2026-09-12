@@ -17,7 +17,7 @@ class FeatureReadyRequest(BaseModel):
     tenant_id: str = "default"
     user_id: str
     trade_date: date
-    model_name: str = "model_qlib"
+    model_name: str = ""
     model_version: str
     feature_version: str
     feature_dim: int = Field(..., ge=1)

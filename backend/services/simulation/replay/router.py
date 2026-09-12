@@ -296,14 +296,14 @@ async def _resolve_model_dir_for_user(
     """解析 model_id 对应的模型目录，并校验可用性。
 
     回放的模型有两类存放位置：
-    - 系统/生产模型：MODELS_PRODUCTION/<model_id>（如 model_qlib、alpha158）
+    - 系统/生产模型：MODELS_PRODUCTION/<model_id>（生产目录下按 id 解析）
     - 用户训练模型：qm_user_models.storage_path（USER_MODELS_ROOT/<tenant>/<user>/<id>）
 
     先查生产目录，再查用户模型注册表。两者都找不到才报错 —— 原实现只查
     生产目录，导致用户选自己训练的模型必然 400「模型不存在」。
 
     抛 HTTPException(400) 而不是静默回落到默认模型：用户以为在跑自选模型、
-    实际跑的是 model_qlib，比直接报错更难排查。
+    实际跑的是默认模型，比直接报错更难排查。
     """
     import json as _json
     import os as _os
@@ -414,7 +414,7 @@ async def create_session(
 
     # model_id 前置校验 + 目录解析。支持生产模型和用户训练模型两类存放位置。
     # 注意不能用 signal_generator._resolve_model_dir —— 它对无效 id 会静默
-    # 回落到 model_qlib，用户以为在跑自选模型，实际跑的是默认模型。
+    # 回落到默认模型，用户以为在跑自选模型，实际跑的是默认模型。
     # code 模式模型可选（策略代码自带 universe，不依赖模型分数）。
     resolved_model_dir: Path | None = None
     if req.model_id:

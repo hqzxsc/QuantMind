@@ -15,7 +15,6 @@ import pandas as pd
 
 # 路径配置
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
-MODELS_DIR = PROJECT_ROOT / "models" / "production" / "model_qlib"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "predictions"
 
 # 导入内部模块
@@ -35,12 +34,14 @@ logging.basicConfig(
 logger = logging.getLogger("BatchPredict")
 
 
-def run_batch_inference(model_id="model_qlib", target_date=None):
+def run_batch_inference(model_id: str = "", target_date=None):
     """
     执行批量推理
-    :param model_id: 模型目录名
+    :param model_id: 模型目录名（必填；原默认 model_qlib 已废弃）
     :param target_date: 推理日期，默认为模型绑定 QuantDB 因子源的最新交易日
     """
+    if not str(model_id or "").strip():
+        raise ValueError("model_id 必填：系统内置 model_qlib 已废弃，请显式指定模型")
     # 1. Load immutable model metadata before choosing a data source.
     loader = ModelLoader(PROJECT_ROOT / "models" / "production")
     loader.load_model(model_id)
@@ -110,9 +111,12 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="model_qlib")
+    parser.add_argument("--model", type=str, default=None, help="模型目录名（必填；原默认 model_qlib 已废弃）")
     parser.add_argument("--date", type=str, default=None)
     args = parser.parse_args()
+
+    if not args.model:
+        parser.error("--model 必填：系统内置 model_qlib 已废弃")
 
     target_dt = pd.to_datetime(args.date) if args.date else None
     run_batch_inference(args.model, target_dt)

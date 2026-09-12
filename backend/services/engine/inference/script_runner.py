@@ -143,7 +143,7 @@ class ExecutionResult:
     run_id: str = ""
     error: str = ""
     signals: list[dict] = field(default_factory=list)
-    fallback_used: bool = False  # True = alpha158 兜底脚本实际执行
+    fallback_used: bool = False  # True = 兜底模型脚本实际执行
     fallback_reason: str = ""  # 触发兜底的原因描述
     failure_stage: str = ""  # main_script/fallback_script/output_parse
     active_model_id: str = ""
@@ -163,6 +163,9 @@ class InferenceScriptRunner:
     2. 兜底模型推理脚本（默认 inference.py）
        - exit 0 → 兜底成功，结果标记 fallback_used=True
        - 非 0   → 兜底失败，返回错误
+
+    注：系统内置 model_qlib/兜底模型已废弃，仅在显式配置
+    fallback_model_dir/fallback_model_id 时兜底才有意义。
     """
 
     # exit code 2: 数据质量不足，触发兜底
@@ -184,33 +187,28 @@ class InferenceScriptRunner:
     ):
         self.enable_fallback = enable_fallback
         # `models_production` 为历史兼容参数，等价于 primary_model_dir。
+        # 系统内置 model_qlib/alpha158 已废弃，不再有隐式默认模型。
         resolved_primary = (
             primary_model_dir
             or models_production
-            or os.getenv("MODELS_PRODUCTION", "/app/models/production/model_qlib")
+            or os.getenv("MODELS_PRODUCTION", "/app/models/production")
         )
         self.primary_model_dir = Path(resolved_primary)
         self.fallback_model_dir = Path(
             fallback_model_dir
-            or os.getenv(
-                "MODELS_FALLBACK_PRODUCTION", "/app/models/production/alpha158"
-            )
+            or os.getenv("MODELS_FALLBACK_PRODUCTION", "/app/models/production")
         )
         self.primary_data_dir = self._normalize_provider_uri(
             str(primary_data_dir or os.getenv("QLIB_PRIMARY_DATA_PATH", ""))
         )
         self.fallback_data_dir = self._normalize_provider_uri(
-            str(
-                fallback_data_dir
-                or os.getenv("QLIB_FALLBACK_DATA_PATH", "")
-            ),
-            prefer_alpha158=True,
+            str(fallback_data_dir or os.getenv("QLIB_FALLBACK_DATA_PATH", ""))
         )
         self.primary_model_id = str(
-            primary_model_id or os.getenv("PRIMARY_MODEL_ID", "model_qlib")
+            primary_model_id or os.getenv("PRIMARY_MODEL_ID", "")
         )
         self.fallback_model_id = str(
-            fallback_model_id or os.getenv("FALLBACK_MODEL_ID", "alpha158")
+            fallback_model_id or os.getenv("FALLBACK_MODEL_ID", "")
         )
         self.primary_script_name = str(
             primary_script_name or os.getenv("INFERENCE_PRIMARY_SCRIPT", "inference.py")
@@ -221,16 +219,13 @@ class InferenceScriptRunner:
         )
 
     @staticmethod
-    def _normalize_provider_uri(
-        provider_uri: str, *, prefer_alpha158: bool = False
-    ) -> str:
+    def _normalize_provider_uri(provider_uri: str) -> str:
         """
         规范化 Qlib provider uri，避免相对路径在子进程 cwd 下被错误解析。
 
         规则：
         1) 若能在候选路径中命中真实目录，返回该绝对路径；
-        2) 相对路径默认转换为 /app/<path>；
-        3) prefer_alpha158 时在候选列表头部追加 metadata 中的默认路径。
+        2) 相对路径默认转换为 /app/<path>。
         """
         raw = str(provider_uri or "").strip()
         if not raw:
@@ -782,7 +777,7 @@ class InferenceScriptRunner:
         persist: bool = True,
         pool_id: str | None = None,
     ) -> ExecutionResult:
-        """执行 inference_alpha158.py 兜底推理脚本。persist=False 时只返回内存信号，不写库不发布。"""
+        """执行兜底模型推理脚本。persist=False 时只返回内存信号，不写库不发布。"""
         fallback_path = self.fallback_model_dir / self.fallback_script_name
         if not fallback_path.is_file():
             return ExecutionResult(
@@ -819,7 +814,7 @@ class InferenceScriptRunner:
             publish_notification(
                 user_id="system",
                 tenant_id="default",
-                title="触发 Alpha158 兜底模型",
+                title="触发兜底模型",
                 content=f"由于 [{fallback_reason}] 触发了兜底机制，请尽快排查主模型和数据状态。",
                 type="system",
                 level="error",
@@ -864,7 +859,7 @@ class InferenceScriptRunner:
                 exit_code=-1,
                 stdout=(exc.stdout or b"").decode("utf-8", errors="replace"),
                 stderr=(exc.stderr or b"").decode("utf-8", errors="replace"),
-                error=f"alpha158 兜底脚本超时 ({_SCRIPT_TIMEOUT_SEC}s)",
+                error=f"兜底模型脚本超时 ({_SCRIPT_TIMEOUT_SEC}s)",
                 run_id=run_id,
                 fallback_used=True,
                 fallback_reason=fallback_reason,
@@ -880,7 +875,7 @@ class InferenceScriptRunner:
                 exit_code=-1,
                 stdout="",
                 stderr="",
-                error=f"alpha158 兜底脚本启动失败: {exc}",
+                error=f"兜底模型脚本启动失败: {exc}",
                 run_id=run_id,
                 fallback_used=True,
                 fallback_reason=fallback_reason,
@@ -893,20 +888,20 @@ class InferenceScriptRunner:
 
         fb_stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
         fb_stderr = (
-            v10_stderr + "\n--- alpha158 fallback ---\n" + (proc.stderr or b"").decode("utf-8", errors="replace")
+            v10_stderr + "\n--- fallback ---\n" + (proc.stderr or b"").decode("utf-8", errors="replace")
         ).strip()
         fb_exitcode = proc.returncode
 
         if fb_exitcode != 0:
             logger.error(
-                f"[InferenceScriptRunner] alpha158 兜底脚本失败 exit={fb_exitcode}, run_id={run_id}"
+                f"[InferenceScriptRunner] 兜底模型脚本失败 exit={fb_exitcode}, run_id={run_id}"
             )
             return ExecutionResult(
                 success=False,
                 exit_code=fb_exitcode,
                 stdout=fb_stdout,
                 stderr=fb_stderr,
-                error=f"alpha158 兜底脚本返回非零退出码: {fb_exitcode}",
+                error=f"兜底模型脚本返回非零退出码: {fb_exitcode}",
                 run_id=run_id,
                 fallback_used=True,
                 fallback_reason=fallback_reason,
@@ -924,7 +919,7 @@ class InferenceScriptRunner:
                 exit_code=0,
                 stdout=fb_stdout,
                 stderr=fb_stderr,
-                error="alpha158 兜底未能写入合法的 JSON 信号数组",
+                error="兜底模型未能写入合法的 JSON 信号数组",
                 run_id=run_id,
                 fallback_used=True,
                 fallback_reason=fallback_reason,
@@ -936,7 +931,7 @@ class InferenceScriptRunner:
             )
 
         logger.info(
-            f"[InferenceScriptRunner] alpha158 兜底成功，{len(signals)} 条信号, run_id={run_id}"
+            f"[InferenceScriptRunner] 兜底模型成功，{len(signals)} 条信号, run_id={run_id}"
         )
         # 兜底路径同样必须过池（否则池过滤会被 exit=2 兜底静默绕过）
         kept, pool_error = self._pool_filter_signals(
@@ -1048,7 +1043,7 @@ class InferenceScriptRunner:
                 run_id = f"run_{date.replace('-', '')}_{uuid.uuid4().hex[:8]}"
                 fallback_reason = f"主模型推理脚本不存在: {script_path}"
                 logger.warning(
-                    "[InferenceScriptRunner] 主模型脚本缺失，触发 alpha158 兜底, run_id=%s, reason=%s",
+                    "[InferenceScriptRunner] 主模型脚本缺失，触发 兜底模型, run_id=%s, reason=%s",
                     run_id,
                     fallback_reason,
                 )
@@ -1128,7 +1123,7 @@ class InferenceScriptRunner:
         if not readiness.get("ready", False):
             fallback_reason = f"主模型维度门禁未通过: {readiness.get('detail', 'N/A')}"
             logger.warning(
-                "[InferenceScriptRunner] 主模型数据维度不足，触发 alpha158 兜底, run_id=%s, reason=%s",
+                "[InferenceScriptRunner] 主模型数据维度不足，触发 兜底模型, run_id=%s, reason=%s",
                 run_id,
                 fallback_reason,
             )
@@ -1237,7 +1232,7 @@ class InferenceScriptRunner:
         exit_code = proc.returncode
 
         if exit_code != 0:
-            # exit code 2 = 数据质量不足 → 尝试 alpha158 兜底
+            # exit code 2 = 数据质量不足 → 尝试 兜底模型
             if exit_code == self._EXIT_DATA_QUALITY:
                 fallback_reason = (
                     stderr.strip().splitlines()[-1]
@@ -1245,7 +1240,7 @@ class InferenceScriptRunner:
                     else "v10 数据质量不足"
                 )
                 logger.warning(
-                    f"[InferenceScriptRunner] v10 数据质量不足 (exit=2)，启动 alpha158 兜底, run_id={run_id}"
+                    f"[InferenceScriptRunner] v10 数据质量不足 (exit=2)，启动 兜底模型, run_id={run_id}"
                 )
                 if not self.enable_fallback:
                     return ExecutionResult(

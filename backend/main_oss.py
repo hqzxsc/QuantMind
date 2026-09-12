@@ -421,6 +421,24 @@ def _ensure_database_schema():
         logger.warning("数据库自动建表失败（不影响启动，后续按需建表）: %s", e)
 
 
+def _upgrade_script_paths() -> list[str]:
+    """升级 SQL 候选路径（去重保序）。
+
+    /app/data 是历史路径；实际部署中 repo data/ 挂载在 /data，
+    只扫 /app/data 会导致升级脚本从不执行（v1.0.6 修）。
+    """
+    import glob as _glob
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for pattern in ("/app/data/upgrade_*.sql", "/data/upgrade_*.sql"):
+        for sql_path in sorted(_glob.glob(pattern)):
+            if sql_path not in seen:
+                seen.add(sql_path)
+                out.append(sql_path)
+    return out
+
+
 def _ensure_upgrade_scripts(env: dict) -> None:
     """执行 /app/data/upgrade_*.sql 增量迁移（system_events、news title 等）。
 
@@ -431,7 +449,7 @@ def _ensure_upgrade_scripts(env: dict) -> None:
     import glob as _glob
     import subprocess as _sp
 
-    for sql_path in sorted(_glob.glob("/app/data/upgrade_*.sql")):
+    for sql_path in _upgrade_script_paths():
         try:
             result = _sp.run(
                 ["psql", "-h", os.getenv("DB_HOST", os.getenv("POSTGRES_HOST", "db")),
@@ -535,8 +553,7 @@ def _ensure_database_schema_python():
                     cur.execute(f.read())
                 logger.info("市场分析表结构自检完成 (Python psycopg2)")
             # 增量升级（system_events、news title 等，幂等）
-            import glob as _glob2
-            for _up in sorted(_glob2.glob("/app/data/upgrade_*.sql")):
+            for _up in _upgrade_script_paths():
                 try:
                     with open(_up, encoding="utf-8") as f:
                         cur.execute(f.read())

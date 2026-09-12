@@ -6,7 +6,7 @@
 规则：
 - 生产目录命中 → 直接用
 - 生产目录未命中 → 查用户模型注册表，用 storage_path 定位
-- 两者都未命中 → 400（不静默回落到 model_qlib，否则用户以为在跑自选模型）
+- 两者都未命中 → 400（不静默回落到 model_demo，否则用户以为在跑自选模型）
 - 目录存在但 metadata.json / 权重文件缺失 → 400（在创建时就拦住，
   不要等后台推理阶段才炸）
 - user_id 有裸数字和 8 位补齐两种形态，都要能查到
@@ -28,7 +28,7 @@ def _resolve(model_id, tenant_id="default", user_id="00000001"):
 
 
 def _write_model_dir(base, model_id, model_file="model.lgb", meta_extra=None):
-    """造一个结构完整的模型目录（metadata.json + 权重文件）。"""
+    """造一个结构完整的模型目录（metadata.json + 权重文件 + pred.parquet）。"""
     d = base / model_id
     d.mkdir(parents=True, exist_ok=True)
     meta = {"framework": "lightgbm", "model_file": model_file}
@@ -36,6 +36,7 @@ def _write_model_dir(base, model_id, model_file="model.lgb", meta_extra=None):
         meta.update(meta_extra)
     (d / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
     (d / model_file).write_bytes(b"fake-weights")
+    (d / "pred.parquet").write_bytes(b"fake-pred")
     return d
 
 
@@ -68,9 +69,9 @@ def fake_registry(monkeypatch):
 
 
 def test_resolves_production_model(prod_root):
-    expected = _write_model_dir(prod_root, "model_qlib")
+    expected = _write_model_dir(prod_root, "model_demo")
 
-    got = _resolve("model_qlib")
+    got = _resolve("model_demo")
 
     assert got == expected
 
@@ -124,8 +125,8 @@ def test_user_id_stripped_variant_is_tried(tmp_path, prod_root, fake_registry):
 
 
 def test_unknown_model_raises_400_not_fallback(prod_root, fake_registry):
-    """关键：即使 model_qlib 存在，未知 id 也要报错而不是回落过去。"""
-    _write_model_dir(prod_root, "model_qlib")
+    """关键：即使 model_demo 存在，未知 id 也要报错而不是回落过去。"""
+    _write_model_dir(prod_root, "model_demo")
 
     with pytest.raises(HTTPException) as exc:
         _resolve("nonexistent_xyz")
@@ -159,20 +160,21 @@ def test_missing_metadata_raises_400(prod_root):
     assert "metadata.json" in str(exc.value.detail)
 
 
-def test_missing_weight_file_raises_400(prod_root):
-    """断链 symlink / 缺权重：创建时就要拦住，别等推理阶段。"""
-    d = prod_root / "no_weights"
+def test_missing_pred_parquet_raises_400(prod_root):
+    """缺少 pred.parquet（回放信号直读历史分数）应在创建时就拦住。"""
+    d = prod_root / "no_pred"
     d.mkdir()
     (d / "metadata.json").write_text(
         json.dumps({"framework": "lightgbm", "model_file": "model.lgb"}),
         encoding="utf-8",
     )
+    (d / "model.lgb").write_bytes(b"fake-weights")
 
     with pytest.raises(HTTPException) as exc:
-        _resolve("no_weights")
+        _resolve("no_pred")
 
     assert exc.value.status_code == 400
-    assert "不可读" in str(exc.value.detail)
+    assert "pred.parquet" in str(exc.value.detail)
 
 
 def test_corrupt_metadata_raises_400(prod_root):

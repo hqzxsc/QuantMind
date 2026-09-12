@@ -19,6 +19,16 @@ from data.splits import _EXECUTION_LAG_DAYS
 logger = logging.getLogger("quantmind.train")
 
 
+def _to_prefix_symbol(sym: str) -> str:
+    """转前缀式（SH600036）：后缀式取点后拼接；其余原样大写。"""
+    s = str(sym or "").strip().upper()
+    if "." in s:
+        code, exch = s.split(".", 1)
+        if code and exch:
+            return exch + code
+    return s
+
+
 def _load_local_parquet(
     local_dir: Path,
     year: int,
@@ -163,6 +173,30 @@ def load_data(
             df["trade_date"].min() if not df.empty else "N/A",
             df["trade_date"].max() if not df.empty else "N/A",
         )
+        # 池尽早过滤（P3）：直读返回全市场（1053 万行），114 列 float64 在
+        # 后续复制展开期峰值会触发容器 mem_limit（Exit 137）；池内成分先过滤，
+        # 后续 downcast/漂移/标签全量受益。直读 symbol 为前缀式。
+        if pool_symbols and market_upper == "CN" and "symbol" in df.columns:
+            _wanted_early = {
+                _to_prefix_symbol(s) for s in pool_symbols if str(s).strip()
+            }
+            if not _wanted_early:
+                raise RuntimeError("pool_symbols 非空但无法解析出任何代码")
+            _before_early = len(df)
+            df = df[
+                df["symbol"].astype(str).str.upper().isin(_wanted_early)
+            ].copy()
+            logger.info(
+                "After early pool filter: %d rows (pool=%d symbols, before=%d)",
+                len(df),
+                len(_wanted_early),
+                _before_early,
+            )
+            if df.empty:
+                raise RuntimeError(
+                    "股票池过滤后无数据：池内标的在训练区间/数据源内无记录"
+                    "（请检查池成分与训练时间窗是否匹配）"
+                )
         # 与 core parquet 分支一致：数值列统一降为 float32，降低内存峰值。
         # Direct QuantDB 读取默认 float64，325 列 × 440 万行 ≈ 11.5GB；
         # 后续 drop/holiday 过滤/sort_values 各复制一次，峰值会突破

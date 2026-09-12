@@ -924,7 +924,8 @@ class TestP3TrainingBridge:
         assert pool_idx < filter_idx
 
     def test_pool_filter_applies_to_all_branches(self):
-        """过滤必须在函数层级（4 空格缩进），否则直读因子源分支会静默训成全市场。"""
+        """函数层级必须有一处池过滤（4 空格缩进），否则直读因子源分支会静默训成全市场。
+        直读分支内的尽早过滤（8 空格）是内存优化，不计入。"""
         from pathlib import Path
 
         lines = (
@@ -934,11 +935,26 @@ class TestP3TrainingBridge:
             / "data"
             / "loading.py"
         ).read_text(encoding="utf-8").splitlines()
-        for line in lines:
-            if "if pool_symbols and market_upper" in line:
-                assert line.startswith("    if ") and not line.startswith("     "), line
-                return
-        raise AssertionError("pool filter block not found")
+        top_level = [
+            line
+            for line in lines
+            if line.startswith("    if pool_symbols") and not line.startswith("     ")
+        ]
+        assert top_level, "missing function-level pool filter"
+
+    def test_pool_early_filter_in_direct_branch(self):
+        """直读分支读后必须尽早过滤，否则 114 列×1053 万行在展开期 OOM（137）。"""
+        from pathlib import Path
+
+        loading = (
+            Path(__file__).resolve().parents[2]
+            / "docker"
+            / "training"
+            / "data"
+            / "loading.py"
+        ).read_text(encoding="utf-8")
+        assert "After early pool filter" in loading
+        assert "_to_prefix_symbol" in loading
 
 
 # ---------------------------------------------------------------------------

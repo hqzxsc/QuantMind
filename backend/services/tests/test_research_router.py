@@ -1,6 +1,4 @@
 import os
-import sys
-import types
 from contextlib import asynccontextmanager
 
 import pytest
@@ -8,11 +6,9 @@ import pytest
 os.environ["DEBUG"] = "false"
 os.environ["debug"] = "false"
 
-auth_module = types.ModuleType("backend.services.api.user_app.middleware.auth")
-auth_module.get_current_user = lambda: {}
-sys.modules.setdefault("backend.services.api.user_app.middleware.auth", auth_module)
-
-from backend.services.api.routers import research
+# 注意：不要向 sys.modules 注入假的 auth 模块（会污染后续 TestClient 用例，
+# 导致 backend.services.api.main 导入 require_admin 失败）。
+from backend.services.api.routers import research  # noqa: E402
 
 
 class _FakeMappingsResult:

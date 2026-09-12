@@ -478,7 +478,11 @@ def run_retry_sync(coro, pusher):
     """同步执行重挂协程并返回 (stats, pusher)。"""
     import asyncio
 
-    return asyncio.get_event_loop().run_until_complete(coro), pusher
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro), pusher
+    finally:
+        loop.close()
 
 
 # ============ 主循环稳定性（桥断/engine断/采集陈旧都不停评分） ============
@@ -614,4 +618,8 @@ def run_loop_sync(coro):
     """同步执行主循环协程（以 CancelledError 退出）。"""
     import asyncio
 
-    asyncio.get_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(coro)
+    finally:
+        loop.close()

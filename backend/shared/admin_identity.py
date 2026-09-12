@@ -32,75 +32,192 @@ _USER_ID_FKS: tuple[tuple[str, str], ...] = (
 )
 
 
-async def fix_admin_user_id(dry_run: bool = False) -> dict[str, Any]:
-    """纠正 admin 的 user_id 为 00000001（幂等，可重复执行）。
+async def _drop_user_id_fks(session) -> None:
+    """卸掉指向 users(user_id) 的 FK（即时检查，任一顺序直接改都会违约束）。"""
+    from sqlalchemy import text as _text
 
-    返回 {"updated": {table: rows}, "users_fixed": bool}。
-    子表先改、users 表最后改（FK 无 ON UPDATE CASCADE，必须保证中间态一致，
-    且整个 sweep 跑在 get_session 的单事务里）。
+    for table, conname in _USER_ID_FKS:
+        try:
+            await session.execute(
+                _text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {conname}")
+            )
+        except Exception as exc:
+            logger.warning("卸 FK %s 跳过: %s", conname, str(exc)[:120])
+
+
+async def _rebuild_user_id_fks(session) -> None:
+    """原名建回 FK（与 db_init.sql 一致：plain REFERENCES，NO ACTION）。"""
+    from sqlalchemy import text as _text
+
+    for table, conname in _USER_ID_FKS:
+        try:
+            await session.execute(
+                _text(
+                    f"ALTER TABLE {table} ADD CONSTRAINT {conname} "
+                    "FOREIGN KEY (user_id) REFERENCES users(user_id)"
+                )
+            )
+        except Exception as exc:
+            logger.warning("建回 FK %s 跳过: %s", conname, str(exc)[:120])
+
+
+async def _char_user_id_tables(session) -> list[str]:
+    """所有字符型 user_id 列的表名（users 除外，调用方自行追加到末尾）。"""
+    from sqlalchemy import text as _text
+
+    tables = (
+        (
+            await session.execute(
+                _text(
+                    "SELECT table_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND column_name='user_id' "
+                    "AND data_type IN ('character varying', 'character', 'text')"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [t for t in sorted(set(tables)) if t != "users"]
+
+
+async def _sweep_one(session, old: str, new: str) -> dict[str, int]:
+    """单映射 old→new：子表先行、users 收尾。调用方保证 FK 已卸、事务未提交。"""
+    from sqlalchemy import text as _text
+
+    updated: dict[str, int] = {}
+    for table in await _char_user_id_tables(session) + ["users"]:
+        try:
+            async with session.begin_nested():
+                n = (
+                    await session.execute(
+                        _text(f"UPDATE {table} SET user_id=:new WHERE user_id=:old"),
+                        {"new": new, "old": old},
+                    )
+                ).rowcount or 0
+        except Exception as exc:
+            logger.warning("纠正 %s 跳过: %s", table, str(exc)[:120])
+            continue
+        if n:
+            updated[table] = n
+            logger.info("纠正 %s: %d 行 %s→%s", table, n, old, new)
+    return updated
+
+
+async def migrate_user_ids(
+    plan: dict[str, str], dry_run: bool = False
+) -> dict[str, Any]:
+    """按 {old: new} 批量迁移 user_id（幂等，可重复执行）。
+
+    单事务：卸 FK → 逐映射 sweep → 建回 FK。空 plan 直接返回。
     """
     from backend.shared.database_manager_v2 import get_session
 
-    report: dict[str, Any] = {"updated": {}, "users_fixed": False, "dry_run": dry_run}
+    report: dict[str, Any] = {"updated": {}, "dry_run": dry_run}
+    if not plan:
+        return report
     async with get_session() as session:
         if not dry_run:
-            # 先卸掉指向 users(user_id) 的 FK（即时检查，任一顺序直接改都会违约束）
-            for table, conname in _USER_ID_FKS:
-                try:
-                    await session.execute(
-                        text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {conname}")
-                    )
-                except Exception as exc:
-                    logger.warning("卸 FK %s 跳过: %s", conname, str(exc)[:120])
-        tables = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT table_name FROM information_schema.columns "
-                        "WHERE table_schema='public' AND column_name='user_id' "
-                        "AND data_type IN ('character varying', 'character', 'text')"
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        ordered = [t for t in sorted(set(tables)) if t != "users"] + ["users"]
-        for table in ordered:
-            try:
-                async with session.begin_nested():
-                    n = (
-                        await session.execute(
-                            text(
-                                f"UPDATE {table} SET user_id=:new "
-                                "WHERE user_id=:old"
-                            ),
-                            {"new": ADMIN_USER_ID, "old": LEGACY_ADMIN_USER_ID},
-                        )
-                    ).rowcount or 0
-            except Exception as exc:
-                logger.warning("纠正 %s 跳过: %s", table, str(exc)[:120])
+            await _drop_user_id_fks(session)
+        for old, new in plan.items():
+            if old == new:
                 continue
-            if n:
-                report["updated"][table] = n
-                if table == "users":
-                    report["users_fixed"] = True
-                logger.info("纠正 %s: %d 行 admin→00000001", table, n)
+            for table, n in (await _sweep_one(session, old, new)).items():
+                report["updated"][table] = report["updated"].get(table, 0) + n
         if not dry_run:
-            # 原名建回 FK（与 db_init.sql 一致：plain REFERENCES，NO ACTION）
-            for table, conname in _USER_ID_FKS:
-                try:
-                    await session.execute(
-                        text(
-                            f"ALTER TABLE {table} ADD CONSTRAINT {conname} "
-                            "FOREIGN KEY (user_id) REFERENCES users(user_id)"
-                        )
-                    )
-                except Exception as exc:
-                    logger.warning("建回 FK %s 跳过: %s", conname, str(exc)[:120])
+            await _rebuild_user_id_fks(session)
         if dry_run:
             await session.rollback()
     return report
+
+
+async def fix_admin_user_id(dry_run: bool = False) -> dict[str, Any]:
+    """纠正 admin 的 user_id 为 00000001（幂等，可重复执行）。
+
+    返回 {"updated": {table: rows}, "users_fixed": bool, "dry_run": bool}。
+    """
+    report = await migrate_user_ids(
+        {LEGACY_ADMIN_USER_ID: ADMIN_USER_ID}, dry_run=dry_run
+    )
+    report["users_fixed"] = bool(report["updated"].get("users"))
+    return report
+
+
+async def find_legacy_users() -> list[dict[str, Any]]:
+    """找出 user_id 不符合 8 位数字规范的存量用户行。"""
+    from sqlalchemy import text as _text
+
+    from backend.shared.database_manager_v2 import get_session
+
+    async with get_session(read_only=True) as session:
+        rows = (
+            await session.execute(
+                _text(
+                    "SELECT id, user_id, username, tenant_id, is_admin FROM users "
+                    "WHERE user_id !~ '^[0-9]{8}$' ORDER BY id"
+                )
+            )
+        ).mappings().all()
+        return [dict(r) for r in rows]
+
+
+async def generate_user_id(session, taken: set[str] | None = None) -> str:
+    """生成唯一的 8 位数字 user_id（与 auth_service._generate_user_id 同算法）。"""
+    import uuid as _uuid
+
+    from sqlalchemy import text as _text
+
+    taken = taken or set()
+    for _ in range(50):
+        candidate = f"{_uuid.uuid4().int % 10**8:08d}"
+        if candidate in taken:
+            continue
+        exists = (
+            await session.execute(
+                _text("SELECT 1 FROM users WHERE user_id=:uid"), {"uid": candidate}
+            )
+        ).scalar()
+        if not exists:
+            taken.add(candidate)
+            return candidate
+    raise ValueError("无法生成唯一的用户ID，请重试")
+
+
+async def plan_legacy_migration() -> dict[str, str]:
+    """为所有不规范 user_id 规划映射：admin 用户名→00000001，其余随机 8 位。
+
+    00000001 被非 admin 占用时抛 ValueError 由调用方处理。
+    """
+    from sqlalchemy import text as _text
+
+    from backend.shared.database_manager_v2 import get_session
+
+    legacy = await find_legacy_users()
+    if not legacy:
+        return {}
+    plan: dict[str, str] = {}
+    async with get_session(read_only=True) as session:
+        taken = {
+            r for (r,) in (
+                await session.execute(_text("SELECT user_id FROM users"))
+            ).all()
+        }
+        for row in legacy:
+            old = str(row["user_id"])
+            if old in plan:
+                continue
+            if str(row.get("username") or "") == ADMIN_USERNAME:
+                new = ADMIN_USER_ID
+                if new in taken and new != old:
+                    raise ValueError(
+                        "00000001 已被非 admin 用户占用，请先手工处理"
+                    )
+            else:
+                new = await generate_user_id(session, taken)
+            taken.add(new)
+            taken.discard(old)
+            plan[old] = new
+    return plan
 
 
 def needs_fix_sync() -> bool:

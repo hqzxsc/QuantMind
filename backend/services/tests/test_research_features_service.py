@@ -36,13 +36,14 @@ class _FakeHub:
         raise RuntimeError("view not found")
 
     def fetch_latest_rows(self, view, symbols, *, dt=None, lookback=None, columns=None):
-        """按视图名返回预置行的 DataFrame（新 QuantDBHub 直读接口）。"""
+        """按视图名返回预置行的 DataFrame（新 QuantDBHub 直读接口）。
+
+        视图不存在时优雅降级为空表（与真实 Hub 行为一致）。
+        """
         import pandas as pd
 
         self.queries.append(f"SELECT * FROM {view}")
-        rows = self._rows_by_view.get(view)
-        if rows is None:
-            raise RuntimeError("view not found")
+        rows = self._rows_by_view.get(view, [])
         df = pd.DataFrame(rows)
         if "symbol" in df.columns:
             wanted = {str(s) for s in symbols}

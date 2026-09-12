@@ -35,6 +35,10 @@ _ALLOWED_ENGINES: frozenset[str] = frozenset({"qlib"})
 
 _DEFAULTS: dict[str, Any] = {
     "universe": None,
+    # 策略股票池（P5）：一行代码限定范围，如 ctx.stock_pool = "pool:csi1000"。
+    # 语义为 universe ∩ 股票池；None/all 时不过滤。解析入口与模拟盘共用
+    # backend.shared.stock_pool.strategy.apply_pool_to_universe。
+    "stock_pool": None,
     "start": None,
     "end": None,
     "cash": None,
@@ -189,6 +193,13 @@ class Context:
                     raise ValueError("universe list must contain non-empty strings")
             else:
                 raise TypeError(f"universe must be str or list[str], got {type(value).__name__}")
+        elif key == "stock_pool":
+            # 用户代码环境只校验格式不查 DB（DB 解析在 runner 侧经 PoolResolver）。
+            from backend.shared.stock_pool.strategy import validate_pool_ref_format
+
+            err = validate_pool_ref_format(value)
+            if err is not None:
+                raise ValueError(err)
         elif key in {"start", "end"}:
             try:
                 _coerce_date(value)

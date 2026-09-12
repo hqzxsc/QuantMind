@@ -1019,6 +1019,89 @@ class TestP3SimulationAndLiveBridge:
 
 
 # ---------------------------------------------------------------------------
+# P5：策略运行环境（一行代码）+ 模拟盘 code 模式
+# ---------------------------------------------------------------------------
+class TestP5StrategyPool:
+    """ctx.stock_pool 与模拟盘 code/signals 双模式的池支持。"""
+
+    def _src(self, rel: str) -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8")
+
+    def test_ctx_accepts_stock_pool_key(self):
+        from backend.services.engine.strategy_lab.sdk.context import Context
+
+        ctx = Context()
+        assert ctx.stock_pool is None
+        ctx.stock_pool = "pool:csi1000"
+        assert ctx.stock_pool == "pool:csi1000"
+        assert ctx.to_config_dict()["stock_pool"] == "pool:csi1000"
+
+    def test_ctx_rejects_bad_pool_ref(self):
+        from backend.services.engine.strategy_lab.sdk.context import Context
+
+        ctx = Context()
+        with pytest.raises(ValueError):
+            ctx.stock_pool = "??? bad ref !!!"
+
+    def test_apply_pool_to_universe_inline(self):
+        from backend.shared.stock_pool.strategy import apply_pool_to_universe
+
+        out = apply_pool_to_universe(
+            ["SH600036", "SZ000001", "SH600000"],
+            "list:SH600036,SH600000",
+            strict=True,
+        )
+        assert out.symbols == ["SH600036", "SH600000"]
+        assert out.dropped == 1
+
+    def test_apply_pool_empty_strict_fails(self):
+        from backend.shared.stock_pool.strategy import apply_pool_to_universe
+
+        with pytest.raises(ValueError):
+            apply_pool_to_universe(["SH600036"], "list:", strict=True)
+
+    def test_apply_pool_zero_intersect_strict_fails(self):
+        from backend.shared.stock_pool.strategy import apply_pool_to_universe
+
+        with pytest.raises(ValueError):
+            apply_pool_to_universe(["SH600036"], "list:SZ000001", strict=True)
+
+    def test_apply_pool_non_strict_keeps_base(self):
+        from backend.shared.stock_pool.strategy import apply_pool_to_universe
+
+        out = apply_pool_to_universe(["SH600036"], "list:", strict=False)
+        assert out.symbols == ["SH600036"]
+        assert out.warnings
+
+    def test_apply_pool_all_passthrough(self):
+        from backend.shared.stock_pool.strategy import apply_pool_to_universe
+
+        out = apply_pool_to_universe(["SH600036"], "all", strict=True)
+        assert out.symbols == ["SH600036"]
+
+    def test_backtest_loop_applies_pool(self):
+        src = self._src("services/engine/strategy_lab/engine/loop.py")
+        assert "apply_pool_to_universe" in src
+        assert "ctx" in src and "stock_pool" in src
+
+    def test_replay_signals_mode_filters_by_pool(self):
+        src = self._src("services/simulation/replay/signal_generator.py")
+        assert "_apply_session_pool_filter" in src
+        assert 'params.get("pool_id")' in src
+
+    def test_replay_code_mode_wired(self):
+        router_src = self._src("services/simulation/replay/router.py")
+        assert 'mode: str = Field(' in router_src
+        assert "code_runner.prepare_session" in router_src
+        assert '"_strategy_code"' in router_src
+        day_src = self._src("services/simulation/replay/day_runner.py")
+        assert "code_runner.run_code_day" in day_src
+        assert "OrderOrigin.CODE" in day_src
+
+
+# ---------------------------------------------------------------------------
 # P4：收敛治理
 # ---------------------------------------------------------------------------
 class TestP4Governance:

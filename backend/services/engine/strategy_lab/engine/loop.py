@@ -95,6 +95,22 @@ def run_backtest(
     else:
         symbols = [str(s) for s in (universe or [])]
 
+    # 全局股票池（P5）：ctx.stock_pool 非空时与 universe 取交集。
+    # 同一套解析入口（shared.stock_pool.strategy），模拟盘 code 模式共用，
+    # 同一行代码两边生效。空池/零交集抛错，不退化全市场。
+    pool_ref = getattr(ctx, "stock_pool", None)
+    if isinstance(pool_ref, str) and pool_ref.strip():
+        from backend.shared.stock_pool.strategy import apply_pool_to_universe
+
+        pool_out = apply_pool_to_universe(symbols, pool_ref, strict=True)
+        symbols = pool_out.symbols
+        if publisher:
+            publisher.publish(
+                Phase.load_data, 15.0,
+                f"pool={pool_out.pool_id} kept={len(symbols)} "
+                f"dropped={pool_out.dropped}",
+            )
+
     if publisher:
         publisher.publish(
             Phase.load_data, 15.0,

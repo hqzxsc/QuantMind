@@ -98,6 +98,15 @@ class CreateSessionRequest(BaseModel):
         description="true=自动执行策略提案；false=手动模式，需先 /propose 再带 confirmed 调 /step",
     )
     stop_loss_pct: float | None = Field(default=None, ge=0, le=1)
+    # P5：执行模式。signals=模型分数+参数调仓（默认，老行为）；
+    # code=跑同一套 Strategy Lab 策略代码（setup/on_bar），需 strategy_code。
+    mode: str = Field(
+        default="signals",
+        description="signals=分数模式；code=策略代码模式（跑同一套 SDK 代码）",
+    )
+    strategy_code: str | None = Field(
+        default=None, description="code 模式的策略代码（setup/on_bar，SDK 口径）"
+    )
 
 
 class ConfirmedOrder(BaseModel):
@@ -392,13 +401,21 @@ async def create_session(
 
     信号直接读模型 pred.parquet（训练产出 + 每日推理回写的全量历史分数），
     无后台信号生成步骤，创建即就绪可直接推演。
+
+    mode=code 时跑同一套 Strategy Lab 策略代码（setup/on_bar），模型可选；
+    策略里的 ``ctx.stock_pool`` 一行与回测同源生效，会话 ``strategy_params``
+    的 ``pool_id`` 仅作缺省（代码里写了以代码为准）。
     """
     if req.start_date >= req.end_date:
         raise HTTPException(400, "start_date 必须 < end_date")
+    mode = (req.mode or "signals").strip().lower()
+    if mode not in ("signals", "code"):
+        raise HTTPException(400, "mode 必须为 signals 或 code")
 
     # model_id 前置校验 + 目录解析。支持生产模型和用户训练模型两类存放位置。
     # 注意不能用 signal_generator._resolve_model_dir —— 它对无效 id 会静默
     # 回落到 model_qlib，用户以为在跑自选模型，实际跑的是默认模型。
+    # code 模式模型可选（策略代码自带 universe，不依赖模型分数）。
     resolved_model_dir: Path | None = None
     if req.model_id:
         resolved_model_dir = await _resolve_model_dir_for_user(
@@ -425,7 +442,43 @@ async def create_session(
     if resolved_model_dir is not None:
         strategy_params["_model_dir"] = str(resolved_model_dir)
 
+    # code 模式：编译策略代码（setup 生效、池解析），失败直接 400 不建会话。
+    # 编译产物缓存在 code_runner 进程内存；进程重启后推演时按 _strategy_code
+    # 自动重编（见 day_runner），故代码原文一并固化进 strategy_params。
+    session_id = uuid.uuid4()
+    if mode == "code":
+        if not (req.strategy_code or "").strip():
+            raise HTTPException(400, "code 模式必须提供 strategy_code")
+        from backend.services.simulation.replay import code_runner
+
+        try:
+            compiled = await asyncio.to_thread(
+                code_runner.prepare_session,
+                session_id,
+                req.strategy_code,
+                market_data=market_data,
+                start=req.start_date,
+                end=req.end_date,
+                cash=float(req.initial_cash),
+                pool_ref=str(strategy_params.get("pool_id") or "").strip() or None,
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        strategy_params["_mode"] = "code"
+        strategy_params["_strategy_code"] = req.strategy_code
+        strategy_params["_window"] = {
+            "start": req.start_date.isoformat(),
+            "end": req.end_date.isoformat(),
+            "cash": float(req.initial_cash),
+        }
+        if compiled.pool_id:
+            strategy_params["_pool_id"] = compiled.pool_id
+            strategy_params["_pool_checksum"] = compiled.pool_checksum
+
     row = ReplaySession(
+        session_id=session_id,
         tenant_id=auth.tenant_id,
         user_id=int(auth.user_id) if auth.user_id.isdigit() else 0,
         name=req.name,
@@ -568,6 +621,8 @@ async def propose_day(
             strategy_params=row.strategy_params,
             stop_loss_pct=row.stop_loss_pct,
             day_index=row.sessions_done,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
         )
     except Exception as exc:
         logger.exception("生成提案失败 session=%s", session_id)
@@ -666,6 +721,7 @@ async def step_session(
                 initial_cash=float(row.initial_cash),
                 match_config=cfg,
                 skip=skip,
+                strategy_params=row.strategy_params,
             )
         else:
             result = await runner.run_day(
@@ -735,6 +791,14 @@ async def delete_session(
     # 清除 Redis 账户
     accounts = ReplayAccountManager(session_id=session_id)
     accounts.drop()
+
+    # code 会话：清除进程内编译缓存
+    try:
+        from backend.services.simulation.replay import code_runner
+
+        code_runner.drop_session(session_id)
+    except Exception:
+        pass
 
     # CASCADE 删除 DB 数据
     await db.delete(row)

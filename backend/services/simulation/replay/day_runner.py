@@ -150,8 +150,9 @@ class ReplayDayRunner:
         # 覆盖 __init__ 中的默认值。不直接修改 self._cfg 以保持构造时的引用不变。
         cfg = match_config or self._cfg
 
+        params = strategy_params or {}
         account_data, signals, bars = await self._prepare_day(
-            db, session_id, trade_date, accounts
+            db, session_id, trade_date, accounts, params
         )
         if account_data is None:
             result.error = "回放账户不存在"
@@ -166,16 +167,31 @@ class ReplayDayRunner:
             account_data = await accounts.get() or {}
 
         # 4. 信号 → 交易指令（day_index 用于调仓周期闸门，首日必建仓）
-        orders = self._build_orders(
-            signals=signals,
-            bars=bars,
-            account_data=account_data,
-            strategy_params=strategy_params or {},
-            approved_orders=approved_orders,
-            day_index=day_index,
-        )
+        # code 模式：跑用户策略代码，orders 自带具体 qty/price。
+        code_info: dict[str, Any] = {}
+        if self._is_code_session(params):
+            orders, code_info = await self._run_code_orders(
+                db, session_id, trade_date, accounts, account_data, bars,
+                params, tenant_id, user_id,
+            )
+            result.signal_count = int(code_info.get("signal_count") or 0)
+        else:
+            orders = self._build_orders(
+                signals=signals,
+                bars=bars,
+                account_data=account_data,
+                strategy_params=params,
+                approved_orders=approved_orders,
+                day_index=day_index,
+            )
 
         # 5. 撮合：先卖后买
+        if self._is_code_session(params):
+            code_origin = OrderOrigin.CODE
+        elif approved_orders is not None:
+            code_origin = OrderOrigin.MANUAL
+        else:
+            code_origin = OrderOrigin.SIGNAL
         for order in sorted(orders, key=lambda o: 0 if o.side == "SELL" else 1):
             await self._execute(
                 db,
@@ -185,9 +201,7 @@ class ReplayDayRunner:
                 bars,
                 order,
                 result,
-                origin=OrderOrigin.MANUAL
-                if approved_orders is not None
-                else OrderOrigin.SIGNAL,
+                origin=code_origin,
                 cfg=cfg,
             )
 
@@ -214,6 +228,7 @@ class ReplayDayRunner:
         initial_cash: float = 0.0,
         match_config: MatchConfig | None = None,
         skip: bool = False,
+        strategy_params: dict[str, Any] | None = None,
     ) -> DayResult:
         """手动模式执行：按已校验的确认清单撮合。
 
@@ -225,7 +240,7 @@ class ReplayDayRunner:
         cfg = match_config or self._cfg
 
         account_data, signals, bars = await self._prepare_day(
-            db, session_id, trade_date, accounts
+            db, session_id, trade_date, accounts, strategy_params
         )
         if account_data is None:
             result.error = "回放账户不存在"
@@ -366,11 +381,15 @@ class ReplayDayRunner:
         session_id: uuid.UUID,
         trade_date: date,
         accounts: ReplayAccountManager,
+        strategy_params: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any] | None, list, dict[str, DailyBar]]:
         """当日准备：T+1 解锁 → 载信号 → 载行情。
 
         run_day / propose_day / execute_day 共用，保证三条路径看到的
         账户、信号、行情完全一致。
+
+        code 模式不载模型分数（signals=[]），wanted 按持仓 ∪ 策略代码
+        symbols 取行情，保证策略标的有 bar 可撮合。
         """
         account_data = await accounts.get()
         if not account_data:
@@ -380,12 +399,22 @@ class ReplayDayRunner:
         account_data = await accounts.get() or {}
 
         held = list((account_data.get("positions") or {}).keys())
-        signals = await self._loader.load_signals_for_date(
-            db=db,
-            session_id=session_id,
-            trade_date=trade_date,
+        params = strategy_params or {}
+        code_symbols: list[str] = []
+        if params.get("_mode") == "code":
+            from backend.services.simulation.replay import code_runner
+
+            code_symbols = code_runner.session_symbols(session_id)
+            signals: list = []
+        else:
+            signals = await self._loader.load_signals_for_date(
+                db=db,
+                session_id=session_id,
+                trade_date=trade_date,
+            )
+        wanted = sorted(
+            set(held) | {s.symbol for s in signals} | set(code_symbols)
         )
-        wanted = sorted(set(held) | {s.symbol for s in signals})
         # 行情直读是同步磁盘 IO，放线程里跑，避免阻塞事件循环
         bars = (
             await asyncio.to_thread(
@@ -396,6 +425,77 @@ class ReplayDayRunner:
         )
         return account_data, signals, bars
 
+    def _is_code_session(self, strategy_params: dict[str, Any] | None) -> bool:
+        return bool((strategy_params or {}).get("_mode") == "code")
+
+    async def _ensure_code_compiled(
+        self,
+        db: AsyncSession,
+        session_id: uuid.UUID,
+        strategy_params: dict[str, Any],
+        tenant_id: str,
+        user_id: str,
+    ) -> Any:
+        """取 code 会话编译产物；进程重启导致缓存丢失时按固化代码自动重编。"""
+        from backend.services.simulation.models.replay import ReplaySession
+        from backend.services.simulation.replay import code_runner
+
+        compiled = code_runner.get_session(session_id)
+        if compiled is not None:
+            return compiled
+        code = str(strategy_params.get("_strategy_code") or "")
+        if not code.strip():
+            raise RuntimeError("code 会话缺少固化的 strategy_code，请重建会话")
+        window = strategy_params.get("_window") or {}
+        row = (
+            (await db.execute(select(ReplaySession).where(ReplaySession.session_id == session_id)))
+            .scalars()
+            .first()
+        )
+        start = window.get("start") or (row.start_date.isoformat() if row else date.today().isoformat())
+        end = window.get("end") or (row.end_date.isoformat() if row else date.today().isoformat())
+        cash = float(window.get("cash") or (row.initial_cash if row else 0.0))
+        return await asyncio.to_thread(
+            code_runner.prepare_session,
+            session_id,
+            code,
+            market_data=self._market_data,
+            start=date.fromisoformat(start[:10]),
+            end=date.fromisoformat(end[:10]),
+            cash=cash,
+            pool_ref=str(strategy_params.get("pool_id") or "").strip() or None,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+
+    async def _run_code_orders(
+        self,
+        db: AsyncSession,
+        session_id: uuid.UUID,
+        trade_date: date,
+        accounts: ReplayAccountManager,
+        account_data: dict[str, Any],
+        bars: dict[str, DailyBar],
+        strategy_params: dict[str, Any],
+        tenant_id: str,
+        user_id: str,
+    ) -> tuple[list[Order], dict[str, Any]]:
+        """code 模式：跑用户 hooks → OrderIntent → Order（具体 qty+开盘价）。"""
+        from backend.services.simulation.replay import code_runner
+
+        await self._ensure_code_compiled(
+            db, session_id, strategy_params, tenant_id, user_id
+        )
+        orders, info = await asyncio.to_thread(
+            code_runner.run_code_day,
+            session_id,
+            trade_date,
+            account_data,
+            bars,
+            self._market_data,
+        )
+        return orders, info
+
     async def propose_day(
         self,
         db: AsyncSession,
@@ -405,6 +505,8 @@ class ReplayDayRunner:
         strategy_params: dict[str, Any] | None = None,
         stop_loss_pct: float | None = None,
         day_index: int = 0,
+        tenant_id: str = "default",
+        user_id: str = "0",
     ) -> dict[str, Any]:
         """生成当日提案，不撮合不落库。
 
@@ -412,8 +514,9 @@ class ReplayDayRunner:
         proposals 每项含 symbol/side/quantity/est_price/origin/cancellable/reason，
         卖出附 avg_cost/est_pnl，买入附 est_amount。
         """
+        params = strategy_params or {}
         account_data, signals, bars = await self._prepare_day(
-            db, session_id, trade_date, accounts
+            db, session_id, trade_date, accounts, params
         )
         if account_data is None:
             return {
@@ -431,23 +534,32 @@ class ReplayDayRunner:
             proposals.extend(scan_stop_loss(account_data, bars, stop_loss_pct))
 
         # 2. 调仓提案 —— 基于「止损之后」的模拟账户，与 auto 模式对齐
+        # code 模式：提案即用户代码当日 orders（est_price 取撮合价口径）。
         sim_account = simulate_fills(account_data, proposals)
-        orders = self._build_orders(
-            signals=signals,
-            bars=bars,
-            account_data=sim_account,
-            strategy_params=strategy_params or {},
-            approved_orders=None,
-            day_index=day_index,
-        )
+        if self._is_code_session(params):
+            code_orders, code_info = await self._run_code_orders(
+                db, session_id, trade_date, accounts, sim_account, bars,
+                params, tenant_id, user_id,
+            )
+            orders = code_orders
+        else:
+            orders = self._build_orders(
+                signals=signals,
+                bars=bars,
+                account_data=sim_account,
+                strategy_params=params,
+                approved_orders=None,
+                day_index=day_index,
+            )
         held_now = sim_account.get("positions") or {}
+        code_mode = self._is_code_session(params)
         for o in sorted(orders, key=lambda x: 0 if x.side == "SELL" else 1):
             item: dict[str, Any] = {
                 "symbol": o.symbol,
                 "side": o.side,
                 "quantity": int(o.quantity),
                 "est_price": round(float(o.price), 4),
-                "origin": "signal",
+                "origin": "code" if code_mode else "signal",
                 "cancellable": True,
                 "reason": o.reason,
             }

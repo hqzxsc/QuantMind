@@ -153,6 +153,50 @@ def _get_pred_day_frame(model_dir: Path, data_day: date) -> pd.DataFrame | None:
 # ---------------------------------------------------------------------------
 
 
+async def _apply_session_pool_filter(
+    signals: list, pool_ref: str, tenant_id: str, user_id: str, session_id: Any,
+) -> list:
+    """按会话股票池裁剪信号（严格语义：空池/零命中返回空）。"""
+    from backend.shared.stock_pool.resolver import (
+        ResolveContext,
+        resolver as pool_resolver,
+    )
+
+    try:
+        snapshot = await asyncio.to_thread(
+            pool_resolver.resolve_sync,
+            pool_ref,
+            ResolveContext(tenant_id=tenant_id, user_id=user_id),
+            strict=False,
+        )
+    except Exception as exc:
+        logger.warning("回放池解析异常 session=%s pool=%s: %s", session_id, pool_ref, exc)
+        return []
+    if snapshot.unfiltered:
+        return signals
+    allowed = set()
+    for s in snapshot.api_symbols or []:
+        try:
+            allowed.add(StockCodeUtil.to_prefix(str(s)))
+        except Exception:
+            continue
+    if not allowed:
+        logger.warning("回放池为空 session=%s pool=%s", session_id, pool_ref)
+        return []
+    kept = []
+    for sig in signals:
+        try:
+            if StockCodeUtil.to_prefix(str(sig.symbol)) in allowed:
+                kept.append(sig)
+        except Exception:
+            continue
+    logger.info(
+        "回放池过滤 session=%s pool=%s kept=%d dropped=%d",
+        session_id, snapshot.pool_id, len(kept), len(signals) - len(kept),
+    )
+    return kept
+
+
 class ReplaySignalLoader:
     """直读模型 pred.parquet 加载指定会话、指定交易日的信号。
 
@@ -251,6 +295,13 @@ class ReplaySignalLoader:
             for i in order
             if min_score is None or float(scores[i]) >= min_score
         ]
+        # 会话股票池（P5）：strategy_params.pool_id 非空时裁剪信号。
+        # 严格语义：空池/零命中返回空（调用方按无信号处理），不退化全市场。
+        pool_ref = str(params.get("pool_id") or "").strip()
+        if pool_ref:
+            result = await _apply_session_pool_filter(
+                result, pool_ref, row.tenant_id, str(row.user_id), session_id
+            )
         return result
 
 

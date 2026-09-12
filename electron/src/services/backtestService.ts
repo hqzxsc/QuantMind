@@ -36,7 +36,8 @@ export interface BacktestConfig {
   qlib_region?: string;
   strategy_type?: string;
   model_id?: string;
-  seed?: number;
+  /** 全局股票池引用（如 pool:csi300），后端优先于 universe 解析 */
+  pool_id?: string;  seed?: number;
   deal_price?: 'open' | 'close';
   is_third_party?: boolean;
   buy_cost?: number;
@@ -763,6 +764,10 @@ class BacktestService {
 
     if (config.model_id?.trim()) {
       payload.model_id = config.model_id;
+    }
+    // 全局股票池引用：后端 pool_id 优先于 universe 解析并物化
+    if (config.pool_id?.trim()) {
+      payload.pool_id = config.pool_id.trim();
     }
 
     if (config.signal_lag_days != null) {

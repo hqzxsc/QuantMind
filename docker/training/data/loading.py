@@ -296,27 +296,6 @@ def load_data(
         df = df[~df["symbol"].str.startswith(("4", "8"))].copy()
         logger.info(f"After symbol filter: {len(df)} rows")
 
-        # 全局股票池过滤（P3）：编排器已把池解析成 6 位代码列表随 config.yaml 传入。
-        # 严格语义：池非空但零命中时直接报错，避免「训练出一个全市场模型却以为
-        # 训的是池内模型」这种静默错配。
-        if pool_symbols:
-            wanted = {str(s).split(".")[0].zfill(6) for s in pool_symbols if str(s).strip()}
-            if not wanted:
-                raise RuntimeError("pool_symbols 非空但无法解析出任何代码")
-            before_pool = len(df)
-            df = df[df["symbol"].isin(wanted)].copy()
-            logger.info(
-                "After pool filter: %d rows (pool=%d symbols, before=%d)",
-                len(df),
-                len(wanted),
-                before_pool,
-            )
-            if df.empty:
-                raise RuntimeError(
-                    f"股票池过滤后无数据：池内 {len(wanted)} 只标的在训练区间/数据源内无记录"
-                    "（请检查池成分与训练时间窗是否匹配）"
-                )
-
         # 过滤 ST/*ST 股票
         if "is_st" in df.columns:
             before = len(df)
@@ -364,6 +343,31 @@ def load_data(
                     logger.warning("instrument_detail.parquet not found (searched: %s)", ", ".join(str(d) for d in _sector_dirs))
             except Exception as e:
                 logger.warning("Failed to merge industry data (non-fatal): %s", e)
+
+    # ── 全局股票池过滤（P3）：编排器已把池解析成 6 位代码列表随 config.yaml 传入 ──
+    # 必须在所有加载分支之后（直读因子源 / core parquet / 年度 parquet 都走这里）：
+    # 此前缩在 CN-parquet 分支内，直读模式（l1_factors）会静默训成全市场模型。
+    # 严格语义：池非空但零命中时直接报错，避免静默错配。
+    if pool_symbols and market_upper == "CN":
+        wanted = {str(s).split(".")[0].zfill(6) for s in pool_symbols if str(s).strip()}
+        if not wanted:
+            raise RuntimeError("pool_symbols 非空但无法解析出任何代码")
+        if "symbol" not in df.columns:
+            raise RuntimeError("股票池过滤需要 symbol 列，但当前数据无该列")
+        before_pool = len(df)
+        df["symbol"] = df["symbol"].astype(str).str.zfill(6)
+        df = df[df["symbol"].isin(wanted)].copy()
+        logger.info(
+            "After pool filter: %d rows (pool=%d symbols, before=%d)",
+            len(df),
+            len(wanted),
+            before_pool,
+        )
+        if df.empty:
+            raise RuntimeError(
+                f"股票池过滤后无数据：池内 {len(wanted)} 只标的在训练区间/数据源内无记录"
+                "（请检查池成分与训练时间窗是否匹配）"
+            )
 
     # ── 丢弃 features_daily.return_Nd：这些列是【未来 N 日收益】 ──
     # return_1d[T] == pct_change[T+1]，当特征使用会直接泄漏标签。

@@ -923,6 +923,23 @@ class TestP3TrainingBridge:
         assert norm_idx < filter_idx
         assert pool_idx < filter_idx
 
+    def test_pool_filter_applies_to_all_branches(self):
+        """过滤必须在函数层级（4 空格缩进），否则直读因子源分支会静默训成全市场。"""
+        from pathlib import Path
+
+        lines = (
+            Path(__file__).resolve().parents[2]
+            / "docker"
+            / "training"
+            / "data"
+            / "loading.py"
+        ).read_text(encoding="utf-8").splitlines()
+        for line in lines:
+            if "if pool_symbols and market_upper" in line:
+                assert line.startswith("    if ") and not line.startswith("     "), line
+                return
+        raise AssertionError("pool filter block not found")
+
 
 # ---------------------------------------------------------------------------
 # P3-4 / P3-5：模拟盘与实盘

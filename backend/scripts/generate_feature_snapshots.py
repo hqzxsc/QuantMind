@@ -51,63 +51,6 @@ _LEAKY_RETURN_COLS: tuple[str, ...] = (
 )
 
 
-def _add_alpha158_new_factors(df: pd.DataFrame) -> pd.DataFrame:
-    """加入 Alpha158 中去重后的新增高价值因子（SUMP/SUMN/SUMD/MIN/MAX/RANK）。
-
-    这些因子对次日收益有较强预测力(IC 0.02~0.065)且与现有特征不重复：
-      - SUMPn/SUMNn/SUMDn: 过去 n 日涨/跌/净涨天数 (做多/做空双方向)
-      - MINn/MAXn: 过去 n 日最低/最高价相对当前价的位置
-      - RANKn: 当前日收益在过去 n 日收益中的时序排名
-    需按股票分组时序计算, df 需含 symbol/trade_date/open/high/low/close/volume。
-    """
-    need_cols = {"symbol", "trade_date", "open", "high", "low", "close", "volume"}
-    if not need_cols.issubset(df.columns):
-        _log("  警告: 缺 OHLCV 列, 跳过 Alpha158 新增因子")
-        return df
-
-    g = df.sort_values(["symbol", "trade_date"]).copy()
-    sym = g["symbol"]
-    c = g["close"]
-    h = g["high"]
-    lo = g["low"]
-    v = g["volume"]
-
-    # 日收益率(时序)
-    ret = c.groupby(sym).pct_change()
-    pos = (ret > 0).astype(float)
-    neg = (ret < 0).astype(float)
-
-    windows = [5, 10, 20, 30, 60]
-
-    def _roll(df_, col, w, agg):
-        """按股票分组滚动聚合, 返回与 df 同索引的 Series。"""
-        return df_.groupby(sym)[col].transform(
-            lambda x: x.rolling(w, min_periods=max(3, int(w * 0.5))).agg(agg)
-        )
-
-    # 涨跌天数统计 SUMP/SUMN/SUMD (只加 20/30/60, 短窗口 IC 弱)
-    for w in (20, 30, 60):
-        sp = pos.groupby(sym).transform(lambda x: x.rolling(w, min_periods=max(3, int(w * 0.5))).sum())
-        sn = neg.groupby(sym).transform(lambda x: x.rolling(w, min_periods=max(3, int(w * 0.5))).sum())
-        g[f"SUMP{w}"] = sp
-        g[f"SUMN{w}"] = sn
-        g[f"SUMD{w}"] = sp - sn
-
-    # 高低点位置 MIN/MAX
-    for w in (5, 10, 20, 30, 60):
-        g[f"MAX{w}"] = _roll(g, "close", w, "max") / c - 1
-        g[f"MIN{w}"] = _roll(g, "close", w, "min") / c - 1
-
-    # 时序排名 RANK (当前收益在过去 n 日的位置)
-    for w in (5, 10, 20, 30, 60):
-        g[f"RANK{w}"] = ret.groupby(sym).transform(
-            lambda x: x.rolling(w, min_periods=max(3, int(w * 0.5))).rank(pct=True)
-        )
-
-    _log(f"  Alpha158 新增因子: {len(g.columns) - len(df.columns)} 个")
-    return g
-
-
 def _add_gtja_factors(df: pd.DataFrame) -> pd.DataFrame:
     """加入去重后的 GTJA Alpha191 高价值因子。
 
@@ -441,9 +384,7 @@ def _build_snapshot(year: int, dry_run: bool = False) -> dict | None:
     # 排序
     df = df.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
 
-    # ── Step 4.5: 加入 Alpha158 新增高价值因子 ──
-    df = _add_alpha158_new_factors(df)
-    # ── Step 4.6: 加入 GTJA Alpha191 去重后因子 ──
+    # ── Step 4.5: 加入 GTJA Alpha191 去重后因子 ──
     df = _add_gtja_factors(df)
 
     row_count = len(df)

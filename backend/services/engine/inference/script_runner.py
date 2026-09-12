@@ -150,6 +150,11 @@ class ExecutionResult:
     active_data_source: str = ""
     data_trade_date: str = ""
     prediction_trade_date: str = ""
+    # 由 InferenceRouterService 在执行后写入的执行元信息（此处声明默认值，
+    # 避免只在 router 链路赋值、直接读取时 AttributeError）
+    execution_mode: str = ""
+    model_switch_used: bool = False
+    model_switch_reason: str = ""
 
 
 class InferenceScriptRunner:

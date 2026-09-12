@@ -502,7 +502,7 @@ class TestLoopStability:
     def _bootstrap(self, rc, svc):
         from datetime import datetime
 
-        from backend.services.trade.services import tdx_l2_capture_task as cap
+        from backend.services.live_trading.services import tdx_l2_capture_task as cap
         from backend.services.live_trading.services.tdx_l2_realtime import save_l2_config
 
         with patch("backend.services.live_trading.services.tdx_l2_realtime.trade_redis", rc):
@@ -525,7 +525,7 @@ class TestLoopStability:
     def _run_loop(self, rc, svc):
         import asyncio
 
-        from backend.services.trade.services import tdx_l2_capture_task as cap
+        from backend.services.live_trading.services import tdx_l2_capture_task as cap
         from backend.services.live_trading.services.tdx_l2_realtime import (
             realtime_status,
             run_tdx_l2_realtime_task,
@@ -549,7 +549,7 @@ class TestLoopStability:
              patch("backend.services.live_trading.services.tdx_rolling_trade_service.TdxRollingTradeService", return_value=svc), \
              patch("backend.services.live_trading.services.tdx_rolling_trade_service.load_rolling_config", return_value=("tdx", 10000.0, "tdx")), \
              patch("backend.services.trade.services.member_gate.is_paid_member", AsyncMock(return_value=True)), \
-             patch("backend.services.trade.services.tdx_l2_capture_task.l2_status", cap.l2_status):
+             patch("backend.services.live_trading.services.tdx_l2_capture_task.l2_status", cap.l2_status):
             with pytest.raises(asyncio.CancelledError):
                 run_loop_sync(run_tdx_l2_realtime_task(interval_sec=1))
         return pusher, realtime_status
@@ -596,7 +596,7 @@ class TestLoopStability:
         # 采集链路陈旧（上一周期 1 小时前）
         from datetime import datetime, timedelta
 
-        from backend.services.trade.services import tdx_l2_capture_task as cap
+        from backend.services.live_trading.services import tdx_l2_capture_task as cap
 
         cap.l2_status["last_cycle_at"] = (
             datetime.now() - timedelta(hours=1)

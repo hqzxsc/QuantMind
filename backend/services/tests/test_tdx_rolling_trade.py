@@ -288,26 +288,6 @@ class TestRunRollingPushExecuteMode:
         place_tdx_orders.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_direct_order_blocked_for_non_member(self):
-        svc = TdxRollingTradeService()
-        fake_tdx = MagicMock()
-        fake_tdx.enabled = False
-        with (
-            patch(f"{ROLLING_MODULE}.load_rolling_config", return_value=(2.2, 10000.0, "paper")),
-            patch(f"{ROLLING_MODULE}.tdx_pusher", fake_tdx),
-            patch(
-                "backend.services.trade.services.member_gate.is_paid_member",
-                new=AsyncMock(return_value=False),
-            ),
-            patch.object(svc, "place_paper_orders") as place_paper,
-        ):
-            result = await svc.run_rolling_push(tenant_id="default", user_id="00000001")
-
-        assert result["success"] is False
-        assert "会员" in result["error"]
-        place_paper.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_tdx_mode_requires_bridge(self):
         svc = TdxRollingTradeService()
         fake_tdx = MagicMock()

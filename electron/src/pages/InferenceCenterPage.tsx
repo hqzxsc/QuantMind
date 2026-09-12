@@ -90,6 +90,10 @@ export const InferenceCenterPage: React.FC = () => {
   const [historyRunIdFilter, setHistoryRunIdFilter] = useState('');
   const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'running' | 'completed' | 'failed'>('all');
   const [historyDateFilter, setHistoryDateFilter] = useState<Dayjs | null>(null);
+  // 单日推理股票池（P3）：null=全市场，否则 pool:<code> 引用；只裁信号，不进 pred.parquet
+  const [inferPoolRef, setInferPoolRef] = useState<string | null>(null);
+  const [inferPoolName, setInferPoolName] = useState<string>('');
+  const [inferPoolId, setInferPoolId] = useState<string | null>(null);
 
   // ─────────────────────────────────────────────────────────────
   // 模块 2：个股预测推理 (Individual Stock Inference) 状态
@@ -337,9 +341,9 @@ export const InferenceCenterPage: React.FC = () => {
         message.error('前置检查未通过，请先处理阻断项');
         return;
       }
-      const runInfo = await modelTrainingService.runModelInference(selectedModel.model_id, inferenceDateStr);
+      const runInfo = await modelTrainingService.runModelInference(selectedModel.model_id, inferenceDateStr, inferPoolRef ?? undefined);
       setLastInferenceRun(runInfo);
-      message.success(`截面推理已完成: 产物已入库（样本数: ${runInfo.signals_count}）`);
+      message.success(`截面推理已完成: 产物已入库（样本数: ${runInfo.signals_count}${inferPoolName ? `，股票池: ${inferPoolName}` : ''}）`);
       void refreshCrossSectionPanel(selectedModel.model_id);
       void loadInferenceHistory(selectedModel.model_id);
     } catch (err: any) {
@@ -672,6 +676,14 @@ export const InferenceCenterPage: React.FC = () => {
                 historyDateFilter={historyDateFilter}
                 onHistoryDateFilterChange={setHistoryDateFilter}
                 onDeleteHistory={handleDeleteHistory}
+                poolRef={inferPoolRef}
+                poolName={inferPoolName}
+                selectedPoolId={inferPoolId}
+                onPoolChange={(ref, name, id) => {
+                  setInferPoolRef(ref);
+                  setInferPoolName(name);
+                  setInferPoolId(id);
+                }}
               />
             ) : (
               <InferenceHistoryPanel modelId={selectedModel.model_id} onDelete={handleDeleteHistory} />

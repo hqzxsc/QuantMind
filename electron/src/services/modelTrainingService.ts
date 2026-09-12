@@ -816,10 +816,12 @@ class ModelTrainingService {
     };
   }
 
-  async runModelInference(modelId: string, inferenceDate: string): Promise<InferenceExecutionResult> {
+  async runModelInference(modelId: string, inferenceDate: string, poolId?: string): Promise<InferenceExecutionResult> {
     const resp = await this.client.post<InferenceExecutionResult>('/models/inference/run', {
       model_id: modelId,
       inference_date: inferenceDate,
+      // 单日推理股票池（P3）：pool:<code> 引用，后端严格裁剪信号，不进 pred.parquet
+      ...(poolId?.trim() ? { pool_id: poolId.trim() } : {}),
     }, { timeout: 300000 }); // 推理可能需要较长时间，5分钟超时
     const data = resp.data as any;
     const normalized = this.normalizeInferenceRun(data);

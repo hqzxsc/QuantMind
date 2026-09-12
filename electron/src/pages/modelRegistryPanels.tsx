@@ -33,6 +33,8 @@ import {
   modelIdToDisplayName,
   resolveMetricNumber,
 } from './modelRegistryUtils';
+import { StockPoolPickerModal } from '../components/backtest/StockPoolPickerModal';
+import type { StockPoolOption } from '../services/stockPoolOptionService';
 const { Text } = Typography;
 
 const MARKET_LABELS: Record<string, string> = {
@@ -923,12 +925,18 @@ export const InferenceCenterPanel: React.FC<{
   historyDateFilter: dayjs.Dayjs | null;
   onHistoryDateFilterChange: (value: dayjs.Dayjs | null) => void;
   onDeleteHistory?: (runId: string) => void;
+  /** 单日推理股票池：null=全市场，否则 pool:<code> 引用（只裁信号，不进 pred.parquet） */
+  poolRef?: string | null;
+  poolName?: string;
+  selectedPoolId?: string | null;
+  onPoolChange?: (ref: string | null, name: string, id: string | null) => void;
 }> = ({
   model, inferenceDate, onDateChange, targetDate, targetDateLoading, horizonDays,
   running, onRun, onRunAsDefault, isDefault, lastRun, history, historyLoading,
   autoSettings, autoSaving, onToggleAuto, latestInferenceRun, latestInferenceRunLoading, precheck, precheckLoading, onRefreshPrecheck,
   historyRunIdFilter, onHistoryRunIdFilterChange, historyStatusFilter, onHistoryStatusFilterChange, historyDateFilter, onHistoryDateFilterChange,
   onDeleteHistory,
+  poolRef = null, poolName = '', selectedPoolId = null, onPoolChange,
 }) => {
   const currentModelName = modelDisplayName(model);
   const latestRunModelLabel = latestInferenceRun?.model_id === model.model_id
@@ -938,6 +946,8 @@ export const InferenceCenterPanel: React.FC<{
   // 本次推理排名：单日推理完成后自动拉取该 run 的排名结果并展示在右侧
   const [rankingResult, setRankingResult] = useState<InferenceRankingResult | null>(null);
   const [rankingLoading, setRankingLoading] = useState(false);
+  // 单日推理股票池弹窗
+  const [poolPickerOpen, setPoolPickerOpen] = useState(false);
 
   useEffect(() => {
     const runId = lastRun?.run_id;
@@ -1040,6 +1050,33 @@ export const InferenceCenterPanel: React.FC<{
               <Text className="text-sm font-black text-slate-800 uppercase tracking-tight leading-none">手动推理执行</Text>
             </div>
 
+            {/* 推理股票池：仅裁单日信号范围，不进 pred.parquet */}
+            {onPoolChange && (
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <Text className="text-xs font-bold text-slate-500 pl-1 whitespace-nowrap">推理股票池</Text>
+                <Button
+                  size="small"
+                  type={poolRef ? 'default' : 'primary'}
+                  onClick={() => onPoolChange(null, '', null)}
+                  className="rounded-xl text-xs font-bold h-8 px-4"
+                >
+                  全市场
+                </Button>
+                <Button
+                  size="small"
+                  type={poolRef ? 'primary' : 'default'}
+                  icon={<Layers size={14} />}
+                  onClick={() => setPoolPickerOpen(true)}
+                  className="rounded-xl text-xs font-bold h-8 px-4"
+                >
+                  {poolRef ? (poolName || poolRef) : '自定义股票池'}
+                </Button>
+                {poolRef && (
+                  <Tag color="blue" className="!m-0 font-mono text-xs">{poolRef}</Tag>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-12 gap-5 items-end mb-4">
               <div className="col-span-4">
                 <Text className="text-xs font-bold text-slate-500 mb-1.5 block pl-1">行情基准日</Text>
@@ -1092,10 +1129,11 @@ export const InferenceCenterPanel: React.FC<{
 
             <div className="mt-auto flex items-start gap-2.5 p-3.5 bg-blue-50/40 rounded-2xl border border-blue-100/30">
                <Info size={14} className="text-blue-400 mt-0.5 shrink-0" />
-                <Text className="text-xs text-blue-700 leading-relaxed">
-                 <span className="font-black mr-1">温馨提示：</span>
-                 手动运行的结果会记录为”手动任务”。如果你点亮星星设为”默认”，模拟交易将直接使用本次推理的结果。
-               </Text>
+                 <Text className="text-xs text-blue-700 leading-relaxed">
+                  <span className="font-black mr-1">温馨提示：</span>
+                  手动运行的结果会记录为”手动任务”。如果你点亮星星设为”默认”，模拟交易将直接使用本次推理的结果。
+                  选择自定义股票池后仅池内标的落信号，不进模型 pred.parquet。
+                </Text>
             </div>
           </div>
         </div>
@@ -1200,21 +1238,32 @@ export const InferenceCenterPanel: React.FC<{
               )}
            </div>
 
-           <div className="glass-panel rounded-2xl p-4 border border-slate-100/50 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <RefreshCw size={14} className={clsx("text-blue-500", autoSettings?.enabled && "animate-spin-slow")} />
-                <div>
-                  <Text className="text-xs font-bold text-slate-700 block leading-tight">自动调度</Text>
-                  <Text className="text-xs text-slate-400">次日 00:00 起进入任务队列</Text>
-                </div>
-              </div>
-              <Switch size="small" checked={autoSettings?.enabled} loading={autoSaving} onChange={onToggleAuto} className={autoSettings?.enabled ? 'bg-blue-600' : ''} />
-           </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+            <div className="glass-panel rounded-2xl p-4 border border-slate-100/50 flex items-center justify-between">
+               <div className="flex items-center gap-3">
+                 <RefreshCw size={14} className={clsx("text-blue-500", autoSettings?.enabled && "animate-spin-slow")} />
+                 <div>
+                   <Text className="text-xs font-bold text-slate-700 block leading-tight">自动调度</Text>
+                   <Text className="text-xs text-slate-400">次日 00:00 起进入任务队列</Text>
+                 </div>
+               </div>
+               <Switch size="small" checked={autoSettings?.enabled} loading={autoSaving} onChange={onToggleAuto} className={autoSettings?.enabled ? 'bg-blue-600' : ''} />
+            </div>
+         </div>
+       </div>
+      <StockPoolPickerModal
+        open={poolPickerOpen}
+        onClose={() => setPoolPickerOpen(false)}
+        selectedPoolId={selectedPoolId}
+        market="CN"
+        title="推理股票池"
+        onSelect={(pool: StockPoolOption) => {
+          onPoolChange?.(`pool:${pool.code}`, pool.name, pool.pool_id);
+          setPoolPickerOpen(false);
+        }}
+      />
+     </div>
+   );
+ };
 
 
 export const MetricCard: React.FC<{ label: string; value: any; digits?: number; color?: string; isLarge?: boolean }> = ({

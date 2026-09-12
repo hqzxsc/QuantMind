@@ -45,6 +45,13 @@ class SkillEngine:
         "STRATEGY_CONFIG", "get_strategy_config", "策略配置",
     ]
 
+    # 股票池意图：命中即叠加 stock_pool_reference（记录各链路池引用写法）
+    POOL_KEYWORDS = [
+        "股票池", "stock_pool", "stock pool", "pool:", "pool_id",
+        "成分", "自选", "中证", "沪深", "上证", "创业板", "科创板",
+        "csi", "all_a", "选股范围", "限定范围",
+    ]
+
     def __init__(self, templates_dir: str | None = None):
         if templates_dir is None:
             templates_dir = os.path.join(os.path.dirname(__file__), "skill_templates")
@@ -56,6 +63,8 @@ class SkillEngine:
 
         返回列表中可能包含多个模板名，按优先级排序：
         - 主模板（traditional_indicator_backtest 或 qlib_model_strategy_config）
+        - 因子参考（fundamental_factor_reference，模型意图时）
+        - 池参考（stock_pool_reference，命中池意图时；无策略意图也可单独注入）
         - 防护模板（debug_guardrail，当有错误信息时）
 
         仅当用户输入包含明确的技术意图关键词时，才注入策略模板。
@@ -66,6 +75,7 @@ class SkillEngine:
 
         traditional_score = sum(1 for kw in self.TRADITIONAL_KEYWORDS if kw.lower() in user_lower)
         model_score = sum(1 for kw in self.MODEL_KEYWORDS if kw.lower() in user_lower)
+        pool_score = sum(1 for kw in self.POOL_KEYWORDS if kw.lower() in user_lower)
 
         templates = []
 
@@ -77,6 +87,10 @@ class SkillEngine:
             else:
                 templates.append("traditional_indicator_backtest")
         # 否则不注入策略模板，让系统提示词主导对话风格
+
+        # 命中池意图即叠加池参考（可独立于策略模板存在）
+        if pool_score > 0 and "stock_pool_reference" not in templates:
+            templates.append("stock_pool_reference")
 
         # 如果有错误信息，叠加调试防护模板
         if error_msg and (traditional_score > 0 or model_score > 0):

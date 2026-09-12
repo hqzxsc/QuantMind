@@ -12,6 +12,7 @@
 6) 当用户提到因子/基本面过滤时，必须优先使用 `f_` 前缀参数（如 `f_pe_ttm_max`, `f_roe_min`, `f_total_mv_min`, `f_is_st_not`），不要把这类静态过滤写在 `generate_target_weight_position` 里。
 7) 禁止输出不存在字段；字段命名按 `features_daily` / quantdb_hub 口径（常用列：revenue_ttm、net_profit_ttm、total_mv、pe_ttm、pb、equity、vol_std_20、ma_gap_20、rsi_14 等）。注意 features_daily 不含 roe、is_st。
 8) 默认 topk=50，避免过大持仓导致回测缓慢。
+9) 选股范围限定走请求级 pool_id（如 pool:csi300，见 stock_pool_reference），禁止在 kwargs 里手写成分表，也不要把池 code 写成 universe 字符串。
 
 建议最小结构：
 ```python

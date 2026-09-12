@@ -18,7 +18,7 @@ from backend.shared.training.per_model import MODEL_FRAMEWORK, REQUEST_MODELS
 
 def build_per_model_router(auth_dep: Callable[..., Any]) -> APIRouter:
     """生成 13 个独立模型训练入口。auth_dep 为鉴权依赖（用户态/管理态各一）。"""
-    router = APIRouter()
+    router = APIRouter(dependencies=[Depends(auth_dep)])
 
     for model_name, schema_cls in REQUEST_MODELS.items():
 

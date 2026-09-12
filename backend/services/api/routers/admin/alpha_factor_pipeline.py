@@ -4,7 +4,7 @@
 1. 从 rd_agent_factors 读取因子
 2. 提取 Qlib 表达式
 3. 用 Qlib 计算因子值
-4. 合并到 model_features parquet
+4. 合并回 QuantDB 因子分区 (6_ml_datasets/l1_factors)
 5. 注册到特征目录 (qm_feature_*)
 """
 
@@ -16,7 +16,6 @@ import re
 import subprocess
 import sys
 import uuid
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -35,11 +34,8 @@ router = APIRouter(
 )
 
 # ── 路径配置 ──
-if os.path.exists("/app") and not os.environ.get("QUANTMIND_HOST_MODE"):
-    PARQUET_PATH = Path("/app/db/feature_snapshots/model_features_2026.parquet")
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[5]
-    PARQUET_PATH = PROJECT_ROOT / "db" / "feature_snapshots" / "model_features_2026.parquet"
+# 因子写回统一走 QuantDB 因子分区（6_ml_datasets/l1_factors），
+# 不再写 db/feature_snapshots/model_features_*.parquet 旧入口。
 # Qlib 目录统一走 qlib_paths 解析（固定目录优先）
 try:
     from backend.shared.qlib_paths import resolve_qlib_provider_uri
@@ -169,56 +165,21 @@ def compute_factor_via_qlib(expression: str, feature_name: str) -> pd.DataFrame:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Parquet 合并
+# QuantDB 因子分区合并
 # ═══════════════════════════════════════════════════════════════════
 
 
 def merge_factor_into_parquet(factor_df: pd.DataFrame, feature_name: str) -> int:
-    """将因子 DataFrame 合并到 parquet，返回新增行数。"""
-    if not PARQUET_PATH.exists():
-        raise FileNotFoundError(f"Parquet 文件不存在: {PARQUET_PATH}")
+    """将因子列合并回 QuantDB l1_factors 分区，返回非空值数。
 
-    existing = pd.read_parquet(PARQUET_PATH)
+    仅追加/覆盖单列，按 6 位代码对齐 symbol，兼容 Qlib（sh600036）与
+    QuantDB（600036.SH）两种口径。旧的 model_features parquet 入口已废弃。
+    """
+    from backend.shared.feature_source import merge_factor_into_source
 
-    # 确保列名一致
-    if feature_name in existing.columns:
-        logger.warning("Feature %s already exists in parquet, will overwrite", feature_name)
-
-    # Qlib 返回的是 MultiIndex(instrument, datetime)
-    # parquet 的是 columns: symbol, trade_date, ...
-    # 需要对齐
-    factor_df = factor_df.reset_index()
-    if "instrument" in factor_df.columns and "datetime" in factor_df.columns:
-        factor_df = factor_df.rename(columns={"instrument": "symbol", "datetime": "trade_date"})
-    elif len(factor_df.columns) >= 3:
-        # 假设前两列是 index levels
-        cols = list(factor_df.columns)
-        factor_df = factor_df.rename(columns={cols[0]: "symbol", cols[1]: "trade_date"})
-
-    if "symbol" not in factor_df.columns or "trade_date" not in factor_df.columns:
-        raise ValueError(f"无法识别因子 DataFrame 的列: {factor_df.columns.tolist()}")
-
-    factor_df["trade_date"] = pd.to_datetime(factor_df["trade_date"]).dt.date
-
-    # 如果 parquet 的 trade_date 是 datetime，转换为 date
-    if hasattr(existing["trade_date"].dtype, 'tz') or existing["trade_date"].dtype == 'datetime64[ns]':
-        existing["trade_date"] = pd.to_datetime(existing["trade_date"]).dt.date
-
-    # 合并
-    if feature_name in existing.columns:
-        existing = existing.drop(columns=[feature_name])
-
-    merged = existing.merge(
-        factor_df[["symbol", "trade_date", feature_name]],
-        on=["symbol", "trade_date"],
-        how="left",
+    return merge_factor_into_source(
+        factor_df, feature_name, source="l1_factors", market="CN"
     )
-
-    # 写回
-    merged.to_parquet(PARQUET_PATH, index=False)
-    added = merged[feature_name].notna().sum()
-    logger.info("Merged %s into parquet: %d non-null values", feature_name, added)
-    return int(added)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -324,7 +285,7 @@ async def promote_factors(req: PromoteRequest):
     流程：
     1. 从 rd_agent_factors 读取因子
     2. 提取 Qlib 表达式
-    3. 计算因子值并合并到 parquet
+    3. 计算因子值并合并回 QuantDB 因子分区
     4. 注册到特征目录
     5. 可选：自动触发训练
     """
@@ -376,7 +337,7 @@ async def promote_factors(req: PromoteRequest):
             # 3. 计算因子值
             factor_df = compute_factor_via_qlib(expression, feature_key)
 
-            # 4. 合并到 parquet
+            # 4. 合并回 QuantDB 因子分区
             non_null = merge_factor_into_parquet(factor_df, feature_key)
 
             # 5. 注册到特征目录

@@ -35,14 +35,10 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 
-# 路径配置
-if os.path.exists("/app") and not os.environ.get("QUANTMIND_HOST_MODE"):
-    PARQUET_PATH = Path("/app/db/feature_snapshots/model_features_2026.parquet")
-    OUTPUT_DIR = Path("/app/db/feature_snapshots")
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-    PARQUET_PATH = PROJECT_ROOT / "db" / "feature_snapshots" / "model_features_2026.parquet"
-    OUTPUT_DIR = PROJECT_ROOT / "db" / "feature_snapshots"
+# 报告输出目录（旧 feature_snapshots 已废弃，统一落到 QuantDB releases 旁）
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+OUTPUT_DIR = PROJECT_ROOT / "data" / "quantdb" / "reports"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _log(msg: str):
@@ -497,6 +493,41 @@ def prepare_l2_data(
     return df
 
 
+def prepare_l1_data(
+    sample_stocks: int = 500,
+    date_range: tuple = None,
+) -> pd.DataFrame:
+    """直读 QuantDB l1_factors 分区（替代旧 model_features parquet 入口）。
+
+    与 prepare_l2_data 同口径：分区自带 OHLCV，抽样股票后计算未来收益。
+    """
+    from backend.shared.feature_source import read_factor_source
+
+    start = date_range[0] if date_range else None
+    end = date_range[1] if date_range else None
+    span = f"（{start}~{end}）" if date_range else ""
+    _log(f"加载 QuantDB l1_factors 因子分区{span}...")
+    df = read_factor_source("l1_factors", "CN", start=start, end=end)
+    _log(f"  原始数据: {len(df):,} 行, {df['symbol'].nunique()} 只股票")
+
+    all_symbols = df["symbol"].unique()
+    if len(all_symbols) > sample_stocks:
+        np.random.seed(42)
+        sampled = np.random.choice(all_symbols, sample_stocks, replace=False)
+        df = df[df["symbol"].isin(sampled)]
+        _log(f"  抽样后: {len(df):,} 行, {len(sampled)} 只股票")
+
+    df = df.sort_values(["symbol", "trade_date"])
+    for w in [1, 3, 5, 10, 20]:
+        df[f"fwd_ret_{w}d"] = df.groupby("symbol")["close"].transform(
+            lambda x, _w=w: x.shift(-_w) / x - 1
+        )
+
+    df = df.dropna(subset=["fwd_ret_5d"])
+    _log(f"  有效数据: {len(df):,} 行")
+    return df
+
+
 def get_l2_factor_columns(df: pd.DataFrame) -> list:
     """获取 L2 因子列（排除 OHLCV + 标识 + fwd_ret）"""
     factor_cols = []
@@ -925,7 +956,7 @@ def print_l2_report(ic_stats: pd.DataFrame, recommendations: dict, primary_horiz
 def main():
     parser = argparse.ArgumentParser(description="因子评估脚本")
     parser.add_argument("--source", choices=["default", "l2"], default="default",
-                        help="数据源: default=model_features 快照, l2=L2原始分区(直读)")
+                        help="数据源: default=QuantDB l1_factors 分区, l2=L2原始分区(直读)")
     parser.add_argument("--top", type=int, default=50, help="显示 Top N 因子")
     parser.add_argument("--category", type=str, default=None, help="按类别筛选")
     parser.add_argument("--sample", type=int, default=2000, help="抽样股票数量")
@@ -970,12 +1001,8 @@ def main():
             _log(f"推荐因子已导出: {rec_path}")
         return
 
-    # ── 默认: model_features 快照评估（原有逻辑）──
-    if not PARQUET_PATH.exists():
-        _log(f"ERROR: parquet 文件不存在: {PARQUET_PATH}")
-        sys.exit(1)
-
-    df = prepare_data(PARQUET_PATH, sample_stocks=args.sample)
+    # ── 默认: QuantDB l1_factors 因子评估 ──
+    df = prepare_l1_data(sample_stocks=args.sample, date_range=date_range)
     factor_cols = get_factor_columns(df)
     _log(f"发现 {len(factor_cols)} 个因子列")
 

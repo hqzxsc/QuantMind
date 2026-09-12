@@ -8,19 +8,17 @@ import pandas as pd
 
 sys.path.insert(0, "/app")
 
-PATH = "/app/db/feature_snapshots/model_features_2026.parquet"
-import pyarrow.parquet as pq
+# 旧 model_features_*.parquet 已废弃，统一读 QuantDB l1_factors 分区
+from backend.shared.feature_source import read_factor_source
 
-schema = pq.ParquetFile(PATH).schema_arrow
-cols = [f.name for f in schema]
+df = read_factor_source(
+    "l1_factors", "CN", columns=["symbol", "trade_date", "close", "volume"]
+)
+cols = list(df.columns)
 print("总列数:", len(cols))
 print("close 相关列:", [c for c in cols if "close" in c.lower() or "adj" in c.lower()])
 print("price 相关列:", [c for c in cols if "price" in c.lower()])
 
-want = [c for c in ("symbol", "instrument", "trade_date", "close", "volume") if c in cols]
-df = pd.read_parquet(PATH, columns=want, engine="pyarrow")
-if "symbol" not in df.columns and "instrument" in df.columns:
-    df = df.rename(columns={"instrument": "symbol"})
 df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.strftime("%Y-%m-%d")
 print()
 print("close 全局统计:")

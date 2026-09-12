@@ -502,9 +502,10 @@ def _get_model_data_dir(model_dir: Path, metadata: dict | None = None) -> str:
     1. metadata.json 中的 qlib_data_path 字段（绝对路径）
     2. metadata.json 中的 context.market 字段映射到对应 qlib 数据目录
     3. metadata.json 中的 data_source 字段判断：
-       - "qlib" -> db/qlib_data
-       - "parquet" 或其他 -> db/feature_snapshots
-    4. 默认值 -> db/feature_snapshots
+       - "quantdb_factors" -> QuantDB 因子源目录（新链路默认）
+       - "qlib" -> qlib 数据目录
+       - "parquet" -> db/feature_snapshots（遗留冻结，仅旧模型）
+    4. 默认值 -> QuantDB 因子源目录
     """
     # QuantDB-bound models are pinned to the raw factor root.  This must be
     # evaluated before historical qlib_data_path/context compatibility hints.
@@ -537,6 +538,9 @@ def _get_model_data_dir(model_dir: Path, metadata: dict | None = None) -> str:
         data_source = str(metadata.get("data_source", "")).lower()
         if data_source == "qlib":
             return resolve_qlib_provider_uri()
+        if data_source == "parquet":
+            # 遗留并冻结：仅存量旧模型使用，新模型一律 quantdb_factors
+            return "db/feature_snapshots"
 
     # 尝试从模型目录读取 metadata.json
     meta_file = model_dir / "metadata.json"
@@ -565,11 +569,21 @@ def _get_model_data_dir(model_dir: Path, metadata: dict | None = None) -> str:
             data_source = str(meta.get("data_source", "")).lower()
             if data_source == "qlib":
                 return resolve_qlib_provider_uri()
+            if data_source == "parquet":
+                # 遗留并冻结：仅存量旧模型使用，新模型一律 quantdb_factors
+                return "db/feature_snapshots"
         except Exception:
             pass
 
-    # 默认值
-    return "db/feature_snapshots"
+    # 默认值：无数据源元数据的模型按 QuantDB 直读处理（旧快照入口已废弃）
+    try:
+        from backend.services.engine.inference.script_runner import (
+            _resolve_quantdb_data_dir,
+        )
+
+        return _resolve_quantdb_data_dir()
+    except Exception:  # pragma: no cover - 兜底
+        return os.getenv("QUANTDB_DATA_DIR", "/data/quantdb")
 
 
 def _render_next_run(next_run_at: Any) -> str | None:

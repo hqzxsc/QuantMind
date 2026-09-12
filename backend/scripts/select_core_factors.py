@@ -10,11 +10,10 @@
 4. 实用性: 保留常用技术指标供参考
 
 输出:
-- db/feature_snapshots/core_factors.csv (因子列表)
-- db/feature_snapshots/model_features_core.parquet (精简后的数据)
+- data/quantdb/reports/core_factors.csv (因子列表)
+- data/quantdb/reports/l1_core.parquet (精简后的数据)
 """
 
-import os
 import sys
 import warnings
 from pathlib import Path
@@ -24,14 +23,10 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 
-# 路径配置
-if os.path.exists("/app") and not os.environ.get("QUANTMIND_HOST_MODE"):
-    PARQUET_PATH = Path("/app/db/feature_snapshots/model_features_2026.parquet")
-    OUTPUT_DIR = Path("/app/db/feature_snapshots")
-else:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-    PARQUET_PATH = PROJECT_ROOT / "db" / "feature_snapshots" / "model_features_2026.parquet"
-    OUTPUT_DIR = PROJECT_ROOT / "db" / "feature_snapshots"
+# 路径配置：输入直读 QuantDB l1_factors 分区，输出报告落 QuantDB reports
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+OUTPUT_DIR = PROJECT_ROOT / "data" / "quantdb" / "reports"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -235,10 +230,8 @@ def select_factors_data_driven(df: pd.DataFrame, target_count: int = 75) -> list
     return selected
 
 
-def create_core_parquet(input_path: Path, output_path: Path, factor_list: list):
-    """创建精简版 parquet"""
-    print(f"加载数据: {input_path}")
-    df = pd.read_parquet(input_path)
+def create_core_parquet(df: pd.DataFrame, output_path: Path, factor_list: list):
+    """创建精简版 parquet（输入为内存中的 QuantDB l1_factors 全量帧）"""
     print(f"  原始: {len(df):,} 行, {len(df.columns)} 列")
 
     # 选择列
@@ -291,9 +284,13 @@ def main():
     for cat, cols in CORE_FACTORS.items():
         print(f"  {cat}: {len(cols)} 个")
 
-    # 创建精简 parquet
-    output_parquet = OUTPUT_DIR / "model_features_core.parquet"
-    df_core = create_core_parquet(PARQUET_PATH, output_parquet, core_factors)
+    # 创建精简 parquet（直读 QuantDB l1_factors 分区）
+    from backend.shared.feature_source import read_factor_source
+
+    print("\n加载 QuantDB l1_factors 因子分区...")
+    df_all = read_factor_source("l1_factors", "CN")
+    output_parquet = OUTPUT_DIR / "l1_core.parquet"
+    df_core = create_core_parquet(df_all, output_parquet, core_factors)
 
     # 导出因子目录
     output_catalog = OUTPUT_DIR / "core_factors.csv"

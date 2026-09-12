@@ -441,7 +441,7 @@ class TestUntradableFilter:
 
 
 class TestManagedParquetTemplateDetection:
-    """测试旧版自动生成脚本识别逻辑。"""
+    """测试托管 parquet 推理脚本识别逻辑。"""
 
     def test_detects_new_template(self, tmp_path: Path):
         """新版模板应被识别为托管脚本。"""
@@ -450,24 +450,6 @@ class TestManagedParquetTemplateDetection:
         script = tmp_path / "inference.py"
         script.write_text(
             '#!/usr/bin/env python3\n"""QuantMind Parquet 数据源推理脚本 (inference.py 模板)\n',
-            encoding="utf-8",
-        )
-
-        runner = InferenceScriptRunner(models_production=str(tmp_path))
-        assert runner._is_managed_parquet_template(script) is True
-
-    def test_detects_old_auto_generated_script(self, tmp_path: Path):
-        """旧版自动生成脚本应被识别为托管脚本。"""
-        from backend.services.engine.inference.script_runner import InferenceScriptRunner
-
-        script = tmp_path / "inference.py"
-        script.write_text(
-            '''#!/usr/bin/env python3
-"""
-QuantMind Parquet 数据源推理脚本
-================================
-由训练流水线自动生成
-''',
             encoding="utf-8",
         )
 

@@ -156,9 +156,8 @@ async def test_do_get_overview_uses_run_date_market_snapshot(monkeypatch):
     assert item["latestChange"] == pytest.approx(10.0)
     assert item["return1d"] == pytest.approx(-0.0196443007)
     assert item["return3d"] == pytest.approx(-0.0434)
-    assert "sdl_run.trade_date = snap.data_trade_date" in captured["sql"]
-    assert "LEAD(sdl.close, 1)" in captured["sql"]
-    assert "LEAD(sdl.close, 3)" in captured["sql"]
+    # 概览候选现读 qm_research_candidate_snapshot
+    assert "qm_research_candidate_snapshot" in captured["sql"]
 
 
 @pytest.mark.asyncio
@@ -171,7 +170,15 @@ async def test_get_research_universe_uses_short_ttl_cache(monkeypatch):
         calls["count"] += 1
         return {"items": [{"runId": "run_demo"}], "summary": {"total": 1}}
 
+    async def _no_sdl_redis(*args, **kwargs):
+        return None
+
+    async def _no_market(*args, **kwargs):
+        return ""
+
     monkeypatch.setattr(research_service, "_do_get_overview", _fake_do_get_overview)
+    monkeypatch.setattr(research_service, "_do_get_universe_with_sdl_redis", _no_sdl_redis)
+    monkeypatch.setattr(research_service, "_infer_market_from_run", _no_market)
 
     payload_1 = await research_service.get_research_universe("default", "u1", "run_demo", 1000)
     payload_2 = await research_service.get_research_universe("default", "u1", "run_demo", 1000)

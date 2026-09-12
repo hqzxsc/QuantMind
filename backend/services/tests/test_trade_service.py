@@ -448,7 +448,7 @@ class TestTradeTenantIsolation:
         )
 
         assert captured["tenant_id"] == "tenant-b"
-        assert captured["user_id"] == "2002"
+        assert captured["user_id"] == 2002
         assert captured["portfolio_id"] == 22
         assert captured["status"] == "filled"
         assert captured["symbol"] == "600519.SH"

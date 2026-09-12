@@ -126,11 +126,21 @@ def load_registered_schemas(
 def detect_duplicate_tables(
     schema_keys: Iterable[str] | None = None,
 ) -> dict[str, list[str]]:
-    seen: dict[str, list[str]] = {}
+    """返回跨「不同 metadata 对象」重复定义的表名。
+
+    同一 Base/metadata 被多个 schema key 共享（如 api.community 与 api.user
+    共用同一 Base）时，表只会定义一次，不应视为重复。
+    """
+    seen: dict[str, list[tuple[str, int]]] = {}
     for schema in load_registered_schemas(schema_keys):
+        meta_id = id(schema.metadata)
         for table_name in schema.metadata.tables:
-            seen.setdefault(table_name, []).append(schema.key)
-    return {table: owners for table, owners in seen.items() if len(owners) > 1}
+            seen.setdefault(table_name, []).append((schema.key, meta_id))
+    return {
+        table: [key for key, _ in owners]
+        for table, owners in seen.items()
+        if len({meta_id for _, meta_id in owners}) > 1
+    }
 
 
 def registry_summary(schema_keys: Iterable[str] | None = None) -> list[dict]:

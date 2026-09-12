@@ -5,6 +5,12 @@ conftest.py - 重构服务测试公共 fixtures
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _default_internal_call_secret(monkeypatch):
+    """统一内部调用密钥，避免宿主机 .env 注入导致 TestClient 内部鉴权 401。"""
+    monkeypatch.setenv("INTERNAL_CALL_SECRET", "dev-internal-call-secret")
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

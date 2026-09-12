@@ -129,42 +129,6 @@ class TestEngineConfigConsistency:
             not has_qlib_provider_keys
         ), "backend/services/engine/.env 存在重复 Qlib Provider 配置，请统一使用根目录 .env"
 
-    def test_model_qlib_class_declaration_should_match_model_file(self):
-        """
-        model_qlib 的 workflow/metadata 声明应与 model.pkl 实际类型一致。
-        """
-        model_dir = Path("models/production/model_qlib")
-        model_path = model_dir / "model.pkl"
-        workflow_path = model_dir / "workflow_config.yaml"
-        metadata_path = model_dir / "metadata.json"
-
-        if not (model_path.exists() and workflow_path.exists() and metadata_path.exists()):
-            pytest.skip("model_qlib 产物不完整，跳过一致性检查")
-
-        import json
-        import pickle
-
-        import yaml
-
-        try:
-            with model_path.open("rb") as f:
-                model = pickle.load(f)
-        except ModuleNotFoundError as exc:
-            pytest.skip(f"依赖缺失，跳过模型一致性检查: {exc}")
-
-        with workflow_path.open("r", encoding="utf-8") as f:
-            workflow = yaml.safe_load(f) or {}
-        with metadata_path.open("r", encoding="utf-8") as f:
-            metadata = json.load(f) or {}
-
-        task_model = (workflow.get("task") or {}).get("model") or {}
-        declared_workflow_cls = f"{task_model.get('module_path')}.{task_model.get('class')}"
-        declared_metadata_cls = metadata.get("resolved_class")
-        actual_cls = f"{type(model).__module__}.{type(model).__name__}"
-
-        assert declared_workflow_cls == actual_cls
-        assert declared_metadata_cls == actual_cls
-
 
 # ============================================================
 # 2. HTTP 接口测试

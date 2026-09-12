@@ -325,11 +325,6 @@ def load_data(
             df = df[df["trade_date"].notna()].copy()
             logger.info(f"Raw concat size: {len(df)} rows. Date range: {df['trade_date'].min()} to {df['trade_date'].max()}")
 
-        # 过滤北交所代码（4/8开头）——仅 A 股
-        df["symbol"] = df["symbol"].astype(str).str.zfill(6)
-        df = df[~df["symbol"].str.startswith(("4", "8"))].copy()
-        logger.info(f"After symbol filter: {len(df)} rows")
-
         # 过滤 ST/*ST 股票
         if "is_st" in df.columns:
             before = len(df)
@@ -377,6 +372,19 @@ def load_data(
                     logger.warning("instrument_detail.parquet not found (searched: %s)", ", ".join(str(d) for d in _sector_dirs))
             except Exception as e:
                 logger.warning("Failed to merge industry data (non-fatal): %s", e)
+
+    # ── 过滤北交所（4/8 开头，仅 A 股） ──
+    # 必须在所有加载分支之后：此前缩在 CN-parquet 分支内，直读因子源模式
+    # 会把北交所带进训练集。双口径（前缀式/6 位数字）判定。
+    if market_upper == "CN" and "symbol" in df.columns:
+        _bj_sym6 = (
+            df["symbol"].astype(str).str.upper().str.replace(r"^(SH|SZ|BJ)", "", regex=True)
+        )
+        _bj_mask = ~_bj_sym6.str.startswith(("4", "8"))
+        _bj_removed = int((~_bj_mask).sum())
+        if _bj_removed:
+            df = df[_bj_mask].copy()
+        logger.info(f"After BJ filter: {len(df)} rows (removed {_bj_removed} BJ rows)")
 
     # ── 全局股票池过滤（P3）：编排器已把池解析成 6 位代码列表随 config.yaml 传入 ──
     # 必须在所有加载分支之后（直读因子源 / core parquet / 年度 parquet 都走这里）：

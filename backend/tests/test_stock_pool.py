@@ -956,6 +956,24 @@ class TestP3TrainingBridge:
         assert "After early pool filter" in loading
         assert "_to_prefix_symbol" in loading
 
+    def test_bj_filter_applies_to_all_branches(self):
+        """北交所过滤必须在函数层级（CN 常开），直读分支不再漏进训练集。"""
+        from pathlib import Path
+
+        lines = (
+            Path(__file__).resolve().parents[2]
+            / "docker"
+            / "training"
+            / "data"
+            / "loading.py"
+        ).read_text(encoding="utf-8").splitlines()
+        top_level = [
+            line
+            for line in lines
+            if "After BJ filter" in line and line.startswith("        logger")
+        ]
+        assert top_level, "missing function-level BJ filter"
+
 
 # ---------------------------------------------------------------------------
 # P3-4 / P3-5：模拟盘与实盘

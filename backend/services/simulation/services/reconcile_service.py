@@ -37,7 +37,18 @@ CREATE TABLE IF NOT EXISTS simulation_reconcile_reports (
 """
 
 
+_table_ensured = False
+
+
 async def _ensure_table() -> None:
+    """确保对账报告表存在（CREATE IF NOT EXISTS）。
+
+    进程内只跑一次：权益结算 worker 每 30s 调一次 run_reconcile_once，
+    逐周期重复 DDL 是纯冗余往返。失败不置位，下周期重试自愈。
+    """
+    global _table_ensured
+    if _table_ensured:
+        return
     from sqlalchemy import text as _text
 
     from backend.shared.database_manager_v2 import get_session as _get_session
@@ -45,6 +56,7 @@ async def _ensure_table() -> None:
     async with _get_session() as session:
         await session.execute(_text(_CREATE_TABLE_SQL))
         await session.commit()
+    _table_ensured = True
 
 
 def _positions_by_symbol(positions: Any) -> dict[str, float]:

@@ -67,3 +67,41 @@ def test_worker_config_defaults(monkeypatch):
     assert settle_interval_seconds() == 10
     monkeypatch.setenv("SIM_EQUITY_SETTLE_ENABLED", "false")
     assert settle_enabled() is False
+
+
+def test_ensure_table_runs_once_per_process(monkeypatch):
+    """_ensure_table 进程内只执行一次 DDL：第二次调用零 DB 往返。"""
+    import backend.services.simulation.services.reconcile_service as recon
+
+    calls = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def execute(self, sql):
+            calls.append(sql)
+
+        async def commit(self):
+            pass
+
+    def fake_get_session():
+        return FakeSession()
+
+    monkeypatch.setattr(recon, "_table_ensured", False, raising=False)
+    monkeypatch.setattr(
+        "backend.shared.database_manager_v2.get_session", fake_get_session
+    )
+
+    import asyncio
+
+    # 首次执行：跑 DDL 并置位
+    asyncio.run(recon._ensure_table())
+    assert len(calls) == 1
+    assert recon._table_ensured is True
+    # 第二次：短路返回，无新 DDL
+    asyncio.run(recon._ensure_table())
+    assert len(calls) == 1

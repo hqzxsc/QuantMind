@@ -972,6 +972,8 @@ class InferenceScriptRunner:
                 signals,
                 active_model_id=self.fallback_model_id,
                 data_trade_date=date,
+                # 兜底+池组合同样局部覆盖，避免池 run 清空同日全市场信号
+                partial=bool(pool_id),
             )
 
         if persist and redis_client is not None:
@@ -1369,8 +1371,11 @@ class InferenceScriptRunner:
             f"[InferenceScriptRunner] 解析到 {len(signals)} 条信号, run_id={run_id}"
         )
 
-        # 写库 + 发布 Redis Stream（partial=单股补推时局部覆盖，不整桶删除）。
+        # 写库 + 发布 Redis Stream（partial=单股补推/股票池时局部覆盖，不整桶删除）。
         # persist=False（个股独立路线）时跳过，只返回内存信号。
+        # 股票池推理必须局部覆盖：整桶删除会把同日全市场 run 的信号清空，
+        # 导致推理历史的分布统计查不到明细（09-11 全市场 5189 行被池 run 清空事故）。
+        pool_scoped = bool(pool_id)
         if persist:
             self._persist_and_publish(
                 run_id,
@@ -1380,7 +1385,7 @@ class InferenceScriptRunner:
                 signals,
                 active_model_id=self.primary_model_id,
                 data_trade_date=date,
-                partial=partial_applied,
+                partial=(partial_applied or pool_scoped),
             )
 
         # 写 Redis 完成标记
@@ -1646,7 +1651,7 @@ class InferenceScriptRunner:
         将推理结果写入 engine_signal_scores 并发布到 Redis Stream。
 
         存储策略：按模型桶覆盖（同 tenant/user/date/model），保证同日不同模型可并存。
-        partial=True（单股补推）时只覆盖目标 symbol 的行，不整桶删除当日全市场信号。
+        partial=True（单股补推/股票池）时只覆盖目标 symbol 的行，不整桶删除当日全市场信号。
 
         Args:
             data_trade_date: 推理日期（数据截止日期），若不传则默认等于 prediction_trade_date
@@ -1903,7 +1908,7 @@ class InferenceScriptRunner:
         )
 
         # ── Step 0.2: 删除当日旧推理结果（覆盖策略）───────────────────
-        # partial（单股补推）时只删目标 symbol 的旧行，保留当日全市场信号。
+        # partial（单股补推/股票池）时只删目标 symbol 的旧行，保留当日全市场信号。
         # 注意：unique 键含 run_id，新 run 会另插一行，同 symbol 当日可能并存多行，
         # 读侧按最新 created_at 取最新（与个股分数曲线口径一致）。
         _sym_filter = " AND symbol = ANY(:partial_symbols)" if partial else ""
@@ -1927,7 +1932,7 @@ class InferenceScriptRunner:
         )
         if partial:
             logger.info(
-                f"[InferenceScriptRunner] 单股补推局部覆盖: 仅替换 {len(symbols)} 只标的的旧信号, run_id={run_id}"
+                f"[InferenceScriptRunner] 局部覆盖: 仅替换 {len(symbols)} 只标的的旧信号(单股补推/股票池), run_id={run_id}"
             )
         else:
             # 同步清除旧 feature_runs 记录（保留最新 run_id）

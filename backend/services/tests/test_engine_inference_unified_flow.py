@@ -509,3 +509,73 @@ class TestActiveDataSourceAudit:
 
         assert result.success is True
         assert "feature_snapshots" in result.active_data_source
+
+
+def test_pool_inference_persists_with_symbol_scoped_delete(monkeypatch, tmp_path: Path):
+    """池推理落库必须 partial=True（按成分 symbol 局部覆盖）。
+
+    回归：中证1000 池 run 整桶删除了同日全市场 run 的 5189 行信号，
+    导致推理历史该行正/负/平均分全空（明细 rows=0）。
+    """
+    import json as _json
+    import subprocess as _subprocess
+
+    model_dir = tmp_path / "model_qlib"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "inference.py").write_text(
+        "#!/usr/bin/env python\nprint('main')\n", encoding="utf-8"
+    )
+
+    runner = InferenceScriptRunner(models_production=str(model_dir))
+    monkeypatch.setattr(
+        runner,
+        "_query_dimension_readiness",
+        lambda trade_date, expected_dim: {"ready": True, "detail": "ok"},
+    )
+
+    def _fake_run(cmd, **kwargs):
+        out = cmd[cmd.index("--output") + 1]
+        Path(out).write_text(
+            _json.dumps(
+                [
+                    {"symbol": "SH600036", "score": 0.9},
+                    {"symbol": "SH600000", "score": -0.4},
+                    {"symbol": "SZ000001", "score": 0.1},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return _subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(
+        "backend.services.engine.inference.script_runner.subprocess.run", _fake_run
+    )
+
+    def _fake_pool_filter(signals, **kwargs):
+        if not kwargs.get("pool_id"):
+            return signals, None
+        return [s for s in signals if s["symbol"] != "SZ000001"], None
+
+    monkeypatch.setattr(runner, "_pool_filter_signals", _fake_pool_filter)
+
+    captured: dict = {}
+
+    def _fake_persist(
+        run_id, prediction_trade_date, tenant_id, user_id, signals, **kwargs
+    ):
+        captured["partial"] = kwargs.get("partial")
+        captured["n"] = len(signals)
+
+    monkeypatch.setattr(runner, "_persist_and_publish", _fake_persist)
+
+    result = runner.execute("2026-09-11", pool_id="pool:csi1000")
+    assert result.success is True
+    assert captured["partial"] is True
+    assert captured["n"] == 2
+
+    # 全市场路径保持整桶覆盖（partial=False）
+    captured.clear()
+    result = runner.execute("2026-09-11")
+    assert result.success is True
+    assert captured["partial"] is False
+    assert captured["n"] == 3

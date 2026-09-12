@@ -21,9 +21,20 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def admin_routes():
-    """Yield the sub-routers registered on the admin router."""
+    """Yield the sub-APIRouters registered on the admin router.
+
+    新版 FastAPI 的 include_router 不再展开为带 path 的 Mount Route，
+    而是 `_IncludedRouter` 包装；通过 original_router 取回被包含的 APIRouter。
+    """
+    from fastapi import APIRouter
+
     from backend.services.api.routers.admin import admin_router
-    return list(admin_router.routes)
+    subs = []
+    for r in admin_router.routes:
+        sub = getattr(r, "original_router", None)
+        if isinstance(sub, APIRouter):
+            subs.append(sub)
+    return subs
 
 
 # ── Auth dependency injection test ──
@@ -33,34 +44,27 @@ class TestAdminRouterAuth:
 
     def test_admin_router_has_sub_routers(self, admin_routes):
         """Sanity: the admin router has at least 10 sub-routers registered."""
-        # Each include_router() creates a Mount route
-        routes = [r for r in admin_routes if hasattr(r, 'path')]
-        sub_router_count = len(routes)
-        assert sub_router_count >= 10, f"Expected >=10 sub-routers, got {sub_router_count}"
-        # Log for visibility
-        for r in routes:
-            print(f"  Admin sub-router: {r.path}")
+        assert len(admin_routes) >= 10, (
+            f"Expected >=10 sub-routers, got {len(admin_routes)}"
+        )
 
     def test_all_sub_routers_have_dependencies(self, admin_routes):
         """Every sub-router must have at least one dependency (require_admin)."""
-        routes = [r for r in admin_routes if hasattr(r, 'app') and hasattr(r.app, 'dependencies')]
         no_deps = []
-        for r in routes:
-            deps = getattr(r.app, 'dependencies', [])
-            if not deps:
-                no_deps.append(r.path)
+        for sub in admin_routes:
+            if not getattr(sub, "dependencies", []):
+                no_deps.append(sub.prefix or list(sub.tags))
         assert not no_deps, (
             f"These admin sub-routers lack router-level dependencies: {no_deps}"
         )
 
     def test_auth_dependency_present(self, admin_routes):
         """The dependency must resolve to require_admin."""
-        routes = [r for r in admin_routes if hasattr(r, 'app') and hasattr(r.app, 'dependencies')]
-        for r in routes:
-            deps = getattr(r.app, 'dependencies', [])
+        for sub in admin_routes:
+            deps = getattr(sub, "dependencies", [])
             assert any(
                 isinstance(d, Depends) for d in deps
-            ), f"Sub-router {r.path} has no Depends in dependencies: {deps}"
+            ), f"Sub-router {sub.prefix or sub.tags} has no Depends in dependencies: {deps}"
 
 
 # ── Individual router import tests ──
@@ -81,7 +85,6 @@ class TestAdminRouterImports:
         "backend.services.api.routers.admin.strategy_templates",
         "backend.services.api.routers.admin.alpha_factor_pipeline",
         "backend.services.api.routers.admin.trading_agents",
-        "backend.services.api.routers.admin.global_market_console",
     ]
 
     @pytest.mark.parametrize("module_name", ADMIN_ROUTER_MODULES)

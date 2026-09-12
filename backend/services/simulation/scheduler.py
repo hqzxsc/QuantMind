@@ -127,10 +127,16 @@ class SimulationScheduler:
                 await asyncio.sleep(self.poll_interval)
 
     def _is_trading_day(self, dt: datetime) -> bool:
-        """检查是否为交易日"""
-        # 简单判断：周一到周五
-        # TODO: 接入交易日历
-        return dt.weekday() < 5
+        """检查是否为交易日（XSHG 日历；日历不可用时回退周一至周五）"""
+        try:
+            from backend.services.simulation.services.simulation_hosted_scheduler import (
+                _is_trading_day as _calendar_is_trading_day,
+            )
+
+            return _calendar_is_trading_day(dt.date())
+        except Exception as exc:
+            logger.debug("SimulationScheduler: 交易日历不可用, 回退周判断: %s", exc)
+            return dt.weekday() < 5
 
     async def run_all_users(self) -> dict[str, Any]:
         """

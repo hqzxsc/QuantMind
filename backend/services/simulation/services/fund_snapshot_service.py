@@ -50,15 +50,13 @@ def _local_today() -> datetime.date:
 
 def _parse_account_key(key: str) -> tuple[str, str] | None:
     # simulation:account:{tenant_id}:{user_id}（CN），带 :MARKET 后缀的市场账户
-    # 暂不纳入资金快照（快照表以 tenant/user/date 唯一，跨市场会串行覆盖），
-    # 显式跳过并记录，避免静默丢失。
+    # 与 CN 账户按 (tenant, user) 合并成一条用户级快照：快照表以
+    # tenant/user/date 唯一，且台账 account_id（sim:{tenant}:{user}）本来
+    # 就不分市场——跨市场资产应合计为用户总资产，而非串行覆盖或跳过。
     parsed = parse_canonical_account_key(key)
     if not parsed:
         return None
-    tenant_id, user_id, market = parsed
-    if market != "CN":
-        logger.debug("资金快照跳过非 CN 市场账户: %s", key)
-        return None
+    tenant_id, user_id, _market = parsed
     return tenant_id, user_id
 
 
@@ -84,42 +82,6 @@ class SimulationFundSnapshotService:
         except Exception:
             return Decimal("0")
         return _to_decimal(data.get("initial_cash"), Decimal("0"))
-
-    @classmethod
-    def _build_row(
-        cls,
-        tenant_id: str,
-        user_id: str,
-        account: dict[str, object],
-        snapshot_date=None,
-    ) -> dict[str, object]:
-        total_asset = _to_decimal(account.get("total_asset"))
-        available_balance = _to_decimal(
-            account.get("cash") or account.get("available_balance")
-        )
-        frozen_balance = _to_decimal(account.get("frozen_balance"))
-        market_value = _to_decimal(account.get("market_value"))
-        initial_capital = _to_decimal(account.get("initial_capital"))
-        today_pnl = _to_decimal(account.get("today_pnl"))
-        total_pnl = _to_decimal(account.get("total_pnl"))
-        # 注意：这里不能用 total_asset 预填 initial_capital，
-        # 否则 capture_all 的 settings.initial_cash 回退永远不会命中，
-        # 导致 total_pnl 恒为 0。缺失时保留 0，由调用方做回退。
-
-        return {
-            "tenant_id": tenant_id,
-            "user_id": user_id,
-            # P0-7：EOD按trade_date记，与account_daily对齐；周期采集默认今日
-            "snapshot_date": snapshot_date or _local_today(),
-            "total_asset": total_asset,
-            "available_balance": available_balance,
-            "frozen_balance": frozen_balance,
-            "market_value": market_value,
-            "initial_capital": initial_capital,
-            "total_pnl": total_pnl,
-            "today_pnl": today_pnl,
-            "source": "redis_simulation_account",
-        }
 
     @classmethod
     async def get_baselines(
@@ -214,7 +176,9 @@ class SimulationFundSnapshotService:
         snap_date = snapshot_date or _local_today()
 
         keys = list(redis.client.scan_iter(match="simulation:account:*", count=500))
-        rows: list[dict[str, object]] = []
+        # 同一用户跨市场账户（CN/HK/US/...）合并为一条用户级快照：
+        # 资产字段累加，盈亏在合并后的总资产上计算（与台账口径一致）。
+        grouped: dict[tuple[str, str], dict[str, Decimal]] = {}
         for key in keys:
             parsed = _parse_account_key(str(key))
             if not parsed:
@@ -228,7 +192,38 @@ class SimulationFundSnapshotService:
             except Exception:
                 continue
 
-            row = cls._build_row(tenant_id, user_id, account, snapshot_date=snap_date)
+            bucket = grouped.setdefault(
+                (tenant_id, user_id),
+                {
+                    "total_asset": Decimal("0"),
+                    "available_balance": Decimal("0"),
+                    "frozen_balance": Decimal("0"),
+                    "market_value": Decimal("0"),
+                },
+            )
+            bucket["total_asset"] += _to_decimal(account.get("total_asset"))
+            bucket["available_balance"] += _to_decimal(
+                account.get("cash") or account.get("available_balance")
+            )
+            bucket["frozen_balance"] += _to_decimal(account.get("frozen_balance"))
+            bucket["market_value"] += _to_decimal(account.get("market_value"))
+
+        rows: list[dict[str, object]] = []
+        for (tenant_id, user_id), bucket in grouped.items():
+            row = {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                # P0-7：EOD按trade_date记，与account_daily对齐；周期采集默认今日
+                "snapshot_date": snap_date,
+                "total_asset": bucket["total_asset"],
+                "available_balance": bucket["available_balance"],
+                "frozen_balance": bucket["frozen_balance"],
+                "market_value": bucket["market_value"],
+                "initial_capital": Decimal("0"),
+                "total_pnl": Decimal("0"),
+                "today_pnl": Decimal("0"),
+                "source": "redis_simulation_account",
+            }
             if row["initial_capital"] == 0:
                 row["initial_capital"] = cls._read_settings_initial_cash(
                     redis, tenant_id, user_id

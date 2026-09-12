@@ -98,7 +98,7 @@ class QlibDataBuilder:
         market: str,
         data_dir: str | Path | None = None,
         qlib_dir: str | Path | None = None,
-    ) -> "QlibDataBuilder":
+    ) -> QlibDataBuilder:
         """根据市场创建对应数据中枢的构建器。
 
         market: CN / US / HK / CRYPTO / FUTURES

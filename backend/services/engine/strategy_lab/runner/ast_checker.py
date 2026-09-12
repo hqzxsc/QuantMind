@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import Iterable
+from collections.abc import Iterable
 
 # Top-level packages user code may import.
 ALLOWED_MODULES: frozenset[str] = frozenset(

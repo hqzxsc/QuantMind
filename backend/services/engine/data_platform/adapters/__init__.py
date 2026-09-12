@@ -11,7 +11,7 @@ akshare / efinance / yahoo_finance / simonlin_global 仅服务 HK/US 市场。
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

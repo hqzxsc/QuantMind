@@ -17,8 +17,8 @@ from sqlalchemy import text
 
 from backend.shared.redis_sentinel_client import get_redis_sentinel_client
 from ..schemas.stock_pool import (
-    PoolItem, 
-    WorkingPool, 
+    PoolItem,
+    WorkingPool,
     SaveWorkingPoolRequest,
     SavePoolFileResponse,
     ListPoolFilesResponse,
@@ -46,14 +46,14 @@ async def get_working_pool(request: Request):
     user_id = getattr(request.state, "user", {}).get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated")
-    
+
     redis = get_redis_sentinel_client()
     data = redis.get(_get_working_key(user_id))
-    
+
     if not data:
         # 如果缓存没有，返回空池
         return WorkingPool(user_id=user_id, items=[])
-    
+
     try:
         pool_data = json.loads(data)
         return WorkingPool(**pool_data)
@@ -67,19 +67,19 @@ async def save_working_pool(body: SaveWorkingPoolRequest, request: Request):
     user_id = getattr(request.state, "user", {}).get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated")
-    
+
     pool = WorkingPool(user_id=user_id, items=body.items)
     redis = get_redis_sentinel_client()
-    
+
     success = redis.set(
-        _get_working_key(user_id), 
+        _get_working_key(user_id),
         json.dumps(pool.dict(), ensure_ascii=False).encode("utf-8"),
         ex=86400 * 7 # 缓存7天
     )
-    
+
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save working pool to cache")
-    
+
     return {"success": True, "updated_at": pool.updated_at}
 
 @router.get("/versions", response_model=ListPoolFilesResponse)
@@ -87,7 +87,7 @@ async def list_pool_versions(request: Request, limit: int = 50):
     """获取用户保存的所有股票池版本"""
     from .storage import list_pool_files as legacy_list
     from ..schemas.stock_pool import ListPoolFilesRequest
-    
+
     user_id = getattr(request.state, "user", {}).get("user_id")
     return await legacy_list(ListPoolFilesRequest(user_id=user_id, limit=limit))
 
@@ -97,30 +97,30 @@ async def save_version_from_working(request: Request, pool_name: str):
     user_id = getattr(request.state, "user", {}).get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated")
-    
+
     # 1. 获取 WorkingPool
     redis = get_redis_sentinel_client()
     data = redis.get(_get_working_key(user_id))
     if not data:
         raise HTTPException(status_code=400, detail="Working pool is empty, nothing to save")
-    
+
     pool_data = json.loads(data)
     items = pool_data.get("items", [])
-    
+
     # 2. 调用旧版保存逻辑 (存入 DB/COS)
     from .storage import save_pool_file as legacy_save
     from ..schemas.stock_pool import SavePoolFileRequest
-    
+
     # 转换格式为旧版期待的结构
     legacy_items = [{"symbol": item["symbol"], "name": item.get("name", "")} for item in items]
-    
+
     res = await legacy_save(SavePoolFileRequest(
         user_id=user_id,
         pool_name=pool_name,
         format="txt",
         pool=legacy_items
     ), request)
-    
+
     return res
 
 @router.post("/versions/{file_key:path}/activate")
@@ -129,7 +129,7 @@ async def activate_version(file_key: str, request: Request):
     user_id = getattr(request.state, "user", {}).get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated")
-    
+
     # 这里逻辑是更新 DB 中的 is_active 字段
     # 旧版 save_pool_file 已经处理了 is_active 的切换
     # 但如果用户是选择一个已有的版本激活，需要一个独立的更新逻辑
@@ -139,17 +139,17 @@ async def activate_version(file_key: str, request: Request):
             db.execute(text(
                 "UPDATE stock_pool_files SET is_active = false WHERE user_id = :user_id"
             ), {"user_id": user_id})
-            
+
             # 激活指定的池子
             res = db.execute(text(
                 "UPDATE stock_pool_files SET is_active = true WHERE user_id = :user_id AND file_key = :file_key"
             ), {"user_id": user_id, "file_key": file_key})
-            
+
             db.commit()
-            
+
             if res.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Pool version not found")
-                
+
         return {"success": True, "activated_key": file_key}
     except Exception as e:
         logger.error(f"Failed to activate pool {file_key}: {e}")
@@ -161,7 +161,7 @@ async def get_active_pool(request: Request):
     # 逻辑复用旧版的 get_active_pool_file 但路径统一
     from .storage import get_active_pool_file as legacy_get_active
     from ..schemas.stock_pool import GetActivePoolFileRequest
-    
+
     user_id = getattr(request.state, "user", {}).get("user_id")
     return await legacy_get_active(GetActivePoolFileRequest(user_id=user_id), request)
 

@@ -161,8 +161,8 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         if field == "adj_factor":
@@ -188,7 +188,7 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         raise InvalidFieldRequest(f"baostock: field={field} not implemented")
 
     def _fetch_adj_factor(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         _ensure_login()
         with _BS_LOCK:
@@ -211,7 +211,7 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         df["source"] = self.name
         return df[["symbol", "trade_date", "adj_factor", "source"]].dropna()
 
-    def _fetch_dividend(self, symbol: str, year: Optional[int]) -> pd.DataFrame:
+    def _fetch_dividend(self, symbol: str, year: int | None) -> pd.DataFrame:
         _ensure_login()
         y = year or date.today().year
         with _BS_LOCK:
@@ -231,7 +231,7 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_financial_report(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         _ensure_login()
         bs_code = _to_bs_symbol(symbol)
@@ -308,7 +308,7 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_growth(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         _ensure_login()
         bs_code = _to_bs_symbol(symbol)
@@ -331,7 +331,7 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_operation(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         _ensure_login()
         bs_code = _to_bs_symbol(symbol)
@@ -354,7 +354,7 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_dupont(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         _ensure_login()
         bs_code = _to_bs_symbol(symbol)
@@ -377,7 +377,7 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_forecast(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         _ensure_login()
         bs_code = _to_bs_symbol(symbol)
@@ -400,7 +400,7 @@ class BaostockAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_performance_express(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         _ensure_login()
         bs_code = _to_bs_symbol(symbol)

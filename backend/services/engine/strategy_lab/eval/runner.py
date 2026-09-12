@@ -236,7 +236,7 @@ def format_markdown_report(result: EvalResult, title: str = "Strategy Lab AI 30-
         f"- 总数: **{result.total}**",
         f"- 通过: **{result.passed}**",
         f"- 通过率: **{result.pass_rate_pct:.2f}%**",
-        f"- 验收门槛: ≥ 60% (Sprint 1 Day 5)",
+        "- 验收门槛: ≥ 60% (Sprint 1 Day 5)",
         "",
         "## 分类统计",
         "",

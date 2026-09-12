@@ -289,8 +289,8 @@ def analyze(events: list[dict]):
         source_scores.append((src, st["count"], bull_mean, bear_mean, predictive))
 
     source_scores.sort(key=lambda x: -x[4])
-    P(f"| 来源 | 文章数 | 利好T+5 | 利空T+5 | 预测力 |")
-    P(f"|------|--------|---------|---------|--------|")
+    P("| 来源 | 文章数 | 利好T+5 | 利空T+5 | 预测力 |")
+    P("|------|--------|---------|---------|--------|")
     for src, cnt, bm, brm, pred in source_scores[:20]:
         P(f"| {src[:30]} | {cnt} | {bm*100:+.2f}% | {brm*100:+.2f}% | {pred*100:+.2f}% |")
     P()
@@ -298,8 +298,8 @@ def analyze(events: list[dict]):
     # 最差来源
     source_scores.sort(key=lambda x: x[4])
     P("**预测力最差（反向指标）Top 10:**")
-    P(f"| 来源 | 文章数 | 利好T+5 | 利空T+5 | 预测力 |")
-    P(f"|------|--------|---------|---------|--------|")
+    P("| 来源 | 文章数 | 利好T+5 | 利空T+5 | 预测力 |")
+    P("|------|--------|---------|---------|--------|")
     for src, cnt, bm, brm, pred in source_scores[:10]:
         P(f"| {src[:30]} | {cnt} | {bm*100:+.2f}% | {brm*100:+.2f}% | {pred*100:+.2f}% |")
     P()
@@ -314,8 +314,8 @@ def analyze(events: list[dict]):
         vals = [e["returns"].get(h) for e in group if h in e["returns"]]
         return np.mean(vals) if vals else 0, len(vals)
 
-    P(f"| 时段 | 事件数 | T+1 | T+3 | T+5 | T+10 | T+20 |")
-    P(f"|------|--------|-----|-----|-----|------|------|")
+    P("| 时段 | 事件数 | T+1 | T+3 | T+5 | T+10 | T+20 |")
+    P("|------|--------|-----|-----|-----|------|------|")
     for name, grp in [("盘中(9:30-15:00)", intra), ("盘后/盘前", after)]:
         vals = []
         for h in [1, 3, 5, 10, 20]:
@@ -331,8 +331,8 @@ def analyze(events: list[dict]):
     for e in events:
         if e["label"] == "bullish":
             hour_groups[e["hour"]].append(e)
-    P(f"| 小时 | 事件数 | T+1 | T+5 | T+10 |")
-    P(f"|------|--------|-----|-----|------|")
+    P("| 小时 | 事件数 | T+1 | T+5 | T+10 |")
+    P("|------|--------|-----|-----|------|")
     for h in sorted(hour_groups.keys()):
         grp = hour_groups[h]
         t1, _ = avg_ret_at(grp, 1)
@@ -368,8 +368,8 @@ def analyze(events: list[dict]):
             if len(items) >= 3:
                 multi_3plus.append(e0)
 
-    P(f"| 报道数 | 事件数 | 利好T+5 | 利好T+20 | 利空T+5 | 利空T+20 |")
-    P(f"|--------|--------|----------|-----------|----------|-----------|")
+    P("| 报道数 | 事件数 | 利好T+5 | 利好T+20 | 利空T+5 | 利空T+20 |")
+    P("|--------|--------|----------|-----------|----------|-----------|")
     for name, grp in [("单篇", single), ("2篇+", multi), ("3篇+", multi_3plus)]:
         bull_g = [e for e in grp if e["label"] == "bullish"]
         bear_g = [e for e in grp if e["label"] == "bearish"]
@@ -390,8 +390,8 @@ def analyze(events: list[dict]):
     gap_up = [e for e in with_day0 if e["day0_ret"] > 0.03]    # 首日涨超3%
     gap_down = [e for e in with_day0 if e["day0_ret"] < -0.03]  # 首日跌超3%
 
-    P(f"| 首日表现 | 事件数 | T+1 | T+3 | T+5 | T+10 | T+20 |")
-    P(f"|----------|--------|-----|-----|-----|------|------|")
+    P("| 首日表现 | 事件数 | T+1 | T+3 | T+5 | T+10 | T+20 |")
+    P("|----------|--------|-----|-----|-----|------|------|")
     for name, grp in [("首日上涨", up_day0), ("首日下跌", down_day0),
                        ("首日涨>3%", gap_up), ("首日跌>3%", gap_down)]:
         vals = []
@@ -501,8 +501,8 @@ def analyze(events: list[dict]):
         tag_scores.append((tag, st["count"], bull_mean, bear_mean))
 
     tag_scores.sort(key=lambda x: -(x[2] - x[3]))
-    P(f"| 事件标签 | 出现次数 | 利好T+5 | 利空T+5 |")
-    P(f"|----------|----------|---------|---------|")
+    P("| 事件标签 | 出现次数 | 利好T+5 | 利空T+5 |")
+    P("|----------|----------|---------|---------|")
     for tag, cnt, bm, brm in tag_scores[:25]:
         P(f"| {tag[:20]} | {cnt} | {bm*100:+.2f}% | {brm*100:+.2f}% |")
     P()
@@ -514,8 +514,8 @@ def analyze(events: list[dict]):
     for e in events:
         cap_groups[e["cap_label"]].append(e)
 
-    P(f"| 市值 | 事件数 | 利好T+5 | 利好T+20 | 利空T+5 | 利空T+20 |")
-    P(f"|------|--------|----------|-----------|----------|-----------|")
+    P("| 市值 | 事件数 | 利好T+5 | 利好T+20 | 利空T+5 | 利空T+20 |")
+    P("|------|--------|----------|-----------|----------|-----------|")
     for cap in ["微盘", "小盘", "中盘", "大盘", "超大盘", "未知"]:
         grp = cap_groups.get(cap, [])
         if not grp:
@@ -550,8 +550,8 @@ def analyze(events: list[dict]):
         if run_length in consecutive:
             consecutive[run_length].append(tl[-run_length])
 
-    P(f"| 连续天数 | 事件数 | T+5 收益 | T+5 胜率 | T+10 收益 |")
-    P(f"|----------|--------|----------|----------|-----------|")
+    P("| 连续天数 | 事件数 | T+5 收益 | T+5 胜率 | T+10 收益 |")
+    P("|----------|--------|----------|----------|-----------|")
     for days in [1, 2, 3]:
         grp = consecutive[days]
         t5, _ = avg_ret_at(grp, 5)
@@ -587,7 +587,7 @@ def analyze(events: list[dict]):
     up_t5, _ = avg_ret_at(up_day0, 5)
     down_t5, _ = avg_ret_at(down_day0, 5)
     findings.append(f"- **首日涨的股票后续继续涨** (T+5: {up_t5*100:+.2f}%), **首日跌的继续跌** (T+5: {down_t5*100:+.2f}%)")
-    findings.append(f"  → 动量效应明显，消息当天涨了就追涨，跌了就杀跌")
+    findings.append("  → 动量效应明显，消息当天涨了就追涨，跌了就杀跌")
 
     # 反转
     b2b_ret5 = np.mean([r["ret5"] for r in reversals["bull_to_bear"]]) if reversals["bull_to_bear"] else 0

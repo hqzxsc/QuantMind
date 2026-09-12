@@ -1,5 +1,6 @@
 """高分股票(≥2.2)板块×市值×周期收益分析"""
-import sys, asyncio
+import sys
+import asyncio
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from collections import defaultdict
@@ -13,7 +14,8 @@ from sqlalchemy import text
 
 def load_caps() -> dict[str, float]:
     """用同步 psycopg2 读市值，避免 asyncio loop 冲突"""
-    import psycopg2, os
+    import psycopg2
+    import os
     conn = psycopg2.connect(
         host=os.getenv("DB_HOST", "localhost"), port=os.getenv("DB_PORT", "5432"),
         dbname=os.getenv("DB_NAME", "quantmind"),

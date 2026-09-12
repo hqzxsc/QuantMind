@@ -74,7 +74,7 @@ B_SHARE_RE = re.compile(r'^[A-Za-z]+\d+B$', re.IGNORECASE)
 # 工具
 # ---------------------------------------------------------------------------
 
-def get_all_stocks(include_bj: bool = False) -> List[Tuple[str, str]]:
+def get_all_stocks(include_bj: bool = False) -> list[tuple[str, str]]:
     """获取股票列表。
 
     Returns:
@@ -86,7 +86,7 @@ def get_all_stocks(include_bj: bool = False) -> List[Tuple[str, str]]:
     if include_bj:
         markets.append(BJ_MARKET)
 
-    stocks: List[Tuple[str, str]] = []
+    stocks: list[tuple[str, str]] = []
     for market_id, suffix, name in markets:
         try:
             raw = tq.get_stock_list(market_id, list_type=1)
@@ -115,7 +115,7 @@ def is_b_share(symbol: str) -> bool:
     return bool(B_SHARE_RE.match(symbol or ''))
 
 
-def iter_months(start_yyyymm: str, end_yyyymm: str) -> List[Tuple[str, str, str]]:
+def iter_months(start_yyyymm: str, end_yyyymm: str) -> list[tuple[str, str, str]]:
     """生成 [(yyyymm, start_yyyymmdd, end_yyyymmdd), ...]"""
     if len(start_yyyymm) != 6 or len(end_yyyymm) != 6:
         raise ValueError("月份格式必须为 YYYYMM, 例 202606")
@@ -165,7 +165,7 @@ def fetch_one(tdx_code: str, internal_symbol: str,
         None                      — 该月无数据
         Exception                 — 失败 (已被重试耗尽)
     """
-    last_err: Optional[Exception] = None
+    last_err: Exception | None = None
     for attempt in range(retries + 1):
         try:
             df = tq.get_divid_factors(
@@ -254,7 +254,7 @@ def main() -> int:
     # 5) 拉取
     print('\n[3/4] 拉取数据...')
     records = []
-    failed: List[Tuple[str, str, str]] = []   # (symbol, yyyymm, error_str)
+    failed: list[tuple[str, str, str]] = []   # (symbol, yyyymm, error_str)
     success = 0
     skipped = 0
     total_jobs = len(all_stocks) * len(months)
@@ -281,8 +281,8 @@ def main() -> int:
                 success += 1
 
     # 6) 合并保存
-    print(f'\n[4/4] 合并并保存...')
-    new_records: Optional[pd.DataFrame] = None
+    print('\n[4/4] 合并并保存...')
+    new_records: pd.DataFrame | None = None
     if records:
         new_records = pd.concat(records, ignore_index=True)
         new_records.columns = [c.lower() for c in new_records.columns]

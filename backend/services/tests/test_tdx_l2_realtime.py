@@ -27,7 +27,7 @@ from backend.services.live_trading.services.tdx_l2_realtime import (
 
 def _factors(**overrides) -> dict:
     """13 因子基值（中性）。"""
-    f = {k: 0.0 for k in FACTOR_ICIR}
+    f = dict.fromkeys(FACTOR_ICIR, 0.0)
     f.update(overrides)
     return f
 

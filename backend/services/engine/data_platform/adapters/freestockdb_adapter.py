@@ -53,8 +53,8 @@ def _api_url(
     cmd: str,
     t: str,
     *,
-    limit: Optional[int] = None,
-    fields: Optional[str] = None,
+    limit: int | None = None,
+    fields: str | None = None,
 ) -> str:
     base = f"http://{_DEFAULT_HOST}"
     params = f"cmd={cmd}&t={quote(t)}"
@@ -69,8 +69,8 @@ def _api_get(
     cmd: str,
     t: str,
     *,
-    limit: Optional[int] = None,
-    fields: Optional[str] = None,
+    limit: int | None = None,
+    fields: str | None = None,
     timeout: int = 30,
 ) -> Any:
     url = _api_url(cmd, t, limit=limit, fields=fields)
@@ -167,8 +167,8 @@ class FreeStockDBAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs: Any,
     ) -> pd.DataFrame:
         if field == "adj_factor":
@@ -392,8 +392,8 @@ class FreeStockDBAdapter(OfflineDataSourceAdapter):
         self,
         symbol: str,
         frequency: str,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
     ) -> pd.DataFrame:
         fsd_code = _to_fsd_code(symbol)
 

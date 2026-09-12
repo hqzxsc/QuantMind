@@ -60,7 +60,7 @@ def _ensure_openbb_path():
         sys.path.insert(0, p)
 
 
-def _eastmoney_kline(symbol: str, start: Optional[date], end: Optional[date]) -> pd.DataFrame:
+def _eastmoney_kline(symbol: str, start: date | None, end: date | None) -> pd.DataFrame:
     """通过东方财富 API 获取 A 股日 K 线。"""
     import requests as req
 
@@ -107,7 +107,7 @@ def _eastmoney_kline(symbol: str, start: Optional[date], end: Optional[date]) ->
     return df
 
 
-def _tushare_kline(symbol: str, start: Optional[date], end: Optional[date]) -> pd.DataFrame:
+def _tushare_kline(symbol: str, start: date | None, end: date | None) -> pd.DataFrame:
     """通过 tushare 获取 A 股日 K 线。"""
     import tushare as ts
 
@@ -222,8 +222,8 @@ class OpenBBAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         if field == "financial_report":

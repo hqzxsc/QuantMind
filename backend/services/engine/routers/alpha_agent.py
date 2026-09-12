@@ -165,7 +165,7 @@ async def list_markets():
 @router.post("/evolve")
 async def start_evolution(
     request: Request,
-    user_id: Optional[str] = Query(None, description="已废弃：身份取自 JWT，仅用于防伪校验"),
+    user_id: str | None = Query(None, description="已废弃：身份取自 JWT，仅用于防伪校验"),
     market: str = Query("a_share", description="市场: a_share, crypto, hong_kong, us_stock"),
     universe: str = Query("csi300", description="股票池: csi300, csi500, csi1000, sse50, gem, star, csi800, all_a"),
     loop_n: int = Query(5, ge=1, le=20, description="演化轮数"),
@@ -304,8 +304,8 @@ async def get_task_log(
 @router.get("/tasks")
 async def list_tasks(
     request: Request,
-    user_id: Optional[str] = Query(None, description="已废弃：身份取自 JWT，仅用于防伪校验"),
-    market: Optional[str] = Query(None, description="按市场过滤"),
+    user_id: str | None = Query(None, description="已废弃：身份取自 JWT，仅用于防伪校验"),
+    market: str | None = Query(None, description="按市场过滤"),
 ):
     """列出当前用户的演化任务"""
     auth_user_id, auth_tenant_id = get_authenticated_identity(request)
@@ -324,10 +324,10 @@ async def list_tasks(
 @router.get("/factors")
 async def list_factors(
     request: Request,
-    user_id: Optional[str] = Query(None, description="已废弃：身份取自 JWT，仅用于防伪校验"),
-    market: Optional[str] = Query(None, description="按市场过滤"),
-    universe: Optional[str] = Query(None, description="按股票池过滤"),
-    status: Optional[str] = Query(None, description="按状态过滤: pending/backtesting/completed/failed"),
+    user_id: str | None = Query(None, description="已废弃：身份取自 JWT，仅用于防伪校验"),
+    market: str | None = Query(None, description="按市场过滤"),
+    universe: str | None = Query(None, description="按股票池过滤"),
+    status: str | None = Query(None, description="按状态过滤: pending/backtesting/completed/failed"),
     limit: int = Query(50, ge=1, le=200),
 ):
     """列出当前用户已生成的因子"""
@@ -411,10 +411,10 @@ async def explain_factor(factor_id: str, request: Request):
 async def backtest_factor(
     factor_id: str,
     request: Request,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    universe: Optional[str] = Query("csi300", description="回测股票池: csi300, csi500, csi1000, sse50, gem, star, csi800, all_a"),
-    data_source: Optional[str] = Query("qlib_bin", description="回测数据源: qlib_bin(默认) | h5"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    universe: str | None = Query("csi300", description="回测股票池: csi300, csi500, csi1000, sse50, gem, star, csi800, all_a"),
+    data_source: str | None = Query("qlib_bin", description="回测数据源: qlib_bin(默认) | h5"),
 ):
     """对因子发起轻量验证（多市场 + 数据源可选）
 
@@ -557,7 +557,7 @@ async def export_factor_to_ide(
 @router.get("/stats")
 async def get_stats(
     request: Request,
-    market: Optional[str] = Query(None, description="按市场过滤统计"),
+    market: str | None = Query(None, description="按市场过滤统计"),
 ):
     """当前用户的因子统计信息"""
     from sqlalchemy import text
@@ -813,9 +813,9 @@ async def _run_factor_backtest(
     factor_code: str,
     market: str = "a_share",
     data_source: str = "qlib_bin",
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    universe: Optional[str] = "csi300",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    universe: str | None = "csi300",
 ) -> None:
     """统一回测入口（多市场 + 数据源可选）。
 
@@ -1215,9 +1215,9 @@ def _resolve_factor_h5_path_for_market(market: str) -> str | None:
 async def _run_lightweight_backtest(
     factor_id: str,
     factor_code: str,
-    start_date: Optional[str],
-    end_date: Optional[str],
-    universe: Optional[str] = "csi300",
+    start_date: str | None,
+    end_date: str | None,
+    universe: str | None = "csi300",
 ) -> None:
     """轻量回测（支持多股票池）"""
     try:
@@ -1382,9 +1382,9 @@ async def _run_lightweight_backtest(
 async def _backtest_functional_factor(
     factor_id: str,
     factor_code: str,
-    start_date: Optional[str],
-    end_date: Optional[str],
-    universe: Optional[str] = "csi300",
+    start_date: str | None,
+    end_date: str | None,
+    universe: str | None = "csi300",
 ) -> None:
     """回测 RD-Agent 函数式因子（calculate_* 返回 DataFrame，读 daily_pv.h5）。
 

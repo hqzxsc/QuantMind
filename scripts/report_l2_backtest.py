@@ -21,7 +21,8 @@ from sqlalchemy import text
 
 def load_names():
     """股票名称/行业映射（同步 psycopg2，避免 asyncio 生命周期冲突）"""
-    import os, psycopg2
+    import os
+    import psycopg2
     conn = psycopg2.connect(
         host=os.getenv("POSTGRES_HOST", "quantmind-db"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),

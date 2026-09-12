@@ -18,7 +18,7 @@ load_dotenv()
 
 class MarketDataToRedis:
     """市场数据推送到Redis类 - 符合QuantMind行情快照写入规范V1.0"""
-    
+
     def __init__(self, tdx_path=None):
         """初始化
         
@@ -27,7 +27,7 @@ class MarketDataToRedis:
         """
         if tdx_path is None:
             tdx_path = r'e:\new_tdx64'
-        
+
         self.tdx_path = tdx_path
         self.running = True  # 控制循环运行的标志
 
@@ -44,7 +44,7 @@ class MarketDataToRedis:
         """
         max_retries = 3
         retry_delay = 3
-        
+
         # 增加环境变量检查，防止递归调用
         if os.environ.get('TQ_INITIALIZED') == '1':
             return
@@ -62,7 +62,7 @@ class MarketDataToRedis:
                 if attempt > 0:
                     print(f"  等待 {retry_delay} 秒后重试...")
                     time.sleep(retry_delay)
-                
+
                 # 尝试初始化（参考规范：所有策略连接通达信客户端都必须调用此函数）
                 # 注意：必须传入文件路径作为标识，这里使用当前文件
                 # 修复：使用绝对路径，避免路径解析问题
@@ -78,7 +78,7 @@ class MarketDataToRedis:
                 if "已有同名策略运行" in error_msg or "初始化失败" in error_msg:
                     print(f"✗ TQ数据接口初始化失败 (尝试 {attempt + 1}/{max_retries})")
                     if attempt == max_retries - 1:
-                        print(f"\n" + "="*60)
+                        print("\n" + "="*60)
                         print("TQ接口初始化失败，请检查以下事项：")
                         print("1. 确保通达信客户端已启动并登录")
                         print("2. 检查是否有其他程序占用TQ接口")
@@ -110,7 +110,7 @@ class MarketDataToRedis:
                     port=redis_port,
                     decode_responses=False  # 保持数据类型
                 )
-            
+
             self.redis_client.ping()
             print(f"✓ Redis连接成功: {redis_host}:{redis_port}")
         except Exception as e:
@@ -127,7 +127,7 @@ class MarketDataToRedis:
             # 修改参数为字符串类型，避免类型错误
             # tq.get_stock_list('5') 对应所有A股
             stock_list = tq.get_stock_list('5')
-            
+
             if stock_list:
                 print(f"✓ 获取到 {len(stock_list)} 只股票")
                 # 过滤掉非法格式的股票代码
@@ -154,7 +154,7 @@ class MarketDataToRedis:
         """
         try:
             snapshot = tq.get_market_snapshot(stock_code=stock_code)
-            
+
             if snapshot and snapshot.get('ErrorId') == '0':
                 return snapshot
             else:
@@ -174,7 +174,7 @@ class MarketDataToRedis:
         """
         now = snapshot.get('Now', 0)
         return now is not None and float(now) > 0
-    
+
     def is_trading_time(self):
         """判断当前是否为交易时间
         
@@ -187,20 +187,20 @@ class MarketDataToRedis:
         """
         now = datetime.datetime.now()
         current_time = now.time()
-        
+
         # 周末不交易
         if now.weekday() >= 5:
             return False
-            
+
         # 交易时间段
         morning_start = datetime.time(9, 15)
         morning_end = datetime.time(11, 30)
         afternoon_start = datetime.time(13, 0)
         afternoon_end = datetime.time(15, 0)
-        
+
         is_morning = morning_start <= current_time <= morning_end
         is_afternoon = afternoon_start <= current_time <= afternoon_end
-        
+
         return is_morning or is_afternoon
 
     def get_wait_seconds(self):
@@ -211,7 +211,7 @@ class MarketDataToRedis:
         """
         now = datetime.datetime.now()
         current_time = now.time()
-        
+
         # 周末
         if now.weekday() >= 5:
             # 计算距离下周一09:15的时间
@@ -220,22 +220,22 @@ class MarketDataToRedis:
                 hour=9, minute=15, second=0, microsecond=0
             )
             return (next_start - now).total_seconds()
-            
+
         morning_start = datetime.time(9, 15)
         morning_end = datetime.time(11, 30)
         afternoon_start = datetime.time(13, 0)
         afternoon_end = datetime.time(15, 0)
-        
+
         # 盘前
         if current_time < morning_start:
             target = now.replace(hour=9, minute=15, second=0, microsecond=0)
             return (target - now).total_seconds()
-            
+
         # 午休
         if morning_end < current_time < afternoon_start:
             target = now.replace(hour=13, minute=0, second=0, microsecond=0)
             return (target - now).total_seconds()
-            
+
         # 盘后
         if current_time > afternoon_end:
             # 计算距离明天09:15的时间
@@ -243,10 +243,10 @@ class MarketDataToRedis:
             # 如果明天是周末，顺延到周一
             if next_day.weekday() >= 5:
                 next_day += datetime.timedelta(days=7 - next_day.weekday())
-            
+
             target = next_day.replace(hour=9, minute=15, second=0, microsecond=0)
             return (target - now).total_seconds()
-            
+
         return 0
 
     def get_market_snapshot_batch(self, stock_list=None, batch_size=200):
@@ -260,31 +260,31 @@ class MarketDataToRedis:
             int: 成功获取的股票数量
         """
         start_time = time.time()
-        
+
         if stock_list is None:
             stock_list = self.get_stock_list()
-        
+
         if not stock_list:
             print("✗ 股票列表为空")
             return 0
-        
-        print(f"\n开始获取市场快照数据...")
+
+        print("\n开始获取市场快照数据...")
         print(f"总股票数: {len(stock_list)}")
         print(f"批次大小: {batch_size}")
-        
+
         success_count = 0
         fail_count = 0
-        
+
         # 按批次处理
         for i in range(0, len(stock_list), batch_size):
             batch_stocks = stock_list[i:i+batch_size]
             pipe = self.redis_client.pipeline()
             batch_success = 0
-            
+
             # 使用get_market_snapshot_batch接口批量获取（假设tqcenter支持）
             # 注意：tqcenter.py中没有get_market_snapshot_batch，只能循环调用
             # 优化：这里我们仍然循环调用，但是减少打印
-            
+
             for stock_code in batch_stocks:
                 # 增加重试机制
                 retry_count = 2
@@ -297,7 +297,7 @@ class MarketDataToRedis:
                         time.sleep(0.01) # 短暂休眠避免请求过快
                     except:
                         pass
-                
+
                 if snapshot and self._validate_data(snapshot):
                     # 构造符合规范的Redis Key
                     # 确保格式为 stock:{code}.{market}
@@ -309,7 +309,7 @@ class MarketDataToRedis:
                             redis_key = f"stock:{stock_code}"
                     else:
                         redis_key = f"stock:{stock_code}"
-                    
+
                     # 构造符合规范的数据结构
                     try:
                         now_price = float(snapshot.get('Now', 0))
@@ -323,19 +323,19 @@ class MarketDataToRedis:
                             'Amount': float(snapshot.get('Amount', 0)),
                             'timestamp': int(time.time())
                         }
-                        
+
                         # 使用Pipeline批量写入
                         pipe.hset(redis_key, mapping=data)
                         pipe.expire(redis_key, 300)  # 设置5分钟过期时间
-                        
+
                         success_count += 1
                         batch_success += 1
-                    except (ValueError, TypeError) as e:
+                    except (ValueError, TypeError):
                         # 数据转换错误忽略
                         pass
                 else:
                     fail_count += 1
-            
+
             # 执行批量操作
             try:
                 pipe.execute()
@@ -351,14 +351,14 @@ class MarketDataToRedis:
                     pass
                 fail_count += batch_success
                 success_count -= batch_success
-            
+
             # 小延迟避免请求过于频繁，保护客户端
             time.sleep(0.2)
-        
+
         end_time = time.time()
         total_time = end_time - start_time
-        
-        print(f"\n" + "=" * 60)
+
+        print("\n" + "=" * 60)
         print("数据推送完成")
         print(f"  总耗时: {total_time:.2f} 秒 ({total_time/60:.2f} 分钟)")
         print(f"  成功: {success_count}")
@@ -366,9 +366,9 @@ class MarketDataToRedis:
         if len(stock_list) > 0:
             print(f"  成功率: {success_count/len(stock_list)*100:.2f}%")
         print("=" * 60)
-        
+
         return success_count
-    
+
     def get_stock_data(self, stock_code):
         """从Redis获取指定股票数据
         
@@ -388,15 +388,15 @@ class MarketDataToRedis:
                     redis_key = f"stock:{stock_code}"
             else:
                 redis_key = f"stock:{stock_code}"
-            
+
             data = self.redis_client.hgetall(redis_key)
-            
+
             # 转换数据类型
             if data:
                 result = {}
                 for k, v in data.items():
                     key = k.decode('utf-8') if isinstance(k, bytes) else k
-                    
+
                     if key in ['Now', 'Open', 'High', 'Low', 'Close', 'Amount']:
                         result[key] = float(v) if isinstance(v, (int, float)) else float(v.decode('utf-8'))
                     elif key in ['Volume', 'timestamp']:
@@ -409,12 +409,12 @@ class MarketDataToRedis:
         except Exception as e:
             print(f"✗ 获取 {stock_code} 数据失败: {e}")
             return None
-    
+
     def clear_all_data(self):
         """清除Redis中所有股票数据"""
         try:
             keys = self.redis_client.keys("stock:*")
-            
+
             if keys:
                 # 批量删除，每批次1000个
                 for i in range(0, len(keys), 1000):
@@ -425,7 +425,7 @@ class MarketDataToRedis:
                 print("✓ 没有需要清除的数据")
         except Exception as e:
             print(f"✗ 清除数据失败: {e}")
-    
+
     def close(self):
         """关闭连接"""
         try:
@@ -433,7 +433,7 @@ class MarketDataToRedis:
             print("✓ TQ数据接口连接已关闭")
         except Exception as e:
             print(f"✗ 关闭TQ数据接口失败: {e}")
-        
+
         try:
             if self.redis_client:
                 self.redis_client.close()
@@ -451,19 +451,19 @@ def signal_handler(signum, frame):
 def main():
     """主函数 - 支持循环推送"""
     global mdtr
-    
+
     print("=" * 60)
     print("通达信市场数据推送到Redis（符合QuantMind规范）")
     print("循环模式：每隔10秒推送一次数据")
     print("按 Ctrl+C 可优雅退出")
     print("=" * 60)
     print()
-    
+
     # 注册信号处理
     signal.signal(signal.SIGINT, signal_handler)
     if hasattr(signal, 'SIGBREAK'):
         signal.signal(signal.SIGBREAK, signal_handler)
-    
+
     try:
         mdtr = MarketDataToRedis()
         stock_list = []
@@ -507,22 +507,22 @@ def main():
             print(f"\n{'='*60}")
             print(f"第 {cycle_count} 次推送 - {time.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"{'='*60}")
-            
+
             success_count = mdtr.get_market_snapshot_batch(stock_list=stock_list, batch_size=200)
-            
+
             if success_count > 0:
                 total_success += success_count
                 print(f"\n✓ 本轮成功推送 {success_count} 只股票的数据到Redis")
                 print(f"  累计推送: {total_success} 次")
             else:
-                print(f"\n✗ 本轮推送失败")
-            
+                print("\n✗ 本轮推送失败")
+
             # 显示示例数据（仅在第一轮）
             if cycle_count == 1:
                 print("\n示例：读取浦发银行(600000.SH)的数据")
                 stock_data = mdtr.get_stock_data("600000.SH")
                 if stock_data:
-                    print(f"  代码: 600000.SH")
+                    print("  代码: 600000.SH")
                     print(f"  当前价: {stock_data.get('Now', 'N/A')}")
                     print(f"  开盘价: {stock_data.get('Open', 'N/A')}")
                     print(f"  最高价: {stock_data.get('High', 'N/A')}")
@@ -533,22 +533,22 @@ def main():
                     print(f"  时间戳: {stock_data.get('timestamp', 'N/A')}")
                 else:
                     print("  未找到该股票数据")
-            
+
             # 计算剩余等待时间
             cycle_time = time.time() - cycle_start
             wait_time = max(0, 10 - cycle_time)
-            
+
             # 强制等待，确保每轮间隔至少30秒
             if mdtr.running:
                 print(f"\n等待 {wait_time:.1f} 秒后进行下一次推送...")
                 time.sleep(wait_time)
-        
+
         print("\n\n" + "=" * 60)
         print("程序已停止")
         print(f"总共运行了 {cycle_count} 个周期")
         print(f"累计成功推送: {total_success} 次")
         print("=" * 60)
-        
+
     except Exception as e:
         print(f"\n✗ 执行失败: {e}")
         import traceback

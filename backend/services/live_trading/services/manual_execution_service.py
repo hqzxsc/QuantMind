@@ -212,7 +212,7 @@ def _normalize_trading_mode(value: Any) -> str:
 
 
 def _resolve_pool_id_from_prepared(
-    prepared: "PreparedManualExecution",
+    prepared: PreparedManualExecution,
 ) -> str | None:
     """从执行上下文里取全局股票池引用（P3）。
 

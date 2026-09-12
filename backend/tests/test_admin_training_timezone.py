@@ -57,7 +57,7 @@ def test_admin_training_utils_no_naive_datetime():
     fp = ROOT / "backend/services/api/routers/admin/admin_training_utils.py"
     content = fp.read_text(encoding="utf-8")
     assert "datetime.utcnow()" not in content, (
-        f"admin_training_utils.py still contains datetime.utcnow()"
+        "admin_training_utils.py still contains datetime.utcnow()"
     )
     for ln, line in enumerate(content.splitlines(), start=1):
         if "datetime.now()" in line and "timezone" not in line:
@@ -164,7 +164,7 @@ def test_local_docker_orchestrator_no_naive_datetime():
     fp = ROOT / "backend/services/engine/training/local_docker_orchestrator.py"
     content = fp.read_text(encoding="utf-8")
     assert "datetime.utcnow()" not in content, (
-        f"local_docker_orchestrator.py still contains datetime.utcnow()"
+        "local_docker_orchestrator.py still contains datetime.utcnow()"
     )
     for ln, line in enumerate(content.splitlines(), start=1):
         if "datetime.now()" in line and "timezone" not in line:

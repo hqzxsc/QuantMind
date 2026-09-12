@@ -1195,7 +1195,7 @@ async def get_available_models(tid: str, uid: str, market: str | None = None) ->
         disk_model_metas = glob.glob(f"/app/models/users/{tid}/{uid}/*/metadata.json")
         if not disk_model_metas:
             disk_model_metas = glob.glob("/app/models/users/*/*/*/metadata.json")
-        
+
         seen_mids = {m["modelId"] for m in models}
         for mp in disk_model_metas:
             try:

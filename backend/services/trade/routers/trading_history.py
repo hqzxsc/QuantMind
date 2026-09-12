@@ -111,7 +111,7 @@ async def get_trade_statistics(
 ):
     """Get trade statistics"""
     user_id = _require_user_id(auth.user_id)
-    
+
     normalized_trading_mode = None
     if trading_mode is not None:
         try:

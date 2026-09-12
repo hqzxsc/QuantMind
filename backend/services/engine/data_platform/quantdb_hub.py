@@ -103,7 +103,7 @@ def _dt_conditions(start: date | None, end: date | None, col: str = "dt") -> lis
 class QuantDBDataHub:
     """A 股数据中枢 — 所有数据读取的单一入口。"""
 
-    _instance: Optional[QuantDBDataHub] = None
+    _instance: QuantDBDataHub | None = None
     _instance_lock = threading.Lock()
 
     def __init__(self, data_dir: str | Path | None = None) -> None:
@@ -158,7 +158,7 @@ class QuantDBDataHub:
         df = hub.fetch_l1_factors(start=date(2024,1,1), end=date(2024,6,30))
     """
 
-    _instance: Optional[QuantDBDataHub] = None
+    _instance: QuantDBDataHub | None = None
     _instance_lock = threading.Lock()
 
     def __init__(self, data_dir: str | Path | None = None) -> None:

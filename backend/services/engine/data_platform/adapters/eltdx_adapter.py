@@ -176,7 +176,7 @@ class EltdxAdapter(OfflineDataSourceAdapter):
             "list_date", "delist_date", "is_active", "source",
         ]]
 
-    def fetch_realtime(self, symbol: str) -> Optional[dict]:
+    def fetch_realtime(self, symbol: str) -> dict | None:
         client = self._get_client()
         code, market = _split_symbol(symbol)
         try:
@@ -203,8 +203,8 @@ class EltdxAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         client = self._get_client()

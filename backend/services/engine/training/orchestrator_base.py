@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Awaitable, Set
+from typing import Any, Set
+from collections.abc import Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class TrainingTaskRegistry:
     """
 
     def __init__(self) -> None:
-        self._tasks: Set[asyncio.Task[Any]] = set()
+        self._tasks: set[asyncio.Task[Any]] = set()
 
     def register(self, coro_or_task: Any) -> asyncio.Task[Any]:
         """注册一个协程或已创建的 task 到 registry。

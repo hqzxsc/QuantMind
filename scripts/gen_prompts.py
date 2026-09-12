@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """一次性生成 prompts/ 提示词库（技能中心数据源）。"""
 import os
 

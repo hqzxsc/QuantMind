@@ -42,7 +42,7 @@ class ParquetWriter:
 
     def __init__(
         self,
-        root: Optional[Path] = None,
+        root: Path | None = None,
         *,
         compression: str = "zstd",
     ) -> None:
@@ -129,8 +129,8 @@ class QlibBinExporter:
 
     def __init__(
         self,
-        bin_root: Optional[Path] = None,
-        parquet_root: Optional[Path] = None,
+        bin_root: Path | None = None,
+        parquet_root: Path | None = None,
     ) -> None:
         self.bin_root = Path(bin_root) if bin_root else QLIB_BIN_ROOT
         self.parquet_root = Path(parquet_root) if parquet_root else PARQUET_ROOT

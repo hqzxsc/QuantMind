@@ -352,7 +352,7 @@ def _get_uptime_days(request: Request) -> int | None:
     except Exception:
         pass
     try:
-        with open("/proc/uptime", "r", encoding="utf-8") as f:
+        with open("/proc/uptime", encoding="utf-8") as f:
             up_seconds = float(f.read().split()[0])
             return max(int(up_seconds // 86400), 0)
     except Exception:

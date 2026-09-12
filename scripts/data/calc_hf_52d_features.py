@@ -325,7 +325,7 @@ def calc_vpin(df_deal: pd.DataFrame, n_buckets: int = 50) -> pd.DataFrame:
         vpin_raw = (vb - vs).abs()
         if n_buckets > 1:
             vpin = float(vpin_raw.rolling(n_buckets, min_periods=max(2, n_buckets // 2)).sum().iloc[-1])
-            v_denom = float((g['volume'].rolling(n_buckets, min_periods=max(2, n_buckets // 2)).sum().iloc[-1]))
+            v_denom = float(g['volume'].rolling(n_buckets, min_periods=max(2, n_buckets // 2)).sum().iloc[-1])
             vpin = np.nan if (not np.isfinite(vpin) or not np.isfinite(v_denom) or v_denom <= 0) else float(vpin / v_denom)
         else:
             denom = float(g['volume'].sum())
@@ -432,12 +432,12 @@ def calc_pressure(df: pd.DataFrame) -> pd.DataFrame:
 def process_chunk(args):
     df_snap_chunk, df_deal_chunk = args
     key = ['TradingDay', 'SecuCode']
-    
+
     res_spread = calc_spread(df_snap_chunk)
     res_rv_jump = calc_realized_and_jump(df_snap_chunk)
     res_imb = calc_imbalance(df_deal_chunk)
     res_vpin = calc_vpin(df_deal_chunk, n_buckets=50)
-    
+
     df_hf = pd.DataFrame()
     if not res_spread.empty and not res_rv_jump.empty:
         df_hf = res_spread.merge(res_rv_jump, on=key, how='outer')

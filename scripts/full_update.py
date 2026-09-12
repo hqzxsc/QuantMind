@@ -116,7 +116,7 @@ class FullDataUpdater:
         start_time = datetime.now()
         print(f"\n开始: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*70}")
-        print(f"全量数据更新")
+        print("全量数据更新")
         print(f"{'='*70}")
         print(f"起始日期: {self.start_date}")
 
@@ -271,7 +271,7 @@ class FullDataUpdater:
 
     def _fetch_all_snapshots(self):
         """拉取快照数据用于补充字段"""
-        print(f"\n[获取快照数据]")
+        print("\n[获取快照数据]")
         snapshot_map = {}
 
         for i, stock in enumerate(self.stock_list):
@@ -364,7 +364,7 @@ class FullDataUpdater:
 
     def _save_temp(self):
         """保存临时数据到文件"""
-        print(f"\n[保存临时数据]")
+        print("\n[保存临时数据]")
         df = pd.DataFrame(self.all_records)
         df.to_parquet(TEMP_PATH, index=False)
         meta = {
@@ -385,14 +385,14 @@ class FullDataUpdater:
         """加载临时数据"""
         print(f"\n[加载临时数据] {TEMP_PATH}")
         df = pd.read_parquet(TEMP_PATH)
-        with open(META_PATH, 'r') as f:
+        with open(META_PATH) as f:
             meta = json.load(f)
         print(f"  记录: {len(df):,}, 股票: {meta.get('stock_count', '?')}, 范围: {df['trade_date'].min()} ~ {df['trade_date'].max()}")
         return df, meta
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """计算全部技术指标 (在完整数据集上一次计算)"""
-        print(f"\n[计算技术指标]")
+        print("\n[计算技术指标]")
         df = df.copy()
         df['trade_date'] = pd.to_datetime(df['trade_date'])
         df = df.sort_values(['symbol', 'trade_date']).reset_index(drop=True)
@@ -515,7 +515,7 @@ class FullDataUpdater:
 
     def _calculate_consecutive_limit_up(self, df: pd.DataFrame) -> pd.DataFrame:
         """向量化计算连板天数"""
-        print(f"\n[计算连板天数]")
+        print("\n[计算连板天数]")
         df = df.copy()
         df['_lu'] = df['limit_up_today'].fillna(0).astype(int)
         df['_not_lu'] = 1 - df['_lu']
@@ -529,7 +529,7 @@ class FullDataUpdater:
 
     def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """清洗北交所/B股/退市股"""
-        print(f"\n[清洗数据]")
+        print("\n[清洗数据]")
         before = len(df)
 
         bj_mask = df['symbol'].str.startswith('bj')
@@ -558,7 +558,7 @@ class FullDataUpdater:
 
     def _fill_company_info(self, df: pd.DataFrame) -> pd.DataFrame:
         """填充公司基本信息"""
-        print(f"\n[填充公司信息]")
+        print("\n[填充公司信息]")
         if not os.path.exists(COMPANY_FILE):
             print(f"  文件不存在: {COMPANY_FILE}")
             return df
@@ -599,7 +599,7 @@ class FullDataUpdater:
 
     def _fill_index_flags(self, df: pd.DataFrame) -> pd.DataFrame:
         """填充指数成分股标记"""
-        print(f"\n[填充指数标记]")
+        print("\n[填充指数标记]")
         idx_const = {}
         for idx_field, fname in INDEX_FILES.items():
             if not os.path.exists(fname):
@@ -667,7 +667,7 @@ class FullDataUpdater:
 
     def _save_final(self, df: pd.DataFrame):
         """备份旧文件并保存新数据"""
-        print(f"\n[保存主数据]")
+        print("\n[保存主数据]")
         if os.path.exists(PARQUET_PATH):
             bak = PARQUET_PATH + f".bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             shutil.copy2(PARQUET_PATH, bak)
@@ -727,7 +727,7 @@ class FullDataUpdater:
         for p in [TEMP_PATH, META_PATH]:
             if os.path.exists(p):
                 os.remove(p)
-        print(f"\n[清理] 临时文件已删除")
+        print("\n[清理] 临时文件已删除")
 
 
 if __name__ == '__main__':

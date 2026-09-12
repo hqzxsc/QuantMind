@@ -91,7 +91,7 @@ class QuantDBAdapter(OfflineDataSourceAdapter):
     }
 
     def __init__(self) -> None:
-        self._client: Optional[QuantDBClient] = None
+        self._client: QuantDBClient | None = None
 
     @property
     def client(self) -> QuantDBClient:
@@ -158,8 +158,8 @@ class QuantDBAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs: Any,
     ) -> pd.DataFrame:
         if field == "calendar":
@@ -173,7 +173,7 @@ class QuantDBAdapter(OfflineDataSourceAdapter):
         raise InvalidFieldRequest(f"QuantDB: field={field} not implemented")
 
     def _fetch_calendar(
-        self, start: Optional[date], end: Optional[date]
+        self, start: date | None, end: date | None
     ) -> pd.DataFrame:
         s = start or date.today().replace(year=date.today().year - 1)
         e = end or date.today()
@@ -189,7 +189,7 @@ class QuantDBAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_financial(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         try:
             df = self.client.load_as_df(
@@ -204,7 +204,7 @@ class QuantDBAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_valuation(
-        self, symbol: str, start: Optional[date], end: Optional[date]
+        self, symbol: str, start: date | None, end: date | None
     ) -> pd.DataFrame:
         try:
             df = self.client.load_as_df(

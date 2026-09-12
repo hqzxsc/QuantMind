@@ -1970,8 +1970,7 @@ async def admin_toggle_tag(tag_id: int):
 # 经反向代理挂子路径时需要：1) HTML 资源路径重写  2) JS 拦截脚本把 /api 调用
 # 重写到本代理路径  3) 代理目标把 /api 前缀剥掉转发给 Huntly 后端。
 # 这样 8089/6008 都不需要暴露，公网/局域网/本地统一走 QuantMind 后端。
-from fastapi import Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 HUNTLY_UI_STATIC_MIME = {
     ".html": "text/html",

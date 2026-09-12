@@ -146,7 +146,7 @@ async def _backfill_year(year: int, limit_symbols: int | None, dry_run: bool) ->
             continue
         rows_payload = []
         for _, r in mdf.iterrows():
-            row_dict = {pg_col: None for pg_col in PG_COLUMNS}
+            row_dict = dict.fromkeys(PG_COLUMNS)
             # 直接映射
             for p_col, pg_col in direct_avail.items():
                 v = r.get(p_col)
@@ -212,7 +212,7 @@ async def main():
                     help="只计算，不实际写 PG")
     args = ap.parse_args()
 
-    print(f"\n=== Backfill PG stock_daily_latest from parquet ===")
+    print("\n=== Backfill PG stock_daily_latest from parquet ===")
     print(f"years: {args.start_year} ~ {args.end_year}")
     print(f"dry_run: {args.dry_run}")
     print(f"limit_symbols: {args.limit_symbols or 'all'}")

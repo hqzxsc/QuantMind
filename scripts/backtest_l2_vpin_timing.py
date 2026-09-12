@@ -261,9 +261,9 @@ def main():
     A = []
     A.append("# L2 阶段3：VPIN择时 + 冲击成本过滤 信号可行性报告")
     A.append("")
-    A.append(f"> **模型**：L2 CatBoost T+5（ac5c5b2e）· **周期**：2026-01-07 ~ 2026-08-19")
+    A.append("> **模型**：L2 CatBoost T+5（ac5c5b2e）· **周期**：2026-01-07 ~ 2026-08-19")
     A.append(f"> **VPIN择时**：全市场 micro_vpin_vol_ratio z-score>{VPIN_ZSCORE_THRESH} 减仓")
-    A.append(f"> **冲击过滤**：micro_amihud_illiquidity 分5组看高冲击股次日收益")
+    A.append("> **冲击过滤**：micro_amihud_illiquidity 分5组看高冲击股次日收益")
     A.append("")
     A.append("---")
     A.append("")

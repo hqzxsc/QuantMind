@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """批量跑 A 股策略模板回测，输出对比表（在 quantmind 容器内运行）。
 
 用法（容器内）：

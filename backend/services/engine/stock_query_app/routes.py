@@ -117,7 +117,7 @@ async def get_all_stocks(
         exchange_params: dict = {"limit": limit}
         is_cn = market_key in ("A", "CN")
         if is_cn and exchange_key in ("SH", "SZ", "BJ"):
-            exchange_where = f"WHERE symbol LIKE :exchange_prefix"
+            exchange_where = "WHERE symbol LIKE :exchange_prefix"
             exchange_params["exchange_prefix"] = f"{exchange_key}%"
 
         if enrich:

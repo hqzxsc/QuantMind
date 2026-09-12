@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Redis Key 前缀
 CACHE_KEY_PREFIX = "qm:stock_latest"
 # 缓存有效期：24 小时 (通常在每日盘后更新时刷新)
-CACHE_TTL = 86400 
+CACHE_TTL = 86400
 
 class StockDailyLatestCache:
     """stock_daily_latest 表缓存管理器"""
@@ -39,7 +39,7 @@ class StockDailyLatestCache:
             raise TypeError(f"Type {type(obj)} not serializable")
         return json.dumps(data, default=json_serial)
 
-    async def get_latest(self, symbol: str) -> Optional[dict[str, Any]]:
+    async def get_latest(self, symbol: str) -> dict[str, Any] | None:
         """获取单只股票的最新行情（优先从缓存读取）"""
         key = self._get_key(symbol)
         try:
@@ -75,10 +75,10 @@ class StockDailyLatestCache:
         """批量获取最新行情"""
         if not symbols:
             return {}
-            
+
         results = {}
         missing_symbols = []
-        
+
         # 1. 尝试从 Redis 批量读取
         keys = [self._get_key(s) for s in symbols]
         try:
@@ -102,7 +102,7 @@ class StockDailyLatestCache:
                     WHERE symbol = ANY(:symbols)
                 """)
                 db_results = await session.execute(query, {"symbols": missing_symbols})
-                
+
                 # 由于 stock_daily_latest 理论上每只股票只有一行最新数据，直接存入即可
                 pipe = self.redis.pipeline()
                 for row in db_results.mappings():
@@ -111,7 +111,7 @@ class StockDailyLatestCache:
                     results[s] = data
                     pipe.set(self._get_key(s), self._serialize(data), ex=CACHE_TTL)
                 pipe.execute()
-                
+
         return results
 
     async def warmup_cache(self) -> int:
@@ -125,7 +125,7 @@ class StockDailyLatestCache:
                 ORDER BY symbol, trade_date DESC
             """))
             rows = result.mappings().all()
-            
+
             if not rows:
                 logger.warning("No data found in stock_daily_latest for warmup.")
                 return 0
@@ -139,7 +139,7 @@ class StockDailyLatestCache:
                 if count % 500 == 0:
                     pipe.execute()
                     pipe = self.redis.pipeline()
-            
+
             pipe.execute()
             logger.info(f"Cache warmup completed. Processed {count} symbols.")
             return count

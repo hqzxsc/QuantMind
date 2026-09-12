@@ -153,8 +153,8 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs: Any,
     ) -> pd.DataFrame:
         if not self._hub.available:
@@ -192,7 +192,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
 
     # ---- 字段实现 ----
     def _fetch_calendar(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_calendar(start=start, end=end)
         if df is None or df.empty:
@@ -201,7 +201,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_financial(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         statement_type = kwargs.get("statement_type", "income")
         df = self._hub.fetch_financial(symbol, statement_type=statement_type, start=start, end=end)
@@ -211,7 +211,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_valuation(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_valuation(symbol=symbol, start=start, end=end)
         if df is None or df.empty:
@@ -220,7 +220,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_ai_factors(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         sub = kwargs.get("sub_category", "l1_factors")
         if sub == "l1_factors":
@@ -240,12 +240,12 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_stock_list(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         return self.fetch_meta("A")
 
     def _fetch_sector(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_sector_members(sector_name=kwargs.get("sector_name"))
         if df is None or df.empty:
@@ -254,7 +254,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_market_sentiment(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_market_sentiment(symbol=symbol, start=start, end=end)
         if df is None or df.empty:
@@ -263,7 +263,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_technical_indicators(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_technical_indicators(symbol=symbol, start=start, end=end)
         if df is None or df.empty:
@@ -272,7 +272,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_adj_factor(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         """从前后复权价格比计算复权因子。"""
         if not start or not end:
@@ -295,7 +295,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_margin_trading(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_margin_trading(symbol=symbol, start=start, end=end)
         if df is None or df.empty:
@@ -304,7 +304,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_dividend(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_dividend_factors(symbol)
         if df is None or df.empty:
@@ -313,7 +313,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_index_kline(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         if not start or not end:
             start = start or date(2016, 1, 4)
@@ -325,7 +325,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_shareholder_count(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_financial(
             symbol, statement_type="holder_num", start=start, end=end
@@ -336,7 +336,7 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return df
 
     def _fetch_share_change(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         df = self._hub.fetch_financial(
             symbol, statement_type="capital", start=start, end=end
@@ -361,8 +361,8 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
     def _fetch_pershare_subset(
         self,
         symbol: str,
-        start: Optional[date],
-        end: Optional[date],
+        start: date | None,
+        end: date | None,
         cols: tuple[str, ...],
         label: str,
     ) -> pd.DataFrame:
@@ -383,21 +383,21 @@ class QuantDBLocalAdapter(OfflineDataSourceAdapter):
         return result
 
     def _fetch_dupont(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         return self._fetch_pershare_subset(
             symbol, start, end, self._DUPONT_COLS, "杜邦分析"
         )
 
     def _fetch_growth(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         return self._fetch_pershare_subset(
             symbol, start, end, self._GROWTH_COLS, "成长能力"
         )
 
     def _fetch_operation(
-        self, symbol: str, start: Optional[date], end: Optional[date], **kwargs: Any
+        self, symbol: str, start: date | None, end: date | None, **kwargs: Any
     ) -> pd.DataFrame:
         return self._fetch_pershare_subset(
             symbol, start, end, self._OPERATION_COLS, "运营能力"

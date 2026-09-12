@@ -1302,7 +1302,7 @@ class RedisCrashBuyDipStrategy(DynamicRiskMixin, WeightStrategyBase, RedisLogger
         if not desired:
             return {}
         weight = 1.0 / len(desired)
-        return {stock: weight for stock in desired}
+        return dict.fromkeys(desired, weight)
 
     def reset(self, *args, **kwargs):
         self._positions.clear()

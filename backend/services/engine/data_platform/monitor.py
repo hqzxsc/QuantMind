@@ -69,7 +69,7 @@ class HealthMonitor:
 
     def __init__(
         self,
-        redis_client: Optional[Any] = None,
+        redis_client: Any | None = None,
         *,
         latency_window: int = 100,
     ) -> None:
@@ -228,11 +228,11 @@ class HealthMonitor:
 # ---------------------------------------------------------------------------
 # 单例
 # ---------------------------------------------------------------------------
-_monitor: Optional[HealthMonitor] = None
+_monitor: HealthMonitor | None = None
 _monitor_lock = threading.Lock()
 
 
-def get_monitor(redis_client: Optional[Any] = None) -> HealthMonitor:
+def get_monitor(redis_client: Any | None = None) -> HealthMonitor:
     global _monitor
     if _monitor is None:
         with _monitor_lock:

@@ -97,7 +97,7 @@ _LABELS = ["涨停", ">7", "5~7", "3~5", "1~3", "0~1", "平盘",
 
 def breadth_distribution(pct: pd.Series, limit_thresh: float = 9.7) -> dict[str, int]:
     """涨跌幅分布直方图（±limit_thresh 视为涨停/跌停近似桶）。"""
-    dist: dict[str, int] = {label: 0 for label in _LABELS}
+    dist: dict[str, int] = dict.fromkeys(_LABELS, 0)
     for v in pct.dropna():
         if v >= limit_thresh:
             dist["涨停"] += 1

@@ -68,7 +68,7 @@ class PromoteResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════════
 
 
-def _extract_qlib_expression(factor_code: str, metadata: dict) -> Optional[str]:
+def _extract_qlib_expression(factor_code: str, metadata: dict) -> str | None:
     """从因子代码或 metadata 中提取 Qlib 表达式。"""
     # 1. 优先从 metadata 取
     formulation = metadata.get("formulation", "")
@@ -392,7 +392,7 @@ async def promote_factors(req: PromoteRequest):
 @router.get("/extractable")
 async def list_extractable_factors(
     limit: int = 50,
-    status: Optional[str] = "completed",
+    status: str | None = "completed",
 ):
     """列出可提取 Qlib 表达式的因子（已完成回测且有代码）。"""
     async with get_session(read_only=True) as session:

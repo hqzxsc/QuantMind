@@ -19,7 +19,7 @@ import os
 import sqlite3
 import threading
 import time
-from typing import Iterable
+from collections.abc import Iterable
 
 import httpx
 import psycopg2

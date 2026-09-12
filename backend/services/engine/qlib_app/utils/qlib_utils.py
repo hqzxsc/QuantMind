@@ -20,7 +20,7 @@ def apply_qlib_loose_patches():
         import qlib.utils.resam as resam
         from qlib.data import D
         from qlib.utils.time import Freq
-        
+
         # 1. 禁用 get_higher_eq_freq_feature 的 1min 回退逻辑
         # 原逻辑在失败时会强行试 1min，导致没有分钟数据时崩溃
         original_get_higher = resam.get_higher_eq_freq_feature

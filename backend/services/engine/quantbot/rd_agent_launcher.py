@@ -342,7 +342,7 @@ class RDAgentLauncher:
         cmd = [
             "sh", "-c",
             data_setup_cmd
-            + f"python /app/scripts/rd_agent/rd_agent_run.py "
+            + "python /app/scripts/rd_agent/rd_agent_run.py "
             + f"--task-id '{task_id}' "
             + f"--user-id '{user_id}' "
             + f"--seed '{seed_mount}' "

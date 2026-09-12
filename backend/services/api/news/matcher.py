@@ -16,7 +16,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Iterable
+from collections.abc import Iterable
 
 import ahocorasick
 import psycopg2

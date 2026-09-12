@@ -51,7 +51,7 @@ _QLIB_FIELD_MAP = {
 }
 
 
-def _data_dir() -> Optional[Path]:
+def _data_dir() -> Path | None:
     raw = os.getenv(DATA_DIR_ENV, "").strip()
     if not raw:
         return None
@@ -70,7 +70,7 @@ def _to_qlib_symbol(symbol: str) -> str:
     return s.lower()
 
 
-def _qlib_root(root: Path) -> Optional[Path]:
+def _qlib_root(root: Path) -> Path | None:
     """返回 qlib_bin 目录，没有就 None。"""
     for cand in (root / "qlib_bin", root / "qlib" / "qlib_cn", root):
         if (cand / "calendars" / "day.txt").exists() and (cand / "features").exists():
@@ -126,8 +126,8 @@ class InvestmentDataAdapter(OfflineDataSourceAdapter):
     # qlib bin 读取
     # ------------------------------------------------------------------
     def _fetch_daily_qlib_bin(
-        self, qroot: Path, symbol: str, start: Optional[date], end: Optional[date],
-    ) -> Optional[pd.DataFrame]:
+        self, qroot: Path, symbol: str, start: date | None, end: date | None,
+    ) -> pd.DataFrame | None:
         qsym = _to_qlib_symbol(symbol)
         sym_dir = qroot / "features" / qsym
         if not sym_dir.exists():
@@ -256,8 +256,8 @@ class InvestmentDataAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         root = self._require_root()

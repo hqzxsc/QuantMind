@@ -32,7 +32,7 @@ def _root() -> Path:
 # JSON 快照
 # ---------------------------------------------------------------------------
 
-def _snapshot_json_path(date: Optional[str]) -> Optional[Path]:
+def _snapshot_json_path(date: str | None) -> Path | None:
     root = _root()
     if date:
         p = root / f"{date}.json"
@@ -45,7 +45,7 @@ def _snapshot_json_path(date: Optional[str]) -> Optional[Path]:
     return files[0] if files else None
 
 
-def _load(date: Optional[str]) -> Optional[dict[str, Any]]:
+def _load(date: str | None) -> dict[str, Any] | None:
     p = _snapshot_json_path(date)
     if not p:
         return None
@@ -55,7 +55,7 @@ def _load(date: Optional[str]) -> Optional[dict[str, Any]]:
         return None
 
 
-def has_snapshot(date: Optional[str] = None) -> bool:
+def has_snapshot(date: str | None = None) -> bool:
     return _snapshot_json_path(date) is not None
 
 
@@ -70,7 +70,7 @@ def available_dates() -> list[str]:
     return sorted(dates, reverse=True)
 
 
-def full(date: Optional[str] = None) -> Optional[dict]:
+def full(date: str | None = None) -> dict | None:
     """返回整份快照（供 SSE 一次性分段推送 / 调试用）。"""
     return _load(date)
 
@@ -79,7 +79,7 @@ def full(date: Optional[str] = None) -> Optional[dict]:
 # SQLite 标签库
 # ---------------------------------------------------------------------------
 
-def _open_tags_db(date: Optional[str]):
+def _open_tags_db(date: str | None):
     root = _root()
     name = f"{date}.db" if date and re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else "latest.db"
     p = root / name
@@ -95,7 +95,7 @@ def _open_tags_db(date: Optional[str]):
 # 各数据块
 # ---------------------------------------------------------------------------
 
-def status(date: Optional[str] = None) -> Optional[dict]:
+def status(date: str | None = None) -> dict | None:
     snap = _load(date)
     if not snap:
         return None
@@ -109,17 +109,17 @@ def status(date: Optional[str] = None) -> Optional[dict]:
     }
 
 
-def indices(date: Optional[str] = None) -> Optional[list]:
+def indices(date: str | None = None) -> list | None:
     snap = _load(date)
     return (snap or {}).get("indices") or None
 
 
-def breadth(date: Optional[str] = None) -> Optional[dict]:
+def breadth(date: str | None = None) -> dict | None:
     snap = _load(date)
     return (snap or {}).get("breadth") or None
 
 
-def heatmap(category: str = "shenwan", date: Optional[str] = None) -> Optional[dict]:
+def heatmap(category: str = "shenwan", date: str | None = None) -> dict | None:
     """优先 SQLite sector_mv（支持 ?date= 历史），否则 JSON 快照。"""
     db = _open_tags_db(date)
     if db is not None:
@@ -142,18 +142,18 @@ def heatmap(category: str = "shenwan", date: Optional[str] = None) -> Optional[d
     return None
 
 
-def stock_flow(limit: int = 20, date: Optional[str] = None) -> Optional[list]:
+def stock_flow(limit: int = 20, date: str | None = None) -> list | None:
     snap = _load(date)
     items = (snap or {}).get("stock_flow")
     return (items or [])[:limit] if items else None
 
 
-def stock_flow_full(date: Optional[str] = None) -> Optional[list]:
+def stock_flow_full(date: str | None = None) -> list | None:
     snap = _load(date)
     return (snap or {}).get("stock_flow_full") or None
 
 
-def sankey(date: Optional[str] = None) -> Optional[dict]:
+def sankey(date: str | None = None) -> dict | None:
     snap = _load(date)
     s = (snap or {}).get("sankey")
     if s and (s.get("nodes") or s.get("links")):
@@ -162,14 +162,14 @@ def sankey(date: Optional[str] = None) -> Optional[dict]:
 
 
 def money_flow_period(period: str, dimension: str, category: str, limit: int,
-                      date: Optional[str] = None) -> Optional[list]:
+                      date: str | None = None) -> list | None:
     snap = _load(date)
     key = f"{period.lower()}_{dimension}_{category}"
     items = ((snap or {}).get("money_flow_periods") or {}).get(key)
     return (items or [])[:limit] if items else None
 
 
-def trade_date(date: Optional[str] = None) -> Optional[str]:
+def trade_date(date: str | None = None) -> str | None:
     snap = _load(date)
     return (snap or {}).get("trade_date")
 
@@ -178,7 +178,7 @@ def trade_date(date: Optional[str] = None) -> Optional[str]:
 # 标签双向查询（SQLite）
 # ---------------------------------------------------------------------------
 
-def tag_stats(limit: int = 30, date: Optional[str] = None) -> Optional[dict]:
+def tag_stats(limit: int = 30, date: str | None = None) -> dict | None:
     db = _open_tags_db(date)
     if db is None:
         return None
@@ -206,7 +206,7 @@ def tag_stats(limit: int = 30, date: Optional[str] = None) -> Optional[dict]:
         db.close()
 
 
-def tags_by_stock(symbol: str, date: Optional[str] = None) -> Optional[dict]:
+def tags_by_stock(symbol: str, date: str | None = None) -> dict | None:
     db = _open_tags_db(date)
     if db is None:
         return None
@@ -222,7 +222,7 @@ def tags_by_stock(symbol: str, date: Optional[str] = None) -> Optional[dict]:
         db.close()
 
 
-def stocks_by_tag(tag: str, limit: int, date: Optional[str] = None) -> Optional[dict]:
+def stocks_by_tag(tag: str, limit: int, date: str | None = None) -> dict | None:
     db = _open_tags_db(date)
     if db is None:
         return None

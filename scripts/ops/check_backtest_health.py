@@ -44,19 +44,19 @@ def load_dotenv(path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
-def read_tail_lines(path: Path, max_lines: int) -> List[str]:
+def read_tail_lines(path: Path, max_lines: int) -> list[str]:
     if not path.exists():
         return []
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     return lines[-max_lines:]
 
 
-def count_patterns(lines: List[str], pattern: str) -> int:
+def count_patterns(lines: list[str], pattern: str) -> int:
     regex = re.compile(pattern)
     return sum(1 for line in lines if regex.search(line))
 
 
-def build_db_url() -> Optional[str]:
+def build_db_url() -> str | None:
     db_url = os.getenv("DATABASE_URL", "").strip()
     if db_url:
         if db_url.startswith("postgresql+asyncpg://"):
@@ -80,7 +80,7 @@ def build_db_url() -> Optional[str]:
     )
 
 
-def query_recent_runs(limit: int) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+def query_recent_runs(limit: int) -> tuple[str | None, list[dict[str, Any]]]:
     try:
         from sqlalchemy import create_engine, text
     except Exception as exc:  # pragma: no cover - dependency issue
@@ -109,7 +109,7 @@ def query_recent_runs(limit: int) -> Tuple[Optional[str], List[Dict[str, Any]]]:
         return str(exc), []
 
 
-def check_worker_errors(worker_lines: List[str]) -> CheckResult:
+def check_worker_errors(worker_lines: list[str]) -> CheckResult:
     fail_count = count_patterns(
         worker_lines,
         r"(ERROR|CRITICAL|Traceback|Task .* failed|raised unexpected)",
@@ -119,7 +119,7 @@ def check_worker_errors(worker_lines: List[str]) -> CheckResult:
     return CheckResult("Worker失败痕迹", "PASS", "未发现 ERROR/Traceback/Task failed")
 
 
-def check_recent_success(worker_lines: List[str], min_success: int) -> CheckResult:
+def check_recent_success(worker_lines: list[str], min_success: int) -> CheckResult:
     success_count = count_patterns(worker_lines, r"Task .* succeeded")
     if success_count < min_success:
         return CheckResult(
@@ -130,7 +130,7 @@ def check_recent_success(worker_lines: List[str], min_success: int) -> CheckResu
     return CheckResult("最近任务成功数", "PASS", f"发现 {success_count} 条 succeeded")
 
 
-def check_warning_counts(worker_lines: List[str]) -> CheckResult:
+def check_warning_counts(worker_lines: list[str]) -> CheckResult:
     close_nan = count_patterns(worker_lines, r"\$close field data contains nan")
     mean_empty = count_patterns(worker_lines, r"Mean of empty slice")
     invalid_div = count_patterns(worker_lines, r"invalid value encountered")
@@ -148,7 +148,7 @@ def check_warning_counts(worker_lines: List[str]) -> CheckResult:
 
 
 def check_db_runs(
-    rows: List[Dict[str, Any]], min_dates: int, min_instruments: int, max_nan_ratio: float
+    rows: list[dict[str, Any]], min_dates: int, min_instruments: int, max_nan_ratio: float
 ) -> CheckResult:
     if not rows:
         return CheckResult("最近回测落库", "SKIP", "未读到 qlib_backtest_runs 记录")
@@ -198,7 +198,7 @@ def check_db_runs(
     return CheckResult("最近回测落库", "PASS", f"最近 {len(rows)} 条 completed 且 signal_meta 合格")
 
 
-def check_default_db_password(api_lines: List[str]) -> CheckResult:
+def check_default_db_password(api_lines: list[str]) -> CheckResult:
     count = count_patterns(api_lines, r"Using default DB_PASSWORD")
     if count > 0:
         return CheckResult(
@@ -209,7 +209,7 @@ def check_default_db_password(api_lines: List[str]) -> CheckResult:
     return CheckResult("默认DB密码告警", "PASS", "未发现默认 DB 密码告警")
 
 
-def print_results(results: List[CheckResult]) -> int:
+def print_results(results: list[CheckResult]) -> int:
     order = {"FAIL": 3, "WARN": 2, "PASS": 1, "SKIP": 0}
     worst = max((order[r.status] for r in results), default=0)
     for r in results:
@@ -242,7 +242,7 @@ def main() -> int:
     api_lines = read_tail_lines(ROOT / args.api_log, args.tail_lines)
     db_err, db_rows = query_recent_runs(args.recent_runs)
 
-    results: List[CheckResult] = [
+    results: list[CheckResult] = [
         check_worker_errors(worker_lines),
         check_recent_success(worker_lines, args.min_success),
         check_warning_counts(worker_lines),

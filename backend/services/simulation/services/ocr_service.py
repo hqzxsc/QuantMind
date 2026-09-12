@@ -16,13 +16,13 @@ class SimulationOCRService:
     Service for recognizing stock holdings from images using Qwen-VL.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         """
         Initialize the OCR service.
         :param api_key: Optional user-provided API key from profile.
         """
         effective_key = api_key or getattr(settings, "DASHSCOPE_API_KEY", None) or os.getenv("DASHSCOPE_API_KEY")
-        
+
         if not effective_key or effective_key == "mock-api-key-not-configured":
             logger.warning("No valid DASHSCOPE_API_KEY found. OCR functionality will be limited to local fallbacks if any.")
             self.client = None
@@ -31,10 +31,10 @@ class SimulationOCRService:
                 api_key=effective_key,
                 base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             )
-        
+
         self.model_name = "qwen-vl-max" # Or qwen-vl-max for better performance
 
-    async def analyze_images(self, image_data_list: List[bytes]) -> List[Dict[str, Any]]:
+    async def analyze_images(self, image_data_list: list[bytes]) -> list[dict[str, Any]]:
         """
         Analyze a list of images and extract stock holding information.
         """
@@ -42,11 +42,11 @@ class SimulationOCRService:
             raise ValueError("OCR Service is not configured (missing API Key)")
 
         all_results = []
-        
+
         for image_bytes in image_data_list:
             try:
                 base64_image = base64.b64encode(image_bytes).decode("utf-8")
-                
+
                 prompt = (
                     "你是一个专业的金融数据提取助手。请从图片中提取股票持仓信息。\n"
                     "要求：\n"
@@ -74,10 +74,10 @@ class SimulationOCRService:
                         },
                     ],
                 )
-                
+
                 content = completion.choices[0].message.content
                 logger.debug(f"Qwen-VL response: {content}")
-                
+
                 # Extract JSON from potential markdown markers
                 json_str = content
                 if "```json" in content:
@@ -88,7 +88,7 @@ class SimulationOCRService:
                     match = re.search(r"```\s*(.*?)\s*```", content, re.DOTALL)
                     if match:
                         json_str = match.group(1)
-                
+
                 try:
                     items = json.loads(json_str)
                 except json.JSONDecodeError:
@@ -106,10 +106,10 @@ class SimulationOCRService:
                         name = str(item.get("name", "")).strip()
                         quantity_raw = item.get("quantity")
                         current_price_raw = item.get("current_price")
-                        
+
                         if not raw_code and not name:
                             continue
-                            
+
                         # Convert quantity to float
                         try:
                             if isinstance(quantity_raw, str):
@@ -128,28 +128,28 @@ class SimulationOCRService:
                             current_price = 0.0
 
                         symbol = StockCodeUtil.to_prefix(raw_code) if raw_code else None
-                        
+
                         all_results.append({
                             "symbol": symbol,
                             "name": name,
                             "quantity": quantity
                             ,"current_price": current_price
                         })
-                
+
             except Exception as e:
                 logger.error(f"Failed to analyze holding image: {e}", exc_info=True)
                 # Continue with next image instead of failing entirely
-                
+
         # Deduplicate and merge quantities for same symbol or name
         merged = {}
         for r in all_results:
             key = r["symbol"] or r["name"]
             if not key:
                 continue
-                
+
             if key in merged:
                 merged[key]["quantity"] += r["quantity"]
             else:
                 merged[key] = r
-                
+
         return list(merged.values())

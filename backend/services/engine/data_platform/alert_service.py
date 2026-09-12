@@ -41,7 +41,7 @@ class DataAlertService:
     def __init__(
         self,
         *,
-        db_url: Optional[str] = None,
+        db_url: str | None = None,
         notification_writer=None,  # 可注入自定义 writer 便于测试
     ) -> None:
         self.db_url = db_url or _resolve_db_url()
@@ -53,14 +53,14 @@ class DataAlertService:
         alert_type: str,
         severity: str = "warning",
         message: str,
-        market: Optional[str] = None,
-        field: Optional[str] = None,
-        source: Optional[str] = None,
-        symbol: Optional[str] = None,
-        trade_date: Optional[date] = None,
-        details: Optional[dict[str, Any]] = None,
+        market: str | None = None,
+        field: str | None = None,
+        source: str | None = None,
+        symbol: str | None = None,
+        trade_date: date | None = None,
+        details: dict[str, Any] | None = None,
         notify_admins: bool = True,
-    ) -> Optional[int]:
+    ) -> int | None:
         """写入告警 + 可选 fan-out 站内通知。返回 alert id（失败返回 None）。"""
         alert_id = self._insert_db(
             alert_type=alert_type, severity=severity, message=message,
@@ -94,7 +94,7 @@ class DataAlertService:
         *,
         alert_type, severity, message,
         market, field, source, symbol, trade_date, details,
-    ) -> Optional[int]:
+    ) -> int | None:
         try:
             from sqlalchemy import create_engine, text as sql_text
             engine = create_engine(self.db_url, pool_pre_ping=True)
@@ -189,7 +189,7 @@ def _resolve_db_url() -> str:
 
 
 # ---------------------------------------------------------------------------
-_singleton: Optional[DataAlertService] = None
+_singleton: DataAlertService | None = None
 
 
 def get_alert_service() -> DataAlertService:

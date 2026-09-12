@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 DATA_DIR_ENV = "QM_SIMONLIN_A_DIR"
 
 
-def _data_dir() -> Optional[Path]:
+def _data_dir() -> Path | None:
     raw = os.getenv(DATA_DIR_ENV, "").strip()
     if not raw:
         return None
@@ -104,8 +104,8 @@ class SimonLinAStockAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         root = self._require_root()

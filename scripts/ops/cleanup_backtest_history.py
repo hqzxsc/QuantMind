@@ -37,7 +37,7 @@ def get_db_connection():
     user = os.getenv("DB_USER", "quantmind")
     password = os.getenv("DB_PASSWORD", "admin123")
     dbname = os.getenv("DB_NAME", "quantmind")
-    
+
     conn_str = f"host={host} port={port} dbname={dbname} user={user} password={password}"
     return psycopg2.connect(conn_str)
 
@@ -48,7 +48,7 @@ def clear_redis_cache():
         port = int(os.getenv("REDIS_PORT", "6379"))
         password = os.getenv("REDIS_PASSWORD", None)
         db = int(os.getenv("REDIS_DB_CACHE", "5"))
-        
+
         r = redis.Redis(host=host, port=port, password=password, db=db)
         keys = r.keys("qlib:*")
         if keys:
@@ -104,9 +104,9 @@ def main():
     group.add_argument("--all", action="store_true", help="清理所有回测历史")
     group.add_argument("--days", type=int, help="保留最近 X 天的历史")
     group.add_argument("--keep", type=int, help="每个用户保留最近 X 条历史")
-    
+
     args = parser.parse_args()
-    
+
     try:
         conn = get_db_connection()
         if args.all:
@@ -122,7 +122,7 @@ def main():
         elif args.keep is not None:
             cleanup_keep_n(conn, args.keep)
             clear_redis_cache()
-            
+
     except Exception as e:
         logger.error(f"❌ 清理失败: {e}")
         return 1

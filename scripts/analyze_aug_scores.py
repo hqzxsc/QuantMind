@@ -39,7 +39,8 @@ def load_aug_signals():
 
 
 def load_klines(symbols):
-    import pyarrow.parquet as pq, os
+    import pyarrow.parquet as pq
+    import os
     root = Path(os.getenv("QM_QUANTDB_DATA_DIR", "/data/quantdb"))
     daily_dir = root / "1_kline_data" / "daily_unadjusted"
     parts = [p / "data.parquet" for p in sorted(daily_dir.glob("dt=2026*"))]

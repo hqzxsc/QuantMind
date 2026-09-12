@@ -56,8 +56,8 @@ async def get_quote(
 @router.get("/historical")
 async def get_historical(
     symbol: str = Query(..., description="股票代码"),
-    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD"),
     period: str = Query("daily", description="周期: daily/weekly/monthly"),
     adjust: str = Query("qfq", description="复权: qfq/hfq/none"),
     days: int = Query(365, description="天数（未指定 start_date 时使用）"),

@@ -70,7 +70,7 @@ class ProgressEvent:
         return json.dumps(d, ensure_ascii=False)
 
     @classmethod
-    def from_json(cls, raw: str | bytes) -> "ProgressEvent":
+    def from_json(cls, raw: str | bytes) -> ProgressEvent:
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
         d = json.loads(raw)

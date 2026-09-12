@@ -117,7 +117,7 @@ def translate_sdk_to_template(code: str, *, run_id: str | None = None) -> Transl
         params = extracted.get("params") or {}
     else:
         cfg_dict = _extract_via_regex(code)
-        params = {p: None for p in _RE_PARAM.findall(code)}
+        params = dict.fromkeys(_RE_PARAM.findall(code))
         needs_review = True
         notes.append("无法 exec 用户脚本，仅按文本提取配置；请在向导中确认参数。")
 

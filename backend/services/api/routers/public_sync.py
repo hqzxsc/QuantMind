@@ -23,7 +23,7 @@ async def sync_processed_data(
     """
     offset = (page - 1) * page_size
     sql = "SELECT * FROM stock_daily_latest WHERE trade_date >= :t_date ORDER BY trade_date, symbol LIMIT :limit OFFSET :offset"
-    
+
     async with get_session(read_only=True) as session:
         result = await session.execute(text(sql), {"t_date": trade_date, "limit": page_size, "offset": offset})
         rows = [dict(r._mapping) for r in result]
@@ -41,9 +41,9 @@ async def sync_feature_data(
     """
     engine = create_async_engine(REMOTE_DB_URL.replace("postgresql://", "postgresql+asyncpg://"))
     offset = (page - 1) * page_size
-    
+
     sql = "SELECT * FROM feature_snapshots WHERE trade_date >= :t_date ORDER BY trade_date, symbol LIMIT :limit OFFSET :offset"
-    
+
     try:
         async with engine.connect() as conn:
             result = await conn.execute(text(sql), {"t_date": trade_date, "limit": page_size, "offset": offset})
@@ -55,7 +55,7 @@ async def sync_feature_data(
 @router.get("/calendar")
 async def sync_calendar(
     start_date: date = Query(..., description="Start date"),
-    end_date: Optional[date] = None
+    end_date: date | None = None
 ):
     """
     同步交易日历
@@ -66,7 +66,7 @@ async def sync_calendar(
         sql += " AND day <= :e_date"
         params["e_date"] = end_date
     sql += " ORDER BY day ASC"
-    
+
     async with get_session(read_only=True) as session:
         result = await session.execute(text(sql), params)
         return {"code": 200, "data": [dict(r._mapping) for r in result]}

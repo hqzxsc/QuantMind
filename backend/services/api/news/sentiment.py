@@ -253,7 +253,7 @@ def _load_worker() -> None:
         _try_load()
 
 
-def score(text: str) -> Tuple[str | None, float | None]:
+def score(text: str) -> tuple[str | None, float | None]:
     """返回 (label, confidence)。模型未就绪/失败返回 (None, None)。"""
     if not is_finbert_enabled():
         return None, None

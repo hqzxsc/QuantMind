@@ -361,7 +361,7 @@ L2_RECOMMENDED_FACTORS: list[dict[str, Any]] = [
 def _l2_partitions() -> tuple[str, ...]:
     """L2 因子分区目录（dt=YYYYMMDD）升序。"""
     d = _quantdb_dir() / "6_ml_datasets" / "l2_factors"
-    parts = sorted((p.name for p in d.glob("dt=*")))
+    parts = sorted(p.name for p in d.glob("dt=*"))
     return tuple(parts)
 
 

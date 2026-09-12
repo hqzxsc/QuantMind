@@ -356,7 +356,7 @@ def _simple_parse_text(text_input: str):
     )
     is_float_cap = "流通" in s
     cap_factor = "float_mv" if is_float_cap else "market_cap"
-    
+
     if m_cap_range:
         low_val = _cap_to_yuan(m_cap_range.group(1), m_cap_range.group(2))
         high_val = _cap_to_yuan(m_cap_range.group(3), m_cap_range.group(4))
@@ -824,7 +824,7 @@ async def parse_text(body: ParseTextRequest, request: Request):
                 sql = re.sub(r"from\s+stock_selection", f"from {LATEST_TABLE}", sql, flags=re.IGNORECASE)
             if "from stock_daily" in sql.lower() and "from stock_daily_latest" not in sql.lower():
                 sql = re.sub(r"from\s+stock_daily(?!\s_latest)", f"from {LATEST_TABLE}", sql, flags=re.IGNORECASE)
-            
+
             # 若生成的是全市场 SQL，自动对齐口径
             if _is_full_market_sql(sql):
                 sql = _build_full_market_sql()

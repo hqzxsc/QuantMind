@@ -72,7 +72,7 @@ class StrategyConfig:
     signal_mode: str = "realtime"  # realtime=逐日推理 | stored=读已有信号
 
     @classmethod
-    def preset(cls, name: str) -> "StrategyConfig":
+    def preset(cls, name: str) -> StrategyConfig:
         """策略风格预设。"""
         base = cls()
         if name == "conservative":

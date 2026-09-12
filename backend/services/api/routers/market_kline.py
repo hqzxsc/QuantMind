@@ -69,7 +69,7 @@ def _kline_cache_set(key: str, items: list[dict[str, Any]]) -> None:
         _KLINE_CACHE.pop(oldest, None)
 
 
-def _parse_date(s: Optional[str]) -> Optional[date]:
+def _parse_date(s: str | None) -> date | None:
     if not s:
         return None
     try:
@@ -78,7 +78,7 @@ def _parse_date(s: Optional[str]) -> Optional[date]:
         raise HTTPException(status_code=400, detail=f"invalid date: {s}")
 
 
-async def _try_quantdb_parquet(symbol: str, start: Optional[date], end: Optional[date], days: int, adjust: str = "qfq"):
+async def _try_quantdb_parquet(symbol: str, start: date | None, end: date | None, days: int, adjust: str = "qfq"):
     """A 股最快路径：从 QuantDB 本地 parquet 读取（DuckDB）。"""
     try:
         from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
@@ -124,7 +124,7 @@ async def _try_quantdb_parquet(symbol: str, start: Optional[date], end: Optional
         return None
 
 
-async def _try_stock_daily_latest(symbol: str, start: Optional[date], end: Optional[date], days: int):
+async def _try_stock_daily_latest(symbol: str, start: date | None, end: date | None, days: int):
     """A 股快路径：从 stock_daily_latest 直接拉。
 
     该表由 quantdb_daily_sync 从 qdb_daily_forward 写入，存储的是前复权价（adj_factor 恒为 1.0），
@@ -221,7 +221,7 @@ def _safe_float(v, default=0.0):
         return default
 
 
-def _direct_yahoo_fetch(symbol: str, start: Optional[date], end: Optional[date]):
+def _direct_yahoo_fetch(symbol: str, start: date | None, end: date | None):
     """HK/US 快路径：直接调用 yahoo_finance adapter，跳过 aggregator 管线。"""
     from backend.services.engine.data_platform.registry import get_registry
     reg = get_registry()
@@ -250,7 +250,7 @@ def _direct_yahoo_fetch(symbol: str, start: Optional[date], end: Optional[date])
     }
 
 
-def _aggregator_fetch(market: str, symbol: str, start: Optional[date], end: Optional[date]):
+def _aggregator_fetch(market: str, symbol: str, start: date | None, end: date | None):
     """通过 FieldAggregator 调多源拉日 K。"""
     agg = _get_aggregator()  # cached; register_all() runs only in main thread
     res = agg.fetch(
@@ -282,8 +282,8 @@ async def get_kline(
     symbol: str = Query(..., description="600519.SH / 00700.HK / AAPL"),
     market: str = Query("A", description="A / HK / US"),
     period: str = Query("daily", description="daily 仅支持 daily"),
-    start: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    start: str | None = Query(None, description="YYYY-MM-DD"),
+    end: str | None = Query(None, description="YYYY-MM-DD"),
     days: int = Query(120, ge=5, le=4000),
     adjust: str = Query("qfq", description="复权方式：qfq=前复权（默认）/ hfq=后复权 / none=不复权，仅 A 股生效"),
     current_user: dict = Depends(get_current_user),

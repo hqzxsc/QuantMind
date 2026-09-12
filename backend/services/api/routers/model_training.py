@@ -1514,7 +1514,7 @@ async def trigger_backfill(
                     # 在 qm_model_inference_runs 无任何痕迹，排查无从下手）
                     if result is not None and not getattr(result, "success", False):
                         try:
-                            _rid = str(getattr(result, "run_id") or "")
+                            _rid = str(result.run_id or "")
                             if _rid:
                                 _now = datetime.now(ZoneInfo("Asia/Shanghai"))
                                 await model_inference_persistence.create_run(

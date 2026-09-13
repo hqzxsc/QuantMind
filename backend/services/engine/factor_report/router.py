@@ -123,6 +123,29 @@ async def factor_related(
     }
 
 
+@router.get("/portfolio")
+async def factor_portfolio(
+    dataset: str = Query(default=DEFAULT_DATASET, description=_DATASET_DESC),
+    recompute: bool = Query(default=False, description="忽略已落盘的 JSON，按当前快照重算"),
+    n_top: int = Query(default=30, ge=5, le=200),
+):
+    """推荐因子组合：入选集 + 权重 + 淘汰理由（训练页勾选的数据来源）。"""
+    from .portfolio import build_portfolio, portfolio_path
+
+    ds = service.normalize_dataset(dataset)
+    if not recompute:
+        path = portfolio_path(ds)
+        if path.exists():
+            import json
+
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:  # noqa: BLE001 — 落盘损坏则重算
+                pass
+    return build_portfolio(ds, n_top=n_top, persist=False)
+
+
 @router.get("/clusters")
 async def factor_clusters(
     dataset: str = Query(default=DEFAULT_DATASET, description=_DATASET_DESC),

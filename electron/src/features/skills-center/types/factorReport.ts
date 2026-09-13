@@ -142,3 +142,36 @@ export interface FactorClusterResponse {
   summary?: FactorClusterSummary;
   clusters?: FactorCluster[];
 }
+
+/** 推荐因子组合（训练勾选的数据来源） */
+export interface PortfolioFactor {
+  name: string;
+  display_name?: string | null;
+  library?: string | null;
+  weight: number;
+  direction: number;
+  ic_mean?: number | null;
+  icir?: number | null;
+  turnover?: number | null;
+  coverage?: number | null;
+  net_daily?: number | null;
+}
+
+export interface FactorPortfolioResponse {
+  available: boolean;
+  dataset?: string;
+  reason?: string;
+  generated_at?: string;
+  rule?: Record<string, number | boolean | string>;
+  summary?: {
+    n_universe: number;
+    n_passed: number;
+    n_selected: number;
+    n_rejected: number;
+    composite_ic: number | null;
+    composite_icir: number | null;
+    single_icir_avg: number;
+  };
+  factors?: PortfolioFactor[];
+  rejected?: Array<{ name: string; reason: string }>;
+}

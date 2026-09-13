@@ -12,10 +12,11 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Layers, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertCircle, Layers, RefreshCw, Sparkles, Target } from 'lucide-react';
 import { FactorRankList } from './FactorRankList';
 import { FactorClusterModal } from './FactorClusterModal';
 import { HorizonDecayChart } from './HorizonDecayChart';
+import { FactorPortfolioModal } from './FactorPortfolioModal';
 import { FactorDetailCharts } from './FactorDetailCharts';
 import { FactorCorrelationHeatmap } from './FactorCorrelationHeatmap';
 import {
@@ -63,6 +64,7 @@ export const FactorReportPanel: React.FC = () => {
   const [correlation, setCorrelation] = useState<FactorCorrelation | null>(null);
   const [corrLoading, setCorrLoading] = useState(false);
   const [clusterOpen, setClusterOpen] = useState(false);
+  const [portfolioOpen, setPortfolioOpen] = useState(false);
 
   // 数据集清单（含快照状态；未生成的数据集置灰）
   useEffect(() => {
@@ -197,14 +199,24 @@ export const FactorReportPanel: React.FC = () => {
               : '加载中…'}
           </span>
 
-          <button
-            onClick={() => setClusterOpen(true)}
-            className="ml-auto flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-indigo-500 active:scale-95"
-            title="按相关性找同源因子簇，每簇只留一个代表（含 PDF 报告）"
-          >
-            <Layers className="w-3 h-3" />
-            因子去重
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setPortfolioOpen(true)}
+              className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-emerald-500 active:scale-95"
+              title="推荐因子集与权重（已写入训练目录，训练页默认勾选）"
+            >
+              <Target className="w-3 h-3" />
+              组合构建
+            </button>
+            <button
+              onClick={() => setClusterOpen(true)}
+              className="flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-indigo-500 active:scale-95"
+              title="按相关性找同源因子簇，每簇只留一个代表（含 PDF 报告）"
+            >
+              <Layers className="w-3 h-3" />
+              因子去重
+            </button>
+          </div>
           <button
             onClick={() => void loadSummary(dataset, false)}
             className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 hover:text-indigo-600 hover:border-indigo-200"
@@ -283,6 +295,14 @@ export const FactorReportPanel: React.FC = () => {
           </>
         )}
       </main>
+
+      <FactorPortfolioModal
+        open={portfolioOpen}
+        dataset={dataset}
+        datasetLabel={(datasets.find((d) => d.dataset === dataset)?.label) || dataset}
+        onClose={() => setPortfolioOpen(false)}
+        onPick={(f) => setSelected(f)}
+      />
 
       <FactorClusterModal
         open={clusterOpen}

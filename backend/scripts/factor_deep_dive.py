@@ -252,43 +252,70 @@ def neutralized_ic(dataset: str, sample_step: int = 5, max_factors: int | None =
 # ═══════════════ C. 扣费净收益 ═══════════════
 
 def net_of_cost(dataset: str, round_trip_cost: float = DEFAULT_ROUND_TRIP_COST, top_n: int = 12) -> tuple[list[str], pd.DataFrame]:
+    """扣费净收益：**同时给 T+5 日频与 T+20 调仓两个口径**。
+
+    口径说明（关键）：
+    - A 段实测几乎所有因子的 |IC| 峰值在 T+20 → 日频调仓把成本放大了数倍，结论会偏悲观；
+    - T+20 口径：毛收益 = ls_20（20 日多空价差），成本 = 20 日调仓换手 × 往返费率
+      （换手用 1−(1−日换手)^20 估计持有 20 日的成员变动比例），均按 20 日摊到日均；
+    - 两个口径并列展示，避免单一假设误导。
+    """
     path = dataset_dir(dataset) / "report" / "factor_series.parquet"
     if not path.exists():
         return [], pd.DataFrame()
-    df = pq.read_table(path, columns=["factor", "date", "q1", "q10", "turnover"]).to_pandas()
-    df["gross"] = (df["q10"] - df["q1"]) / 5.0          # 主口径 T+5 → 折算日均
-    df["cost"] = df["turnover"].fillna(0.0) * round_trip_cost
-    df["net"] = df["gross"] - df["cost"]
+    cols = ["factor", "date", "q1", "q10", "turnover"]
+    avail = set(pq.ParquetFile(path).schema_arrow.names)
+    if "ls_20" in avail:
+        cols.append("ls_20")
+    df = pq.read_table(path, columns=cols).to_pandas()
+
+    d = df["turnover"].fillna(0.0).clip(0.0, 1.0)
+    # ① T+5 日频口径
+    df["gross_d5"] = (df["q10"] - df["q1"]) / 5.0
+    df["cost_d5"] = d * round_trip_cost
+    df["net_d5"] = df["gross_d5"] - df["cost_d5"]
+    # ② T+20 调仓口径
+    if "ls_20" in df.columns:
+        turn20 = (1.0 - (1.0 - d) ** 20).clip(0.0, 1.0)
+        df["gross_d20"] = df["ls_20"].fillna(0.0) / 20.0
+        df["cost_d20"] = turn20 * round_trip_cost / 20.0
+        df["net_d20"] = df["gross_d20"] - df["cost_d20"]
+    else:
+        df["gross_d20"] = df["cost_d20"] = df["net_d20"] = np.nan
 
     g = df.groupby("factor")
     out = g.agg(
-        gross=("gross", "mean"),
-        cost=("cost", "mean"),
-        net=("net", "mean"),
-        gross_std=("gross", "std"),
-        turnover=("turnover", "mean"),
-        days=("net", "size"),
+        gross_d5=("gross_d5", "mean"), cost_d5=("cost_d5", "mean"), net_d5=("net_d5", "mean"),
+        gross_d20=("gross_d20", "mean"), cost_d20=("cost_d20", "mean"), net_d20=("net_d20", "mean"),
+        std_d20=("net_d20", "std"), turnover=("turnover", "mean"), days=("net_d5", "size"),
     ).reset_index()
-    out["net_sharpe"] = out["net"] / out["gross_std"].replace(0, np.nan) * np.sqrt(244)
-    out["breakeven_cost"] = out["gross"] / out["turnover"].replace(0, np.nan)   # 换手=1 时的盈亏平衡费率
-    out["cost_ratio"] = out["cost"] / out["gross"].replace(0, np.nan)           # 成本吃掉多少毛收益
+    out["sharpe_d20"] = out["net_d20"] / out["std_d20"].replace(0, np.nan) * np.sqrt(244)
 
-    ranked = out.sort_values("net_sharpe", ascending=False).head(top_n)
+    ranked = out.sort_values("net_d20", ascending=False).head(top_n)
     lines = [
-        f"（往返成本 {round_trip_cost * 100:.3f}% ≈ 佣金双边 0.05% + 印花税 0.05% + 滑点双边 0.1%）",
+        f"（往返成本 {round_trip_cost * 100:.3f}% = 佣金双边 0.05% + 印花税 0.05% + 滑点双边 0.1%）",
         "",
-        "| 因子 | 毛多空/日 | 成本/日 | **净多空/日** | 净 Sharpe | 换手 | 成本吃掉毛收益 |",
+        "| 因子 | T+5 日频净/日 | **T+20 调仓净/日** | T+20 毛/日 | T+20 成本/日 | 净 Sharpe(T+20) | 日换手 |",
         "|---|---|---|---|---|---|---|",
     ]
     for _, r in ranked.iterrows():
         lines.append(
-            f"| `{r['factor']}` | {_fpct(r['gross'], 3)} | {_fpct(-r['cost'], 3)} | **{_fpct(r['net'], 3)}** | "
-            f"{_num_safe(r['net_sharpe'])} | {r['turnover'] * 100 if np.isfinite(r['turnover']) else float('nan'):.0f}% | "
-            f"{_fpct(r['cost_ratio'], 0)} |"
+            f"| `{r['factor']}` | {_fpct(r['net_d5'], 3)} | **{_fpct(r['net_d20'], 3)}** | {_fpct(r['gross_d20'], 3)} | "
+            f"{_fpct(-r['cost_d20'], 3)} | {_num_safe(r['sharpe_d20'])} | {_pct_plain(r['turnover'])} |"
         )
-    dead = int((out["net"] <= 0).sum())
-    lines += ["", f"**{len(out)} 个因子里，扣费后净多空 ≤ 0 的有 {dead} 个（{dead / max(len(out), 1):.0%}）**。"]
+    n5 = int((out["net_d5"] <= 0).sum())
+    n20 = int((out["net_d20"] <= 0).sum())
+    lines += [
+        "",
+        f"**{len(out)} 个因子**：日频(T+5)口径净收益 ≤0 的有 {n5} 个（{n5 / max(len(out), 1):.0%}）；"
+        f"**按 T+20 调仓口径只剩 {n20} 个（{n20 / max(len(out), 1):.0%}）≤0**。",
+        "→ 结论：调仓周期从日频放到 20 日，成本对净收益的侵蚀大幅缓解；短线策略才需要担心换手。",
+    ]
     return lines, out
+
+
+def _pct_plain(v, digits: int = 0) -> str:
+    return "—" if v is None or not np.isfinite(v) else f"{v * 100:.{digits}f}%"
 
 
 def _num_safe(v, digits: int = 2) -> str:

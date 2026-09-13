@@ -3,6 +3,7 @@
 import { SERVICE_ENDPOINTS } from '../../../config/services';
 import type {
   FactorClusterResponse,
+  FactorPortfolioResponse,
   FactorCorrelation,
   FactorDatasetList,
   FactorDetail,
@@ -84,4 +85,11 @@ export function getFactorClusters(
 ): Promise<FactorClusterResponse> {
   const qs = new URLSearchParams({ dataset, threshold: String(threshold), keep });
   return getJson<FactorClusterResponse>(`/clusters?${qs}`);
+}
+
+/** 推荐因子组合（含权重、方向、淘汰理由） */
+export function getFactorPortfolio(dataset: string, recompute = false): Promise<FactorPortfolioResponse> {
+  const qs = new URLSearchParams({ dataset });
+  if (recompute) qs.set('recompute', 'true');
+  return getJson<FactorPortfolioResponse>(`/portfolio?${qs}`);
 }

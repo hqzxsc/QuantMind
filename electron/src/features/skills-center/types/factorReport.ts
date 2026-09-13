@@ -2,8 +2,12 @@
 
 export interface FactorSummary {
   name: string;
-  /** alpha158 / alpha101 / gtja191 */
+  /** 因子库：alpha158 / alpha101 / gtja191 / L1 / L2 */
   library: string;
+  /** 中文名（来自平台因子字典，可能为空） */
+  display_name?: string | null;
+  /** 中文分类（如「动量」「换手与流动性」「信息不对称与毒性」） */
+  category_name?: string | null;
   ic_mean: number;
   icir: number;
   t_value: number;
@@ -18,9 +22,28 @@ export interface FactorSummary {
   turnover: number;
 }
 
+/** 报告页可选的数据集及其快照状态 */
+export interface FactorDatasetInfo {
+  dataset: string;
+  label: string;
+  available: boolean;
+  horizon?: string | null;
+  n_factors?: number | null;
+  start?: string | null;
+  end?: string | null;
+  generated_at?: string | null;
+}
+
+export interface FactorDatasetList {
+  default: string;
+  items: FactorDatasetInfo[];
+}
+
 export interface FactorReportMeta {
   generated_at: string;
+  dataset?: string;
   horizon: string;
+  label_mode?: string;
   start: string;
   end: string;
   n_dates: number;
@@ -33,16 +56,19 @@ export interface FactorReportMeta {
 export interface FactorSummaryResponse {
   available: boolean;
   reason?: string;
+  dataset?: string;
   meta?: FactorReportMeta;
   total?: number;
   factors: FactorSummary[];
 }
 
 export interface FactorDetail {
+  dataset?: string;
   factor: string;
   horizon: string;
   empty: boolean;
   reason?: string;
+  source?: 'series_snapshot' | 'partition_scan';
   dates: string[];
   quantile_mean: number[];
   quantile_curves: number[][];

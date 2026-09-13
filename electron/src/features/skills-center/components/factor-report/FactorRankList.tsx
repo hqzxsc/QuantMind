@@ -33,10 +33,21 @@ export const FactorRankList: React.FC<FactorRankListProps> = ({ factors, selecte
     const kw = keyword.trim().toUpperCase();
     return factors.filter((f) => {
       if (library !== 'all' && f.library !== library) return false;
-      if (kw && !f.name.toUpperCase().includes(kw)) return false;
+      if (kw && !f.name.toUpperCase().includes(kw) && !String(f.display_name || '').toUpperCase().includes(kw)) {
+        return false;
+      }
       return true;
     });
   }, [factors, keyword, library]);
+
+  // 库筛选动态化：Alpha 库是 alpha158/alpha101/gtja191，L1/L2 数据集则是 L1/L2
+  const libraries = useMemo(() => {
+    const seen: string[] = [];
+    for (const f of factors) {
+      if (f.library && !seen.includes(f.library)) seen.push(f.library);
+    }
+    return seen;
+  }, [factors]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -46,12 +57,22 @@ export const FactorRankList: React.FC<FactorRankListProps> = ({ factors, selecte
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            placeholder="搜索因子，如 ROC20 / gtja_088"
+            placeholder="搜索因子（中文名或代码）"
             className="w-full rounded-lg border border-slate-200 bg-slate-50/70 pl-8 pr-2 py-1.5 text-xs text-slate-700 outline-none focus:border-indigo-300 focus:bg-white"
           />
         </div>
         <div className="flex items-center gap-1 flex-wrap">
-          {['all', 'alpha158', 'alpha101', 'gtja191'].map((lib) => (
+          <button
+            onClick={() => setLibrary('all')}
+            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${
+              library === 'all'
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-200 hover:text-indigo-600'
+            }`}
+          >
+            全部
+          </button>
+          {libraries.map((lib) => (
             <button
               key={lib}
               onClick={() => setLibrary(lib)}
@@ -61,7 +82,7 @@ export const FactorRankList: React.FC<FactorRankListProps> = ({ factors, selecte
                   : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-200 hover:text-indigo-600'
               }`}
             >
-              {lib === 'all' ? '全部' : LIBRARY_LABELS[lib]}
+              {LIBRARY_LABELS[lib] || lib}
             </button>
           ))}
           <span className="ml-auto text-[10px] text-slate-400 font-mono">{shown.length} 个</span>
@@ -83,8 +104,9 @@ export const FactorRankList: React.FC<FactorRankListProps> = ({ factors, selecte
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className={`text-xs font-bold truncate ${active ? 'text-indigo-700' : 'text-slate-700'}`}>
-                  {f.name}
+                <span className={`text-xs font-bold truncate ${active ? 'text-indigo-700' : 'text-slate-700'}`}
+                      title={f.display_name ? `${f.name} · ${f.display_name}` : f.name}>
+                  {f.display_name || f.name}
                 </span>
                 <span
                   className="shrink-0 rounded px-1.5 py-[1px] text-[10px] font-mono font-bold text-white"
@@ -95,9 +117,10 @@ export const FactorRankList: React.FC<FactorRankListProps> = ({ factors, selecte
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400 font-mono">
+                {f.display_name && <span className="truncate text-slate-500">{f.name}</span>}
                 <span>ICIR {f.icir.toFixed(2)}</span>
                 <span>换手 {(f.turnover * 100).toFixed(0)}%</span>
-                <span className="ml-auto text-slate-300">{LIBRARY_LABELS[f.library] || f.library}</span>
+                <span className="ml-auto text-slate-300 shrink-0">{f.library}</span>
               </div>
             </button>
           );

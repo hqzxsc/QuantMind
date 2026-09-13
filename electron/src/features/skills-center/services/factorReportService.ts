@@ -3,6 +3,7 @@
 import { SERVICE_ENDPOINTS } from '../../../config/services';
 import type {
   FactorCorrelation,
+  FactorDatasetList,
   FactorDetail,
   FactorRelated,
   FactorSummaryResponse,
@@ -30,13 +31,20 @@ async function getJson<T>(path: string, timeoutMs = 60000): Promise<T> {
   }
 }
 
-/** 快照摘要：429 因子的 IC / ICIR / 分位价差 / 换手 */
+/** 可选数据集及各自快照状态 */
+export function getFactorDatasets(): Promise<FactorDatasetList> {
+  return getJson<FactorDatasetList>('/datasets');
+}
+
+/** 快照摘要：因子排行（IC / ICIR / 分位价差 / 换手） */
 export function getFactorSummary(params: {
+  dataset?: string;
   library?: string;
   sort?: 'abs_ic' | 'icir' | 'turnover' | 'ls_mean' | 'name';
   limit?: number;
 } = {}): Promise<FactorSummaryResponse> {
   const qs = new URLSearchParams();
+  if (params.dataset) qs.set('dataset', params.dataset);
   if (params.library) qs.set('library', params.library);
   if (params.sort) qs.set('sort', params.sort);
   if (params.limit) qs.set('limit', String(params.limit));
@@ -44,20 +52,25 @@ export function getFactorSummary(params: {
   return getJson<FactorSummaryResponse>(`/summary${suffix}`);
 }
 
-/** 单因子明细：分位净值 / IC 序列 / 换手序列（首次约 3s，服务端缓存 10 分钟） */
-export function getFactorDetail(factor: string, horizon = 'fwd_ret_5', lookback = 250): Promise<FactorDetail> {
-  const qs = new URLSearchParams({ factor, horizon, lookback: String(lookback) });
+/** 单因子明细（预计算序列，毫秒级） */
+export function getFactorDetail(
+  factor: string,
+  dataset: string,
+  horizon = 'fwd_ret_5',
+  lookback = 250,
+): Promise<FactorDetail> {
+  const qs = new URLSearchParams({ factor, dataset, horizon, lookback: String(lookback) });
   return getJson<FactorDetail>(`/detail?${qs}`, 90000);
 }
 
 /** 因子相关性子矩阵 */
-export function getFactorCorrelation(factors: string[]): Promise<FactorCorrelation> {
-  const qs = new URLSearchParams({ factors: factors.join(',') });
+export function getFactorCorrelation(factors: string[], dataset: string): Promise<FactorCorrelation> {
+  const qs = new URLSearchParams({ factors: factors.join(','), dataset });
   return getJson<FactorCorrelation>(`/correlation?${qs}`);
 }
 
 /** 与某因子最相关（含负相关）的因子 */
-export function getFactorRelated(factor: string, top = 8): Promise<FactorRelated> {
-  const qs = new URLSearchParams({ factor, top: String(top) });
+export function getFactorRelated(factor: string, dataset: string, top = 8): Promise<FactorRelated> {
+  const qs = new URLSearchParams({ factor, dataset, top: String(top) });
   return getJson<FactorRelated>(`/related?${qs}`);
 }

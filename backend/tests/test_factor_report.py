@@ -73,11 +73,11 @@ _FAKE_SNAPSHOT = {
 
 @pytest.fixture()
 def fake_snapshot(monkeypatch):
-    monkeypatch.setattr(service, "load_snapshot", lambda: json.loads(json.dumps(_FAKE_SNAPSHOT)))
+    monkeypatch.setattr(service, "load_snapshot", lambda *a, **k: json.loads(json.dumps(_FAKE_SNAPSHOT)))
 
 
 def test_相关性切片保持请求顺序(fake_snapshot):
-    res = service.correlation_slice(["f3", "f1"])
+    res = service.correlation_slice("alpha_library", ["f3", "f1"])
 
     assert res["available"] is True
     assert res["factors"] == ["f3", "f1"]           # 顺序 = 请求顺序（页面靠它对齐标签）
@@ -86,23 +86,23 @@ def test_相关性切片保持请求顺序(fake_snapshot):
 
 
 def test_相关性切片忽略不存在的因子(fake_snapshot):
-    res = service.correlation_slice(["f2", "不存在"])
+    res = service.correlation_slice("alpha_library", ["f2", "不存在"])
 
     assert res["factors"] == ["f2"]
     assert len(res["matrix"]) == 1
 
 
 def test_高相关因子按绝对值降序且排除自身(fake_snapshot):
-    res = service.top_correlated("f1", top=5)
+    res = service.top_correlated("alpha_library", "f1", top=5)
 
     assert [x["name"] for x in res] == ["f2", "f3"]   # |-0.9| > |0.2|
     assert res[0]["corr"] == pytest.approx(-0.9)
 
 
 def test_快照缺失时返回未生成(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(service, "snapshot_path", lambda: tmp_path / "nope.json")
+    monkeypatch.setattr(service, "snapshot_path", lambda *a, **k: tmp_path / "nope.json")
 
-    assert service.load_snapshot() is None
-    res = service.correlation_slice(["f1"])
+    assert service.load_snapshot("alpha_library") is None
+    res = service.correlation_slice("alpha_library", ["f1"])
     assert res["available"] is False
     assert "尚未生成" in res["reason"]

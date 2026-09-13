@@ -206,8 +206,11 @@ def _render_name(column: str) -> str:
         (r"micro_zone_vol_ratio_T(\d+)", "T{0} 时段成交量占比"),
         (r"vol_realized_(\d+)min", "{0}分钟已实现波动率"),
         # Alpha 库命名（2026-08-29 接入）
-        (r"a101_(\d{3})", "Alpha101 #\1（Kakushadze 101 Formulaic Alphas）"),
-        (r"gtja_(\d{3})", "GTJA191 #\1（国泰君安短周期价量因子）"),
+        # 注意：模板走 `template.format(*match.groups())`，占位符必须是 {0}。
+        # 曾经写成 "\1"（非 raw 字符串）→ Python 解析成控制符 \x01，且没有 {} 占位符
+        # 导致 271 个 a101/gtja 因子显示名全部退化成同一个不可区分的字符串。
+        (r"a101_(\d{3})", "Alpha101 #{0}（Kakushadze 101 Formulaic Alphas）"),
+        (r"gtja_(\d{3})", "GTJA191 #{0}（国泰君安短周期价量因子）"),
         (r"a158_KMID", "K线实体比"),
         (r"a158_KLEN", "K线振幅比"),
         (r"a158_KMID2", "实体占振幅比"),

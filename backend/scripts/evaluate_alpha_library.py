@@ -70,26 +70,33 @@ def load_labels() -> pd.DataFrame:
 def compute_ic_series(
     frame: pd.DataFrame, factor_cols: list[str], forward_col: str
 ) -> pd.DataFrame:
-    """逐日横截面 RankIC 序列（index=trade_date, columns=factor_cols）。"""
-    need = factor_cols + [forward_col]
+    """逐日横截面 RankIC 序列（index=trade_date, columns=factor_cols）。
+
+    口径：**成对完整（pairwise-complete）秩相关** —— 每个因子各自与目标在其有效配对样本上
+    先取秩再算 Pearson。三处历史缺陷都在这里修掉（见 tests/data_platform/test_evaluate_alpha_library_ic.py）：
+    1. 不在外面预排名：预排名是按「各列全部有效样本」排序，NaN 多时其秩与成对样本上的秩不是
+       同一个分布，Pearson 会系统性偏低（实测 50% NaN 时 1.0 被算成 0.995、真实 0.65 被报成 0.32）
+    2. corrwith 逐列成对剔除 NaN，分母即有效配对样本数（旧实现分母用全截面 len(g)）
+    3. 常量列 corrwith 直接给 NaN，不会像旧实现那样因分母 ~1e-16 溢出成 ±inf
+    """
+    need = factor_cols + [forward_col, "trade_date"]
     sub = frame[need].copy()
-    sub["trade_date"] = frame["trade_date"].values
-    ranked = sub.groupby("trade_date").rank(pct=True)
-    ranked["trade_date"] = frame["trade_date"].values
 
     def _daily_corr(g: pd.DataFrame) -> pd.Series:
         if len(g) < 20:
             return pd.Series(np.nan, index=factor_cols)
         target = g[forward_col]
-        if target.std() < 1e-9:
+        # 目标本身有效样本太少或当日无变化 → 整日不可用
+        if target.notna().sum() < 20 or target.std() < 1e-9:
             return pd.Series(np.nan, index=factor_cols)
-        fc = g[factor_cols].subtract(g[factor_cols].mean())
-        tc = target - target.mean()
-        denom = fc.std() * target.std() * len(g)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            return fc.mul(tc, axis=0).sum() / denom
+        return g[factor_cols].corrwith(target, method="spearman")
 
-    ic_df = ranked.groupby("trade_date").apply(_daily_corr)
+    # 逐日循环（不用 groupby.apply：pandas 2.2+ 会警告 grouping 列参与运算，且各版本行为不一致）
+    rows: dict = {}
+    for trade_date, g in sub.groupby("trade_date"):
+        rows[trade_date] = _daily_corr(g)
+    ic_df = pd.DataFrame.from_dict(rows, orient="index")
+    ic_df.index.name = "trade_date"
     return ic_df
 
 
@@ -167,8 +174,10 @@ def main() -> None:
     res.to_csv(OUT_DIR / "ic_results_all.csv", index=False)
 
     # ── 排序与汇总 ──
-    # 综合分 = |IC| × ICIR（同时要求强度与稳定性）；另列 T+5 主榜
-    res["score"] = res["ic_mean"].abs() * res["icir"]
+    # 综合分 = |IC| × |ICIR|（同时要求强度与稳定性）。
+    # 注意 ICIR 必须取绝对值：反向因子（IC<0、ICIR<0）同样有效，
+    # 旧实现漏了绝对值，把 ICIR=-0.65 的最强反向因子 gtja_070 排到 422/422 倒数第一。
+    res["score"] = res["ic_mean"].abs() * res["icir"].abs()
     summary = res[res["horizon"] == "fwd_ret_5"].copy()
     summary = summary.sort_values("score", ascending=False)
     summary = summary.reset_index(drop=True)
@@ -183,9 +192,9 @@ def main() -> None:
         print(f"{i + 1:>4} {r['factor']:<14} {r['ic_mean']:>8.4f} {r['icir']:>7.3f} "
               f"{r['win_rate']:>7.1%} {r['t_value']:>7.2f} {r['score']:>8.4f}  {cat}")
 
-    # 通过阈值统计
+    # 通过阈值统计（ICIR 同样取绝对值：反向因子与正向因子一视同仁）
     for th_ic, th_icir in [(0.02, 0.3), (0.03, 0.3), (0.02, 0.5)]:
-        passed = summary[(summary["ic_mean"].abs() >= th_ic) & (summary["icir"] >= th_icir)]
+        passed = summary[(summary["ic_mean"].abs() >= th_ic) & (summary["icir"].abs() >= th_icir)]
         print(f"\n通过 |IC|>={th_ic} 且 ICIR>={th_icir}: {len(passed)} 个")
         if len(passed):
             print("  " + ", ".join(passed["factor"].head(20)))

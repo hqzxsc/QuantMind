@@ -24,3 +24,25 @@ def test_microstructure_names_are_compact_and_readable():
 
     assert definition["display_name"] == "AESP 有效价差"
     assert "价差与微观结构因子" not in str(definition["display_name"])
+
+
+def test_alpha_library_names_keep_factor_number_and_no_control_chars():
+    """Alpha 库三个前缀的显示名必须唯一且带编号。
+
+    回归：模板曾写成非 raw 字符串的 "\\1"（控制符 \\x01）且没有 {} 占位符，
+    导致 101 个 a101 与 170 个 gtja 因子的显示名全部退化成同一个字符串。
+    """
+    a101 = definition_for("a101_028")["display_name"]
+    gtja = definition_for("gtja_125")["display_name"]
+    a158 = definition_for("a158_MA20")["display_name"]
+
+    assert a101 == "Alpha101 #028（Kakushadze 101 Formulaic Alphas）"
+    assert gtja == "GTJA191 #125（国泰君安短周期价量因子）"
+    assert "20" in str(a158)
+    for name in (a101, gtja, a158):
+        assert "\x01" not in str(name)
+        assert "#" not in str(name) or "#0" in str(name) or "#1" in str(name)
+
+    # 不同因子的显示名必须可区分
+    assert definition_for("a101_001")["display_name"] != a101
+    assert definition_for("gtja_001")["display_name"] != gtja

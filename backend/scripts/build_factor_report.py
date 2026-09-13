@@ -194,6 +194,7 @@ def compute_one_date(args: tuple) -> dict | None:
 
     return {
         "dt": dt,
+        "symbols": merged["symbol"].to_numpy(),
         "gram": gram,
         "col_sum": col_sum,
         "n_rows": n_rows,
@@ -229,6 +230,7 @@ def merge_partials(partials: list[dict], n_factors: int) -> dict:
     coverage_mat: list[np.ndarray] = []  # 每日 (n_factors,)
 
     prev_group: np.ndarray | None = None
+    prev_syms: np.ndarray | None = None
     for p in partials:
         gram += p["gram"]
         col_sum += p["col_sum"]
@@ -237,20 +239,26 @@ def merge_partials(partials: list[dict], n_factors: int) -> dict:
         q_sum += qs
         q_cnt += p["q_cnt"]
         ic_list.append(p["ic"])
-        # 换手：与前一有交易日比较十分位成员变化，按当日有效样本归一（单边换手率）
+        # 换手：与前一有交易日比较十分位成员变化，按当日有效样本归一（单边换手率）。
+        # ⚠️ 必须按 **symbol 对齐**再比：各数据集的行序不保证逐日稳定
+        # （实测 l1_l2_factors 相邻两日同位置符号一致率低至 0.2%），
+        # 按位置比较等于拿不同股票的分位做差，会把换手率算成噪声。
         g = p["group"]
+        syms = p["symbols"]
         day_turnover = np.zeros(n_factors, dtype=np.float64)
-        if prev_group is not None and prev_group.shape == g.shape:
-            valid = (g >= 0) & (prev_group >= 0)
-            turnover_changed += ((g != prev_group) & valid).sum(axis=0)
-            turnover_valid += valid.sum(axis=0)
+        if prev_group is not None:
+            _, ia, ib = np.intersect1d(prev_syms, syms, return_indices=True)
+            a, b = prev_group[ia], g[ib]
+            valid = (a >= 0) & (b >= 0)
+            changed_cnt = ((a != b) & valid).sum(axis=0)
+            valid_cnt = valid.sum(axis=0)
+            turnover_changed += changed_cnt
+            turnover_valid += valid_cnt
             day_turnover = np.divide(
-                ((g != prev_group) & valid).sum(axis=0),
-                np.maximum(valid.sum(axis=0), 1),
-                out=np.zeros(n_factors),
-                where=valid.sum(axis=0) > 0,
+                changed_cnt, np.maximum(valid_cnt, 1),
+                out=np.zeros(n_factors), where=valid_cnt > 0,
             )
-        prev_group = g
+        prev_group, prev_syms = g, syms
 
         dates_out.append(p["dt"])
         q_mat.append(p["q_ret"].astype(np.float32))

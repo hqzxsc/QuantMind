@@ -277,6 +277,7 @@ def compute_detail(dataset: str, factor: str, horizon: str = "fwd_ret_5", lookba
     ic_series: list[float] = []
     coverage: list[float] = []
     members_prev: np.ndarray | None = None
+    prev_syms: np.ndarray | None = None
     turnover_series: list[float] = []
 
     for dt, fac, lab in loaded:
@@ -305,9 +306,13 @@ def compute_detail(dataset: str, factor: str, horizon: str = "fwd_ret_5", lookba
         ic_series.append(_spearman(xv, yv))
         coverage.append(float(ok.sum() / max(len(merged), 1)))
 
-        if members_prev is not None and members_prev.size == xv.size:
-            turnover_series.append(float((group != members_prev).mean()))
-        members_prev = group
+        # 换手按 symbol 对齐再比（行序逐日可能变，按位置比会算成噪声；见 build_factor_report.py 同款注释）
+        syms_valid = merged["symbol"].to_numpy()[ok]
+        if members_prev is not None and prev_syms is not None:
+            _, ia, ib = np.intersect1d(prev_syms, syms_valid, return_indices=True)
+            if ia.size:
+                turnover_series.append(float((members_prev[ia] != group[ib]).mean()))
+        members_prev, prev_syms = group, syms_valid
 
     if not dates:
         payload = {

@@ -191,9 +191,8 @@ def _holdings_profile(
     last = len(p.dates) - 1
     mvs: list[float] = []
     inds: dict[str, int] = {}
-    for s_ in p.sym[fi, last, :n]:
-        sym = str(s_)
-        if not sym or snap_idx is None or sym not in snap_idx.index:
+    for sym in p.sym_at(fi, last, n):
+        if snap_idx is None or sym not in snap_idx.index:
             continue
         row = snap_idx.loc[sym]
         mv = row.get("total_mv_yi")
@@ -244,10 +243,10 @@ def leaderboard(
     for code in p.codes:
         meta = fmeta.get(code, {})
         s = series[code]
-        kpi = dict(s["kpi"])
+        kpi = scorecard.gate_kpi(dict(s["kpi"]))
         if ic is not None:
             kpi.update(scorecard.ic_stats(ic, code, rdates))
-        ex = scorecard.excess_vs(ctx["benches"], s["kpi"])
+        ex = scorecard.excess_vs(ctx["benches"], kpi)
         med_mv, mv_style, top_ind = _holdings_profile(p, p.index(code), n, snap_idx)
         rows.append(
             {
@@ -267,9 +266,14 @@ def leaderboard(
             }
         )
     df = scorecard.composite_scores(pd.DataFrame(rows))
-    df = df.sort_values(["composite", "code"], ascending=[False, True]).reset_index(
-        drop=True
-    )
+    df["insufficient"] = df["n_months"].fillna(0) < scorecard.MIN_MONTHS
+    # 疑似未来函数：|IC|>0.15 或 |ICIR|>5 超出真实因子的物理上限
+    # （features_daily 的 return_1d/3d/5d/10d/20d/60d 家族实测与次月收益相关性 0.2~0.94，是标签泄漏）
+    df["suspicious"] = (df["ic_mean"].abs() > 0.15) | (df["ic_ir"].abs() > 5)
+    df = df.sort_values(
+        ["insufficient", "suspicious", "composite", "code"],
+        ascending=[True, True, False, True],
+    ).reset_index(drop=True)
     df["rank"] = np.arange(1, len(df) + 1)
     out = store._sanitize(df.to_dict("records"))
     m = store.factors_meta() if dataset == "private" else store.metrics()
@@ -310,7 +314,7 @@ def factor_detail(
         variants.append(
             {
                 "n": n,
-                "kpi": s["kpi"],
+                "kpi": scorecard.gate_kpi(dict(s["kpi"])),
                 "excess": scorecard.excess_vs(ctx["benches"], s["kpi"]),
                 "nav": _points(s["dates"], s["nav"]),
             }
@@ -341,14 +345,15 @@ def factor_detail(
     snap = store.stock_snapshot()
     snap_idx = snap.set_index("symbol") if snap is not None else None
     kk = min(int(stocks_n), p.fwd.shape[2])
-    syms = p.sym[fi, last, :kk]
+    sym_codes = p.sym_codes(fi, last)[:kk]
     scores = p.score[fi, last, :kk]
     raws = p.raw[fi, last, :kk]
     stocks = []
     for r_i in range(kk):
-        sym = str(syms[r_i])
-        if not sym:
+        c_i = int(sym_codes[r_i])
+        if c_i < 0:
             continue
+        sym = p.symbols[c_i]
         row = {
             "rank": r_i + 1,
             "symbol": sym,
@@ -815,21 +820,23 @@ def optimal_weights(
         return {"error": "区间过短（至少 6 个月）"}
 
     pools = []
+    syms_all = p.symbols
     for a in months:
         sym_list: list[str] = []
         for fi in fis:
-            sym_list.extend(s for s in p.sym[fi, a] if s)
+            sym_list.extend(p.sym_at(fi, a))
         syms = sorted(set(sym_list))
         si = {s: i for i, s in enumerate(syms)}
         S = np.zeros((len(syms), k), dtype=np.float32)
         M = np.zeros((len(syms), k), dtype=np.float32)
         F = np.full(len(syms), np.nan, dtype=np.float32)
         for j, fi in enumerate(fis):
-            for r_i in range(p.sym.shape[2]):
-                s_ = p.sym[fi, a, r_i]
-                if not s_:
+            codes_row = p.sym_codes(fi, a)
+            for r_i in range(len(codes_row)):
+                c_i = int(codes_row[r_i])
+                if c_i < 0:
                     continue
-                i = si[s_]
+                i = si[syms_all[c_i]]
                 S[i, j] = p.score[fi, a, r_i]
                 M[i, j] = 1.0
                 fv = p.fwd[fi, a, r_i]

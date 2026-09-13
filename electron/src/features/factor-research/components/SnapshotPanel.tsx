@@ -34,6 +34,7 @@ export const SnapshotPanel: React.FC<Props> = ({ dataset, onReady }) => {
             notified.current = true;
             onReady();
           }
+
         })
         .catch((e: unknown) => {
           if (alive) setErr(e instanceof Error ? e.message : String(e));
@@ -89,7 +90,7 @@ export const SnapshotPanel: React.FC<Props> = ({ dataset, onReady }) => {
                   >
                     <RefreshCw className="w-3 h-3" /> 重算快照
                   </button>
-                  <span className="text-[10px] text-slate-400">全本地计算（QuantDB），约 25~45 分钟，不上传任何数据</span>
+                  <span className="text-[10px] text-slate-400">自动扫描 6_ml_datasets 重建索引 · 全本地、不上传</span>
                 </div>
               </>
             ) : (
@@ -98,8 +99,10 @@ export const SnapshotPanel: React.FC<Props> = ({ dataset, onReady }) => {
                   {running ? '快照计算中…' : '尚未生成因子快照'}
                 </div>
                 <div className="mt-0.5 text-[11px] text-slate-500 leading-relaxed">
-                  因子排行榜/单因子/对比/合成依赖一份本地快照（月末打分面板）。
-                  点击下方按钮在**本机 QuantDB** 上计算（约 25~45 分钟）；全程本地运行，不会上传任何数据。
+                  榜单/单因子/对比/合成依赖一份本地快照（月末打分索引）。
+                  点击下方按钮将**自动扫描本机 quantdb 的 6_ml_datasets**（L1/L2、Alpha 库、
+                  量价/技术指标等已计算好的因子数据）并生成索引 —— 只读取、不重算因子本身，
+                  全程本地运行、不上传任何数据。私人因子库约 5~15 分钟，经典因子集约 25 分钟。
                   若 QuantDB 尚未同步，请先在「数据管理」里同步 A 股数据。
                 </div>
                 <div className="mt-2 flex items-center gap-2">

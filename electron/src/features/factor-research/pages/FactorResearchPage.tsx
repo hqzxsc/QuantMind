@@ -49,7 +49,7 @@ const FactorResearchPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [showSnapshot, setShowSnapshot] = useState(false);
-  const [dataset, setDataset] = useState<FactorDataset>('classic');
+  const [dataset, setDataset] = useState<FactorDataset>('private'); // 默认以 L1+L2 私人因子库为主
   const [reloadKey, setReloadKey] = useState(0);
 
   const rangeParams: RangeParams = useMemo(

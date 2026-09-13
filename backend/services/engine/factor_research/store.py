@@ -57,6 +57,15 @@ def _cached_obj(key: str, loader):
     return obj
 
 
+def _file_key(p: Path, prefix: str, extra: str = "") -> str:
+    """缓存 key = 路径 + mtime + 参数 —— 构建脚本重跑后旧缓存立即失效（不受 TTL 限制）。"""
+    try:
+        mtime = p.stat().st_mtime_ns
+    except OSError:
+        mtime = 0
+    return f"{prefix}:{p}:{mtime}:{extra}"
+
+
 def load_json(name: str, dataset: str = "classic"):
     p = artifact_dir(dataset) / name
 
@@ -65,7 +74,7 @@ def load_json(name: str, dataset: str = "classic"):
             return None
         return _sanitize(json.loads(p.read_text(encoding="utf-8")))
 
-    return _cached_obj(f"json:{p}", _rd)
+    return _cached_obj(_file_key(p, "json"), _rd)
 
 
 def load_parquet(name: str, dataset: str = "classic", **kwargs) -> pd.DataFrame | None:
@@ -76,7 +85,9 @@ def load_parquet(name: str, dataset: str = "classic", **kwargs) -> pd.DataFrame 
             return None
         return pd.read_parquet(p, **kwargs)
 
-    return _cached_obj(f"pq:{p}:{repr(sorted(kwargs.items(), key=str))}", _rd)
+    return _cached_obj(
+        _file_key(p, "pq", repr(sorted(kwargs.items(), key=str))), _rd
+    )
 
 
 def metrics(dataset: str = "classic") -> dict:
@@ -120,7 +131,7 @@ def panel(dataset: str = "classic"):
             return None
         return scorecard.Panel(pd.read_parquet(p))
 
-    return _cached_obj(f"obj:{p}", _rd)
+    return _cached_obj(_file_key(p, "obj"), _rd)
 
 
 def stock_snapshot() -> pd.DataFrame | None:

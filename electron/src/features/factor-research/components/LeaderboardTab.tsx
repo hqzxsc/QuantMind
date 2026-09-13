@@ -220,6 +220,19 @@ export const LeaderboardTab: React.FC<Props> = ({
                         <span className="font-bold text-slate-700">{r.name_cn}</span>
                         <span className="ml-1.5 font-mono text-[10px] text-slate-400">{r.code}</span>
                         <span className="ml-1.5 text-[9px] text-slate-300">{r.l1.slice(0, 2)} / {r.l2}</span>
+                        {r.insufficient && (
+                          <span className="ml-1.5 rounded-full bg-amber-50 border border-amber-100 px-1.5 py-[1px] text-[9px] font-bold text-amber-600">
+                            数据不足（{r.n_months ?? 0} 月）
+                          </span>
+                        )}
+                        {r.suspicious && (
+                          <span
+                            className="ml-1.5 rounded-full bg-orange-50 border border-orange-100 px-1.5 py-[1px] text-[9px] font-bold text-orange-600"
+                            title="|IC|>0.3 或 |ICIR|>5，超出真实因子的物理上限，疑似未来函数（数据质量问题，已沉底不参与正常排序）"
+                          >
+                            疑似未来函数
+                          </span>
+                        )}
                       </td>
                       <td className="py-1.5 text-right font-mono font-bold text-indigo-600">{fmtNum(r.composite, 3)}</td>
                       <td className={`py-1.5 text-right font-mono font-bold ${(r.annual_return || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>

@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""私人因子库快照构建（筛选最终保留清单 → 因子工作台「私人因子库」数据集）。
+"""私人因子库快照构建（因子工作台「私人因子库」数据集）。
 
-来源：``<quantdb>/factor_research/screening/factor_selection.json`` 的 kept
-（质量门槛 + 同源去重后的最终保留清单；随筛选重跑变化，当前 292 =
-    alpha360 72 + alpha_library 137（a101 / alpha158 / gtja191）+ jq110 31 + tdxgs 21
-    + factor_research 31（自经典快照直接拷贝，口径一致））
+来源（``--source``，默认 ``auto``）：
+- ``auto``（默认）：**自动扫描 ``6_ml_datasets/`` 下的全部因子数据集**（alpha_library 429、
+  alpha360 360、l1_factors 110、l2_factors 211、jq110 109、tdxgs 88、features_daily 47 等，
+  合计约 1300 个因子）——只读取你已算好的因子数据，不重算因子本身；
+- ``l1l2``：仅 L1+L2 两个数据集（约 321 个）；
+- ``kept``：多库联合筛选的最终保留清单（``screening/factor_selection.json`` 的 kept）。
+
+跳过规则：``alpha_library_labels``（标签非因子）、``l1_l2_factors``（L1∪L2 冗余并集）；
+跨数据集重名列按优先级（l1 → l2 → 各因子库 → features_daily）保留首次出现。
 
 产物（<quantdb>/factor_research_private/）:
     factors.json          目录（code/display_name/来源库/方向/IC 指标）
@@ -20,8 +25,10 @@
   （越大越好，供榜单/回测展示），原始值原样保留在 raw 列。
 
 用法（仓库根）:
-    python3 backend/scripts/build_factor_panel_private.py               # 全量 2020-01 至今
-    python3 backend/scripts/build_factor_panel_private.py --smoke 200   # 冒烟（200 只）
+    python3 backend/scripts/build_factor_panel_private.py                   # 自动扫描 6_ml_datasets 全量
+    python3 backend/scripts/build_factor_panel_private.py --source l1l2     # 仅 L1+L2
+    python3 backend/scripts/build_factor_panel_private.py --source kept     # 筛选保留清单
+    python3 backend/scripts/build_factor_panel_private.py --smoke 200       # 冒烟（200 只）
     FACTOR_RESEARCH_OUT=<dir> 可改输出目录（冒烟隔离）
 """
 
@@ -50,13 +57,43 @@ from backend.shared.quantdb_paths import resolve_quantdb_dir  # noqa: E402
 LOOKBACK_START = "2018-06-01"
 DEFAULT_START = "2020-01-01"
 PANEL_K = 150
-LIB_SOURCES = ("alpha_library", "alpha360", "jq110", "tdxgs")
+# 来源库（auto = 扫描 6_ml_datasets；l1l2 = L1/L2 因子数据；kept = 多库筛选保留清单）
+L1L2_SOURCES = ("l1_factors", "l2_factors")
+KEPT_LIB_SOURCES = ("alpha_library", "alpha360", "jq110", "tdxgs")
+# auto 模式的优先序（重名列先到先得）；未列出的目录按字母序追加
+AUTO_PRIORITY = (
+    "l1_factors",
+    "l2_factors",
+    "alpha_library",
+    "alpha360",
+    "jq110",
+    "tdxgs",
+    "features_daily",
+)
+# auto 模式跳过的目录：标签集（非因子）与 L1∪L2 冗余并集
+AUTO_SKIP = {"alpha_library_labels", "l1_l2_factors"}
 LIB_LABELS = {
+    "l1_factors": "L1 因子",
+    "l2_factors": "L2 因子",
     "alpha_library": "Alpha 因子库",
     "alpha360": "Alpha360 量价",
     "jq110": "聚宽 JQ110",
     "tdxgs": "通达信指标",
+    "features_daily": "每日特征（技术+估值）",
     "factor_research": "经典因子（demo 复刻）",
+}
+# 非因子列（标识与行情行情列不入库；date 为分区日期的冗余列）
+DROP_COLS = {
+    "symbol",
+    "time",
+    "dt",
+    "date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "amount",
 }
 
 
@@ -72,7 +109,7 @@ def _out_dir() -> Path:
 
 
 def _load_kept() -> tuple[dict[str, list[dict]], list[dict]]:
-    """筛选保留清单 → (外部库分组, factor_research 组)。"""
+    """五库联合筛选保留清单 → (外部库分组, factor_research 组)。"""
     p = (
         resolve_quantdb_dir()
         / "factor_research"
@@ -87,11 +124,75 @@ def _load_kept() -> tuple[dict[str, list[dict]], list[dict]]:
     for k in sel.get("kept", []):
         if not k.get("name"):
             continue
-        if k["library"] in LIB_SOURCES:
+        if k["library"] in KEPT_LIB_SOURCES:
             external.setdefault(k["library"], []).append(k)
         elif k["library"] == "factor_research":
             fr_kept.append(k)
     return external, fr_kept
+
+
+def _load_l1l2(qroot: Path) -> tuple[dict[str, list[dict]], list[dict]]:
+    """本地 L1/L2 因子数据的因子列清单 → (L1/L2 分组, 空)。"""
+    external: dict[str, list[dict]] = {}
+    for ds in L1L2_SOURCES:
+        root = qroot / "6_ml_datasets" / ds
+        parts = sorted(root.glob("dt=*/data.parquet"))
+        if not parts:
+            raise FileNotFoundError(
+                f"{ds} 数据集缺失（先运行特征管线生成 {ds}）: {root}"
+            )
+        names = _numeric_names(parts[-1])
+        external[ds] = [{"name": c, "display_name": c} for c in names]
+    return external, []
+
+
+def _load_auto(qroot: Path) -> tuple[dict[str, list[dict]], list[dict]]:
+    """自动扫描 6_ml_datasets：全部含分区的因子数据集（按优先序去重）。"""
+    root = qroot / "6_ml_datasets"
+    if not root.exists():
+        raise FileNotFoundError(f"6_ml_datasets 目录缺失: {root}")
+    found = set()
+    for d_ in root.iterdir():
+        if not d_.is_dir() or d_.name in AUTO_SKIP or d_.name.startswith("."):
+            continue
+        parts = sorted(d_.glob("dt=*/data.parquet"))
+        if parts:
+            found.add(d_.name)
+    order = [x for x in AUTO_PRIORITY if x in found] + sorted(
+        found - set(AUTO_PRIORITY)
+    )
+    external: dict[str, list[dict]] = {}
+    seen: set[str] = set()
+    for ds in order:
+        parts = sorted((root / ds).glob("dt=*/data.parquet"))
+        names = [c for c in _numeric_names(parts[-1]) if c not in seen]
+        if len(names) < 5:  # 非因子目录（记录/元数据）跳过
+            continue
+        seen.update(names)
+        external[ds] = [{"name": c, "display_name": c} for c in names]
+    return external, []
+
+
+def _load_sources(source: str, qroot: Path) -> tuple[dict[str, list[dict]], list[dict]]:
+    if source == "kept":
+        return _load_kept()
+    if source == "l1l2":
+        return _load_l1l2(qroot)
+    return _load_auto(qroot)
+
+
+def _numeric_names(path: Path) -> list[str]:
+    """分区内的数值型因子列（排除标识/行情列与字符串列）。"""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    out = []
+    for field in pq.ParquetFile(path).schema_arrow:
+        if field.name in DROP_COLS:
+            continue
+        if pa.types.is_integer(field.type) or pa.types.is_floating(field.type):
+            out.append(field.name)
+    return out
 
 
 def _day_matrix(f: Path, names: list[str], symbols: pd.Index) -> np.ndarray:
@@ -114,13 +215,21 @@ def _score_row_block(v: np.ndarray) -> np.ndarray:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", type=int, default=0, help="冒烟：只取前 N 只股票")
+    ap.add_argument(
+        "--source",
+        choices=["auto", "l1l2", "kept"],
+        default="auto",
+        help="因子来源：auto=自动扫描 6_ml_datasets（默认）；l1l2=仅 L1+L2；kept=筛选保留清单",
+    )
     args = ap.parse_args()
     t0 = time.time()
     out = _out_dir()
     qroot = resolve_quantdb_dir()
-    external, fr_kept = _load_kept()
-    n_ext = sum(len(v) for v in external.values())
-    print(f"[1/6] 保留清单：外部库 {n_ext} + factor_research {len(fr_kept)}")
+    external, fr_kept = _load_sources(args.source, qroot)
+    src_desc = " + ".join(
+        f"{LIB_LABELS.get(k, k)} {len(v)}" for k, v in external.items()
+    )
+    print(f"[1/6] 来源({args.source})：{src_desc} + factor_research {len(fr_kept)}")
 
     daily = frdata.load_daily_panel(LOOKBACK_START, "20991231")
     instr = frdata.load_instrument()
@@ -170,7 +279,11 @@ def main() -> int:
     panel_rows: list[pd.DataFrame] = []
     meta_entries: list[dict] = []
 
-    for lib in LIB_SOURCES:
+    if args.source == "kept":
+        lib_order = KEPT_LIB_SOURCES
+    else:
+        lib_order = tuple(external.keys())  # 按 _load_* 构建顺序（auto/l1l2）
+    for lib in lib_order:
         ks = external.get(lib, [])
         if not ks:
             continue
@@ -270,6 +383,11 @@ def main() -> int:
             k = org_map[name]
             icm = float(np.nanmean(ic_o[fi]))
             ics = float(np.nanstd(ic_o[fi]))
+            sel_note = (
+                f"筛选收录：RankIC {k.get('ic_mean')} · ICIR {k.get('icir')}。"
+                if k.get("ic_mean") is not None
+                else ""
+            )
             meta_entries.append(
                 {
                     "code": name,
@@ -280,7 +398,7 @@ def main() -> int:
                     "direction": int(sign[fi]),
                     "description": (
                         f"来源：{LIB_LABELS[lib]} / {sub_map[name]}；方向按全样本 IC 自动统一（越大越好）。"
-                        f"筛选收录：RankIC {k.get('ic_mean')} · ICIR {k.get('icir')}。"
+                        + sel_note
                     ),
                     "formula": "",
                     "wind_source": f"QuantDB 6_ml_datasets/{lib}",
@@ -404,6 +522,7 @@ def main() -> int:
             l2s.append(e["l2"])
     meta = {
         "dataset": "factor_research_private",
+        "source": args.source,
         "built_at": pd.Timestamp.now().isoformat(timespec="seconds"),
         "window": [str(dates[0].date()), str(dates[-1].date())],
         "n_dates": len(dates),

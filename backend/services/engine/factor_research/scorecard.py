@@ -47,7 +47,11 @@ CAP_LABELS = ["<50亿", "50-100亿", "100-300亿", "300-1000亿", "1000-3000亿"
 
 
 class Panel:
-    """月末名次面板矩阵。f/s/r/sym 形状 (F, M, K)，K 固定补齐（缺位 NaN）。"""
+    """月末名次面板矩阵。fwd/score/raw 形状 (F, M, K)，K 固定补齐（缺位 NaN）。
+
+    symbol 以整型编码存储（-1=空位）——1300+ 因子 × 1600 万行时字符串数组会吃 1GB+。
+    取用时经 ``sym_at()/sym_codes()`` 映射回代码。
+    """
 
     def __init__(self, df: pd.DataFrame) -> None:
         tds = pd.to_datetime(df["trade_date"]).to_numpy()  # datetime64[ns]
@@ -60,20 +64,32 @@ class Panel:
         self.fwd = np.full((f, m, k), np.nan, dtype=np.float32)
         self.score = np.full((f, m, k), np.nan, dtype=np.float32)
         self.raw = np.full((f, m, k), np.nan, dtype=np.float32)
-        self.sym = np.full((f, m, k), "", dtype=object)
+        self._sym_codes = np.full((f, m, k), -1, dtype=np.int32)
         fi = df["factor_code"].astype(str).map(ci).to_numpy(dtype=int)
         mi = np.array([di[int(x)] for x in tds], dtype=int)
         rk = df["rank"].to_numpy(dtype=int) - 1
         self.fwd[fi, mi, rk] = df["fwd_ret"].to_numpy(dtype=np.float32)
         self.score[fi, mi, rk] = df["score"].to_numpy(dtype=np.float32)
         self.raw[fi, mi, rk] = df["raw"].to_numpy(dtype=np.float32)
-        self.sym[fi, mi, rk] = df["symbol"].astype(str).to_numpy()
+        cats = df["symbol"].astype(str).astype("category").cat
+        self.symbols = [str(c) for c in cats.categories]
+        self._sym_codes[fi, mi, rk] = cats.codes.to_numpy(dtype=np.int32)
         self.codes = codes
         self.dates = dates
         self.ci = ci
 
     def index(self, code: str) -> int:
         return self.ci[code]
+
+    def sym_codes(self, fi: int, mi: int) -> np.ndarray:
+        """第 (因子, 月) 的符号编码（-1=无效位）。"""
+        return self._sym_codes[fi, mi]
+
+    def sym_at(self, fi: int, mi: int, n: int | None = None) -> list[str]:
+        """第 (因子, 月) 的前 n 名股票代码（跳过空位）。"""
+        codes = self._sym_codes[fi, mi, :n]
+        syms = self.symbols
+        return [syms[c] for c in codes if c >= 0]
 
 
 def month_mask(dates: np.ndarray, start: str | None, end: str | None) -> np.ndarray:
@@ -108,7 +124,7 @@ def topn_runs(
     for a, b in zip(idx[:-1], idx[1:], strict=False):
         fwd = panel.fwd[fi, a, :n]
         r = float(np.nanmean(fwd)) if np.isfinite(fwd).any() else np.nan
-        cur = set(panel.sym[fi, a, :n].tolist())
+        cur = set(panel.sym_at(fi, a, n))
         to = _turnover(prev, cur, n)
         cost = to * COST_RATE
         rets.append(r - cost if pd.notna(r) else np.nan)
@@ -122,6 +138,18 @@ def nav_from_rets(rets: np.ndarray) -> np.ndarray:
     """净值序列（首点 1.0，之后逐月复利）。"""
     nav = np.cumprod(1 + np.nan_to_num(rets, nan=0.0))
     return np.concatenate([[1.0], nav])
+
+
+MIN_MONTHS = 6  # 回测最少月数：不足则不给年化/夏普等（避免 2 个月年化出假数）
+
+
+def gate_kpi(kpi: dict, min_months: int = MIN_MONTHS) -> dict:
+    """样本不足（n_months < min_months）时清空年化/夏普/回撤/胜率/Calmar。"""
+    out = dict(kpi)
+    if int(out.get("n_months") or 0) < min_months:
+        for k in ("annual_return", "sharpe", "max_drawdown", "win_rate", "calmar"):
+            out[k] = None
+    return out
 
 
 def kpi_of(rets: np.ndarray, nav: np.ndarray) -> dict:

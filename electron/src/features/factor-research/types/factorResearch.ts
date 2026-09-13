@@ -82,6 +82,10 @@ export interface LeaderboardRow extends FactorKpi {
   top_industries?: Array<{ name: string; count: number }> | null;
   env_tag: string;
   time_tag: string;
+  /** 回测月数不足 6（年化等已置空，排在榜尾） */
+  insufficient?: boolean;
+  /** 疑似未来函数（|IC|>0.3 / |ICIR|>5，超真实因子上限；排在正常因子之后） */
+  suspicious?: boolean;
 }
 
 export interface LeaderboardResponse {

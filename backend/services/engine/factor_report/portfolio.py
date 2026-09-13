@@ -47,6 +47,10 @@ def _series_stats(dataset: str, round_trip_cost: float, holding_days: int) -> di
     if ls_col in names:
         cols.append(ls_col)
     df = pq.read_table(path, columns=cols).to_pandas()
+    # 防御：分位列可能混入 ±inf（早年近零/负价的 forward return），统一打回 NaN 再聚合
+    for c in ("turnover", "coverage", ls_col):
+        if c in df.columns:
+            df[c] = df[c].where(np.isfinite(df[c]))
     d = df["turnover"].fillna(0.0).clip(0.0, 1.0)
     # 持有 holding_days 的成员变动比例 ≈ 1−(1−日换手)^N；成本按 N 日摊到日均
     turn_n = (1.0 - (1.0 - d) ** holding_days).clip(0.0, 1.0)

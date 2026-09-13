@@ -173,6 +173,9 @@ def compute_one_date(args: tuple) -> dict | None:
                 ssum = np.bincount(idx, weights=yv, minlength=N_QUANTILES)
                 with np.errstate(invalid="ignore"):
                     q_ret[:, j] = np.where(cnt > 0, ssum / np.maximum(cnt, 1), np.nan)
+        # 非有限值一律归 NaN：早年 daily_forward 有近零/负价，forward return 会算出 ±inf，
+        # 混进分位数后 mean 变 NaN（实测 a158_KMID 的 q1）——脏数据不能流进报告与选因子
+        q_ret = np.where(np.isfinite(q_ret), q_ret, np.nan)
         q_by_h[h] = q_ret
         qcnt_by_h[h] = np.isfinite(q_ret).sum(axis=0)
 
@@ -191,7 +194,7 @@ def compute_one_date(args: tuple) -> dict | None:
                 with np.errstate(invalid="ignore"):
                     cov_h = np.nanmean((Ry - mu) * (ry - mu_y)[:, None], axis=0)
                     ic = np.where(sd > 0, cov_h / (sd * sd_y), np.nan)
-        ic_by_h[h] = ic
+        ic_by_h[h] = np.where(np.isfinite(ic), ic, np.nan)
 
     # ── 十分位成员（用于换手）：返回当日每列的分位编号（-1 表示无效）
     if n_valid_col.max(initial=0) > 0:

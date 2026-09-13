@@ -268,6 +268,11 @@ def net_of_cost(dataset: str, round_trip_cost: float = DEFAULT_ROUND_TRIP_COST, 
     if "ls_20" in avail:
         cols.append("ls_20")
     df = pq.read_table(path, columns=cols).to_pandas()
+    # 防御：早年 daily_forward 近零/负价会让 forward return 出现 ±inf，
+    # 分位列里一旦混入 inf，mean() 直接变 NaN（实测 a158_KMID 的 q1）——统一打回 NaN
+    for c in ("q1", "q10", "ls_20", "turnover"):
+        if c in df.columns:
+            df[c] = df[c].where(np.isfinite(df[c]))
 
     d = df["turnover"].fillna(0.0).clip(0.0, 1.0)
     # ① T+5 日频口径

@@ -448,6 +448,15 @@ try:
 except ImportError as e:
     logger.error(f"❌ Failed to load Strategy Lab router: {e}")
 
+try:
+    # 因子报告（Alphalens 式）：技能中心「因子报告」页数据源
+    from backend.services.engine.factor_report import router as factor_report_router
+
+    app.include_router(factor_report_router)
+    logger.info("✅ Factor Report router loaded")
+except ImportError as e:
+    logger.error(f"❌ Failed to load Factor Report router: {e}")
+
 
 @app.get("/health")
 async def health_check():

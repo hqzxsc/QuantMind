@@ -146,5 +146,11 @@ async def _proxy(request: Request, user: dict | None = None) -> Response:
 @router.api_route(
     "/api/v1/strategy-lab", methods=["GET", "POST", "OPTIONS"], include_in_schema=False
 )
+@router.api_route(
+    "/api/v1/factor-report/{p:path}", methods=["GET", "POST", "OPTIONS"], include_in_schema=False
+)
+@router.api_route(
+    "/api/v1/factor-report", methods=["GET", "POST", "OPTIONS"], include_in_schema=False
+)
 async def engine_catch_all(request: Request, user: dict | None = Depends(get_optional_user)):
     return await _proxy(request, user)

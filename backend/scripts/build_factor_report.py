@@ -97,42 +97,50 @@ def compute_one_date(args: tuple) -> dict | None:
       "close_fwd"    —— label_ref 为**未来第 k 个交易日**的分区日期，
                         用本表 close 算 close_{T+k}/close_T - 1（与训练侧 return_Nd 同口径）
     """
-    dt, horizon, factor_dir, factor_cols, meta_ignore, label_mode, label_ref = args
+    dt, horizons, factor_dir, factor_cols, meta_ignore, label_mode, label_ref = args
     try:
         fac = pq.read_table(f"{factor_dir}/dt={dt}/data.parquet").to_pandas()
     except FileNotFoundError:
         return None
 
+    # 各前瞻期的收益 y：labels_table 一次读全；close_fwd 逐 k 读 T+k 分区收盘价
+    ys: dict[str, np.ndarray] = {}
     if label_mode == "labels_table":
         try:
-            lab = pq.read_table(f"{label_ref}/dt={dt}/data.parquet", columns=["symbol", horizon]).to_pandas()
+            lab = pq.read_table(f"{label_ref}/dt={dt}/data.parquet", columns=["symbol", *horizons]).to_pandas()
         except FileNotFoundError:
             return None
-        if horizon not in lab.columns or lab[horizon].notna().sum() == 0:
-            return None  # 尾部标签未落地
         merged = fac.merge(lab, on="symbol", how="inner")
-        y = merged[horizon].to_numpy(dtype=np.float64)
-    else:  # close_fwd
-        if not label_ref:
-            return None
-        try:
-            fut = pq.read_table(f"{factor_dir}/dt={label_ref}/data.parquet", columns=["symbol", "close"]).to_pandas()
-        except FileNotFoundError:
-            return None
+        for h in horizons:
+            if h in merged.columns and merged[h].notna().sum() > 0:
+                ys[h] = merged[h].to_numpy(dtype=np.float64)
+    else:  # close_fwd：label_ref = {k: T+k 分区日期}
         base = fac[["symbol", "close"]].rename(columns={"close": "close_t"})
-        merged = base.merge(fut.rename(columns={"close": "close_tk"}), on="symbol", how="inner")
-        c0 = merged["close_t"].to_numpy(dtype=np.float64)
-        c1 = merged["close_tk"].to_numpy(dtype=np.float64)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            merged[horizon] = np.where((c0 > 0) & np.isfinite(c0) & np.isfinite(c1), c1 / c0 - 1.0, np.nan)
-        merged = merged.merge(fac.drop(columns=["close"], errors="ignore"), on="symbol", how="inner")
+        c0 = base["close_t"].to_numpy(dtype=np.float64)
+        # 先与因子表对齐成最终行集，再逐期 **left join** 取 T+k 收盘价 ——
+        # 必须用 left join：各期交集大小不同（有的股票 T+k 当天停牌缺行），
+        # 用 inner join + 截断会静默错位（实测形状 5195 vs 5193 直接抛错，还好没静默）。
+        merged = base.merge(fac.drop(columns=["close"], errors="ignore"), on="symbol", how="inner")
+        for h, target_dt in (label_ref or {}).items():
+            if not target_dt:
+                continue
+            try:
+                fut = pq.read_table(f"{factor_dir}/dt={target_dt}/data.parquet", columns=["symbol", "close"]).to_pandas()
+            except FileNotFoundError:
+                continue
+            tmp = base.merge(fut.rename(columns={"close": "close_tk"}), on="symbol", how="left")
+            c1 = tmp["close_tk"].to_numpy(dtype=np.float64)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                ys[h] = np.where((c0 > 0) & np.isfinite(c0) & np.isfinite(c1), c1 / c0 - 1.0, np.nan)
 
-    if len(merged) < 50:
+    if len(merged) < 50 or not ys:
         return None
+    y_by_h = ys   # 两种模式都已与 merged 逐行对齐（labels_table 来自 merged 列，close_fwd 用 left join）
 
     cols = [c for c in factor_cols if c not in meta_ignore]
     X = merged[cols].to_numpy(dtype=np.float32)
-    y = merged[horizon].to_numpy(dtype=np.float64)
+    horizon = horizons[0]                     # 主前瞻期：分位/换手/序列以它为准
+    y = y_by_h.get(horizon, np.full(len(merged), np.nan))
     ok_y = ~np.isnan(y)
 
     R = _rank_axis0(X)
@@ -145,39 +153,45 @@ def compute_one_date(args: tuple) -> dict | None:
     col_sum = Rf.sum(axis=0, dtype=np.float64)
     n_rows = Rf.shape[0]
 
-    # ── 分位组合：按秩等分成 N_QUANTILES 组，组内 y 均值
-    q_ret = np.full((N_QUANTILES, len(cols)), np.nan)
-    if ok_y.sum() >= 50:
-        nq = np.ceil(n_valid_col / N_QUANTILES)  # 每组目标样本数
-        for j in range(len(cols)):
-            rj = R[:, j]
-            valid = np.isfinite(rj) & ok_y
-            if valid.sum() < 50:
-                continue
-            idx = np.minimum(((rj[valid] - 1) // np.maximum(nq[j], 1)).astype(int), N_QUANTILES - 1)
-            yv = y[valid]
-            cnt = np.bincount(idx, minlength=N_QUANTILES)
-            ssum = np.bincount(idx, weights=yv, minlength=N_QUANTILES)
-            with np.errstate(invalid="ignore"):
-                q_ret[:, j] = np.where(cnt > 0, ssum / np.maximum(cnt, 1), np.nan)
+    # ── 分位组合 + 秩 IC：逐前瞻期循环（秩 R 与 horizon 无关，只算一次；各期只换 y）
+    q_by_h: dict[str, np.ndarray] = {}
+    qcnt_by_h: dict[str, np.ndarray] = {}
+    ic_by_h: dict[str, np.ndarray] = {}
+    nq = np.ceil(n_valid_col / N_QUANTILES)  # 每组目标样本数（与 horizon 无关）
+    for h, yh in y_by_h.items():
+        okh = ~np.isnan(yh)
+        q_ret = np.full((N_QUANTILES, len(cols)), np.nan)
+        if okh.sum() >= 50:
+            for j in range(len(cols)):
+                rj = R[:, j]
+                valid = np.isfinite(rj) & okh
+                if valid.sum() < 50:
+                    continue
+                idx = np.minimum(((rj[valid] - 1) // np.maximum(nq[j], 1)).astype(int), N_QUANTILES - 1)
+                yv = yh[valid]
+                cnt = np.bincount(idx, minlength=N_QUANTILES)
+                ssum = np.bincount(idx, weights=yv, minlength=N_QUANTILES)
+                with np.errstate(invalid="ignore"):
+                    q_ret[:, j] = np.where(cnt > 0, ssum / np.maximum(cnt, 1), np.nan)
+        q_by_h[h] = q_ret
+        qcnt_by_h[h] = np.isfinite(q_ret).sum(axis=0)
 
-    # ── 秩 IC（Spearman）：rank(y) 与各因子秩的相关
-    ic = np.full(len(cols), np.nan)
-    if ok_y.sum() >= 30:
-        yr = np.full(len(y), np.nan)
-        yr[ok_y] = _rank_axis0(y.reshape(-1, 1)[:, :]).ravel()[ok_y]
-        ry = yr[ok_y]
-        # 用秩秩相关（Pearson on ranks）
-        Ry = R[ok_y, :]
-        mu_y = ry.mean()
-        sd_y = ry.std()
-        # 整日因子全 NaN（早期预热日）时直接留 NaN，避免对空切片做 nanmean 刷警告
-        if sd_y > 0 and np.isfinite(Ry).any():
-            mu = np.nanmean(Ry, axis=0)
-            sd = np.nanstd(Ry, axis=0)
-            with np.errstate(invalid="ignore"):
-                cov = np.nanmean((Ry - mu) * (ry - mu_y)[:, None], axis=0)
-                ic = np.where(sd > 0, cov / (sd * sd_y), np.nan)
+        ic = np.full(len(cols), np.nan)
+        if okh.sum() >= 30:
+            yr = np.full(len(yh), np.nan)
+            yr[okh] = _rank_axis0(yh.reshape(-1, 1)[:, :]).ravel()[okh]
+            ry = yr[okh]
+            Ry = R[okh, :]
+            mu_y = ry.mean()
+            sd_y = ry.std()
+            # 整日因子全 NaN（早期预热日）时直接留 NaN，避免对空切片做 nanmean 刷警告
+            if sd_y > 0 and np.isfinite(Ry).any():
+                mu = np.nanmean(Ry, axis=0)
+                sd = np.nanstd(Ry, axis=0)
+                with np.errstate(invalid="ignore"):
+                    cov_h = np.nanmean((Ry - mu) * (ry - mu_y)[:, None], axis=0)
+                    ic = np.where(sd > 0, cov_h / (sd * sd_y), np.nan)
+        ic_by_h[h] = ic
 
     # ── 十分位成员（用于换手）：返回当日每列的分位编号（-1 表示无效）
     if n_valid_col.max(initial=0) > 0:
@@ -199,9 +213,12 @@ def compute_one_date(args: tuple) -> dict | None:
         "gram": gram,
         "col_sum": col_sum,
         "n_rows": n_rows,
-        "q_ret": q_ret,
-        "q_cnt": np.isfinite(q_ret).sum(axis=0),
-        "ic": ic,
+        "q_ret": q_by_h.get(horizon, np.full((N_QUANTILES, len(cols)), np.nan)),
+        "q_cnt": qcnt_by_h.get(horizon, np.zeros(len(cols), dtype=int)),
+        "ic": ic_by_h.get(horizon, np.full(len(cols), np.nan)),
+        "ic_by_h": ic_by_h,
+        "q_by_h": q_by_h,
+        "qcnt_by_h": qcnt_by_h,
         "group": group,
         "coverage": cov,
     }
@@ -209,7 +226,7 @@ def compute_one_date(args: tuple) -> dict | None:
 
 # ─────────────────────────── 主流程 ───────────────────────────
 
-def merge_partials(partials: list[dict], n_factors: int) -> dict:
+def merge_partials(partials: list[dict], n_factors: int, horizons: list[str] | None = None) -> dict:
     """合并各日中间量 → 全局指标 + 单因子明细序列。
 
     明细序列（IC/十分位收益/换手/覆盖率，逐日 × 逐因子）同时在这里落成数组，
@@ -221,6 +238,12 @@ def merge_partials(partials: list[dict], n_factors: int) -> dict:
     q_sum = np.zeros((N_QUANTILES, n_factors), dtype=np.float64)
     q_cnt = np.zeros(n_factors, dtype=np.int64)
     ic_list: list[np.ndarray] = []
+    # 多前瞻期累加器（键 = horizon）
+    h_keys: list[str] = []
+    ic_lists: dict[str, list[np.ndarray]] = {}
+    q_sums: dict[str, np.ndarray] = {}
+    q_cnts: dict[str, np.ndarray] = {}
+    ls_rows: dict[str, list[np.ndarray]] = {}
     turnover_changed = np.zeros(n_factors, dtype=np.float64)
     turnover_valid = np.zeros(n_factors, dtype=np.float64)
     # 明细序列容器
@@ -240,6 +263,25 @@ def merge_partials(partials: list[dict], n_factors: int) -> dict:
         q_sum += qs
         q_cnt += p["q_cnt"]
         ic_list.append(p["ic"])
+        # 逐日按 horizons 全列表补齐：个别日期可能缺某期（T+k 目标分区不存在，如尾部），
+        # 缺就补 NaN 行 —— 否则各期序列长度不一，写 parquet 时列长对不上直接报错
+        for h in (horizons or sorted((p.get("ic_by_h") or {}).keys())):
+            if h not in ic_lists:
+                h_keys.append(h)
+                ic_lists[h] = []
+                q_sums[h] = np.zeros((N_QUANTILES, n_factors), dtype=np.float64)
+                q_cnts[h] = np.zeros(n_factors, dtype=np.int64)
+                ls_rows[h] = []
+            v = (p.get("ic_by_h") or {}).get(h)
+            ic_lists[h].append(v if v is not None else np.full(n_factors, np.nan, dtype=np.float32))
+            qh = (p.get("q_by_h") or {}).get(h)
+            if qh is not None:
+                q_sums[h] += np.where(np.isfinite(qh), qh, 0.0)
+                q_cnts[h] += p["qcnt_by_h"].get(h, np.zeros(n_factors, dtype=np.int64))
+                with np.errstate(invalid="ignore"):
+                    ls_rows[h].append((qh[-1] - qh[0]).astype(np.float32))
+            else:
+                ls_rows[h].append(np.full(n_factors, np.nan, dtype=np.float32))
         # 换手：与前一有交易日比较十分位成员变化，按当日有效样本归一（单边换手率）。
         # ⚠️ 必须按 **symbol 对齐**再比：各数据集的行序不保证逐日稳定
         # （实测 l1_l2_factors 相邻两日同位置符号一致率低至 0.2%），
@@ -300,6 +342,14 @@ def merge_partials(partials: list[dict], n_factors: int) -> dict:
         "t_value": t_value,
         "turnover": turnover,
         "n_dates": len(dates_out),
+        # 多前瞻期汇总：IC 均值与多空价差
+        "by_horizon": {
+            h: {
+                "ic_mean": np.nanmean(np.vstack(ic_lists[h]), axis=0),
+                "ls_mean": np.nanmean(np.vstack(ls_rows[h]), axis=0) if ls_rows[h] else np.zeros(n_factors),
+            }
+            for h in h_keys
+        },
         # 明细序列（写 parquet 用）
         "series": {
             "dates": dates_out,
@@ -307,6 +357,9 @@ def merge_partials(partials: list[dict], n_factors: int) -> dict:
             "ic": np.stack(ic_mat) if ic_mat else np.zeros((0, n_factors), dtype=np.float32),
             "turnover": np.stack(turnover_mat) if turnover_mat else np.zeros((0, n_factors), dtype=np.float32),
             "coverage": np.stack(coverage_mat) if coverage_mat else np.zeros((0, n_factors), dtype=np.float32),
+            "ic_by_h": {h: np.stack(ic_lists[h]).astype(np.float32) for h in h_keys},
+            "ls_by_h": {h: (np.stack(ls_rows[h]).astype(np.float32) if ls_rows[h]
+                            else np.zeros((len(dates_out), n_factors), dtype=np.float32)) for h in h_keys},
         },
     }
 
@@ -330,14 +383,22 @@ def write_series_parquet(path: Path, factors: list[str], series: dict) -> int:
     t_len, k_len = q.shape[0], q.shape[2]
     q_tk = np.transpose(q, (0, 2, 1)).reshape(t_len * k_len, N_QUANTILES)  # (T*K, 10)
 
-    table = pa.table({
+    cols_out = {
         "factor": pa.array(np.tile(np.array(factors, dtype=object), t_len), type=pa.dictionary(pa.int16(), pa.string())),
         "date": pa.array(np.repeat(np.array(dates, dtype="int32"), k_len)),
         "ic": pa.array(ic.reshape(-1)),
         "turnover": pa.array(turn.reshape(-1)),
         "coverage": pa.array(cov.reshape(-1)),
         **{f"q{i + 1}": pa.array(q_tk[:, i]) for i in range(N_QUANTILES)},
-    })
+    }
+    # 各前瞻期的 IC 与多空价差（IC 衰减曲线 / 扣费净收益的数据基础）
+    for h, arr in (series.get("ic_by_h") or {}).items():
+        suffix = h.replace("fwd_ret_", "")
+        cols_out[f"ic_{suffix}"] = pa.array(arr.reshape(-1))
+    for h, arr in (series.get("ls_by_h") or {}).items():
+        suffix = h.replace("fwd_ret_", "")
+        cols_out[f"ls_{suffix}"] = pa.array(arr.reshape(-1))
+    table = pa.table(cols_out)
     path.parent.mkdir(parents=True, exist_ok=True)
     pq_mod.write_table(table, str(path), compression="zstd")
     return table.num_rows
@@ -348,7 +409,10 @@ def main() -> int:
     ap.add_argument("--dataset", default="alpha_library", choices=sorted(DATASETS),
                     help="因子源：alpha_library / l1_factors / l2_factors / l1_l2_factors")
     ap.add_argument("--horizon", default="fwd_ret_5",
-                    choices=["fwd_ret_1", "fwd_ret_2", "fwd_ret_3", "fwd_ret_5", "fwd_ret_10", "fwd_ret_20"])
+                    choices=["fwd_ret_1", "fwd_ret_2", "fwd_ret_3", "fwd_ret_5", "fwd_ret_10", "fwd_ret_20"],
+                    help="主前瞻期（分位/换手/明细序列以它为准）")
+    ap.add_argument("--horizons", default="fwd_ret_1,fwd_ret_2,fwd_ret_5,fwd_ret_10,fwd_ret_20",
+                    help="一趟同时计算的多个前瞻期（逗号分隔）；主前瞻期必须在其中")
     ap.add_argument("--years", type=int, default=5, help="回看年数（默认近 5 年；0 = 全历史）")
     ap.add_argument("--start", default=None, help="起始日期 YYYYMMDD（优先于 --years）")
     ap.add_argument("--end", default=None, help="结束日期 YYYYMMDD")
@@ -410,17 +474,24 @@ def main() -> int:
     )
 
     t0 = time.time()
-    k = int(args.horizon.split("_")[-1])
+    horizons = [h.strip() for h in str(args.horizons).split(",") if h.strip()]
+    if args.horizon not in horizons:
+        horizons.insert(0, args.horizon)      # 主前瞻期必须在列表里（序列/分位以它为准）
+    log.info(f"前瞻期：主 {args.horizon}，同趟计算 {horizons}")
     if cfg["label_mode"] == "labels_table":
         label_dir = str(dataset_label_dir(args.dataset))
-        tasks = [(dt, args.horizon, str(factor_dir), factor_cols, meta_cols, "labels_table", label_dir) for dt in dts]
+        tasks = [(dt, horizons, str(factor_dir), factor_cols, meta_cols, "labels_table", label_dir) for dt in dts]
     else:
         idx = {d: i for i, d in enumerate(all_dts)}
         tasks = []
         for dt in dts:
-            j = idx[dt] + k
-            tasks.append((dt, args.horizon, str(factor_dir), factor_cols, meta_cols, "close_fwd",
-                          all_dts[j] if j < len(all_dts) else None))
+            j0 = idx[dt]
+            ref = {}
+            for h in horizons:
+                kk = int(h.split("_")[-1])
+                jj = j0 + kk
+                ref[h] = all_dts[jj] if jj < len(all_dts) else None
+            tasks.append((dt, horizons, str(factor_dir), factor_cols, meta_cols, "close_fwd", ref))
     partials: list[dict] = []
     if args.workers <= 1:
         for i, task in enumerate(tasks, 1):
@@ -444,7 +515,7 @@ def main() -> int:
         log.error("没有任何有效日期（标签可能尚未落地）")
         return 1
 
-    merged = merge_partials(partials, n_factors)
+    merged = merge_partials(partials, n_factors, horizons=horizons)
     corr = merged["corr"]
     q_mean = merged["q_mean"]
     ls = q_mean[-1] - q_mean[0]
@@ -488,9 +559,14 @@ def main() -> int:
                 display_name, category_name = str(d["display_name"]), str(d["category_name"])
             except Exception:  # noqa: BLE001
                 pass
+        by_h = merged.get("by_horizon") or {}
         items.append({
             "name": name,
             "library": library_of(args.dataset, name, l2_cols),
+            "ic_by_horizon": {h: (None if not np.isfinite(v["ic_mean"][j]) else round(float(v["ic_mean"][j]), 5))
+                              for h, v in by_h.items()},
+            "ls_by_horizon": {h: (None if not np.isfinite(v["ls_mean"][j]) else round(float(v["ls_mean"][j]), 5))
+                              for h, v in by_h.items()},
             "display_name": display_name,
             "category_name": category_name,
             "ic_mean": round(float(merged["ic_mean"][j]), 5),
@@ -509,6 +585,7 @@ def main() -> int:
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "dataset": args.dataset,
             "horizon": args.horizon,
+            "horizons": horizons,
             "label_mode": cfg["label_mode"],
             "start": partials[0]["dt"],
             "end": partials[-1]["dt"],

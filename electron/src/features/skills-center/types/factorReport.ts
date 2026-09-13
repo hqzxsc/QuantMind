@@ -20,6 +20,10 @@ export interface FactorSummary {
   monotonicity: number | null;
   /** 单边换手率（0~1） */
   turnover: number;
+  /** 各前瞻期的 IC（T+1/2/5/10/20）→ IC 衰减曲线；旧快照可能没有 */
+  ic_by_horizon?: Record<string, number | null>;
+  /** 各前瞻期的多空价差 */
+  ls_by_horizon?: Record<string, number | null>;
 }
 
 /** 报告页可选的数据集及其快照状态 */

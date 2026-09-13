@@ -15,6 +15,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Layers, RefreshCw, Sparkles } from 'lucide-react';
 import { FactorRankList } from './FactorRankList';
 import { FactorClusterModal } from './FactorClusterModal';
+import { HorizonDecayChart } from './HorizonDecayChart';
 import { FactorDetailCharts } from './FactorDetailCharts';
 import { FactorCorrelationHeatmap } from './FactorCorrelationHeatmap';
 import {
@@ -256,6 +257,7 @@ export const FactorReportPanel: React.FC = () => {
               title="十分位组合每日成员变动比例，直接决定交易成本"
             />
             <MetricTile label="单调性" value={monotoneText} title="分位序号与分位收益的秩相关，±1 = 完美单调" />
+            <HorizonDecayChart icByHorizon={current?.ic_by_horizon} />
           </div>
         )}
 

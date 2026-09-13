@@ -65,8 +65,6 @@ export const MODEL_TYPE_OPTIONS: ModelTypeOption[] = [
 export interface TrainingTarget {
   mode: TargetMode;
   horizonDays: number;
-  /** 多周期训练：非空数组时一次产出多个周期模型（如 [1,3,5,10]），horizonDays 仅作主显示周期 */
-  horizonDaysList?: number[];
 }
 
 export type EnsembleMethod = 'none' | 'stacking';
@@ -280,17 +278,6 @@ export interface TrainingResult {
   };
   wfa?: WfaDiagnosticResult;
   drift?: PsiDriftResult;
-  multiHorizon?: {
-    horizons: string[];
-    child_run_ids: string[];
-    child_model_ids: string[];
-    fusion_model_id: string;
-    child_results?: Array<{
-      run_id: string;
-      target_horizon_days: number;
-      result: any;
-    }>;
-  };
   completedAt: string;
 }
 
@@ -838,9 +825,6 @@ export const parseTrainingConfig = (source: string): ImportedTrainingConfig => {
   const target: TrainingTarget = {
     mode: targetMode,
     horizonDays,
-    ...(Array.isArray(config.target.horizonDaysList)
-      ? { horizonDaysList: config.target.horizonDaysList.filter((item): item is number => Number.isInteger(item) && item >= 1) }
-      : {}),
   };
   const context = { ...DEFAULT_CONTEXT, ...config.context } as TrainingContext;
   const displayName = typeof config.displayName === 'string' ? config.displayName : '';
@@ -926,8 +910,7 @@ export const MODEL_SHORT_NAMES: Record<string, string> = {
 
 export const buildAutoDisplayName = (referenceDate: Dayjs, target: TrainingTarget, featureCount: number, version = DEFAULT_MODEL_VERSION, market?: string, modelType?: string) => {
   const dateToken = referenceDate.format('DD');
-  const horizons = target.horizonDaysList?.filter((h) => h >= 1) ?? [];
-  const returnToken = horizons.length >= 2 ? `T${horizons.join('_')}` : `T${target.horizonDays}`;
+  const returnToken = `T${target.horizonDays}`;
   const dimensionToken = `Alpha${Math.max(1, featureCount)}`;
   const marketSuffix = market ? `_${market.toUpperCase()}` : '';
   const modelPrefix = modelType ? `${MODEL_SHORT_NAMES[modelType] ?? modelType.toUpperCase()}_` : '';
@@ -1223,14 +1206,6 @@ export const buildBackendTrainingPayload = (
     payload.preprocessing = { enabled: true, winsor: true };
   }
 
-  // 多周期训练：一次产出 T+1/T+3/T+5/T+10 等周期的模型（编排器按周期展开为多个任务）
-  const horizons = request.target.horizonDaysList?.filter((h) => h >= 1) ?? [];
-  if (horizons.length >= 2) {
-    payload.horizons = horizons;
-    // 多周期下 WFA 成本 4×4=16 次训练，禁用避免超时
-    delete payload.wfa;
-  }
-
   // 训练节点（local=本机 Docker，autodl-xxx=AutoDL 远程 GPU）
   if (options?.nodeId) {
     payload.node_id = options.nodeId;
@@ -1379,7 +1354,6 @@ export const parseTrainingResult = (
     },
     wfa: (rawResult.wfa as WfaDiagnosticResult) || undefined,
     drift: (rawResult.drift as PsiDriftResult) || undefined,
-    multiHorizon: (rawResult.multi_horizon as TrainingResult['multiHorizon']) || undefined,
     completedAt: new Date().toISOString(),
   };
 };

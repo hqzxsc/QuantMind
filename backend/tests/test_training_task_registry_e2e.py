@@ -28,10 +28,6 @@ PATH_CODE_REFS = {
         ("backend/services/api/routers/admin/admin_training_utils.py", "REGISTRY.register", 1),
         ("backend/services/engine/training/local_docker_orchestrator.py", "containers.get", 1),
     ],
-    "(c) multi-horizon T+1/3/5": [
-        ("backend/services/api/routers/admin/admin_training_utils.py", "REGISTRY.register", 2),
-        ("backend/services/engine/training/local_docker_orchestrator.py", "containers.get", 1),
-    ],
     "(d) WFA standalone": [
         ("backend/services/api/routers/admin/admin_training_utils.py", "REGISTRY.register", 1),
         ("backend/services/engine/training/local_docker_orchestrator.py", "containers.get", 1),
@@ -82,10 +78,6 @@ def test_path_a_feature_lightgbm_persistence():
 
 def test_path_b_classification_persistence():
     _test_path("(b) classification")
-
-
-def test_path_c_multi_horizon_persistence():
-    _test_path("(c) multi-horizon T+1/3/5")
 
 
 def test_path_d_wfa_persistence():

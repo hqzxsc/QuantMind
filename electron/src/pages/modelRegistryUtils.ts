@@ -149,7 +149,6 @@ export function modelIdToDisplayName(modelId?: string | null, fallback?: string)
 /** 返回算法短标签（用于名称前缀），如 LightGBM、GRU */
 export function extractModelTypeShort(m: UserModelRecord): string {
   const raw = String(getMeta(m).model_type ?? '').toLowerCase();
-  if (raw.includes('ensemble')) return 'Ensemble';
   if (raw.includes('lightgbm') || raw.includes('lgb')) return 'LightGBM';
   if (raw.includes('xgboost') || raw.includes('xgb')) return 'XGBoost';
   if (raw.includes('catboost')) return 'CatBoost';
@@ -175,7 +174,6 @@ export function modelDisplayName(m: UserModelRecord): string {
 }
 export function extractModelType(m: UserModelRecord): string {
   const raw = String(getMeta(m).model_type ?? '').toLowerCase();
-  if (raw.includes('ensemble')) return '多模型融合';
   if (raw.includes('lgb') || raw.includes('lightgbm')) return '轻量级GBDT';
   if (raw.includes('xgb') || raw.includes('xgboost')) return '极端梯度提升';
   if (raw.includes('catboost')) return 'CatBoost 梯度提升';

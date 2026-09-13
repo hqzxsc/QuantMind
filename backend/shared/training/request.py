@@ -191,7 +191,6 @@ class TrainingRequest(BaseModel):
     catboost_params: dict = Field(default_factory=dict)
     dl_params: dict = Field(default_factory=dict)
     target_horizon_days: int = 1
-    horizons: list[int] | None = None
     target_mode: str = "return"
     label_formula: str = ""
     effective_trade_date: str = ""
@@ -336,30 +335,6 @@ class TrainingRequest(BaseModel):
                 status_code=422, detail="target_horizon_days must be between 1 and 30"
             )
 
-        horizons: list[int] | None = None
-        raw_horizons = payload.get("horizons")
-        if raw_horizons is not None:
-            if not isinstance(raw_horizons, list) or not raw_horizons:
-                raise HTTPException(
-                    status_code=422,
-                    detail="horizons must be a non-empty array of integers",
-                )
-            horizons = []
-            for h in raw_horizons:
-                try:
-                    hv = int(h)
-                except Exception:
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"horizons contains non-integer value: {h}",
-                    ) from None
-                if not (1 <= hv <= 30):
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"horizons value must be between 1 and 30: {hv}",
-                    )
-                horizons.append(hv)
-
         target_mode = str(payload.get("target_mode", "return")).strip().lower()
         if target_mode not in ALLOWED_TARGET_MODE:
             raise HTTPException(
@@ -399,7 +374,6 @@ class TrainingRequest(BaseModel):
                 catboost_params=payload.get("catboost_params", {}) or {},
                 dl_params=payload.get("dl_params", {}) or {},
                 target_horizon_days=target_horizon_days,
-                horizons=horizons,
                 target_mode=target_mode,
                 label_formula=label_formula,
                 effective_trade_date=effective_trade_date,

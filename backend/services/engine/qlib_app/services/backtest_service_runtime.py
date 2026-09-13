@@ -1776,28 +1776,6 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                 meta["resolved_pred_path"] = str(candidate)
                 return str(candidate), meta
 
-        # 融合模型（model_file=ensemble_config.json）无 pred.pkl 时，
-        # 自动用子模型 pred 融合生成，避免 AI-IDE 回测因缺信号失败。
-        model_file = str(meta.get("model_file") or "").strip()
-        if "ensemble_config" in model_file:
-            try:
-                from backend.services.engine.services.prediction_artifact import (
-                    generate_ensemble_pred,
-                )
-
-                generated = generate_ensemble_pred(model_dir=storage)
-                meta["resolved_pred_path"] = str(generated)
-                meta["ensemble_pred_generated"] = True
-                return str(generated), meta
-            except Exception as gen_err:
-                task_logger.warning(
-                    "ensemble_pred_generation_failed",
-                    "融合模型 pred 自动生成失败",
-                    model_dir=str(storage),
-                    error=str(gen_err),
-                )
-                meta["ensemble_pred_generation_error"] = str(gen_err)
-
         meta["resolved_pred_path"] = str(candidate_paths[0]) if candidate_paths else ""
         meta["fallback_reason"] = "pred_pkl_not_found_in_model_storage"
         return None, meta

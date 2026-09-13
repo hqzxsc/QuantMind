@@ -20,7 +20,6 @@ if str(ROOT) not in sys.path:
 ALL_PATHS = [
     "(a) feature + lightgbm",
     "(b) classification",
-    "(c) multi-horizon T+1/3/5",
     "(d) WFA standalone",
     "(e) remote AutoDL",
     "(f) active cancel",
@@ -130,10 +129,6 @@ def test_path_a_feature_lightgbm_secret():
 
 
 def test_path_b_classification_secret():
-    _verify_callback_endpoint_exists()
-
-
-def test_path_c_multi_horizon_secret():
     _verify_callback_endpoint_exists()
 
 

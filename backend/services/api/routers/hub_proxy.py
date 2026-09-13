@@ -124,7 +124,6 @@ def _safe_extract_tar_gz(archive_bytes: bytes, dest_dir: Path) -> None:
 def _find_model_file_in_dir(model_dir: Path) -> str:
     """探测模型权重文件（与 ModelRegistryService 一致的候选集）。"""
     candidates = [
-        "ensemble_config.json",
         "model.lgb",
         "model.xgb",
         "model.cbm",
@@ -155,7 +154,7 @@ def _find_model_file_in_dir(model_dir: Path) -> str:
             ".pt",
             ".json",
         }:
-            if p.name.startswith("model") or p.name == "ensemble_config.json":
+            if p.name.startswith("model"):
                 return p.relative_to(model_dir).as_posix()
     return ""
 

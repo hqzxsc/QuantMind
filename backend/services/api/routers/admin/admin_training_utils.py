@@ -288,49 +288,11 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
             "max_train_end": str(raw_wfa.get("max_train_end") or "").strip(),
         }
 
-    # display/日期/数值/特征/params 校验已收敛进 TrainingRequest；多周期推导见下。
-
+    # display/日期/数值/特征/params 校验已收敛进 TrainingRequest。
 
     target_horizon_days = int(payload.get("target_horizon_days", 1))
     if not (1 <= target_horizon_days <= 30):
         raise HTTPException(status_code=422, detail="target_horizon_days must be between 1 and 30")
-
-    # 多周期训练：一次训练产出多个周期的模型（T+1/3/5/10…）
-    horizons: list[int] | None = None
-    raw_horizons = payload.get("horizons")
-    if raw_horizons is not None:
-        if not isinstance(raw_horizons, list) or not raw_horizons:
-            raise HTTPException(status_code=422, detail="horizons must be a non-empty array of integers")
-        horizons = []
-        for h in raw_horizons:
-            try:
-                hv = int(h)
-            except Exception:
-                raise HTTPException(status_code=422, detail=f"horizons contains non-integer value: {h}")
-            if not (1 <= hv <= 30):
-                raise HTTPException(status_code=422, detail=f"horizons value must be between 1 and 30: {hv}")
-            if hv not in horizons:
-                horizons.append(hv)
-        horizons.sort()
-        if len(horizons) < 2:
-            raise HTTPException(status_code=422, detail="horizons must contain at least 2 distinct periods")
-        # 多周期主显示周期取第一个
-        target_horizon_days = horizons[0]
-        # WFA 与多周期互斥：此前子任务静默 pop("wfa")，用户勾了 WFA 也无感知。
-        # 改为提交时显式拒绝，避免"以为做了 WFA 诊断"的误解。
-        if wfa_config and wfa_config.get("enabled", True):
-            raise HTTPException(
-                status_code=422,
-                detail="WFA 走查暂不支持多周期训练：wfa 与 horizons 请二选一",
-            )
-        # 分位推理与多周期互斥：子任务会继承 prediction_mode=quantile，
-        # 每个周期训 3 个分位模型（4 周期=12 次 LGB），预算却被切到 1/4，
-        # 且融合只用 P50 点预测、区间无声丢失。显式拒绝。
-        if req.prediction_mode == "quantile":
-            raise HTTPException(
-                status_code=422,
-                detail="prediction_mode=quantile 暂不支持多周期训练：分位推理与 horizons 请二选一",
-            )
 
     target_mode = str(payload.get("target_mode", "return")).strip().lower()
     if target_mode not in _ALLOWED_TARGET_MODE:
@@ -424,8 +386,6 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
         normalized["auto_feature_filter"] = str(
             raw_aff if raw_aff is not None else "true"
         ).strip().lower()
-    if horizons:
-        normalized["horizons"] = horizons
     # 训练时长预算（分钟），默认 120
     normalized["max_time_minutes"] = _clamp_int(payload.get("max_time_minutes"), 120, 10, 1440)
     if wfa_config:
@@ -465,9 +425,7 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
         # 信号在 T 日生成、T+1 执行；若预测未来 H 天收益，Train 结束与
         # Val 开始之间至少应留下 H+1 天，避免执行价/未来价格跨入下一分段。
         # 不再阻断(422)，而是由后端自动向后平移日期。
-        # 多周期必须按最大周期留 gap：此前取 horizons[0]（最小值），大周期
-        # child 的 train 尾部标签会跨入 val，造成跨段泄漏。
-        gap_days = (max(horizons) if horizons else int(normalized.get("target_horizon_days") or 1)) + 1
+        gap_days = int(normalized.get("target_horizon_days") or 1) + 1
 
         # 记录修正通知
         adjustment_notices = []
@@ -489,28 +447,8 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
         if not (dt_train_start <= dt_train_end < dt_valid_start <= dt_valid_end < dt_test_start <= dt_test_end):
             raise HTTPException(
                 status_code=422,
-                detail=f"Date order must satisfy train_start <= train_end < valid_start <= valid_end < test_start <= test_end. {' '.join(adjustment_notices)}",
+                    detail=f"Date order must satisfy train_start <= train_end < valid_start <= valid_end < test_start <= test_end. {' '.join(adjustment_notices)}",
             )
-
-        # 多周期 embargo 前置校验：镜像内 splits.py 会对 train/val 尾部裁掉
-        # horizon+1 个交易日做隔离；val 段交易日不足时仅 warning 就跳过裁剪，
-        # 造成 val 泄漏、val ICIR 虚高，直接污染 ICIR 融合权重。
-        # 按最大周期校验（日历天按 5/7 折交易日，留 3 天节假日余量），不足 422。
-        # 仅多周期触发，单周期保持现状。
-        if horizons:
-            max_h = max(horizons)
-            min_trading_days = max_h + 1 + 3
-            val_calendar_days = (dt_valid_end - dt_valid_start).days + 1
-            approx_trading_days = val_calendar_days * 5 // 7
-            if approx_trading_days < min_trading_days:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"多周期 T+{max_h} 要求验证集约 {min_trading_days} 个交易日以上"
-                        f"（当前 valid 段约 {approx_trading_days} 个），否则 embargo 隔离会被跳过、"
-                        "验证集泄漏并虚增 ICIR 权重。请拉长 valid_start~valid_end，或减小最大周期。"
-                    ),
-                )
 
         normalized.update(
             {
@@ -770,12 +708,6 @@ def _normalize_training_result_payload(
     elif isinstance(metadata.get("drift"), dict):
         normalized["drift"] = metadata["drift"]
 
-    # 多周期训练结果：透传到顶层，供前端训练结果页展示周期明细 + 融合模型
-    if isinstance(raw.get("multi_horizon"), dict):
-        normalized["multi_horizon"] = raw["multi_horizon"]
-    elif isinstance(metadata.get("multi_horizon"), dict):
-        normalized["multi_horizon"] = metadata["multi_horizon"]
-
     return normalized, validation_error
 
 
@@ -819,64 +751,23 @@ async def submit_training_job(
     normalized_payload["tenant_id"] = tenant_id
     normalized_payload["user_id"] = user_id
 
-    # ── 多周期训练：创建 parent job + 每周期一个 child job ──
-    horizons = normalized_payload.get("horizons")
-    multi_horizon = bool(horizons and isinstance(horizons, list) and len(horizons) >= 2)
-
     async with get_session() as session:
-        parent_record = TrainingJobRecord(
+        record = TrainingJobRecord(
             id=run_id,
             tenant_id=tenant_id,
             user_id=user_id,
             status="pending",
-            request_payload={**normalized_payload, "_parent": True},
+            request_payload=normalized_payload,
             progress=0,
         )
-        session.add(parent_record)
-
-        if multi_horizon:
-            child_run_ids: list[str] = []
-            for i, h in enumerate(horizons):
-                child_run_id = f"{run_id}_t{h}"
-                # 子任务固定单周期，display_name 追加 _T{h}
-                child_payload = {
-                    **normalized_payload,
-                    "target_horizon_days": int(h),
-                    "display_name": f"{normalized_payload.get('display_name', 'unnamed')}_T{h}",
-                    "horizons": None,
-                    "_parent_run_id": run_id,
-                    "_multi_horizon_index": i,
-                    "max_time_minutes": max(
-                        30,
-                        int(normalized_payload.get("max_time_minutes") or 120)
-                        // max(1, len(horizons)),
-                    ),
-                }
-                child_payload.pop("wfa", None)
-                child_record = TrainingJobRecord(
-                    id=child_run_id,
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    status="pending",
-                    request_payload=child_payload,
-                    progress=0,
-                )
-                session.add(child_record)
-                child_run_ids.append(child_run_id)
-            parent_record.request_payload = {
-                **parent_record.request_payload,
-                "_child_run_ids": child_run_ids,
-                "_tenant_id": tenant_id,
-                "_user_id": user_id,
-            }
+        session.add(record)
         await session.commit()
 
     _training_log_stream.append_log(
         run_id=run_id,
         tenant_id=tenant_id,
         user_id=user_id,
-        line=f"[SYSTEM] 训练任务已创建: {run_id}"
-        + (f"（多周期 ×{len(horizons)}: " + ", ".join(f"T{h}" for h in horizons) + "）" if multi_horizon else ""),
+        line=f"[SYSTEM] 训练任务已创建: {run_id}",
         status="pending",
         progress=0,
     )
@@ -885,20 +776,9 @@ async def submit_training_job(
     node_id = str(normalized_payload.get("node_id") or payload.get("node_id") or "local")
     orchestrator = get_orchestrator(node_id=node_id)
     logger.warning(f"[SYSTEM] Dispatching training job {run_id}. node={node_id} payload_keys={list(normalized_payload.keys())}")
-    if multi_horizon:
-        # 多周期：编排器串行跑各 child，全部成功后自动创建融合模型
-        REGISTRY.register(
-            orchestrator.launch_multi_horizon_job(
-                parent_run_id=run_id,
-                child_run_ids=child_run_ids,
-                payload=normalized_payload,
-            )
-        )
-    else:
-        # 单周期：直接跑
-        REGISTRY.register(
-            orchestrator.launch_training_job(run_id=run_id, payload=normalized_payload)
-        )
+    REGISTRY.register(
+        orchestrator.launch_training_job(run_id=run_id, payload=normalized_payload)
+    )
 
     # 预检特征可用性，告知前端哪些特征在 parquet 中不存在
     valid_features, missing_features = LocalDockerOrchestrator._filter_features_by_parquet(
@@ -908,7 +788,6 @@ async def submit_training_job(
     return {
         "runId": run_id,
         "status": "pending",
-        "multiHorizon": multi_horizon,
         "payload": normalized_payload,
         "validFeatureCount": len(valid_features),
         "missingFeatureCount": len(missing_features),
@@ -984,7 +863,7 @@ async def get_latest_training_run_for_owner(
 
     优先从 redis 的用户活跃索引读（训练实时流会持续维护该 key，TTL 与状态一致）；
     索引失效/无缓存时回退 DB：先找进行中主任务，再回退最近创建主任务。
-    跳过多周期子任务与父占位。都没有时返回 None。
+    都没有时返回 None。
     """
     tenant_id = str(current_user.get("tenant_id") or "default")
     user_id = str(current_user.get("user_id") or current_user.get("sub") or "unknown")
@@ -1000,12 +879,8 @@ async def get_latest_training_run_for_owner(
 
     active_statuses = ("pending", "provisioning", "running", "waiting_callback")
 
-    def _is_root(rec: TrainingJobRecord) -> bool:
-        payload = rec.request_payload if isinstance(rec.request_payload, dict) else {}
-        return not (payload.get("_parent") or payload.get("_parent_run_id"))
-
     async with get_session(read_only=True) as session:
-        # 先找进行中的主任务（倒序最新一条）
+        # 先找进行中的任务（倒序最新一条）
         stmt = (
             select(TrainingJobRecord)
             .where(
@@ -1017,10 +892,10 @@ async def get_latest_training_run_for_owner(
         )
         rows = (await session.execute(stmt)).scalars().all()
 
-        root_active = next((r for r in rows if _is_root(r)), None)
+        candidate = rows[0] if rows else None
 
-        # 无进行中任务时，回退最近创建的主任务
-        if root_active is None:
+        # 无进行中任务时，回退最近创建的任务
+        if candidate is None:
             stmt_all = (
                 select(TrainingJobRecord)
                 .where(
@@ -1030,10 +905,7 @@ async def get_latest_training_run_for_owner(
                 .order_by(TrainingJobRecord.created_at.desc())
             )
             all_rows = (await session.execute(stmt_all)).scalars().all()
-            root_recent = next((r for r in all_rows if _is_root(r)), None)
-            candidate = root_recent
-        else:
-            candidate = root_active
+            candidate = all_rows[0] if all_rows else None
 
     if candidate is None:
         return None

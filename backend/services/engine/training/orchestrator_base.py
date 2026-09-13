@@ -17,17 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class TrainingOrchestrator(ABC):
-    """训练编排器基类。子类必须实现单周期/多周期训练。"""
+    """训练编排器基类。子类必须实现单周期训练。"""
 
     @abstractmethod
     async def launch_training_job(self, run_id: str, payload: dict | None = None) -> None:
         """编排单周期训练任务（推送数据 → 训练 → 注册模型）。"""
-
-    @abstractmethod
-    async def launch_multi_horizon_job(
-        self, parent_run_id: str, child_run_ids: list[str], payload: dict | None = None
-    ) -> None:
-        """编排多周期训练（串行跑各 child，全部成功后创建融合模型）。"""
 
 
 def get_orchestrator(node_id: str | None = None) -> TrainingOrchestrator:

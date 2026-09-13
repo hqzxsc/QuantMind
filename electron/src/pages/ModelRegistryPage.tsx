@@ -45,7 +45,6 @@ import {
   TrainingSourcePanel,
   AttributionAnalysisPanel,
 } from './modelRegistryPanels';
-import { CreateEnsembleModal } from './CreateEnsembleModal';
 import { PublishModelModal } from './hub/PublishModelModal';
 import { DriftTabPanel } from './DriftTabPanel';
 import { MarketRegimePanel } from './MarketRegimePanel';
@@ -70,9 +69,6 @@ export const ModelRegistryPage: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedIdRef = React.useRef<string | null>(null);
   React.useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
-  const [ensembleMode, setEnsembleMode] = useState(false);
-  const [ensembleChecked, setEnsembleChecked] = useState<string[]>([]);
-  const [showEnsembleModal, setShowEnsembleModal] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -163,7 +159,6 @@ export const ModelRegistryPage: React.FC = () => {
             feature_count: sm.feature_count,
             feature_columns: sm.feature_columns,
             market: (sm as unknown as Record<string, unknown>).market,
-            ensemble_config: (sm as unknown as Record<string, unknown>).ensemble_config,
           },
           metrics_json: sm.performance_metrics ?? {},
           is_default: false,
@@ -551,53 +546,15 @@ export const ModelRegistryPage: React.FC = () => {
                       <Brain size={10} className="text-blue-500" />
                       <span className="text-[9px] font-black text-blue-500 tracking-widest">我的模型资产</span>
                     </div>
-                    {!ensembleMode ? (
-                      <button
-                        className="text-[9px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-0.5 bg-blue-50 hover:bg-blue-100 rounded-md px-1.5 py-0.5 transition-colors"
-                        onClick={(e) => { e.stopPropagation(); setEnsembleMode(true); setEnsembleChecked([]); }}
-                      >
-                        <Layers size={9} /> 多选融合
-                      </button>
-                    ) : (
-                      <button
-                        className="text-[9px] font-bold text-slate-500 hover:text-slate-600 flex items-center gap-0.5 bg-slate-100 hover:bg-slate-200 rounded-md px-1.5 py-0.5 transition-colors"
-                        onClick={(e) => { e.stopPropagation(); setEnsembleMode(false); setEnsembleChecked([]); }}
-                      >
-                        退出
-                      </button>
-                    )}
                   </div>
-                  {ensembleMode && ensembleChecked.length >= 2 && (
-                    <div className="px-2 pb-1.5">
-                      <Button
-                        type="primary" size="small" block
-                        icon={<Layers size={10} />}
-                        className="rounded-lg bg-blue-600 border-none font-bold text-[10px]"
-                        onClick={() => setShowEnsembleModal(true)}
-                      >
-                        创建融合模型 ({ensembleChecked.length})
-                      </Button>
-                    </div>
-                  )}
                   {displayModels.map(model => (
                     <ModelCard
                       key={model.model_id}
                       model={model}
                       isSelected={selectedId === model.model_id}
-                      onClick={() => {
-                        if (ensembleMode) {
-                          const next = ensembleChecked.includes(model.model_id)
-                            ? ensembleChecked.filter(id => id !== model.model_id)
-                            : [...ensembleChecked, model.model_id];
-                          setEnsembleChecked(next);
-                        } else {
-                          setSelectedId(model.model_id);
-                        }
-                      }}
+                      onClick={() => setSelectedId(model.model_id)}
                       onSetDefault={() => void handleSetDefaultById(model.model_id)}
                       canSetDefault={!model.is_default && model.status !== 'archived'}
-                      showCheckbox={ensembleMode}
-                      isChecked={ensembleMode && ensembleChecked.includes(model.model_id)}
                     />
                   ))}
                 </>
@@ -906,19 +863,6 @@ export const ModelRegistryPage: React.FC = () => {
           </div>
         </div>
       </Modal>
-
-      {/* 多模型融合创建对话框 */}
-      <CreateEnsembleModal
-        open={showEnsembleModal}
-        onCancel={() => setShowEnsembleModal(false)}
-        onCreated={(newModelId) => {
-          setEnsembleMode(false);
-          setEnsembleChecked([]);
-          setSelectedId(newModelId);
-          void loadModels(true);
-        }}
-        models={userModels.filter(m => ensembleChecked.includes(m.model_id))}
-      />
 
       {/* 发布到广场对话框 */}
       <PublishModelModal

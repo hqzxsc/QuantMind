@@ -295,30 +295,6 @@ class SetDefaultModelRequest(BaseModel):
     model_id: str
 
 
-class EnsembleCreateRequest(BaseModel):
-    source_model_ids: list[str] = Field(
-        ..., min_length=2, description="源模型 ID 列表（至少 2 个）"
-    )
-    display_name: str = Field(
-        default="", description="融合模型显示名（可选，自动生成）"
-    )
-    weight_strategy: str = Field(
-        default="equal",
-        description="权重策略: equal / icir / manual / recent_ic",
-    )
-    manual_weights: dict[str, float] | None = Field(
-        default=None, description="manual 策略下各源模型权重"
-    )
-    fusion_strategy: str = Field(
-        default="linear",
-        description="融合算法: linear / majority_vote / periodic_hierarchy / confidence_gate",
-    )
-    strategy_config: dict[str, float] | None = Field(
-        default=None,
-        description="融合算法参数（如 periodic_boundary / confidence_threshold）",
-    )
-
-
 class SetStrategyBindingRequest(BaseModel):
     model_id: str
 
@@ -2018,17 +1994,6 @@ def _build_precheck_items(
                 model_file_exists = True
                 model_file_path = candidate
                 break
-    # ensemble 模型：ensemble_config.json 或 inference.py 算作模型文件
-    if not model_file_exists:
-        meta = runner._read_primary_metadata()
-        model_type = str(meta.get("model_type") or "").lower()
-        if model_type == "ensemble":
-            for name in ("ensemble_config.json", "inference.py"):
-                candidate = model_dir / name
-                if candidate.is_file():
-                    model_file_exists = True
-                    model_file_path = candidate
-                    break
     items.append(
         {
             "key": "model_file",
@@ -4584,51 +4549,3 @@ async def training_complete_callback(
     x_internal_call_secret: str = Header(default="", alias="X-Internal-Call-Secret"),
 ):
     return await complete_training_run(run_id, result, x_internal_call_secret)
-
-
-@router.post("/ensemble/create", summary="创建多模型融合模型（用户态）")
-async def create_ensemble_model(
-    payload: EnsembleCreateRequest,
-    current_user: dict[str, Any] = Depends(get_current_user),
-):
-    """将多个已训练模型融合为一个持久化融合模型。
-
-    融合模型像普通模型一样注册、推理、选股、回测。支持权重策略：
-      - equal   等权
-      - icir    按源模型 Val Rank ICIR 归一化加权
-      - manual  手动指定权重（自动归一化到和为 1）
-    """
-    if payload.weight_strategy not in ("equal", "icir", "manual", "recent_ic"):
-        raise HTTPException(
-            status_code=422,
-            detail="weight_strategy 应为 equal / icir / manual / recent_ic",
-        )
-    if payload.weight_strategy == "manual" and not payload.manual_weights:
-        raise HTTPException(
-            status_code=422, detail="manual 策略必须提供 manual_weights"
-        )
-    if payload.fusion_strategy not in (
-        "linear",
-        "majority_vote",
-        "periodic_hierarchy",
-        "confidence_gate",
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail="fusion_strategy 应为 linear / majority_vote / periodic_hierarchy / confidence_gate",
-        )
-
-    tenant_id, user_id = _owner_scope(current_user)
-    try:
-        return await model_registry_service.register_ensemble_model(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            source_model_ids=payload.source_model_ids,
-            display_name=payload.display_name,
-            weight_strategy=payload.weight_strategy,
-            manual_weights=payload.manual_weights,
-            fusion_strategy=payload.fusion_strategy,
-            strategy_config=payload.strategy_config,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))

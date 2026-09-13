@@ -75,10 +75,18 @@ def test_selection_report_is_logged_and_persisted_to_metadata() -> None:
 
 def test_factor_selection_thresholds_forwarded_to_train_script() -> None:
     source = TRAIN_SCRIPT.read_text(encoding="utf-8")
-    assert 'factor_selection_cfg.get("n_top", 60)' in source
-    assert 'factor_selection_cfg.get("ic_threshold", 0.02)' in source
-    assert 'factor_selection_cfg.get("icir_threshold", 0.3)' in source
-    assert 'factor_selection_cfg.get("correlation_threshold", 0.85)' in source
+    # 默认值与 train.py 现状对齐（历史断言停留在 60/0.02/0.3/0.85 已过期）
+    assert 'factor_selection_cfg.get("n_top", 80)' in source
+    assert 'factor_selection_cfg.get("ic_threshold", 0.01)' in source
+    assert 'factor_selection_cfg.get("icir_threshold", 0.15)' in source
+    assert 'factor_selection_cfg.get("correlation_threshold", 0.9)' in source
+    # 质量闸门参数（PFS 扰动保真度 / DH 多样性增益）必须透传进 select_top_factors
+    assert 'factor_selection_cfg.get("pfs_enabled", True)' in source
+    assert 'factor_selection_cfg.get("pfs_threshold", 0.9)' in source
+    assert 'factor_selection_cfg.get("dh_enabled", True)' in source
+    assert 'factor_selection_cfg.get("dh_min_gain", 0.1)' in source
+    assert "pfs_enabled=pfs_enabled, pfs_threshold=pfs_threshold," in source
+    assert "dh_enabled=dh_enabled, dh_min_gain=dh_min_gain," in source
 
 
 def test_admin_passthrough_forwards_factor_selection_and_filter_switch() -> None:
@@ -88,6 +96,11 @@ def test_admin_passthrough_forwards_factor_selection_and_filter_switch() -> None
     assert '"method": str(raw_fs.get("method") or "").strip().lower(),' in utils_source
     assert '"n_top": _clamp_int(raw_fs.get("n_top"), 150, 10, 300),' in utils_source
     assert 'if "auto_feature_filter" in payload:' in utils_source
+    # 质量闸门参数同样透传（PFS 扰动保真度 / DH 多样性增益）
+    assert '"pfs_enabled": _coerce_flag(raw_fs.get("pfs_enabled"), True),' in utils_source
+    assert '"pfs_threshold": float(raw_fs.get("pfs_threshold", 0.9)),' in utils_source
+    assert '"dh_enabled": _coerce_flag(raw_fs.get("dh_enabled"), True),' in utils_source
+    assert '"dh_min_gain": float(raw_fs.get("dh_min_gain", 0.1)),' in utils_source
 
 
 def test_admin_passthrough_clamps_n_top_and_keeps_thresholds() -> None:
@@ -133,6 +146,14 @@ def test_admin_passthrough_clamps_n_top_and_keeps_thresholds() -> None:
     assert fs["icir_threshold"] == 0.3
     assert fs["correlation_threshold"] == 0.85
     assert normalized.get("auto_feature_filter") == "true"
+    # 未显式给出的闸门参数取默认（开），字符串 "false" 按关闭解析
+    assert fs["pfs_enabled"] is True and fs["dh_enabled"] is True
+    assert fs["pfs_threshold"] == 0.9 and fs["dh_min_gain"] == 0.1
+
+    payload_off = dict(payload)
+    payload_off["factor_selection"] = {**payload["factor_selection"], "pfs_enabled": "false"}
+    fs_off = normalize(payload_off, allowed_features=["amt_log", "vol_persistence"])["factor_selection"]
+    assert fs_off["pfs_enabled"] is False
 
 
 def test_admin_passthrough_filter_off_skips_selection() -> None:

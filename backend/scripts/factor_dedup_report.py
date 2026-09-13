@@ -5,6 +5,8 @@
 `a158_ROC20` 与 `gtja_088` 相关性 −0.978、`a101_040` 与 `gtja_042` 完全同源、
 L2 的 `flow_sell_amount` 与 `flow_buy_amount` +0.97。一起进模型等于同一份信息数两遍。
 本脚本按 |ρ| ≥ 阈值聚簇，每簇只留一个代表（默认 |ICIR| 最大），其余标为重复项。
+各数据集另附**多样性体检**：全库 vs 去重后的有效因子数（N_eff = exp(特征值熵)），
+回答「聚类去重会不会把多样性也削掉」。
 
 用法：
   python backend/scripts/factor_dedup_report.py                      # 四个数据集全跑，阈值 0.9
@@ -81,8 +83,32 @@ def build_dataset_section(dataset: str, threshold: float, keep: str, max_members
     lines: list[str] = []
     lines.append(f"### {label}")
     lines.append("")
+
+    def _diversity_line(div: dict | None) -> str:
+        """全库 vs 去重后的有效因子数（N_eff = exp(多样性熵)）。"""
+        if not div or div.get("n_eff") is None:
+            return ""
+        keep = f"；去重后 {div['n_keep']} 个 ≈ **{div['n_eff_after']}** 个独立因子"
+        change = ""
+        if div.get("n_eff_after") is not None and div["n_eff"]:
+            delta = (div["n_eff_after"] - div["n_eff"]) / div["n_eff"] * 100
+            # N_eff 对「近重复成簇」是超线性惩罚：剔掉同源复制后有效因子数往往不降反升
+            change = (
+                f"（多样性 +{delta:.1f}%：剔除同源复制反而提升有效因子数）"
+                if delta >= 0
+                else f"（多样性损失 {abs(delta):.1f}%）"
+            )
+        return (
+            f"**多样性**：全库 {div['n_total']} 个因子 ≈ **{div['n_eff']}** 个独立因子"
+            f"（多样性熵 {div['entropy']}）{keep}{change}。"
+        )
+
     if not clusters:
         lines.append(f"未发现 |ρ| ≥ {threshold} 的同源因子（{summary['n_total']} 个因子互不重复）。")
+        div_line = _diversity_line(res.get("diversity"))
+        if div_line:
+            lines.append("")
+            lines.append(div_line)
         lines.append("")
         return "\n".join(lines), summary
 
@@ -91,6 +117,10 @@ def build_dataset_section(dataset: str, threshold: float, keep: str, max_members
         f"可去除 **{summary['n_duplicates']} 个重复因子**（保留 {summary['n_keep']} 个），"
         f"最大簇 {summary['largest_cluster']} 个成员。"
     )
+    div_line = _diversity_line(res.get("diversity"))
+    if div_line:
+        lines.append("")
+        lines.append(div_line)
     lines.append("")
     lines.append("| 代表因子（保留） | ICIR | 其余成员（建议剔除） | 与代表相关性 |")
     lines.append("|---|---|---|---|")

@@ -401,6 +401,45 @@ def top_correlated(dataset: str, factor: str, top: int = 8) -> list[dict[str, An
     return pairs[: max(1, top)]
 
 
+def _diversity_before_after(
+    names: list[str], matrix: list, clusters: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """全库 vs 去重后（每簇留代表）的有效因子数 / 多样性熵。
+
+    回答「按 |ρ| 聚类去重会不会把多样性也削掉」：N_eff = exp(熵)，
+    相当于几个独立因子。实现复用训练侧 factor_quality（单一公式来源）。
+    """
+    from backend.shared.factor_quality import load_factor_quality
+
+    fq = load_factor_quality()
+    if fq is None or not names or not matrix:
+        return None
+    try:
+        arr = np.asarray(matrix, dtype=np.float64)
+        if arr.shape[0] != len(names):
+            return None
+        dup = {m["name"] for c in clusters for m in c["members"] if not m["is_rep"]}
+        keep_idx = [i for i, n in enumerate(names) if n not in dup]
+        n_eff_all = fq.effective_factors(arr)
+        entropy_all = fq.diversity_entropy(arr)
+        n_eff_keep = None
+        entropy_keep = None
+        if keep_idx:
+            sub = arr[np.ix_(keep_idx, keep_idx)]
+            n_eff_keep = fq.effective_factors(sub)
+            entropy_keep = fq.diversity_entropy(sub)
+        return {
+            "n_total": len(names),
+            "n_eff": round(float(n_eff_all), 2) if n_eff_all is not None else None,
+            "entropy": round(float(entropy_all), 4) if entropy_all is not None else None,
+            "n_keep": len(keep_idx),
+            "n_eff_after": round(float(n_eff_keep), 2) if n_eff_keep is not None else None,
+            "entropy_after": round(float(entropy_keep), 4) if entropy_keep is not None else None,
+        }
+    except Exception:  # noqa: BLE001 — 多样性度量失败不影响去重结果
+        return None
+
+
 def correlation_clusters(dataset: str, threshold: float = 0.9, keep: str = "icir") -> dict[str, Any]:
     """因子去重簇：|ρ| ≥ 阈值 的同源因子聚成一簇，每簇留一个代表。"""
     from .clusters import cluster_by_correlation, summarize
@@ -421,5 +460,6 @@ def correlation_clusters(dataset: str, threshold: float = 0.9, keep: str = "icir
         "threshold": threshold,
         "keep": keep,
         "summary": summarize(len(names), clusters),
+        "diversity": _diversity_before_after(names, matrix, clusters),
         "clusters": clusters,
     }

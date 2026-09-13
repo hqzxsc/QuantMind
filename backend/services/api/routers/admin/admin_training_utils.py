@@ -42,6 +42,15 @@ _MARKET_TO_XCAL = {"CN": "XSHG", "US": "XNYS", "HK": "XHKG"}
 # _clamp_int 下沉至 backend.shared.training.request（单源），此处 import 复用。
 
 
+def _coerce_flag(value: Any, default: bool) -> bool:
+    """宽松布尔解析：真布尔原样；字符串按 "0/false/no/off" 为假（大小写不敏感）。"""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in ("0", "false", "no", "off")
+
+
 def _shift_trading_days_back(anchor: datetime, n_days: int, market: str) -> tuple[datetime, bool]:
     """从 anchor 往前数 n_days 个交易日，返回 (结果日期, 是否用了交易日历)。
 
@@ -412,6 +421,12 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
             "ic_threshold": float(raw_fs.get("ic_threshold", 0.01)),
             "icir_threshold": float(raw_fs.get("icir_threshold", 0.15)),
             "correlation_threshold": float(raw_fs.get("correlation_threshold", 0.9)),
+            # 质量闸门（PFS 扰动保真度 / DH 多样性增益）：显式归一化为真布尔，
+            # 字符串 "false"/"0"/"off" 一律按关闭解析（防 bool("false")=True 坑）
+            "pfs_enabled": _coerce_flag(raw_fs.get("pfs_enabled"), True),
+            "pfs_threshold": float(raw_fs.get("pfs_threshold", 0.9)),
+            "dh_enabled": _coerce_flag(raw_fs.get("dh_enabled"), True),
+            "dh_min_gain": float(raw_fs.get("dh_min_gain", 0.1)),
         }
     if "auto_feature_filter" in payload:
         # 注意：不能用 `payload.get(...) or "true"` —— False 会被 falsy 兜底吞掉

@@ -81,20 +81,27 @@ interface FactorReportRow {
   coverage: number;
   status: string;
   reason: string;
+  pfs?: number | null;
+  pfs_backfilled?: boolean;
 }
 
-/** 因子筛选报告：漏斗 + 每特征 IC/ICIR/覆盖/淘汰原因（train.py select_top_factors 产出）。 */
+/** 因子筛选报告：漏斗 + 每特征 IC/ICIR/覆盖/PFS/淘汰原因（train.py select_top_factors 产出）。 */
 const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
   const sc: Record<string, number> = report?.stage_counts || {};
-  const thr: Record<string, number> = report?.thresholds || {};
+  const thr: Record<string, number | null> = report?.thresholds || {};
   const features: FactorReportRow[] = Array.isArray(report?.features) ? report.features : [];
+  const diversity = report?.diversity as { n_factors: number; n_eff: number; entropy: number } | null;
+  const pfsOn = thr.pfs_threshold != null;
   const maxVal = Math.max(1, Number(sc.input) || 1);
 
   const funnel = [
     { label: '输入特征', value: Number(sc.input) || 0, color: 'bg-slate-400' },
     { label: '|IC|/|ICIR| 通过', value: Number(sc.ic_pass) || 0, color: 'bg-indigo-400' },
-    { label: '相关性剪枝后', value: Number(sc.corr_pass) || 0, color: 'bg-violet-400' },
+    { label: '相关性+多样性后', value: Number(sc.corr_pass) || 0, color: 'bg-violet-400' },
     { label: '稳定性通过', value: Number(sc.stable) || 0, color: 'bg-emerald-400' },
+    ...(pfsOn
+      ? [{ label: 'PFS 扰动保真度', value: Number(sc.pfs_pass) || 0, color: 'bg-teal-400' }]
+      : []),
     { label: '最终入选', value: Number(sc.selected) || 0, color: 'bg-emerald-500' },
   ];
 
@@ -144,6 +151,21 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
       width: 70,
       align: 'center' as const,
     },
+    ...(pfsOn
+      ? [{
+          title: 'PFS',
+          dataIndex: 'pfs',
+          key: 'pfs',
+          width: 64,
+          align: 'center' as const,
+          render: (v: number | null | undefined) =>
+            v == null ? (
+              <span className="text-slate-300">—</span>
+            ) : (
+              <span className={v < 0.9 ? 'font-semibold text-red-500' : 'text-slate-700'}>{v.toFixed(3)}</span>
+            ),
+        }]
+      : []),
     {
       title: '训练段覆盖',
       dataIndex: 'coverage',
@@ -173,7 +195,7 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
     <Card className="rounded-3xl border-slate-200 shadow-sm" styles={{ body: { padding: 20 } }}>
       <SectionHeader
         title="因子筛选报告"
-        desc="为什么最终是这些特征进入训练：IC/ICIR 初筛 → 相关性剪枝 → 稳定性检验的完整漏斗与逐特征依据。"
+        desc="为什么最终是这些特征进入训练：IC/ICIR 初筛 → 相关性 + 多样性剪枝 → 稳定性检验 → PFS 扰动保真度的完整漏斗与逐特征依据。"
         icon={<Filter size={18} className="text-emerald-500" />}
       />
       <Divider className="my-4" />
@@ -191,13 +213,38 @@ const FactorSelectionReport: React.FC<{ report: any }> = ({ report }) => {
 
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
         <span>阈值：top-N ≤ {thr.n_top ?? '—'} · |IC| ≥ {thr.ic_threshold ?? '—'} · |ICIR| ≥ {thr.icir_threshold ?? '—'} · 相关性 &lt; {thr.correlation_threshold ?? '—'}</span>
+        {pfsOn && (
+          <span>
+            质量闸门：PFS ≥ {thr.pfs_threshold}（扰动保真度，σ={thr.pfs_sigma ?? '—'}）
+            {thr.dh_min_gain != null ? ` · 多样性增益 ≥ ${thr.dh_min_gain}` : ''}
+          </span>
+        )}
         {report?.train_rows != null && <span>筛选基于训练段 {Number(report.train_rows).toLocaleString()} 行（不含验证/测试，防泄漏）</span>}
         {report?.method ? <span className="font-mono">{report.method}</span> : null}
       </div>
 
+      {(diversity || report?.pfs_fallback || Number(sc.dh_rejected) > 0 || Number(sc.pfs_backfilled) > 0) && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+          {diversity && (
+            <span className="text-slate-600">
+              多样性：入选 {diversity.n_factors} 个特征 ≈ <span className="font-semibold text-slate-800">{diversity.n_eff}</span> 个独立因子（多样性熵 {diversity.entropy}）
+            </span>
+          )}
+          {Number(sc.dh_rejected) > 0 && (
+            <span className="text-violet-500">多样性增益淘汰 {Number(sc.dh_rejected)} 个（与已选多重共线）</span>
+          )}
+          {Number(sc.pfs_backfilled) > 0 && (
+            <span className="text-teal-600">PFS 回填 {Number(sc.pfs_backfilled)} 个（补足被扰动检验淘汰的名额）</span>
+          )}
+          {report?.pfs_fallback ? (
+            <span className="text-amber-600">PFS 淘汰过多（&lt; 30），已回退原名单，PFS 仅作标注</span>
+          ) : null}
+        </div>
+      )}
+
       {/* 逐特征明细：各列定宽不吞剩余空间，整体居中包裹避免超宽拉伸 */}
       {features.length > 0 ? (
-        <div className="mx-auto mt-3 w-full" style={{ maxWidth: 900 }}>
+        <div className="mx-auto mt-3 w-full" style={{ maxWidth: 980 }}>
           <Table<FactorReportRow>
             size="small"
             rowKey="name"

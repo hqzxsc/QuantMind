@@ -12,6 +12,26 @@
 - 训练结束后默认生成 `shap_summary.csv`，使用 LightGBM 原生 `pred_contrib=True` 计算 SHAP 汇总贡献度；默认读取验证集、采样 30000 行，并在 `metadata.json.shap` 中记录状态、样本数、耗时和错误信息。SHAP 失败不会阻断训练完成。
 - 前端训练页会据此展示“提交特征数 / 自动补充特征 / 实际入模特征数”，便于排查维度不一致问题。
 
+## 因子筛选流水线（data/factor_selection.py）
+
+IC/ICIR 初筛 → 自适应回填 → 相关性 + 多样性剪枝 → 稳定性检验 → PFS 扰动保真度。
+后两道质量闸门对齐 AlphaEval（KDD 2026，arXiv 2508.13174）的五维评估，纯函数在
+`data/factor_quality.py`（无容器依赖，engine 侧经 `backend/shared/factor_quality.py`
+按路径加载同一份实现，**改公式只需改这一个文件**）：
+
+- **DH 多样性增益**（`dh_enabled` / `dh_min_gain`，默认开 / 0.1）：两两 |ρ| 阈值之外，
+  要求新增因子给集合带来的有效因子数（`N_eff = exp(特征值熵)`）增量不低于阈值——
+  拦「与多只同时中等相关」的多重共线（两两阈值是盲的）。收紧到 0.3+ 会明显减少特征数。
+- **PFS 扰动保真度**（`pfs_enabled` / `pfs_threshold`，默认开 / 0.9）：截面 z 分加
+  高斯与 t 厚尾噪声，逐日算排名保真度取最差；排名一扰就塌的因子（并值/离散型居多）
+  换成后续候选。淘汰后幸存者 < 30 视为判定过严，回退原名单并在报告标 `pfs_fallback`。
+- 报告新增键（`features[].pfs/dh_gain/pfs_backfilled`、`diversity`、`stage_counts.pfs_pass`、
+  `thresholds.pfs_threshold`）均为**只增键**，老前端不受影响；训练结果页漏斗已加 PFS 一级。
+- 实测（429 因子库 × 60 交易日，n_top=80）：相关性+多样性淘汰 25 个、PFS 换掉 15 个，
+  入选集合从 73 个降到 54 个但 N_eff 只降 3.7（29.4→25.7，且剔除的 12 个里
+  有 PFS=0.37 的极端脆弱因子）；整条流水线耗时 +25%（71.6s → 89.7s）。
+- 关掉两道闸门（`pfs_enabled=false` + `dh_enabled=false`）与老行为逐行一致。
+
 ## 多核 / 多线程控制
 
 树模型与因子筛选默认用满机器所有 CPU 核心，可通过环境变量限制：

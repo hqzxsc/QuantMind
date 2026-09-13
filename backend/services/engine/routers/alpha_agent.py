@@ -6,6 +6,7 @@
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -353,7 +354,14 @@ async def explain_factor(factor_id: str, request: Request):
     # Check if explanation already exists
     metadata = factor.get("metadata") or {}
     if metadata.get("explanation"):
-        return {"code": 200, "data": {"explanation": metadata["explanation"], "cached": True}}
+        return {
+            "code": 200,
+            "data": {
+                "explanation": metadata["explanation"],
+                "logic_score": metadata.get("logic_score"),
+                "cached": True,
+            },
+        }
 
     factor_name = factor.get("factor_name", "unknown")
     factor_code = factor.get("factor_code", "")
@@ -378,7 +386,9 @@ async def explain_factor(factor_id: str, request: Request):
 因子名称：{factor_name}
 因子公式：{factor_formulation or factor_code[:500]}
 
-请直接输出解释，不要重复因子公式。"""
+请直接输出解释，不要重复因子公式。
+解释正文写完后，另起一行输出一行机器可读评分（不要解释这行）：
+SCORE: 50 到 100 的整数（50-70 逻辑牵强/易过拟合，70-85 逻辑合理，85-100 经济学依据扎实）"""
 
     try:
         explanation = await llm_chat(
@@ -395,11 +405,16 @@ async def explain_factor(factor_id: str, request: Request):
         logger.error("LLM explain failed: %s", e)
         raise HTTPException(status_code=500, detail="LLM 解释失败，请稍后重试") from e
 
+    # 解析金融逻辑评分（LLM 可能不按格式输出 → 评分缺失但不影响解释文本）
+    explanation, logic_score = _parse_logic_score(explanation)
+
     # Store explanation in metadata
     metadata["explanation"] = explanation
+    if logic_score is not None:
+        metadata["logic_score"] = logic_score
     await persistence.update_factor_metrics(factor_id, metadata=metadata)
 
-    return {"code": 200, "data": {"explanation": explanation, "cached": False}}
+    return {"code": 200, "data": {"explanation": explanation, "logic_score": logic_score, "cached": False}}
 
 
 @router.post("/factors/{factor_id}/backtest")
@@ -507,6 +522,15 @@ async def export_factor_to_ide(
     factor_name = factor.get("factor_name", "unnamed_factor")
     meta = factor.get("metadata") or {}
 
+    # 质量闸门（软）：PFS 扰动保真度 / LLM 金融逻辑分低于阈值时给出显式警告。
+    # 不阻断导出（研究流程需人工判断），但警告随响应与文件头一并交付。
+    quality = meta.get("quality") or {}
+    pfs_val = quality.get("pfs")
+    logic_score = meta.get("logic_score")
+    quality_warnings = _quality_warnings(pfs_val, logic_score)
+    if quality_warnings:
+        logger.warning("[alpha-export] %s quality warnings: %s", factor_id, "; ".join(quality_warnings))
+
     # 生成带头部注释的完整 Python 文件
     header_lines = [
         '"""',
@@ -516,6 +540,8 @@ async def export_factor_to_ide(
         f'RankIC: {meta.get("rank_ic", "N/A")}',
         f'Sharpe: {factor.get("sharpe_ratio", "N/A")}',
         f'Market: {meta.get("market", "a_share")}',
+        f'PFS (perturbation fidelity): {f"{float(pfs_val):.3f}" if pfs_val is not None else "N/A"}',
+        f'LogicScore: {logic_score if logic_score is not None else "N/A"}',
         f'Description: {meta.get("description", "")[:200]}',
         '"""',
         '',
@@ -545,6 +571,8 @@ async def export_factor_to_ide(
             "strategy_id": res["id"],
             "name": file_name,
             "message": f"因子 {factor_name} 已导出到 AI-IDE 工作空间",
+            "quality": {"pfs": pfs_val, "logic_score": logic_score},
+            "quality_warnings": quality_warnings,
         },
     }
 
@@ -682,6 +710,64 @@ _MARKET_TO_QLIB: dict[str, str] = {
 }
 
 _QLIB_NATIVE_UNIVERSES = ("csi300", "csi500", "csi1000", "csi800")
+
+
+def _compute_pfs_quality(df: "pd.DataFrame") -> dict | None:
+    """扰动保真度（PFS）：从 (trade_date, symbol, factor) 面板算因子的排名稳健性。
+
+    实现来自 docker/training/data/factor_quality.py（经 backend.shared.factor_quality
+    按路径加载，与训练侧筛选同一公式，口径不漂移）；模块不可用/样本不足返回 None。
+    低于 0.9 = 截面 z 分加噪后排名明显塌陷（数据误差/离散化敏感），不宜实盘。
+    """
+    try:
+        from backend.shared.factor_quality import load_factor_quality
+
+        fq = load_factor_quality()
+        if fq is None or df is None or df.empty:
+            return None
+        out = fq.compute_pfs(df, ["factor"]).get("factor") or {}
+        if out.get("pfs") is None:
+            return None
+        return {
+            "pfs": round(float(out["pfs"]), 4),
+            "pfs_gauss": round(float(out["pfs_gauss"]), 4) if out.get("pfs_gauss") is not None else None,
+            "pfs_t": round(float(out["pfs_t"]), 4) if out.get("pfs_t") is not None else None,
+            "n_days": int(out.get("n_days") or 0),
+        }
+    except Exception as exc:  # noqa: BLE001 — 质量度量失败不影响回测结果
+        logger.warning("[alpha-backtest] PFS computation failed: %s", exc)
+        return None
+
+
+def _quality_warnings(pfs: float | None, logic_score: int | None) -> list[str]:
+    """导出前的质量闸门（软）：PFS / 金融逻辑分低于阈值时返回警告文案。"""
+    warnings: list[str] = []
+    if pfs is not None and float(pfs) < 0.9:
+        warnings.append(
+            f"扰动保真度偏低（PFS={float(pfs):.3f} < 0.9）：截面加噪后排名易塌，实盘换手不稳"
+        )
+    if logic_score is not None and int(logic_score) < 60:
+        warnings.append(
+            f"金融逻辑评分偏低（logic_score={int(logic_score)} < 60）：建议人工复核经济含义"
+        )
+    return warnings
+
+
+def _parse_logic_score(text: str) -> tuple[str, int | None]:
+    """从 LLM 解释文本中抽出 ``SCORE: <50-100>`` 评分行。
+
+    返回 (去掉评分行的解释正文, 评分|None)。LLM 可能不按格式输出或给出越界值：
+    没有匹配 → 原文 + None；越界一律钳制到 [0, 100]。取最后一个匹配（正文里
+    若引用了评分说明，以最后的行为准）。
+    """
+    score: int | None = None
+    match = None
+    for match in re.finditer(r"SCORE\s*[:：]\s*(\d{1,3})", text):
+        pass  # 取最后一个匹配
+    if match is not None:
+        score = max(0, min(100, int(match.group(1))))
+        text = (text[: match.start()] + text[match.end():]).strip()
+    return text, score
 
 
 def _detect_factor_kind(factor_code: str) -> str:
@@ -967,6 +1053,14 @@ async def _backtest_via_qlib(
     except Exception:
         ann_ret = sharpe = max_dd = None
 
+    # 质量闸门：扰动保真度（PFS）——同一批因子值上直接算，标注进 metadata，
+    # 因子列表/详情原样返回（前端可据此过滤；低于阈值时导出会带质量警告）
+    pfs_quality = _compute_pfs_quality(pd.DataFrame({
+        "trade_date": f_clean.index.get_level_values(1),  # Qlib index=(instrument, datetime)
+        "symbol": f_clean.index.get_level_values(0),
+        "factor": np.asarray(f_clean, dtype=float),
+    }))
+
     await persistence.update_factor_metrics(
         factor_id,
         status="completed",
@@ -977,14 +1071,18 @@ async def _backtest_via_qlib(
         max_drawdown=max_dd,
         universe=universe,
         date_range=f"{start}~{end}",
-        metadata={"data_source": "qlib_bin", "market": market, "icir": icir, "n_obs": n_obs},
+        metadata={
+            "data_source": "qlib_bin", "market": market, "icir": icir, "n_obs": n_obs,
+            **({"quality": pfs_quality} if pfs_quality else {}),
+        },
     )
     logger.info(
-        "[alpha-backtest] %s done market=%s ic=%.4f rank_ic=%.4f icir=%.4f sharpe=%s ann_ret=%s max_dd=%s n=%d",
+        "[alpha-backtest] %s done market=%s ic=%.4f rank_ic=%.4f icir=%.4f sharpe=%s ann_ret=%s max_dd=%s pfs=%s n=%d",
         factor_id, market, ic_mean, rank_ic_median, icir,
         f"{sharpe:.3f}" if sharpe is not None else "N/A",
         f"{ann_ret:.3f}" if ann_ret is not None else "N/A",
         f"{max_dd:.3f}" if max_dd is not None else "N/A",
+        pfs_quality["pfs"] if pfs_quality else "N/A",
         n_obs,
     )
 
@@ -1476,6 +1574,27 @@ try:
     icir = np.mean(ic_values) / (np.std(ic_values) + 1e-8)
     print(f"IC={{ic:.4f}}"); print(f"RANK_IC={{rank_ic:.4f}}")
     print(f"ICIR={{icir:.4f}}"); print(f"OBSERVATIONS={{len(f)}}")
+    # 质量闸门：扰动保真度 PFS（与训练侧 data/factor_quality 同一实现；
+    # 用 % 格式化避免与外层 f-string 的花括号冲突）
+    try:
+        from backend.shared.factor_quality import load_factor_quality
+        _fq = load_factor_quality()
+        if _fq is not None:
+            _pfs_df = pd.DataFrame(
+                list(zip(f.index.get_level_values(0), f.index.get_level_values(1),
+                         np.asarray(f, dtype=float))),
+                columns=["trade_date", "symbol", "factor"],
+            )
+            _q = _fq.compute_pfs(_pfs_df, ["factor"]).get("factor") or {{}}
+            if _q.get("pfs") is not None:
+                print("PFS=%.4f" % _q["pfs"])
+                if _q.get("pfs_gauss") is not None:
+                    print("PFS_GAUSS=%.4f" % _q["pfs_gauss"])
+                if _q.get("pfs_t") is not None:
+                    print("PFS_T=%.4f" % _q["pfs_t"])
+                print("PFS_DAYS=%d" % int(_q.get("n_days") or 0))
+    except Exception:
+        pass
 except Exception as e:
     print(f"ERROR: {{e}}")
     traceback.print_exc()
@@ -1488,6 +1607,7 @@ except Exception as e:
         # 合并 stdout + stderr（因子脚本异常用 stderr 输出 traceback）
         out = stdout + "\n" + stderr
         ic_mean = rank_ic_mean = None
+        pfs_quality: dict = {}
         for line in out.splitlines():
             if line.startswith("IC="):
                 try:
@@ -1497,6 +1617,26 @@ except Exception as e:
             elif line.startswith("RANK_IC="):
                 try:
                     rank_ic_mean = float(line.split("=")[1])
+                except Exception:
+                    pass
+            elif line.startswith("PFS_GAUSS="):
+                try:
+                    pfs_quality["pfs_gauss"] = float(line.split("=")[1])
+                except Exception:
+                    pass
+            elif line.startswith("PFS_T="):
+                try:
+                    pfs_quality["pfs_t"] = float(line.split("=")[1])
+                except Exception:
+                    pass
+            elif line.startswith("PFS_DAYS="):
+                try:
+                    pfs_quality["n_days"] = int(line.split("=")[1])
+                except Exception:
+                    pass
+            elif line.startswith("PFS="):
+                try:
+                    pfs_quality["pfs"] = float(line.split("=")[1])
                 except Exception:
                     pass
 
@@ -1513,9 +1653,11 @@ except Exception as e:
             max_drawdown=None,
             universe=universe,
             date_range=f"{start}~{end}",
+            metadata={"data_source": "h5", **({"quality": pfs_quality} if pfs_quality else {})},
         )
-        logger.info("[alpha-backtest-fn] %s done ic=%.4f rank_ic=%s", factor_id, ic_mean,
-                    f"{rank_ic_mean:.4f}" if rank_ic_mean is not None else "N/A")
+        logger.info("[alpha-backtest-fn] %s done ic=%.4f rank_ic=%s pfs=%s", factor_id, ic_mean,
+                    f"{rank_ic_mean:.4f}" if rank_ic_mean is not None else "N/A",
+                    f"{pfs_quality['pfs']:.4f}" if pfs_quality.get("pfs") is not None else "N/A")
     except FactorBacktestCancelled:
         logger.info("[alpha-backtest-fn] %s cancelled by user", factor_id)
         try:

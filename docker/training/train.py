@@ -1059,7 +1059,17 @@ def main() -> int:
             ic_thresh = float(factor_selection_cfg.get("ic_threshold", 0.01))
             icir_thresh = float(factor_selection_cfg.get("icir_threshold", 0.15))
             corr_thresh = float(factor_selection_cfg.get("correlation_threshold", 0.9))
-            logger.info("=== Auto Factor Selection: top-%d ===", n_top)
+            # 质量闸门（PFS 扰动保真度 / DH 多样性增益，见 data/factor_quality.py）：
+            # 默认开启；字符串 "false"/"0"/"off" 一律按关闭解析（防 bool("false")=True 坑）
+            _falsey = ("0", "false", "no", "off")
+            pfs_enabled = str(factor_selection_cfg.get("pfs_enabled", True)).strip().lower() not in _falsey
+            pfs_threshold = float(factor_selection_cfg.get("pfs_threshold", 0.9))
+            dh_enabled = str(factor_selection_cfg.get("dh_enabled", True)).strip().lower() not in _falsey
+            dh_min_gain = float(factor_selection_cfg.get("dh_min_gain", 0.1))
+            logger.info(
+                "=== Auto Factor Selection: top-%d (pfs=%s@%.2f, dh=%s@%.2f) ===",
+                n_top, pfs_enabled, pfs_threshold, dh_enabled, dh_min_gain,
+            )
             # 特征选择属于拟合过程的一部分：只能看到训练段。此前直接把完整
             # train/valid/test df 传入，会让 test 标签影响入选因子及最终样本外指标。
             selection_train_df, _, _ = _split_data(df, cfg)
@@ -1067,6 +1077,8 @@ def main() -> int:
                 selection_train_df, valid_features, label_col="label",
                 n_top=n_top, ic_threshold=ic_thresh,
                 icir_threshold=icir_thresh, correlation_threshold=corr_thresh,
+                pfs_enabled=pfs_enabled, pfs_threshold=pfs_threshold,
+                dh_enabled=dh_enabled, dh_min_gain=dh_min_gain,
             )
             logger.info(
                 "Selected %d features from training segment only (%d rows)",

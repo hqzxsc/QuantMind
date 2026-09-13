@@ -557,6 +557,12 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                 "ic_threshold": 0.01,
                 "icir_threshold": 0.15,
                 "correlation_threshold": 0.9,
+                # 质量闸门（PFS 扰动保真度 / DH 多样性增益）默认开启；
+                # 显式写入 config.yaml 便于 A/B 对照与逐次调整
+                "pfs_enabled": True,
+                "pfs_threshold": 0.9,
+                "dh_enabled": True,
+                "dh_min_gain": 0.1,
             }
         else:
             factor_selection = None

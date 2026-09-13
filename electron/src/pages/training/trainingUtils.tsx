@@ -239,12 +239,16 @@ export interface TrainingResult {
     metric: string;
     market?: string;
     generated_at: string;
-    // 因子筛选报告（train.py select_top_factors 产出）：漏斗 + 每特征 IC/ICIR/覆盖/原因
+    // 因子筛选报告（train.py select_top_factors 产出）：漏斗 + 每特征 IC/ICIR/覆盖/PFS/原因
     factor_selection?: {
       method?: string;
       thresholds?: Record<string, number>;
       stage_counts?: Record<string, number>;
       train_rows?: number;
+      /** 入选集合多样性：N_eff = exp(熵)，相当于几个独立因子 */
+      diversity?: { n_factors: number; n_eff: number; entropy: number } | null;
+      /** PFS 淘汰过多时回退原名单（fail-safe），此时 PFS 仅作标注 */
+      pfs_fallback?: boolean;
       features?: Array<{
         name: string;
         ic: number | null;
@@ -254,6 +258,14 @@ export interface TrainingResult {
         coverage: number;
         status: string;
         reason: string;
+        /** 扰动保真度：截面 z 分加噪后排名保真度（0-1，< 0.9 视为脆弱） */
+        pfs?: number | null;
+        pfs_gauss?: number | null;
+        pfs_t?: number | null;
+        /** 入选时的多样性增益（有效因子数增量） */
+        dh_gain?: number | null;
+        /** 由 PFS 淘汰后的回填补位进入 */
+        pfs_backfilled?: boolean;
       }>;
       selected?: string[];
     };

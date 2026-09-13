@@ -7,15 +7,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Database, Play, RefreshCw } from 'lucide-react';
 import { getSnapshotStatus, postBuildSnapshot } from '../services/factorResearchService';
-import type { SnapshotStatus } from '../services/factorResearchService';
+import type { FactorDataset, SnapshotStatus } from '../services/factorResearchService';
 import { Card } from './common';
 
 interface Props {
+  dataset: FactorDataset;
   /** 快照就绪（存在且不再构建中）时回调（防重复触发） */
   onReady: () => void;
 }
 
-export const SnapshotPanel: React.FC<Props> = ({ onReady }) => {
+export const SnapshotPanel: React.FC<Props> = ({ dataset, onReady }) => {
   const [st, setSt] = useState<SnapshotStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -24,7 +25,7 @@ export const SnapshotPanel: React.FC<Props> = ({ onReady }) => {
   useEffect(() => {
     let alive = true;
     const tick = () => {
-      getSnapshotStatus()
+      getSnapshotStatus(dataset)
         .then((s) => {
           if (!alive) return;
           setSt(s);
@@ -44,15 +45,15 @@ export const SnapshotPanel: React.FC<Props> = ({ onReady }) => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [onReady]);
+  }, [dataset, onReady]);
 
   const start = async () => {
     setStarting(true);
     setErr(null);
     try {
-      await postBuildSnapshot();
+      await postBuildSnapshot(dataset);
       notified.current = false;
-      const s = await getSnapshotStatus();
+      const s = await getSnapshotStatus(dataset);
       setSt(s);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -65,7 +66,7 @@ export const SnapshotPanel: React.FC<Props> = ({ onReady }) => {
 
   return (
     <div className="flex-1 flex items-center justify-center">
-      <Card title="因子快照" className="w-[560px]">
+      <Card title={dataset === "private" ? "私人因子库快照" : "因子快照"} className="w-[560px]">
         <div className="flex items-start gap-3">
           <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
             <Database className="w-4 h-4 text-indigo-500" />

@@ -86,7 +86,7 @@ export const LeaderboardTab: React.FC<Props> = ({
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2">
       {/* 工具条 */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="shrink-0 flex items-center gap-2 flex-wrap">
         <span className="flex items-center gap-1">
           <span className="text-[10px] font-bold text-slate-400">持仓数</span>
           <input
@@ -133,7 +133,7 @@ export const LeaderboardTab: React.FC<Props> = ({
       </div>
 
       {/* 说明 */}
-      <details className="rounded-xl border border-slate-200/80 bg-white px-3 py-1.5 text-[10px] text-slate-500">
+      <details className="shrink-0 rounded-xl border border-slate-200/80 bg-white px-3 py-1.5 text-[10px] text-slate-500">
         <summary className="cursor-pointer font-bold text-slate-600 select-none">
           综合分与标签口径（点击展开）
         </summary>
@@ -156,7 +156,7 @@ export const LeaderboardTab: React.FC<Props> = ({
       </details>
 
       {/* 标签筛选 */}
-      <div className="flex items-center gap-1 flex-wrap">
+      <div className="shrink-0 flex items-center gap-1 flex-wrap">
         <span className="text-[10px] font-bold text-slate-400 mr-0.5">标签筛选</span>
         {ALL_TAGS.map((t) => {
           const on = tagFilter.includes(t);
@@ -265,7 +265,7 @@ export const LeaderboardTab: React.FC<Props> = ({
           </div>
         )}
       </Card>
-      <div className="text-[10px] text-slate-400 flex items-center gap-1">
+      <div className="shrink-0 text-[10px] text-slate-400 flex items-center gap-1">
         <TrendingUp className="w-3 h-3" />
         口径：全 A 非 ST/退市池，月末调仓 Top-N 等权（持仓数可切换），双边成本 0.2%（按换手计），前复权价 · 与 factor-lib-demo 一致
       </div>

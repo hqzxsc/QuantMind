@@ -1,7 +1,12 @@
-"""因子研究 —— 快照（artifact）读取层。
+"""因子研究 —— 快照（artifact）读取层（支持多数据集）。
 
-产物由 ``backend/scripts/build_factor_research.py`` 写入
-``<quantdb>/factor_research/``；本层只读 + 短 TTL 缓存，不触发计算。
+数据集：
+- ``classic``（默认）：demo 复刻 82 因子，产物由 ``build_factor_research.py`` 写
+  ``<quantdb>/factor_research/``（长表打分 + 经典目录 catalog.py）；
+- ``private``：筛选最终保留 327 因子，产物由 ``build_factor_panel_private.py`` 写
+  ``<quantdb>/factor_research_private/``（宽表打分 + factors.json 目录）。
+
+本层只读 + 短 TTL 缓存，不触发计算。
 """
 
 from __future__ import annotations
@@ -18,6 +23,9 @@ TTL_SECONDS = 600  # 快照读取缓存（构建脚本重跑后 10 分钟内自�
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
 
+# 数据集 → 产物目录名
+DATASET_DIRS = {"classic": "factor_research", "private": "factor_research_private"}
+
 
 def _sanitize(o):
     """NaN/Inf → None（快照 JSON 由 pandas 写出，可能含非有限值；FastAPI 序列化会 500）。"""
@@ -30,92 +38,134 @@ def _sanitize(o):
     return o
 
 
-def artifact_dir() -> Path:
+def artifact_dir(dataset: str = "classic") -> Path:
     from backend.shared.quantdb_paths import resolve_quantdb_dir
 
-    return resolve_quantdb_dir() / "factor_research"
+    return resolve_quantdb_dir() / DATASET_DIRS.get(dataset, dataset)
 
 
-def _load(name: str, loader, key_suffix: str = ""):
-    path = artifact_dir() / name
-    key = str(path) + key_suffix  # 带过滤参数（同文件不同 filters 不能互相命中缓存）
+def _cached_obj(key: str, loader):
+    """按 key 的 TTL 缓存读取（key 需含文件路径与过滤参数）。"""
     now = time.time()
     with _lock:
         hit = _cache.get(key)
         if hit and now - hit[0] < TTL_SECONDS:
             return hit[1]
-    obj = loader(path)
+    obj = loader()
     with _lock:
         _cache[key] = (now, obj)
     return obj
 
 
-def load_json(name: str):
-    def _rd(p: Path):
+def load_json(name: str, dataset: str = "classic"):
+    p = artifact_dir(dataset) / name
+
+    def _rd():
         if not p.exists():
             return None
         return _sanitize(json.loads(p.read_text(encoding="utf-8")))
 
-    return _load(name, _rd)
+    return _cached_obj(f"json:{p}", _rd)
 
 
-def load_parquet(name: str, **kwargs) -> pd.DataFrame | None:
-    def _rd(p: Path):
+def load_parquet(name: str, dataset: str = "classic", **kwargs) -> pd.DataFrame | None:
+    p = artifact_dir(dataset) / name
+
+    def _rd():
         if not p.exists():
             return None
         return pd.read_parquet(p, **kwargs)
 
-    return _load(name, _rd, repr(sorted(kwargs.items(), key=str)))
+    return _cached_obj(f"pq:{p}:{repr(sorted(kwargs.items(), key=str))}", _rd)
 
 
-def metrics() -> dict:
-    return load_json("metrics.json") or {"leaderboard": [], "metrics": {}, "meta": {}}
+def metrics(dataset: str = "classic") -> dict:
+    return load_json("metrics.json", dataset) or {
+        "leaderboard": [],
+        "metrics": {},
+        "meta": {},
+    }
+
+
+def factors_meta(dataset: str = "private") -> dict | None:
+    """私人因子库目录（factors.json：factors/l1_order/l2_order/meta）。"""
+    return load_json("factors.json", dataset)
 
 
 def holdings() -> dict:
     return load_json("holdings_latest.json") or {"date": None, "holdings": {}}
 
 
-def ic_table() -> pd.DataFrame | None:
-    return load_parquet("ic.parquet")
-
-
-def nav_table() -> pd.DataFrame | None:
-    return load_parquet("nav.parquet")
+def ic_table(dataset: str = "classic") -> pd.DataFrame | None:
+    return load_parquet("ic.parquet", dataset)
 
 
 def corr_table() -> pd.DataFrame | None:
     return load_parquet("corr.parquet")
 
 
-def benchmark_table() -> pd.DataFrame | None:
+def benchmark_table(dataset: str = "classic") -> pd.DataFrame | None:
     """基准净值长表（trade_date, nav, index_code：沪深300/中证800/中证500）。"""
-    return load_parquet("benchmarks.parquet")
+    return load_parquet("benchmarks.parquet", dataset)
 
 
-def panel():
-    """月末名次面板（scorecard.Panel；构建自 factor_panel.parquet，进程内缓存）。"""
+def panel(dataset: str = "classic"):
+    """月末名次面板（scorecard.Panel；进程内缓存）。"""
     from backend.services.engine.factor_research import scorecard
 
-    return _load(
-        "factor_panel.parquet", lambda p: scorecard.Panel(pd.read_parquet(p))
-    )
+    p = artifact_dir(dataset) / "factor_panel.parquet"
+
+    def _rd():
+        if not p.exists():
+            return None
+        return scorecard.Panel(pd.read_parquet(p))
+
+    return _cached_obj(f"obj:{p}", _rd)
 
 
 def stock_snapshot() -> pd.DataFrame | None:
-    """最新截面个股元数据（名称/申万行业/市值/PE/PB/近一年日均成交额）。"""
-    return load_parquet("stock_snapshot.parquet")
+    """最新截面个股元数据（名称/申万行业/市值/PE/PB/近一年日均成交额）。
+
+    数据集无关（股票池元数据同一份；优先经典目录，私人库回退经典）。
+    """
+    df = load_parquet("stock_snapshot.parquet", "classic")
+    if df is None:
+        df = load_parquet("stock_snapshot.parquet", "private")
+    return df
 
 
-def scores_for(codes: list[str]) -> pd.DataFrame | None:
-    """按因子过滤读取月末打分（parquet 行组过滤，避免全量加载）。"""
-    return load_parquet(
-        "monthly_scores.parquet", filters=[("factor_code", "in", list(codes))]
-    )
+def scores_for(codes: list[str], dataset: str = "classic") -> pd.DataFrame | None:
+    """按因子读取月末打分（长表：trade_date/symbol/factor_code/score）。
+
+    classic：长表 parquet 行组过滤；private：宽表按列裁剪 + melt（不缓存，避免大对象驻留）。
+    """
+    codes = list(codes)
+    if dataset != "private":
+        return load_parquet(
+            "monthly_scores.parquet",
+            dataset,
+            filters=[("factor_code", "in", codes)],
+        )
+    p = artifact_dir("private") / "monthly_scores.parquet"
+    if not p.exists():
+        return None
+    import pyarrow.parquet as pq
+
+    names = set(pq.ParquetFile(p).schema.names)
+    cols = [c for c in codes if c in names]
+    if not cols:
+        return pd.DataFrame()
+    df = pd.read_parquet(p, columns=["trade_date", "symbol", *cols])
+    return df.melt(
+        id_vars=["trade_date", "symbol"],
+        value_vars=cols,
+        var_name="factor_code",
+        value_name="score",
+    ).dropna(subset=["score"])
 
 
-def fwd_returns() -> pd.DataFrame | None:
-    return load_parquet("fwd_returns.parquet")
+def fwd_returns(dataset: str = "classic") -> pd.DataFrame | None:
+    return load_parquet("fwd_returns.parquet", dataset)
 
 
 def screening() -> dict:

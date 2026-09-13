@@ -67,7 +67,24 @@ def _instrument_names() -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 # 目录
 # ---------------------------------------------------------------------------
-def catalog() -> dict:
+def catalog(dataset: str = "classic") -> dict:
+    if dataset == "private":
+        f = store.factors_meta()
+        if f is None:
+            raise FileNotFoundError(
+                "私人因子库快照缺失（请先一键计算，产物 factor_research_private/factors.json）"
+            )
+        items = [{**e, "env_tag": "", "time_tag": ""} for e in f.get("factors", [])]
+        return {
+            "factors": items,
+            "l1_order": f.get("l1_order", []),
+            "l2_order": f.get("l2_order", {}),
+            "benchmarks": [
+                {"symbol": c, "name": scorecard.BENCH_NAMES[c]}
+                for c in scorecard.BENCH_ORDER
+            ],
+            "meta": f.get("meta", {}),
+        }
     m = store.metrics()
     meta = m.get("meta", {})
     computed = set(m.get("metrics", {}).keys())
@@ -109,17 +126,17 @@ def catalog() -> dict:
 # ---------------------------------------------------------------------------
 # 区间公共上下文（排行/单因子/对比共用；带 TTL 缓存）
 # ---------------------------------------------------------------------------
-def _range_ctx(start: str | None, end: str | None) -> dict:
-    key = ("range", start or "", end or "")
+def _range_ctx(start: str | None, end: str | None, dataset: str = "classic") -> dict:
+    key = ("range", start or "", end or "", dataset)
 
     def build() -> dict:
-        p = store.panel()
+        p = store.panel(dataset)
         if p is None:
             raise FileNotFoundError(
-                "factor_panel.parquet 缺失（请先跑 build_factor_research.py）"
+                f"factor_panel.parquet 缺失（数据集 {dataset}；请先跑构建或点「快照-一键计算」）"
             )
-        bench = store.benchmark_table()
-        ic = store.ic_table()
+        bench = store.benchmark_table(dataset)
+        ic = store.ic_table(dataset)
         mask = scorecard.month_mask(p.dates, start, end)
         benches = (
             scorecard.bench_series(bench, mask, p.dates) if bench is not None else {}
@@ -196,12 +213,24 @@ def _holdings_profile(
     return med, style, top_ind
 
 
+def _meta_map(dataset: str) -> dict[str, dict]:
+    """code → 元数据（经典：catalog.py；私人：factors.json）。"""
+    if dataset == "private":
+        f = store.factors_meta() or {}
+        return {e["code"]: e for e in f.get("factors", [])}
+    return BY_CODE
+
+
 def leaderboard(
-    start: str | None = None, end: str | None = None, n: int = 30
+    start: str | None = None,
+    end: str | None = None,
+    n: int = 30,
+    dataset: str = "classic",
 ) -> dict:
     """排行榜。n=业绩 KPI 的持仓数（默认 30；标签恒按 top-30 基准自动判定）。"""
-    ctx = _range_ctx(start, end)
+    ctx = _range_ctx(start, end, dataset)
     p, ic = ctx["panel"], ctx["ic"]
+    fmeta = _meta_map(dataset)
     rdates = ctx["rdates"]
     n = max(1, min(int(n or 30), scorecard.MAX_SCAN_N))
     series = (
@@ -213,7 +242,7 @@ def leaderboard(
     snap_idx = snap.set_index("symbol") if snap is not None else None
     rows = []
     for code in p.codes:
-        meta = BY_CODE.get(code, {})
+        meta = fmeta.get(code, {})
         s = series[code]
         kpi = dict(s["kpi"])
         if ic is not None:
@@ -243,10 +272,11 @@ def leaderboard(
     )
     df["rank"] = np.arange(1, len(df) + 1)
     out = store._sanitize(df.to_dict("records"))
-    m = store.metrics().get("meta", {})
+    m = store.factors_meta() if dataset == "private" else store.metrics()
+    meta_out = (m or {}).get("meta", {})
     return {
         "leaderboard": out,
-        "meta": {**m, "range": _range_meta(ctx), "top_n": n},
+        "meta": {**meta_out, "range": _range_meta(ctx), "top_n": n, "dataset": dataset},
     }
 
 
@@ -259,11 +289,12 @@ def factor_detail(
     start: str | None = None,
     end: str | None = None,
     stocks_n: int = 30,
+    dataset: str = "classic",
 ) -> dict | None:
-    meta = BY_CODE.get(code)
+    meta = _meta_map(dataset).get(code)
     if meta is None:
         return None
-    ctx = _range_ctx(start, end)
+    ctx = _range_ctx(start, end, dataset)
     p, ic = ctx["panel"], ctx["ic"]
     if code not in p.ci:
         return None
@@ -366,6 +397,7 @@ def factor_detail(
     out = {
         "code": code,
         "name_cn": meta["name_cn"],
+        "display_name": meta.get("display_name", ""),
         "l1": meta["l1"],
         "l2": meta["l2"],
         "direction": meta["direction"],
@@ -396,9 +428,11 @@ def compare(
     items: list[dict] | list[str],
     start: str | None = None,
     end: str | None = None,
+    dataset: str = "classic",
 ) -> dict:
-    ctx = _range_ctx(start, end)
+    ctx = _range_ctx(start, end, dataset)
     p = ctx["panel"]
+    fmeta = _meta_map(dataset)
     norm: list[dict] = []
     for it in items[:12]:
         if isinstance(it, str):
@@ -408,7 +442,7 @@ def compare(
     out = []
     for it in norm:
         code, n = it["code"], max(1, min(int(it["n"]), scorecard.MAX_SCAN_N))
-        meta = BY_CODE.get(code)
+        meta = fmeta.get(code)
         if meta is None or code not in p.ci:
             continue
         s = scorecard.topn_series(p, p.index(code), n, ctx["mask"])
@@ -438,7 +472,9 @@ def compare(
             }
         )
 
-    corr = store.corr_table()
+    corr = (
+        store.corr_table() if dataset != "private" else None
+    )  # 私人库暂不构建全量相关矩阵
     corr_sub = None
     codes = [x["code"] for x in out]
     if corr is not None and not corr.empty and codes:
@@ -499,9 +535,8 @@ _BUILD_LOG = "build.log"
 _BUILD_PID = "build.pid"
 
 
-def _build_running() -> int | None:
+def _build_running(d: Path) -> int | None:
     """返回正在运行的构建进程 PID（无则 None）。带 cmdline 校验防 PID 复用。"""
-    d = store.artifact_dir()
     pf = d / _BUILD_PID
     if not pf.exists():
         return None
@@ -512,16 +547,16 @@ def _build_running() -> int | None:
         return None
     try:  # PID 复用防护：必须是 build_factor_research 的进程
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="ignore")
-        if "build_factor_research" not in cmdline:
+        if "build_factor" not in cmdline:
             return None
     except OSError:
         pass
     return pid
 
 
-def snapshot_status() -> dict:
+def snapshot_status(dataset: str = "classic") -> dict:
     """快照状态：是否已生成 / 构建中 / 日志进度。供前端「一键计算」入口。"""
-    d = store.artifact_dir()
+    d = store.artifact_dir(dataset)
     meta: dict = {}
     mf = d / "metrics.json"  # 构建元信息内嵌在 metrics.json 的 meta 字段
     if mf.exists():
@@ -529,7 +564,7 @@ def snapshot_status() -> dict:
             meta = json.loads(mf.read_text(encoding="utf-8")).get("meta", {})
         except Exception:  # noqa: BLE001 - 元信息损坏不阻塞状态查询
             meta = {}
-    pid = _build_running()
+    pid = _build_running(d)
     log_tail: list[str] = []
     step = ""
     lf = d / _BUILD_LOG
@@ -548,25 +583,41 @@ def snapshot_status() -> dict:
         "running": pid is not None,
         "built_at": meta.get("built_at"),
         "window": meta.get("window"),
-        "n_factors": meta.get("n_factors_computed"),
+        "n_factors": meta.get("n_factors") or meta.get("n_factors_computed"),
         "n_dates": meta.get("n_dates"),
         "step": step,
         "log_tail": log_tail,
+        "dataset": dataset,
     }
 
 
-def start_build() -> dict:
+_BUILD_SCRIPTS = {
+    "classic": "build_factor_research.py",
+    "private": "build_factor_panel_private.py",
+}
+
+
+def start_build(dataset: str = "classic") -> dict:
     """启动快照构建（后台子进程；已在构建则直接返回运行中）。全部本地计算。"""
-    if (pid := _build_running()) is not None:
+    d = store.artifact_dir(dataset)
+    if (pid := _build_running(d)) is not None:
         return {"started": False, "running": True, "pid": pid}
-    d = store.artifact_dir()
     d.mkdir(parents=True, exist_ok=True)
-    root = Path(__file__).resolve().parents[4]  # backend/services/engine/factor_research → 仓库根
-    script = root / "backend" / "scripts" / "build_factor_research.py"
+    root = (
+        Path(__file__).resolve().parents[4]
+    )  # backend/services/engine/factor_research → 仓库根
+    script = (
+        root
+        / "backend"
+        / "scripts"
+        / _BUILD_SCRIPTS.get(dataset, "build_factor_research.py")
+    )
     if not script.exists():
         return {"error": f"构建脚本缺失: {script}"}
     log = open(d / _BUILD_LOG, "a", encoding="utf-8")  # noqa: SIM115 - 交给子进程持有
-    log.write(f"\n===== build started {pd.Timestamp.now().isoformat(timespec='seconds')} =====\n")
+    log.write(
+        f"\n===== build started {pd.Timestamp.now().isoformat(timespec='seconds')} =====\n"
+    )
     proc = subprocess.Popen(  # noqa: S603 - 固定脚本路径，无用户输入
         [sys.executable, str(script)],
         cwd=str(root),
@@ -575,7 +626,7 @@ def start_build() -> dict:
         start_new_session=True,
     )
     (d / _BUILD_PID).write_text(str(proc.pid), encoding="utf-8")
-    return {"started": True, "running": True, "pid": proc.pid}
+    return {"started": True, "running": True, "pid": proc.pid, "dataset": dataset}
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +651,7 @@ def compose(
     cost_rate: float | None = None,
     start: str | None = None,
     end: str | None = None,
+    dataset: str = "classic",
 ) -> dict:
     """自定义权重合成 +（可选）阈值过滤 → 实时回测。
 
@@ -607,15 +659,14 @@ def compose(
     threshold: 合成打分的过滤下限（全局，z 刻度；None=不过滤）
     thresholds: 每因子过滤下限 {code: z}（选股前先按各因子阈值筛股）
     """
-    weights = {
-        c: float(w) for c, w in (weights or {}).items() if c in BY_CODE and w != 0
-    }
+    fmeta = _meta_map(dataset)
+    weights = {c: float(w) for c, w in (weights or {}).items() if c in fmeta and w != 0}
     if not weights:
         return {"error": "weights 为空"}
     codes = list(weights)
-    scores = store.scores_for(codes)
+    scores = store.scores_for(codes, dataset)
     if scores is None or scores.empty:
-        return {"error": "快照缺失（请先运行 build_factor_research.py）"}
+        return {"error": "快照缺失（请在「快照」中一键计算）"}
     scores = _scores_in_range(scores, start, end)
     if scores.empty:
         return {"error": "所选区间内没有月末截面数据"}
@@ -648,7 +699,7 @@ def compose(
     wide.index = pd.to_datetime(wide.index)
     wide = wide.sort_index()
 
-    fwd = store.fwd_returns()
+    fwd = store.fwd_returns(dataset)
     fwd_wide = fwd.pivot(index="trade_date", columns="symbol", values="fwd_ret")
     fwd_wide.index = pd.to_datetime(fwd_wide.index)
     common = wide.index.intersection(fwd_wide.index)
@@ -663,7 +714,7 @@ def compose(
         cost_rate=cost_rate or analysis.COST_RATE,
     )
     k = analysis.kpi(bt["ret"], bt["nav"])
-    ctx = _range_ctx(start, end)
+    ctx = _range_ctx(start, end, dataset)
     k_ex = scorecard.excess_vs(ctx["benches"], k)
 
     names = _instrument_names()
@@ -743,6 +794,7 @@ def optimal_weights(
     top_n: int = 30,
     start: str | None = None,
     end: str | None = None,
+    dataset: str = "classic",
 ) -> dict:
     """在所选因子上网格搜索（非负、和为 1），夏普/年化/超额各给一组最优权重。
 
@@ -750,7 +802,7 @@ def optimal_weights(
     展示口径以 compose 全样本精确回测为准。
     """
     t0 = time.time()
-    ctx = _range_ctx(start, end)
+    ctx = _range_ctx(start, end, dataset)
     p = ctx["panel"]
     codes = [c for c in codes if c in p.ci][:10]
     if len(codes) < 1:

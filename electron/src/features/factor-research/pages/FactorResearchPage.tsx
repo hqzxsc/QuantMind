@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowRightLeft, BarChart3, Database, Filter, Layers, Sigma, TableProperties } from 'lucide-react';
 import { PAGE_LAYOUT } from '../../../config/pageLayout';
 import { ApiError, getCatalog, getLeaderboard } from '../services/factorResearchService';
-import type { RangeParams } from '../services/factorResearchService';
+import type { FactorDataset, RangeParams } from '../services/factorResearchService';
 import type { FactorMeta, LeaderboardRow } from '../types/factorResearch';
 import { RangePicker } from '../components/common';
 import type { RangeValue } from '../components/common';
@@ -49,6 +49,7 @@ const FactorResearchPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [showSnapshot, setShowSnapshot] = useState(false);
+  const [dataset, setDataset] = useState<FactorDataset>('classic');
   const [reloadKey, setReloadKey] = useState(0);
 
   const rangeParams: RangeParams = useMemo(
@@ -59,7 +60,7 @@ const FactorResearchPage: React.FC = () => {
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    getCatalog()
+    getCatalog(dataset)
       .then((cat) => {
         if (!alive) return;
         setFactors(cat.factors);
@@ -76,12 +77,19 @@ const FactorResearchPage: React.FC = () => {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [dataset]);
+
+  // 切换数据集：清空选择态，避免跨库代码混选
+  useEffect(() => {
+    setSelected([]);
+    setActiveCode(null);
+    setTagFilter([]);
+  }, [dataset]);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    getLeaderboard(rangeParams, lbN)
+    getLeaderboard(rangeParams, lbN, dataset)
       .then((lb) => {
         if (!alive) return;
         setRows(lb.leaderboard);
@@ -101,7 +109,7 @@ const FactorResearchPage: React.FC = () => {
     return () => {
       alive = false;
     };
-  }, [rangeParams, lbN, reloadKey]);
+  }, [rangeParams, lbN, dataset, reloadKey]);
 
   useEffect(() => {
     if (!activeCode && rows.length) setActiveCode(rows[0].code);
@@ -183,8 +191,24 @@ const FactorResearchPage: React.FC = () => {
 
           {/* 主区 */}
           <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-2">
-            {/* 区间工具条 */}
-            <div className="flex items-center gap-2 flex-wrap rounded-xl border border-slate-200/80 bg-white px-3 py-1.5">
+            {/* 数据集 + 区间工具条 */}
+            <div className="shrink-0 flex items-center gap-2 flex-wrap rounded-xl border border-slate-200/80 bg-white px-3 py-1.5">
+              <div className="flex items-center gap-0.5 rounded-full bg-slate-100 border border-slate-200 p-0.5">
+                {([
+                  { key: 'classic', label: '经典因子' },
+                  { key: 'private', label: '私人因子库' },
+                ] as Array<{ key: FactorDataset; label: string }>).map((d) => (
+                  <button
+                    key={d.key}
+                    onClick={() => setDataset(d.key)}
+                    className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold transition-colors ${
+                      dataset === d.key ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
               <RangePicker windowStr={window_} value={range} onChange={setRange} />
               <div className="flex-1" />
               {tagFilter.length > 0 && (
@@ -215,6 +239,7 @@ const FactorResearchPage: React.FC = () => {
 
             {showSnapshot ? (
               <SnapshotPanel
+                dataset={dataset}
                 onReady={() => {
                   setShowSnapshot(false);
                   setReloadKey(reloadKey + 1);
@@ -253,13 +278,13 @@ const FactorResearchPage: React.FC = () => {
                 meta={meta}
               />
             ) : tab === 'single' ? (
-              <SingleFactorTab code={activeCode} range={rangeParams} />
+              <SingleFactorTab code={activeCode} range={rangeParams} dataset={dataset} />
             ) : tab === 'compare' ? (
-              <CompareTab codes={selected} onRemove={toggleSelected} nameOf={nameOf} range={rangeParams} />
+              <CompareTab codes={selected} onRemove={toggleSelected} nameOf={nameOf} range={rangeParams} dataset={dataset} />
             ) : tab === 'screening' ? (
               <ScreeningTab />
             ) : (
-              <ComposeTab factors={factors} codes={selected} onChangeCodes={setSelected} range={rangeParams} />
+              <ComposeTab factors={factors} codes={selected} onChangeCodes={setSelected} range={rangeParams} dataset={dataset} />
             )}
           </div>
         </div>

@@ -3,6 +3,8 @@
 export interface FactorMeta {
   code: string;
   name_cn: string;
+  /** 完整名称（私人因子库的英文全名；经典因子为空） */
+  display_name?: string;
   l1: string;
   l2: string;
   /** 1=正（越大越好），-1=负 */
@@ -128,6 +130,7 @@ export interface DistRow {
 export interface FactorDetail {
   code: string;
   name_cn: string;
+  display_name?: string;
   l1: string;
   l2: string;
   direction: number;
@@ -186,6 +189,7 @@ export interface ComposeRequest {
   thresholds?: Record<string, number> | null;
   start?: string | null;
   end?: string | null;
+  dataset?: 'classic' | 'private';
 }
 
 export interface ComposeHolding {

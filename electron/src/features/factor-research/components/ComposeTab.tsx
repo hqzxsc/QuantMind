@@ -5,7 +5,7 @@
 import React, { useMemo, useState } from 'react';
 import { Play, Trash2, Wand2 } from 'lucide-react';
 import { postCompose, postOptimalWeights } from '../services/factorResearchService';
-import type { RangeParams } from '../services/factorResearchService';
+import type { FactorDataset, RangeParams } from '../services/factorResearchService';
 import type { ComposeResponse, FactorMeta, OptimalResponse, OptimalWinner } from '../types/factorResearch';
 import { Card, FACTOR_COLORS, fmtNum, fmtPct, KpiTiles, NavChart } from './common';
 import { EChartsChart } from '../../../components/common/EChartsChart';
@@ -15,9 +15,10 @@ interface Props {
   codes: string[];
   onChangeCodes: (codes: string[]) => void;
   range: RangeParams;
+  dataset: FactorDataset;
 }
 
-export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, range }) => {
+export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, range, dataset }) => {
   const [weights, setWeights] = useState<Record<string, number>>({});
   const [thresholds, setThresholds] = useState<Record<string, string>>({});
   const [topN, setTopN] = useState(30);
@@ -57,7 +58,7 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, ran
     }
     return { weights: w, top_n: topN, thresholds: Object.keys(th).length ? th : null,
              threshold: threshold === '' ? null : Number(threshold),
-             start: range.start ?? null, end: range.end ?? null };
+             start: range.start ?? null, end: range.end ?? null, dataset };
   };
 
   const run = async () => {
@@ -85,7 +86,7 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, ran
     setOptimizing(true);
     setError(null);
     try {
-      setOptimal(await postOptimalWeights(codes, topN, range));
+      setOptimal(await postOptimalWeights(codes, topN, range, dataset));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -217,7 +218,7 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, ran
       {/* 右：结果 */}
       <div className="flex-1 min-w-0 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-0.5">
         {optimal && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+          <div className="shrink-0 grid grid-cols-1 lg:grid-cols-3 gap-2">
             {(['sharpe', 'annual_return', 'excess_300'] as const).map((key) => {
               const w = optimal.objectives[key];
               if (!w) return null;
@@ -251,7 +252,7 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, ran
           </div>
         )}
         {optimal && (
-          <div className="text-[10px] text-slate-400">
+          <div className="shrink-0 text-[10px] text-slate-400">
             网格搜索 {optimal.n_combos} 组权重 · {optimal.n_months} 个月 · 用时 {optimal.elapsed_ms}ms ·
             搜索在候选池（各因子月末前 150 名的并集）上评估，应用后以全样本精确回测为准
           </div>
@@ -259,8 +260,8 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, ran
 
         {result ? (
           <>
-            <KpiTiles kpi={{ ...result.kpi, ...result.excess }} />
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+            <div className="shrink-0"><KpiTiles kpi={{ ...result.kpi, ...result.excess }} /></div>
+            <div className="shrink-0 grid grid-cols-1 xl:grid-cols-2 gap-2">
               <Card
                 title="合成组合净值"
                 extra={<span className="text-[10px] text-slate-400">区间 {result.range.start} ~ {result.range.end} · 双边成本 0.2%</span>}
@@ -282,6 +283,7 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, ran
               </Card>
             </div>
             <Card
+              className="shrink-0"
               title={`最新持仓（${result.holdings_date || '—'} · Top ${result.holdings.length}）`}
               extra={<span className="text-[10px] text-slate-400">合成打分降序 · 阈值 {result.threshold ?? '无'}</span>}
             >

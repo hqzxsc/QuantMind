@@ -54,27 +54,22 @@ export interface RangeParams {
   end?: string | null;
 }
 
-function rangeQuery(range?: RangeParams): string {
-  const qs = new URLSearchParams();
-  if (range?.start) qs.set('start', range.start);
-  if (range?.end) qs.set('end', range.end);
-  const s = qs.toString();
-  return s ? `?${s}` : '';
-}
+/** 数据集：classic=demo 复刻 82 因子；private=筛选保留 327 私人因子库 */
+export type FactorDataset = 'classic' | 'private';
 
-/** 因子目录（82 个 + 分类顺序 + 基准 + 快照元信息） */
-export function getCatalog(): Promise<CatalogResponse> {
-  return requestJson<CatalogResponse>('/catalog');
+/** 因子目录（分类顺序 + 基准 + 快照元信息） */
+export function getCatalog(dataset: FactorDataset = 'classic'): Promise<CatalogResponse> {
+  return requestJson<CatalogResponse>(`/catalog?dataset=${dataset}`);
 }
 
 /** 排行榜（区间内重算 KPI/超额/IC + 持仓画像 + 标签 + 综合分；n=持仓数） */
-export function getLeaderboard(range?: RangeParams, n = 30): Promise<LeaderboardResponse> {
+export function getLeaderboard(range?: RangeParams, n = 30, dataset: FactorDataset = 'classic'): Promise<LeaderboardResponse> {
   const qs = new URLSearchParams();
   if (range?.start) qs.set('start', range.start);
   if (range?.end) qs.set('end', range.end);
   if (n && n !== 30) qs.set('n', String(n));
-  const s = qs.toString();
-  return requestJson<LeaderboardResponse>(`/leaderboard${s ? `?${s}` : ''}`, {}, 120000);
+  qs.set('dataset', dataset);
+  return requestJson<LeaderboardResponse>(`/leaderboard?${qs.toString()}`, {}, 120000);
 }
 
 /** 单因子详情（ns=持仓数档位列表，如 [5,10,30]） */
@@ -83,18 +78,20 @@ export function getFactorDetail(
   ns: number[],
   range?: RangeParams,
   stocksN = 30,
+  dataset: FactorDataset = 'classic',
 ): Promise<FactorDetail> {
   const qs = new URLSearchParams();
   qs.set('ns', ns.join(','));
   qs.set('stocks_n', String(stocksN));
+  qs.set('dataset', dataset);
   if (range?.start) qs.set('start', range.start);
   if (range?.end) qs.set('end', range.end);
   return requestJson<FactorDetail>(`/factor/${encodeURIComponent(code)}?${qs.toString()}`, {}, 90000);
 }
 
 /** 多因子对比（每因子可单独设持仓数） */
-export function postCompare(items: CompareItemReq[], range?: RangeParams): Promise<CompareResponse> {
-  const body: Record<string, unknown> = { items };
+export function postCompare(items: CompareItemReq[], range?: RangeParams, dataset: FactorDataset = 'classic'): Promise<CompareResponse> {
+  const body: Record<string, unknown> = { items, dataset };
   if (range?.start) body.start = range.start;
   if (range?.end) body.end = range.end;
   return requestJson<CompareResponse>('/compare', { method: 'POST', body: JSON.stringify(body) }, 120000);
@@ -110,8 +107,9 @@ export function postOptimalWeights(
   codes: string[],
   topN: number,
   range?: RangeParams,
+  dataset: FactorDataset = 'classic',
 ): Promise<OptimalResponse> {
-  const body: Record<string, unknown> = { codes, top_n: topN };
+  const body: Record<string, unknown> = { codes, top_n: topN, dataset };
   if (range?.start) body.start = range.start;
   if (range?.end) body.end = range.end;
   return requestJson<OptimalResponse>('/optimal-weights', { method: 'POST', body: JSON.stringify(body) }, 180000);
@@ -136,10 +134,10 @@ export interface SnapshotStatus {
   log_tail: string[];
 }
 
-export function getSnapshotStatus(): Promise<SnapshotStatus> {
-  return requestJson<SnapshotStatus>('/snapshot-status');
+export function getSnapshotStatus(dataset: FactorDataset = 'classic'): Promise<SnapshotStatus> {
+  return requestJson<SnapshotStatus>(`/snapshot-status?dataset=${dataset}`);
 }
 
-export function postBuildSnapshot(): Promise<{ started: boolean; running: boolean; pid?: number }> {
-  return requestJson('/build', { method: 'POST' }, 30000);
+export function postBuildSnapshot(dataset: FactorDataset = 'classic'): Promise<{ started: boolean; running: boolean; pid?: number }> {
+  return requestJson(`/build?dataset=${dataset}`, { method: 'POST' }, 30000);
 }

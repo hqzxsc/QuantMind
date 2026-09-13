@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { EChartsChart } from '../../../components/common/EChartsChart';
 import { postCompare } from '../services/factorResearchService';
-import type { RangeParams } from '../services/factorResearchService';
+import type { FactorDataset, RangeParams } from '../services/factorResearchService';
 import type { CompareResponse } from '../types/factorResearch';
 import { Card, FACTOR_COLORS, fmtNum, fmtPct, IcChart, NavChart } from './common';
 
@@ -14,9 +14,10 @@ interface Props {
   onRemove: (code: string) => void;
   nameOf: (code: string) => string;
   range: RangeParams;
+  dataset: FactorDataset;
 }
 
-export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf, range }) => {
+export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf, range, dataset }) => {
   const [data, setData] = useState<CompareResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,12 +37,12 @@ export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf, range }) 
     let alive = true;
     setLoading(true);
     setError(null);
-    postCompare(items, range)
+    postCompare(items, range, dataset)
       .then((d) => { if (alive) setData(d); })
       .catch((e: unknown) => { if (alive) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [JSON.stringify(items), range.start, range.end]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(items), range.start, range.end, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const corrMatrix = useMemo(() => {
     if (!data?.corr || !data.factors.length) return null;
@@ -87,7 +88,7 @@ export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf, range }) 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-0.5">
       {/* 已选因子 + 持仓数 */}
-      <div className="flex items-center gap-2 flex-wrap rounded-xl border border-slate-200/80 bg-white px-3 py-1.5">
+      <div className="shrink-0 flex items-center gap-2 flex-wrap rounded-xl border border-slate-200/80 bg-white px-3 py-1.5">
         {codes.map((c, i) => (
           <span
             key={c}
@@ -133,6 +134,7 @@ export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf, range }) 
         <>
           {/* KPI 对照表 */}
           <Card
+            className="shrink-0"
             title="KPI 对照"
             extra={<span className="text-[10px] text-slate-400">区间 {data.range.start} ~ {data.range.end} · 各自持仓数见上</span>}
           >
@@ -175,7 +177,7 @@ export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf, range }) 
           </Card>
 
           {/* 净值叠加 + 相关热力图 */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+          <div className="shrink-0 grid grid-cols-1 xl:grid-cols-2 gap-2">
             <Card title="净值对比（区间内起点=1.0）" extra={<span className="text-[10px] text-slate-400">各因子按自身持仓数</span>}>
               <NavChart
                 series={[
@@ -203,7 +205,7 @@ export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf, range }) 
           </div>
 
           {/* IC 并排 */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+          <div className="shrink-0 grid grid-cols-1 xl:grid-cols-2 gap-2">
             {data.factors.map((f) => (
               <Card key={f.code} title={`${f.name_cn} · 月频 IC`} extra={<span className="text-[10px] text-slate-400">{f.code}</span>}>
                 <IcChart points={f.ic} height={140} />

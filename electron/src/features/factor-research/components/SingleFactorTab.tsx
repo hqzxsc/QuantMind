@@ -5,13 +5,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { getFactorDetail } from '../services/factorResearchService';
-import type { RangeParams } from '../services/factorResearchService';
+import type { FactorDataset, RangeParams } from '../services/factorResearchService';
 import type { FactorDetail, FactorKpi } from '../types/factorResearch';
 import { Card, DistBars, fmtNum, fmtPct, IcChart, NScanChart, NavChart, TagChip } from './common';
 
 interface Props {
   code: string | null;
   range: RangeParams;
+  dataset: FactorDataset;
 }
 
 const N_PRESETS = [5, 10, 30, 50];
@@ -43,7 +44,7 @@ function KpiRow({ label, kpi, color, excess300 }: {
   );
 }
 
-export const SingleFactorTab: React.FC<Props> = ({ code, range }) => {
+export const SingleFactorTab: React.FC<Props> = ({ code, range, dataset }) => {
   const [detail, setDetail] = useState<FactorDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,12 +62,12 @@ export const SingleFactorTab: React.FC<Props> = ({ code, range }) => {
     let alive = true;
     setLoading(true);
     setError(null);
-    getFactorDetail(code, nsList, range)
+    getFactorDetail(code, nsList, range, 30, dataset)
       .then((d) => { if (alive) setDetail(d); })
       .catch((e: unknown) => { if (alive) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [code, nsList.join(','), range.start, range.end]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [code, nsList.join(','), range.start, range.end, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const colors = useMemo(() => {
     const base = ['#2563eb', '#e11d48', '#059669', '#d97706', '#7c3aed', '#0891b2'];
@@ -100,11 +101,14 @@ export const SingleFactorTab: React.FC<Props> = ({ code, range }) => {
       ) : detail ? (
         <>
           {/* 定义 */}
-          <Card title="因子定义">
+          <Card title="因子定义" className="shrink-0">
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-base font-extrabold text-slate-800">{detail.name_cn}</span>
                 <span className="font-mono text-[11px] text-slate-400">{detail.code}</span>
+                {detail.display_name && detail.display_name !== detail.name_cn && (
+                  <span className="text-[10px] text-slate-400">{detail.display_name}</span>
+                )}
                 <span className="rounded-full bg-slate-100 border border-slate-200 px-2 py-[1px] text-[10px] font-bold text-slate-500">
                   {detail.l1} · {detail.l2}
                 </span>
@@ -132,7 +136,7 @@ export const SingleFactorTab: React.FC<Props> = ({ code, range }) => {
           </Card>
 
           {/* 持仓数选择 */}
-          <div className="flex items-center gap-2 flex-wrap rounded-xl border border-slate-200/80 bg-white px-3 py-1.5">
+          <div className="shrink-0 flex items-center gap-2 flex-wrap rounded-xl border border-slate-200/80 bg-white px-3 py-1.5">
             <span className="text-[10px] font-bold text-slate-400">持仓数</span>
             {N_PRESETS.map((n) => {
               const on = nsList.includes(n);
@@ -203,7 +207,7 @@ export const SingleFactorTab: React.FC<Props> = ({ code, range }) => {
           </div>
 
           {/* 净值 + KPI */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+          <div className="shrink-0 grid grid-cols-1 xl:grid-cols-2 gap-2">
             <Card
               title={`组合净值对比（区间 ${detail.range.start} ~ ${detail.range.end}，起点=1.0）`}
               extra={<span className="text-[10px] text-slate-400">月末等权 · 0.2% 双边成本</span>}
@@ -260,7 +264,7 @@ export const SingleFactorTab: React.FC<Props> = ({ code, range }) => {
           </div>
 
           {/* IC + N 扫描 */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+          <div className="shrink-0 grid grid-cols-1 xl:grid-cols-2 gap-2">
             <Card title="月频 RankIC（Spearman）" extra={<span className="text-[10px] text-slate-400">柱=当月 · 线=12期均值</span>}>
               <IcChart points={detail.ic} height={190} />
             </Card>
@@ -273,7 +277,7 @@ export const SingleFactorTab: React.FC<Props> = ({ code, range }) => {
           </div>
 
           {/* 个股表 + 分布 */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-2">
+          <div className="shrink-0 grid grid-cols-1 xl:grid-cols-3 gap-2">
             <Card
               title={`Top 30 股票（截面日 ${detail.stocks_date}，按得分降序）`}
               className="xl:col-span-2"
@@ -323,7 +327,7 @@ export const SingleFactorTab: React.FC<Props> = ({ code, range }) => {
               </Card>
             </div>
           </div>
-          <div className="text-[10px] text-slate-300 pb-1">
+          <div className="shrink-0 text-[10px] text-slate-300 pb-1">
             月末收盘调仓、Top-N 等权、剔除 ST/退市、双边成本 0.2%（按换手计）·「Top 30 股票」始终是最新截面 ·
             快照由 build_factor_research.py 构建
           </div>

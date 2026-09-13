@@ -394,8 +394,28 @@ def portfolio_construction(dataset: str, top_k: int = 30) -> tuple[list[str], di
     for w in (w_eq, w_ic, w_mv):
         w /= np.abs(w).sum()
 
+    # 组合 ICIR 必须用**逐日 IC 序列**合成来算（不能用相关矩阵：那是横截面秩相关、
+    # 单位与 IC 不同，混着算会得出「分散化让 ICIR 变差」的假结论）。
+    # 口径：composite_ic_t = Σ w_i · ic_i,t → ICIR = mean/std（与单因子 ICIR 同口径可比）
+    ic_series = None
+    sp = dataset_dir(dataset) / "report" / "factor_series.parquet"
+    if sp.exists():
+        try:
+            raw = pq.read_table(sp, columns=["factor", "date", "ic"]).to_pandas()
+            ic_series = raw.pivot_table(index="date", columns="factor", values="ic")
+        except Exception:  # noqa: BLE001
+            ic_series = None
+
     def stats(w: np.ndarray) -> tuple[float, float]:
         ic = float(w @ mu)
+        if ic_series is not None:
+            cols = [n for n in sel if n in ic_series.columns]
+            if len(cols) >= 3:
+                ww = np.array([w[sel.index(n)] for n in cols])
+                comp = ic_series[cols].to_numpy(dtype=float) @ ww
+                comp = comp[np.isfinite(comp)]
+                if comp.size > 20 and comp.std() > 0:
+                    return ic, float(comp.mean() / comp.std())
         vol = float(np.sqrt(max(w @ Sigma @ w, 1e-12)))
         return ic, ic / vol
 
@@ -410,10 +430,12 @@ def portfolio_construction(dataset: str, top_k: int = 30) -> tuple[list[str], di
     # 分散化收益：平均单因子 ICIR vs 组合 ICIR
     single_icir = float(np.mean([abs(float(metrics[n].get("icir") or 0)) for n in sel]))
     _, comb_icir = stats(w_mv)
+    ratio = comb_icir / max(single_icir, 1e-9)
+    verdict = "分散化提升" if ratio >= 1 else "组合 ICIR 低于单因子平均（相关性太高，分散化收益有限）"
     lines += [
         "",
-        f"单因子 |ICIR| 平均 {single_icir:.3f} → 最大 ICIR 组合 {comb_icir:.3f}"
-        f"（分散化提升 {comb_icir / max(single_icir, 1e-9):.2f}×）。",
+        f"组合内单因子 |ICIR| 平均 {single_icir:.3f} → 最大 ICIR 组合 {comb_icir:.3f}"
+        f"（{verdict} {ratio:.2f}×；组合 ICIR 由逐日 IC 序列合成，与单因子口径一致）。",
         f"入选 {len(sel)} 个因子（按 |IC|×|ICIR| 排序取前 {top_k}，已含方向符号）。",
     ]
 

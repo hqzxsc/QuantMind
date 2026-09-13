@@ -48,6 +48,16 @@ export const PublishModelModal: React.FC<PublishModelModalProps> = ({
     return 'classification';
   };
 
+  // 训练周期读取：metadata 存的是 target_horizon_days（数字），并非 target_horizon（字符串）。
+  // 此前读错字段导致恒回退 T+5，现按 target_horizon_days → horizon_days → label_formula 依次兜底。
+  const resolveTargetHorizon = (): string => {
+    const rawDays = meta?.target_horizon_days ?? meta?.horizon_days;
+    const n = Number(rawDays);
+    if (Number.isFinite(n) && n >= 1) return `T+${Math.trunc(n)}`;
+    const m = String(meta?.label_formula ?? '').match(/-(\d+)/);
+    return m ? `T+${parseInt(m[1], 10)}` : 'T+5';
+  };
+
   const handlePublish = async () => {
     try {
       const values = await form.validateFields();
@@ -71,7 +81,7 @@ export const PublishModelModal: React.FC<PublishModelModalProps> = ({
         description: values.description,
         market: meta?.market || 'CN',
         algorithm: meta?.algorithm || meta?.model_type || 'CatBoost',
-        target_horizon: (meta?.target_horizon || 'T+5').toString().trim() || 'T+5',
+        target_horizon: resolveTargetHorizon(),
         target_mode: normalizeTargetMode(meta?.target_mode as string),
         test_ic: testIC,
         rank_ic: rankIC,

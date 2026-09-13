@@ -62,7 +62,7 @@ class PublishLocalRequest(BaseModel):
     description: str = ""
     market: str = "CN"
     algorithm: str = "CatBoost"
-    target_horizon: str = "T+5"
+    target_horizon: str = ""
     target_mode: str = "classification"
     test_ic: float = 0.0
     rank_ic: float = 0.0
@@ -174,6 +174,81 @@ def _normalize_target_mode(raw: str) -> str:
     if "regress" in s:
         return "regression"
     return "classification"
+
+
+# extra_metrics.train_meta 精选字段：只带可公开展示、体积可控的元数据，
+# 排除 features/fill_values/shap/saved_models 等大字段（避免 ticket 体积膨胀）。
+_TRAIN_META_WINDOW_KEYS = (
+    "train_start",
+    "train_end",
+    "val_start",
+    "val_end",
+    "test_start",
+    "test_end",
+)
+_TRAIN_META_LABEL_KEYS = (
+    "label_formula",
+    "target_mode",
+    "target_horizon_days",
+    "effective_trade_date",
+    "training_window",
+    "execution_lag_days",
+    "prediction_mode",
+)
+_TRAIN_META_MODEL_KEYS = (
+    "model_type",
+    "framework",
+    "best_iteration",
+    "feature_count",
+    "data_source",
+    "version",
+    "pool_id",
+    "pool_symbol_count",
+    "factor_source",
+    "factor_catalog_version",
+)
+_TRAIN_META_CONTEXT_KEYS = (
+    "benchmark",
+    "initial_capital",
+    "commission_rate",
+    "slippage",
+    "deal_price",
+)
+_TRAIN_META_DIAG_KEYS = ("wfa", "drift", "preprocessing")
+
+
+def _select_train_meta(metadata: Any) -> dict[str, Any]:
+    """从本地模型 metadata 精选可上传广场的元数据（放 extra_metrics.train_meta）。"""
+    if not isinstance(metadata, dict):
+        return {}
+    meta: dict[str, Any] = {}
+    for key in _TRAIN_META_WINDOW_KEYS + _TRAIN_META_LABEL_KEYS + _TRAIN_META_MODEL_KEYS:
+        val = metadata.get(key)
+        if val not in (None, "", [], {}):
+            meta[key] = val
+
+    ctx = metadata.get("context")
+    if isinstance(ctx, dict):
+        ctx_keep = {
+            k: ctx.get(k)
+            for k in _TRAIN_META_CONTEXT_KEYS
+            if ctx.get(k) not in (None, "", [], {})
+        }
+        if ctx_keep:
+            meta["context"] = ctx_keep
+
+    # 分段指标（train/val/test 的 IC/ICIR 等）
+    seg = metadata.get("metrics")
+    if isinstance(seg, dict) and seg:
+        meta["metrics"] = seg
+
+    # WFA 诊断 / PSI 漂移 / 预处理开关
+    for key in _TRAIN_META_DIAG_KEYS:
+        val = metadata.get(key)
+        if val not in (None, "", [], {}):
+            meta[key] = val
+
+    return meta
 
 
 def _slugify_hub_name(raw: str, max_len: int = 32) -> str:
@@ -296,7 +371,13 @@ async def publish_local_model(
         raw_psi = metrics_json.get("psi")
         if isinstance(raw_psi, (int, float)):
             psi_val = float(raw_psi)
-    extra_metrics: Any = metrics_json if isinstance(metrics_json, dict) else {}
+    extra_metrics: Any = dict(metrics_json) if isinstance(metrics_json, dict) else {}
+    # 精选训练元数据合并进 extra_metrics.train_meta（不影响顶层指标键，广场原样存储）
+    _train_meta = _select_train_meta(metadata_json)
+    if _train_meta:
+        if not isinstance(extra_metrics, dict):
+            extra_metrics = {}
+        extra_metrics.setdefault("train_meta", _train_meta)
 
     # 回测指标回填：训练阶段的 metrics 往往只有 IC，夏普/年化/回撤/Calmar/净值曲线需取最新一次已完成回测
     # 若本模型无回测，则保留训练指标；若有则用回测覆盖（更贴近用户在“回测”页看到的收益）
@@ -406,8 +487,20 @@ async def publish_local_model(
 
     # 归一校验字段，避免被广场 400 拦掉
     normalized_mode = _normalize_target_mode(req.target_mode)
-    # 兜底：horizon 至少保留 T+N 形态
-    normalized_horizon = str(req.target_horizon or "T+5").strip() or "T+5"
+    # 训练周期：客户端未显式提供时，回退到模型自身 metadata 的 target_horizon_days，
+    # 避免旧客户端漏传导致广场一律显示默认值。
+    normalized_horizon = str(req.target_horizon or "").strip()
+    if not normalized_horizon:
+        _hd = (
+            metadata_json.get("target_horizon_days")
+            if isinstance(metadata_json, dict)
+            else None
+        )
+        try:
+            _hd_int = max(1, int(_hd))
+        except (TypeError, ValueError):
+            _hd_int = 5
+        normalized_horizon = f"T+{_hd_int}"
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -689,13 +782,17 @@ async def import_remote_model(
     )
     # 若包内无 metadata.json，用广场详情合成一份基础 metadata
     if not metadata:
+        _hub_h_digits = "".join(
+            c for c in str(hub_detail.get("target_horizon") or "") if c.isdigit()
+        )
+        _hub_h_days = int(_hub_h_digits) if _hub_h_digits else 5
         metadata = {
             "display_name": resolved_display,
             "model_name": resolved_display,
             "model_type": str(hub_detail.get("algorithm") or "unknown"),
             "framework": str(hub_detail.get("algorithm") or "unknown"),
             "market": market_str,
-            "target_horizon_days": 5,
+            "target_horizon_days": max(1, _hub_h_days),
             "target_mode": str(hub_detail.get("target_mode") or "unknown"),
         }
         # 特征清单：优先取广场 factors_summary

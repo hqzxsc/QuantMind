@@ -457,6 +457,15 @@ try:
 except ImportError as e:
     logger.error(f"❌ Failed to load Factor Report router: {e}")
 
+try:
+    # 因子研究（factor-lib-demo 改造版）：排行榜/单因子/对比/合成
+    from backend.services.engine.factor_research.router import router as factor_research_router
+
+    app.include_router(factor_research_router)
+    logger.info("✅ Factor Research router loaded")
+except ImportError as e:
+    logger.error(f"❌ Failed to load Factor Research router: {e}")
+
 
 @app.get("/health")
 async def health_check():

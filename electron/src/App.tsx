@@ -94,6 +94,7 @@ const AdminSystemSettings = lazy(() => import('./features/admin/components/Admin
 const ComingSoonPage = lazy(() => import('./features/admin/components/ComingSoonPage').then(m => ({ default: m.ComingSoonPage })));
 const AlphaResearchPage = lazy(() => import('./features/alpha-research/pages/AlphaResearchPage'));
 const SkillsCenterPage = lazy(() => import('./features/skills-center/pages/SkillsCenterPage'));
+const FactorResearchPage = lazy(() => import('./features/factor-research/pages/FactorResearchPage'));
 
 // 主题切换hook
 // 主题管理已移除 - 应用统一使用浅色主题
@@ -211,6 +212,7 @@ export default function App() {
       'trading': '/trading',
       'rss-news': '/rss-news',
       'alpha-research': '/alpha-research',
+      'factor-research': '/factor-research',
       skills: '/skills',
       'profile': '/user-center',
       'admin': '/admin',
@@ -261,6 +263,8 @@ export default function App() {
       dispatch(setCurrentTab('rss-news' as DashboardTab));
     } else if (location.pathname.startsWith('/alpha-research')) {
       dispatch(setCurrentTab('alpha-research' as DashboardTab));
+    } else if (location.pathname.startsWith('/factor-research')) {
+      dispatch(setCurrentTab('factor-research' as DashboardTab));
     } else if (location.pathname.startsWith('/strategy-lab')) {
       // 策略实验室已合并到 AI-IDE
       navigate('/ai-ide', { replace: true });
@@ -715,6 +719,16 @@ export default function App() {
                       <ProtectedRoute>
                         <Suspense fallback={<Spin size="large" />}>
                           <SkillsCenterPage />
+                        </Suspense>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/factor-research"
+                    element={
+                      <ProtectedRoute>
+                        <Suspense fallback={<Spin size="large" />}>
+                          <FactorResearchPage />
                         </Suspense>
                       </ProtectedRoute>
                     }

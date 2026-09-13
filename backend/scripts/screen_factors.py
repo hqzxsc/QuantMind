@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""因子筛选：质量门槛 + 同源去重（alpha_library 429 ∪ factor_research 82）
+"""因子筛选：质量门槛 + 同源去重（五库联合：alpha_library ∪ tdxgs ∪ jq110 ∪ alpha360 ∪ factor_research）
 
 输入（均已存在，无需重新计算因子值）：
-  alpha_library/report/factor_report.json   —— 因子报告快照（|IC|/ICIR/换手/429×429 相关矩阵）
-  factor_research/{metrics.json,corr.parquet,monthly_scores.parquet}
-  alpha_library/dt=*/data.parquet           —— 月末采样做「跨库」相关（库内用各自现成矩阵）
+  <dataset>/report/factor_report.json   —— 因子报告快照（IC/ICIR/换手 + 库内相关矩阵）
+      数据集：alpha_library(429) / tdxgs(88) / jq110(109) / alpha360(360)
+  factor_research/{metrics.json,corr.parquet,monthly_scores.parquet}  —— 82 因子研究库
+  <dataset>/dt=*/data.parquet            —— 月末采样做「跨库」相关（单遍联合，缓存 npz）
 
 筛选逻辑：
-  1. 质量门槛：|IC 均值| ≥ min_ic 且 |ICIR| ≥ min_icir（两库同一把尺）；
-  2. 去重：联合相关矩阵上做并查集聚类（|ρ| ≥ corr，默认 0.9），每簇保留强度最高者
-     （强度 = |ICIR|，同分比 |IC|）；被剔除者标注 duplicate_of 与相关系数；
-  3. 同义/同构因子（PLAN §7 的 41 组 a101≈gtja 对）会被聚类自然捕获。
+  1. 质量门槛：|IC 均值| ≥ min_ic 且 |ICIR| ≥ min_icir（各库同一把尺）；
+  2. 去重（贪心直接去重）：候选按强度（|ICIR|，同分比 |IC|）降序，逐个与**已保留**因子比
+     直接相关 |ρ|（联合矩阵，月末截面 Spearman 均值）：≥ 阈值（默认 0.9）者剔除并标注
+     duplicate_of（取其最相关的已保留因子）与 |ρ|；否则保留。
+     不用并查集传递闭包——那会把「只通过链式中等相关相连」的因子误并成巨簇（曾出现
+     318 成员巨型簇，CLOSE24 与代表 MOM60 直接 ρ 仅 0.54）。
+  3. 已知同构对（a101≈gtja、TDXGS_MA≈a158_MA、JQ110_ROC≈a158_ROC 等）由直接相关自然捕获。
 
 输出（<quantdb>/factor_research/screening/）：
   factor_selection.json       机器可读：kept（按库分组）/ dropped（原因/重复对象）/ 门槛与统计
-  筛选报告_YYYYMMDD.md         人读报告（清单 + 去重样例）
+  筛选报告_YYYYMMDD.md         人读报告（各库清单 + 去重明细）
   kept_features.txt           训练可直接消费的特征名清单（每行一个）
+  cross_corr.npz              联合相关缓存（--refresh-cross 重算）
 
 用法：
-  python3 backend/scripts/screen_factors.py                       # 默认门槛
+  python3 backend/scripts/screen_factors.py                       # 默认门槛（全库联合）
   python3 backend/scripts/screen_factors.py --min-ic 0.03 --min-icir 0.3 --corr 0.85
-  python3 backend/scripts/screen_factors.py --skip-cross          # 跳过跨库相关（快）
+  python3 backend/scripts/screen_factors.py --skip-cross          # 只用库内矩阵（快，无跨库去重）
+  python3 backend/scripts/screen_factors.py --libraries alpha_library,tdxgs   # 只筛部分库
 """
 
 from __future__ import annotations
@@ -54,34 +60,51 @@ _spec = importlib.util.spec_from_file_location(
 )
 _fr_clusters = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_fr_clusters)
-cluster_by_correlation = _fr_clusters.cluster_by_correlation
-summarize = _fr_clusters.summarize
+cluster_by_correlation = (
+    _fr_clusters.cluster_by_correlation
+)  # 供 --method cluster 备用（默认不用）
 
-ALPHA_REPORT = ("6_ml_datasets", "alpha_library", "report", "factor_report.json")
-ALPHA_DIR = ("6_ml_datasets", "alpha_library")
+REPORT_DATASETS = ["alpha_library", "tdxgs", "jq110", "alpha360"]
+OURS = "factor_research"
+DATASET_LABEL = {
+    "alpha_library": "Alpha 库（Alpha101 / GTJA191 / Alpha158）",
+    "tdxgs": "TDXGS 通达信技术指标",
+    "jq110": "JQ110 聚宽因子",
+    "alpha360": "Alpha360 原始量价回溯",
+    "factor_research": "因子研究（行情+财务+行为）",
+}
 
 
-def _load_alpha() -> tuple[list[str], np.ndarray, dict[str, dict]]:
-    root = resolve_quantdb_dir()
-    rep = json.loads((root.joinpath(*ALPHA_REPORT)).read_text(encoding="utf-8"))
+def _dataset_dir(dataset: str) -> Path:
+    return resolve_quantdb_dir() / "6_ml_datasets" / dataset
+
+
+def _load_report(dataset: str) -> tuple[list[str], np.ndarray, dict[str, dict]]:
+    rep = json.loads(
+        (_dataset_dir(dataset) / "report" / "factor_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
     names = list(rep["correlation"]["factors"])
     matrix = np.asarray(rep["correlation"]["matrix"], dtype=np.float64)
     by_name = {f["name"]: f for f in rep["factors"]}
     metrics = {}
     for n in names:
         f = by_name.get(n) or {}
+        sub = f.get("library") or dataset  # 报告里的子库（alpha101/gtja191/alpha158）
         metrics[n] = {
             "ic_mean": f.get("ic_mean"),
             "icir": f.get("icir"),
             "turnover": f.get("turnover"),
             "display_name": f.get("display_name") or n,
-            "library": f.get("library") or "alpha_library",
+            "library": dataset,
+            "sublibrary": sub,
         }
     return names, matrix, metrics
 
 
 def _load_ours() -> tuple[list[str], np.ndarray, dict[str, dict]]:
-    root = resolve_quantdb_dir() / "factor_research"
+    root = resolve_quantdb_dir() / OURS
     m = json.loads((root / "metrics.json").read_text(encoding="utf-8"))
     metrics_json = m.get("metrics", {})
     names = sorted(metrics_json)
@@ -96,23 +119,29 @@ def _load_ours() -> tuple[list[str], np.ndarray, dict[str, dict]]:
     metrics = {}
     for n in names:
         k = metrics_json[n]
+        blob = BY_CODE.get(n) or {}
         metrics[n] = {
             "ic_mean": k.get("ic_mean"),
             "icir": k.get("ic_ir"),
             "turnover": None,
-            "display_name": (BY_CODE.get(n) or {}).get("name_cn") or n,
-            "library": "factor_research",
+            "display_name": blob.get("name_cn") or n,
+            "library": OURS,
+            "sublibrary": f"{blob.get('l1', '')}/{blob.get('l2', '')}".strip("/"),
         }
     return names, M, metrics
 
 
-def _cross_corr(
-    our_names: list[str], alpha_names: list[str], max_dates: int = 0
+def _union_cross_corr(
+    blocks: list[tuple[str, list[str]]], our_names: list[str], max_dates: int = 0
 ) -> tuple[np.ndarray, int]:
-    """月末截面 Spearman：alpha_library 因子值 × factor_research 打分。返回 (mean_corr[A×C], n_dates)。"""
+    """单遍联合相关：各库分区 × factor_research 打分，月末截面 Spearman 逐期均值。
+
+    blocks: [(dataset, 因子名列表)]；返回 (全库联合相关均值矩阵, 使用的期数)。
+    列顺序 = blocks 依次拼接 + our_names。
+    """
     root = resolve_quantdb_dir()
     scores = pd.read_parquet(
-        root / "factor_research" / "monthly_scores.parquet",
+        root / OURS / "monthly_scores.parquet",
         columns=["trade_date", "symbol", "factor_code", "score"],
     )
     scores["symbol"] = scores["symbol"].astype("category")
@@ -121,36 +150,58 @@ def _cross_corr(
     dates = sorted(groups)
     if max_dates:
         dates = dates[-max_dates:]
-    acc = np.zeros((len(alpha_names), len(our_names)))
-    cnt = np.zeros_like(acc)
-    a_idx = np.arange(len(alpha_names))
-    o_idx = np.arange(len(our_names))
+
+    all_names = [n for _, names in blocks for n in names] + list(our_names)
+    n_all = len(all_names)
+    acc = np.zeros((n_all, n_all))
+    cnt = np.zeros((n_all, n_all))
+    offsets = []
+    off = 0
+    for _, names in blocks:
+        offsets.append((off, off + len(names)))
+        off += len(names)
     used = 0
+    t_batch = time.time()
     for d in dates:
         dt = pd.Timestamp(d).strftime("%Y%m%d")
-        part_file = root.joinpath(*ALPHA_DIR) / f"dt={dt}" / "data.parquet"
-        if not part_file.exists():
-            continue
-        try:
-            part = pd.read_parquet(part_file, columns=["symbol", *alpha_names])
-        except Exception:
+        comb = None
+        ok = True
+        for (ds, names), _span in zip(blocks, offsets, strict=True):
+            f = root / "6_ml_datasets" / ds / f"dt={dt}" / "data.parquet"
+            if not f.exists():
+                ok = False
+                break
+            try:
+                part = pd.read_parquet(f, columns=["symbol", *names]).set_index(
+                    "symbol"
+                )
+            except Exception:  # noqa: BLE001
+                ok = False
+                break
+            comb = part if comb is None else comb.join(part, how="inner")
+        if not ok or comb is None:
             continue
         our_d = groups[d].pivot_table(
             index="symbol", columns="factor_code", values="score", aggfunc="last"
         )
         our_d = our_d.reindex(columns=our_names)
-        comb = part.set_index("symbol").join(our_d, how="inner")
+        comb = comb.join(our_d, how="inner")
         if len(comb) < 60:
             continue
         rk = comb.rank()
         cm = rk.corr(min_periods=50).to_numpy(dtype=np.float64)
-        block = cm[np.ix_(a_idx, len(alpha_names) + o_idx)]
-        ok = np.isfinite(block)
-        acc[ok] += block[ok]
-        cnt[ok] += 1
+        good = np.isfinite(cm)
+        acc[good] += cm[good]
+        cnt[good] += 1
         used += 1
+        if used % 10 == 0:
+            print(
+                f"      {used}/{len(dates)} 期（{time.time() - t_batch:.0f}s/10期）",
+                flush=True,
+            )
     with np.errstate(invalid="ignore"):
         mean = np.where(cnt > 0, acc / np.maximum(cnt, 1), np.nan)
+    np.fill_diagonal(mean, 1.0)
     return mean, used
 
 
@@ -166,64 +217,109 @@ def main() -> int:
         "--corr", type=float, default=0.9, help="去重相关阈值 |ρ|（默认 0.9）"
     )
     ap.add_argument(
-        "--skip-cross", action="store_true", help="跳过跨库相关（库内去重）"
+        "--skip-cross", action="store_true", help="跳过跨库相关（仅库内矩阵，快）"
     )
     ap.add_argument(
-        "--refresh-cross", action="store_true", help="忽略跨库相关缓存，重算"
+        "--refresh-cross", action="store_true", help="忽略联合相关缓存，重算"
+    )
+    ap.add_argument(
+        "--libraries",
+        default=",".join([*REPORT_DATASETS, OURS]),
+        help="参与筛选的库（逗号分隔；默认全部）",
     )
     args = ap.parse_args()
+    wanted = [x.strip() for x in args.libraries.split(",") if x.strip()]
 
     t0 = time.time()
-    print("[1/5] 读取 alpha_library 因子报告快照 ...")
-    a_names, a_corr, a_metrics = _load_alpha()
-    print(f"      {len(a_names)} 个因子（矩阵 {a_corr.shape}）")
-    print("[2/5] 读取 factor_research 指标/相关 ...")
-    o_names, o_corr, o_metrics = _load_ours()
-    print(f"      {len(o_names)} 个因子")
-
-    overlap = set(a_names) & set(o_names)
-    if overlap:
-        raise SystemExit(f"因子重名（两库命名空间冲突）: {sorted(overlap)[:5]}")
-
-    n_a = len(a_names)
-    names = a_names + o_names
-    metrics = {**a_metrics, **o_metrics}
-    M = np.full((len(names), len(names)), np.nan)
-    M[:n_a, :n_a] = a_corr
-    M[n_a:, n_a:] = o_corr
-
-    if args.skip_cross:
-        print("[3/5] 跳过跨库相关（--skip-cross）")
-        cross_note = "未计算（--skip-cross）"
-    else:
-        cache_file = (
-            resolve_quantdb_dir() / "factor_research" / "screening" / "cross_corr.npz"
-        )
-        cross = None
-        used = 0
-        if cache_file.exists() and not args.refresh_cross:
-            z = np.load(cache_file)
-            cross, used = z["cross"], int(z["used"])
-            if cross.shape == (n_a, len(o_names)):
-                print(f"[3/5] 载入跨库相关缓存（{used} 期）；--refresh-cross 可重算")
-            else:
-                cross = None
-        if cross is None:
-            print("[3/5] 计算跨库月末截面相关（alpha_library × factor_research）...")
-            cross, used = _cross_corr(o_names, a_names)
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(cache_file, cross=cross, used=used)
+    names_all: list[str] = []
+    metrics: dict[str, dict] = {}
+    blocks: list[tuple[str, list[str], np.ndarray]] = []  # (dataset, names, 库内矩阵)
+    use_ours = OURS in wanted
+    for ds in REPORT_DATASETS:
+        if ds not in wanted:
+            continue
+        rep_file = _dataset_dir(ds) / "report" / "factor_report.json"
+        if not rep_file.exists():
             print(
-                f"      完成：{used} 期 × {cross.shape}（{time.time() - t0:.0f}s，已缓存）"
+                f"      ⚠ {ds} 无因子报告快照，跳过（先跑 build_factor_report.py --dataset {ds}）"
             )
-        M[:n_a, n_a:] = cross
-        M[n_a:, :n_a] = cross.T
-        cross_note = f"月末截面 Spearman 均值（{used} 期）"
+            continue
+        nms, mat, mets = _load_report(ds)
+        print(f"[1/5] {ds}: {len(nms)} 因子（报告矩阵 {mat.shape}）")
+        blocks.append((ds, nms, mat))
+        names_all.extend(nms)
+        metrics.update(mets)
+    if use_ours:
+        nms, mat, mets = _load_ours()
+        print(f"[2/5] {OURS}: {len(nms)} 因子")
+        blocks.append((OURS, nms, mat))
+        names_all.extend(nms)
+        metrics.update(mets)
+    if not names_all:
+        raise SystemExit("没有可筛选的库（--libraries 为空或缺报告快照）")
 
+    dup_names = len(names_all) - len(set(names_all))
+    if dup_names:
+        raise SystemExit(f"存在跨库重名 {dup_names} 个（命名空间冲突）")
+
+    # ---- 联合相关矩阵 ----
+    off = {}
+    pos = 0
+    for ds, nms, _ in blocks:
+        off[ds] = (pos, pos + len(nms))
+        pos += len(nms)
+    M = np.full((len(names_all), len(names_all)), np.nan)
+    if args.skip_cross or not use_ours:
+        note = (
+            "--skip-cross"
+            if args.skip_cross
+            else "未选 factor_research（跨库相关以其打分为基准）"
+        )
+        print(f"[3/5] 跳过跨库相关（{note}）：库内矩阵拼接")
+        for ds, _nms, mat in blocks:
+            a, b = off[ds]
+            M[a:b, a:b] = mat
+        cross_note = f"未计算跨库（{note}；仅库内去重）"
+    else:
+        cache_file = resolve_quantdb_dir() / OURS / "screening" / "cross_corr.npz"
+        cache_hit = False
+        if cache_file.exists() and not args.refresh_cross:
+            try:
+                z = np.load(cache_file, allow_pickle=False)
+                valid = "names" in z and "matrix" in z and "used" in z
+            except Exception:  # noqa: BLE001
+                valid = False
+            if valid and [str(x) for x in z["names"]] == names_all:
+                M = z["matrix"]
+                cross_note = f"联合月末截面 Spearman 均值（{int(z['used'])} 期，缓存）"
+                print(f"[3/5] 载入联合相关缓存（{int(z['used'])} 期）")
+                cache_hit = True
+            else:
+                print("[3/5] 联合相关缓存缺失/不兼容/与本次库集合不一致，重算")
+        if not cache_hit:
+            cross_blocks = [(ds, nms) for ds, nms, _ in blocks if ds != OURS]
+            our_names = [n for ds, nms, _ in blocks if ds == OURS for n in nms]
+            if cross_blocks:
+                print(
+                    "[3/5] 计算联合跨库相关（各库分区 × factor_research 打分，月末截面）..."
+                )
+                M, used = _union_cross_corr(cross_blocks, our_names)
+            else:
+                M, used = _union_cross_corr([(OURS, our_names)], [])
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(
+                cache_file, matrix=M, used=used, names=np.array(names_all, dtype=str)
+            )
+            cross_note = f"联合月末截面 Spearman 均值（{used} 期）"
+            print(
+                f"      完成：{used} 期 × {M.shape}（{time.time() - t0:.0f}s，已缓存）"
+            )
+
+    # ---- 门槛 + 联合去重 ----
     print("[4/5] 质量门槛 + 联合去重 ...")
     gated_out: dict[str, str] = {}
     candidates: list[str] = []
-    for n in names:
+    for n in names_all:
         m = metrics[n]
         ic, icir = m.get("ic_mean"), m.get("icir")
         if ic is None or icir is None:
@@ -237,40 +333,66 @@ def main() -> int:
             continue
         candidates.append(n)
 
-    c_idx = [names.index(n) for n in candidates]
-    sub = M[np.ix_(c_idx, c_idx)]
-    clusters = cluster_by_correlation(
-        candidates, sub.tolist(), metrics, threshold=args.corr, keep="icir"
-    )
+    idx_all = {n: i for i, n in enumerate(names_all)}
+
+    def _strength(n: str) -> float:
+        m = metrics[n]
+        return abs(float(m.get("icir") or 0)) * 1000 + abs(float(m.get("ic_mean") or 0))
+
+    order = sorted(candidates, key=_strength, reverse=True)
+    kept: list[str] = []
     dup_of: dict[str, tuple[str, float]] = {}
-    cluster_rows = []
-    for c in clusters:
-        rep = c["representative"]
-        cluster_rows.append(c)
-        for mem in c["members"]:
-            if not mem["is_rep"]:
-                dup_of[mem["name"]] = (rep, abs(float(mem.get("corr_to_rep") or 0.0)))
+    for n in order:
+        i = idx_all[n]
+        hits: list[tuple[str, float]] = []
+        for k in kept:
+            rho = M[i, idx_all[k]]
+            if np.isfinite(rho) and abs(rho) >= args.corr:
+                hits.append((k, abs(float(rho))))
+        if hits:
+            rep, cc = max(
+                hits, key=lambda x: x[1]
+            )  # 与本次最相关的已保留因子作为「重复于」
+            dup_of[n] = (rep, cc)
+        else:
+            kept.append(n)
 
-    kept = [n for n in candidates if n not in dup_of]
-    kept.sort(key=lambda n: abs(float(metrics[n].get("icir") or 0)), reverse=True)
-
+    # 报告视图：按代表归组的直接去重明细（无链式传递）
+    groups: dict[str, list[tuple[str, float]]] = {}
+    for n, (rep, cc) in dup_of.items():
+        groups.setdefault(rep, []).append((n, cc))
+    cluster_rows = [
+        {
+            "representative": rep,
+            "size": len(members) + 1,
+            "members": [
+                {"name": rep, "is_rep": True, "corr_to_rep": 1.0},
+                *[
+                    {"name": n, "is_rep": False, "corr_to_rep": round(cc, 3)}
+                    for n, cc in sorted(members, key=lambda x: -x[1])
+                ],
+            ],
+        }
+        for rep, members in sorted(groups.items(), key=lambda kv: -len(kv[1]))
+    ]
+    n_clusters = len(cluster_rows)
     print(
-        f"      候选 {len(candidates)} → 保留 {len(kept)}（门槛剔除 {len(gated_out)}，去重剔除 {len(dup_of)}）"
+        f"      候选 {len(candidates)} → 保留 {len(kept)}"
+        f"（门槛剔除 {len(gated_out)}，去重剔除 {len(dup_of)}，{n_clusters} 组同源）"
     )
 
+    # ---- 落盘 ----
     print("[5/5] 落盘 ...")
-    out_dir = resolve_quantdb_dir() / "factor_research" / "screening"
+    out_dir = resolve_quantdb_dir() / OURS / "screening"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     def _row(n: str) -> dict:
         m = metrics[n]
-        b = BY_CODE.get(n) or {}
         return {
             "name": n,
             "display_name": m.get("display_name"),
             "library": m.get("library"),
-            "l1": b.get("l1", ""),
-            "l2": b.get("l2", ""),
+            "sublibrary": m.get("sublibrary"),
             "ic_mean": m.get("ic_mean"),
             "icir": m.get("icir"),
             "turnover": m.get("turnover"),
@@ -278,18 +400,20 @@ def main() -> int:
 
     selected = {
         "generated_at": pd.Timestamp.now().isoformat(timespec="seconds"),
+        "dedup_method": "greedy_direct_corr",
         "gates": {
             "min_abs_ic": args.min_ic,
             "min_abs_icir": args.min_icir,
             "corr_threshold": args.corr,
         },
+        "libraries": [ds for ds, _, _ in blocks],
         "cross_corr": cross_note,
         "counts": {
             "candidates": len(candidates),
             "kept": len(kept),
             "gated_out": len(gated_out),
             "deduped": len(dup_of),
-            "total_considered": len(names),
+            "total_considered": len(names_all),
         },
         "kept": [_row(n) for n in kept],
         "dropped_gated": [
@@ -306,75 +430,92 @@ def main() -> int:
             for n, (rep, cc) in sorted(dup_of.items())
         ],
         "clusters": cluster_rows,
-        "cluster_summary": summarize(len(names), cluster_rows),
+        "cluster_summary": {
+            "n_groups": n_clusters,
+            "n_duplicates": len(dup_of),
+            "largest_group": cluster_rows[0]["representative"]
+            if cluster_rows
+            else None,
+            "largest_group_size": cluster_rows[0]["size"] if cluster_rows else 0,
+        },
     }
     (out_dir / "factor_selection.json").write_text(
         json.dumps(selected, ensure_ascii=False, indent=1), encoding="utf-8"
     )
-    (out_dir / "kept_features.txt").write_text(
-        "\n".join(n for n in kept) + "\n", encoding="utf-8"
-    )
+    (out_dir / "kept_features.txt").write_text("\n".join(kept) + "\n", encoding="utf-8")
 
     # ---- 报告 md ----
     lines = []
     lines.append(f"# 因子筛选报告（{pd.Timestamp.now().strftime('%Y-%m-%d')}）")
     lines.append("")
-    lines.append(
-        "> 来源：因子报告快照（alpha_library 429）+ 因子研究指标（factor_research 73）"
+    libs_label = " ∪ ".join(
+        DATASET_LABEL.get(ds, ds) + f"（{len(nms)}）" for ds, nms, _ in blocks
     )
+    lines.append(f"> 来源：{libs_label}")
     lines.append(
-        f"> 门槛：|IC 均值| ≥ {args.min_ic}，|ICIR| ≥ {args.min_icir}；去重：联合相关 |ρ| ≥ {args.corr} 每簇留最优"
+        f"> 门槛：|IC 均值| ≥ {args.min_ic}，|ICIR| ≥ {args.min_icir}；去重：联合相关 |ρ| ≥ {args.corr} 每簇留最优（|ICIR|）"
     )
-    lines.append(f"> 跨库相关：{cross_note}")
+    lines.append(f"> 相关：{cross_note}")
     lines.append("")
     lines.append("## 统计")
     lines.append("")
     lines.append("| 项 | 数量 |")
     lines.append("|---|---|")
-    lines.append(f"| 参与筛选 | {len(names)} |")
+    lines.append(f"| 参与筛选 | {len(names_all)} |")
     lines.append(f"| 过门槛候选 | {len(candidates)} |")
     lines.append(f"| **最终保留** | **{len(kept)}** |")
     lines.append(f"| 门槛剔除 | {len(gated_out)} |")
-    lines.append(f"| 同源去重剔除 | {len(dup_of)}（{len(cluster_rows)} 个簇） |")
+    lines.append(f"| 同源去重剔除 | {len(dup_of)}（{n_clusters} 组） |")
     lines.append("")
-    for is_ours, label in (
-        (False, "Alpha 库（Alpha101 / GTJA191 / Alpha158）"),
-        (True, "因子研究（行情+财务+行为 82）"),
-    ):
-        rows = [
-            n for n in kept if (metrics[n]["library"] == "factor_research") == is_ours
-        ]
-        lines.append(f"## 保留清单 · {label}（{len(rows)}）")
+    for ds, nms, _ in blocks:
+        rows = [n for n in kept if metrics[n]["library"] == ds]
+        kept_ratio = len(rows) / max(len(nms), 1)
+        lines.append(
+            f"## 保留清单 · {DATASET_LABEL.get(ds, ds)}（{len(rows)}/{len(nms)} = {kept_ratio:.0%}）"
+        )
         lines.append("")
         if not rows:
             lines.append("（无）")
             lines.append("")
             continue
-        lines.append("| # | 因子 | 子库 | 说明 | IC 均值 | ICIR | 换手 |")
-        lines.append("|---|---|---|---|---|---|---|")
+        sub_col = ds == "alpha_library"
+        head = (
+            "| # | 因子 |"
+            + (" 子库 |" if sub_col else "")
+            + " 说明 | IC 均值 | ICIR | 换手 |"
+        )
+        sep = "|---|---|" + ("---|" if sub_col else "") + "---|---|---|---|"
+        lines.append(head)
+        lines.append(sep)
         for i, n in enumerate(rows, 1):
             m = metrics[n]
             tv = f"{m['turnover']:.2f}" if m.get("turnover") is not None else "—"
+            mid = f" {m.get('sublibrary')} |" if sub_col else ""
             lines.append(
-                f"| {i} | `{n}` | {m.get('library')} | {m.get('display_name')} | "
-                f"{m.get('ic_mean')} | {m.get('icir')} | {tv} |"
+                f"| {i} | `{n}` |{mid} {m.get('display_name')} | {m.get('ic_mean')} | {m.get('icir')} | {tv} |"
             )
         lines.append("")
-    lines.append(f"## 去重剔除（{len(dup_of)}）—— 与保留因子同源，**不要重复进训练**")
+    lines.append(
+        f"## 去重剔除（{len(dup_of)}）—— 与保留因子直接相关 |ρ| ≥ {args.corr}，**不要重复进训练**"
+    )
     lines.append("")
-    lines.append("| 因子 | 重复于 | \\|ρ\\| | 说明 |")
-    lines.append("|---|---|---|---|")
+    lines.append(
+        "> 贪心直接去重：每个剔除项与「重复于」的保留因子直接相关 ≥ 阈值（非链式传递）。"
+    )
+    lines.append("")
+    lines.append("| 因子 | 库 | 重复于 | \\|ρ\\| | 说明 |")
+    lines.append("|---|---|---|---|---|")
     for n, (rep, cc) in sorted(dup_of.items(), key=lambda x: -x[1][1]):
         lines.append(
-            f"| `{n}` | `{rep}` | {cc:.3f} | {metrics[n].get('display_name')} |"
+            f"| `{n}` | {metrics[n]['library']} | `{rep}` | {cc:.3f} | {metrics[n].get('display_name')} |"
         )
     lines.append("")
-    lines.append("### 去重簇一览（按代表强度降序，前 15 簇）")
+    lines.append(f"### 同源组一览（{n_clusters} 组，按组大小降序，前 20）")
     lines.append("")
-    for c in cluster_rows[:15]:
+    for c in cluster_rows[:20]:
         mems = "、".join(f"`{m['name']}`" for m in c["members"] if not m["is_rep"])
         rep = c["representative"]
-        lines.append(f"- **{rep}**（保留，|ρ| 基准）← 同源 {c['size'] - 1} 个：{mems}")
+        lines.append(f"- **{rep}**（保留）← 直接重复 {c['size'] - 1} 个：{mems}")
     lines.append("")
     lines.append("## 训练接入")
     lines.append("")
@@ -385,7 +526,7 @@ def main() -> int:
         "- 机器可读结果：`factor_selection.json`（kept / dropped 原因 / 簇结构）"
     )
     lines.append(
-        "- 提醒：>0.9 相关的一对因子只保留一个即可；本清单已剔除同源冗余，直接进特征选择不会互相稀释。"
+        "- 提醒：>0.9 相关的一对因子只保留一个；若嫌去重过狠，可用 `--corr 0.95` 收紧阈值。"
     )
     lines.append("")
     md_name = f"筛选报告_{pd.Timestamp.now().strftime('%Y%m%d')}.md"

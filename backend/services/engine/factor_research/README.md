@@ -95,20 +95,24 @@ python3 backend/scripts/build_factor_research.py --skip-financial
 > valuation 的 TTM 字段（net_profit/revenue/pe/ps）若在源侧回归中损坏，可本地兜底：
 > `python3 backend/scripts/repair_valuation_ttm.py --survey 20260101`（体检）/ `--apply-from 20260101`（逐格修复）。
 
-## 因子筛选（质量门槛 + 同源去重）
+## 因子筛选（质量门槛 + 同源去重 · 五库联合）
 
 ```bash
 python3 backend/scripts/screen_factors.py            # 默认 |IC|≥0.02 · |ICIR|≥0.2 · 去重 |ρ|≥0.9
-python3 backend/scripts/screen_factors.py --skip-cross   # 只做库内去重（不跑跨库相关）
+python3 backend/scripts/screen_factors.py --skip-cross   # 只用库内矩阵（快，无跨库）
+python3 backend/scripts/screen_factors.py --libraries alpha_library,tdxgs   # 只筛部分库
 ```
 
-- 输入 = 因子报告快照（alpha_library 429 的 IC/ICIR/相关矩阵）+ 本模块 73 个指标
-  + 跨库月末截面相关（81 期，缓存于 `screening/cross_corr.npz`）；
-- 输出 `screening/`：`factor_selection.json`（kept/剔除原因/簇）、`筛选报告_YYYYMMDD.md`、
-  `kept_features.txt`（训练特征清单，一行一个）；
-- 前端「筛选」页签（`/api/v1/factor-research/screening`）可视化同一份结果；
-- 2026-09-13 首跑：502 → 门槛后 271 → 去重后 **178**（剔除 93 个同源，已知 a101≈gtja
-  同构对/STOM≈TURN20 等全部命中）。
+- 参与库：`alpha_library`(429) ∪ `tdxgs`(88) ∪ `jq110`(109) ∪ `alpha360`(360) ∪ 本模块(73)；
+- 联合相关 = 各库分区 × 本模块月末打分截面 Spearman 均值（81 期，缓存 `screening/cross_corr.npz`，
+  重算 ~20 分钟，`--refresh-cross` 强制）；
+- **去重 = 贪心直接去重**：候选按 |ICIR| 降序，与已保留因子直接 |ρ|≥阈值 才剔除（不用
+  并查集传递闭包——曾把链式中等相关误并成 318 成员巨簇）；
+- 输出 `screening/`：`factor_selection.json`（kept/剔除原因/同源组）、`筛选报告_YYYYMMDD.md`、
+  `kept_features.txt`（训练特征清单，一行一个）；前端「筛选」页签可视化同一份；
+- 2026-09-14 五库首跑：1059 → 门槛后 732 → **保留 292**（440 个直接重复、89 组）。
+  跨库同构精准命中：`MA20BIAS ≡ a158_MA20 ≡ JQ110_MAC_020`（ρ=1.0）、
+  `MOM20 ≡ a158_ROC20 ≡ JQ110_ROC_020`（ρ=0.999）等。
 
 ## 测试
 

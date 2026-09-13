@@ -121,3 +121,13 @@ async def factor_related(
         "factor": factor,
         "related": service.top_correlated(dataset, factor, top=top),
     }
+
+
+@router.get("/clusters")
+async def factor_clusters(
+    dataset: str = Query(default=DEFAULT_DATASET, description=_DATASET_DESC),
+    threshold: float = Query(default=0.9, ge=0.5, le=0.999, description="|ρ| 阈值，≥ 即视为同源"),
+    keep: str = Query(default="icir", description="每簇保留口径：icir | abs_ic | ls"),
+):
+    """因子去重清单：同源因子簇 + 每簇代表（其余为重复项）。"""
+    return service.correlation_clusters(dataset, threshold=threshold, keep=keep)

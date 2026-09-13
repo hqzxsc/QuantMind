@@ -97,3 +97,44 @@ export interface FactorRelated {
   factor: string;
   related: Array<{ name: string; corr: number }>;
 }
+
+/** 去重簇成员 */
+export interface FactorClusterMember {
+  name: string;
+  display_name?: string | null;
+  library?: string | null;
+  ic_mean?: number | null;
+  icir?: number | null;
+  turnover?: number | null;
+  /** 与簇代表的相关性（反向同源为负） */
+  corr_to_rep: number;
+  is_rep: boolean;
+}
+
+/** 同源因子簇 */
+export interface FactorCluster {
+  size: number;
+  representative: string;
+  representative_display?: string | null;
+  representative_icir?: number | null;
+  representative_ic_mean?: number | null;
+  members: FactorClusterMember[];
+}
+
+export interface FactorClusterSummary {
+  n_total: number;
+  n_clusters: number;
+  n_duplicates: number;
+  n_keep: number;
+  largest_cluster: number;
+}
+
+export interface FactorClusterResponse {
+  available: boolean;
+  dataset?: string;
+  reason?: string;
+  threshold?: number;
+  keep?: string;
+  summary?: FactorClusterSummary;
+  clusters?: FactorCluster[];
+}

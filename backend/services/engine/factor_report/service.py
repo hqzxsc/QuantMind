@@ -394,3 +394,27 @@ def top_correlated(dataset: str, factor: str, top: int = 8) -> list[dict[str, An
     ]
     pairs.sort(key=lambda p: abs(p["corr"]), reverse=True)
     return pairs[: max(1, top)]
+
+
+def correlation_clusters(dataset: str, threshold: float = 0.9, keep: str = "icir") -> dict[str, Any]:
+    """因子去重簇：|ρ| ≥ 阈值 的同源因子聚成一簇，每簇留一个代表。"""
+    from .clusters import cluster_by_correlation, summarize
+
+    ds = normalize_dataset(dataset)
+    snap = load_snapshot(ds)
+    if not snap:
+        return {"available": False, "dataset": ds, "reason":
+                f"数据集 {ds} 的快照尚未生成，请运行 backend/scripts/build_factor_report.py --dataset {ds}"}
+    corr = snap.get("correlation") or {}
+    names: list[str] = list(corr.get("factors") or [])
+    matrix = list(corr.get("matrix") or [])
+    metrics = {f.get("name"): f for f in (snap.get("factors") or []) if f.get("name")}
+    clusters = cluster_by_correlation(names, matrix, metrics, threshold=threshold, keep=keep)
+    return {
+        "available": True,
+        "dataset": ds,
+        "threshold": threshold,
+        "keep": keep,
+        "summary": summarize(len(names), clusters),
+        "clusters": clusters,
+    }

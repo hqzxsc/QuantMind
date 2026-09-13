@@ -2,6 +2,7 @@
 
 import { SERVICE_ENDPOINTS } from '../../../config/services';
 import type {
+  FactorClusterResponse,
   FactorCorrelation,
   FactorDatasetList,
   FactorDetail,
@@ -73,4 +74,14 @@ export function getFactorCorrelation(factors: string[], dataset: string): Promis
 export function getFactorRelated(factor: string, dataset: string, top = 8): Promise<FactorRelated> {
   const qs = new URLSearchParams({ factor, dataset, top: String(top) });
   return getJson<FactorRelated>(`/related?${qs}`);
+}
+
+/** 因子去重清单：|ρ| ≥ 阈值 的同源因子簇，每簇留一个代表 */
+export function getFactorClusters(
+  dataset: string,
+  threshold = 0.9,
+  keep: 'icir' | 'abs_ic' | 'ls' = 'icir',
+): Promise<FactorClusterResponse> {
+  const qs = new URLSearchParams({ dataset, threshold: String(threshold), keep });
+  return getJson<FactorClusterResponse>(`/clusters?${qs}`);
 }

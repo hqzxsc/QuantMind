@@ -41,9 +41,11 @@ catalog.py     82 因子元数据（代码生成自 demo JSON + 可用性标注�
 data.py        QuantDB 读取（daily_forward/valuation/index/instrument）
 engine.py      行情类 + 估值类因子 + 打分（rank→正态分位，Acklam ppf）
 financials.py  PIT 财报面板（单季/YTD 双 TTM）+ 财务/行为因子
-analysis.py    IC / Top-N 回测 / KPI / 相关矩阵 / 排行榜
+analysis.py    IC / Top-N 回测 / KPI / 相关矩阵 / 排行榜（构建脚本用）
+scorecard.py   区间评分卡：名次面板 → 任意 N/任意区间的净值、KPI、超额、
+               双标签（环境/时效）、综合分、持仓数扫描（服务层用）
 store.py       快照读取（10 分钟 TTL 缓存）
-service.py     目录/排行/单因子/对比/实时合成（compose 在线现算）
+service.py     目录/排行榜/单因子/对比/实时合成/最优权重
 router.py      /api/v1/factor-research（engine 服务，经网关注册）
 ```
 
@@ -52,27 +54,46 @@ router.py      /api/v1/factor-research（engine 服务，经网关注册）
 ```
 backend/scripts/build_factor_research.py        （构建，pandas，可宿主机裸跑）
     → <quantdb>/factor_research/*.parquet|json   （快照：打分/IC/净值/相关/KPI/持仓）
-    → router.py 读取（compose 在线合成）          → 前端 features/factor-research/
+        · factor_panel.parquet   月末名次面板（每因子每期前 150 名：symbol/score/raw/fwd_ret）
+        · stock_snapshot.parquet 最新截面个股元数据（名称/申万行业/市值/PE/PB/近一年日均成交额）
+        · benchmarks.parquet     沪深300 / 中证800 / 中证500 净值（index_code 区分）
+    → router.py 读取（compose/optimal 在线现算）  → 前端 features/factor-research/
 ```
 
-构建命令（仓库根，全量约 30–45 分钟）：
+构建命令（仓库根，全量约 25–45 分钟）：
 
 ```bash
 python3 backend/scripts/build_factor_research.py                 # 2020-01 至今
-python3 backend/scripts/build_factor_research.py --smoke 200     # 冒烟
+python3 backend/scripts/build_factor_research.py --smoke 200     # 冒烟（可用 FACTOR_RESEARCH_OUT 改临时输出目录）
 python3 backend/scripts/build_factor_research.py --skip-financial
 ```
+
+## 区间口径（工作台）
+
+- 区间（全部/近3年/近1年/各年/自定义）只影响**切片与重算**：净值在区间内重建（首月末=1.0，
+  首月换手 100% 全额计费）；超额 = 组合年化 − 基准年化（demo 口径）；
+- 综合分 = 0.5×有效性 z(mean(z(RankIC), z(IC_IR))) + 0.5×业绩 z(mean(z(年化), z(夏普), z(−回撤), z(月胜率)))，
+  分项在全因子截面标准化——**换区间会整体重算**；
+- 标签（每个因子 2 个，随区间重算）：市场环境（沪深300 滚动 3 月分牛/熊/震荡 → 三环境月均超额 z 取最高，
+  均 <0.5 为全天候型）；时效（近 12 月 RankIC 与区间全样本差 ±0.012，双低为持续低效）；
+- 最优权重：非负、和为 1 的粗网格（≤900 组，目标=夏普/年化/超额），在「各因子月末前 150 名的并集」
+  候选池上评估；应用后由 compose 全样本精确回测。
 
 ## API 端点（网关 :8000 → engine :8001）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/v1/factor-research/catalog` | 因子目录 + 快照元信息 |
-| GET | `/api/v1/factor-research/leaderboard?sort=` | 排行榜（composite/annual_return/sharpe/ic_mean/ic_ir） |
-| GET | `/api/v1/factor-research/factor/{code}` | 单因子：KPI + 净值 + IC + 最新持仓 |
-| GET | `/api/v1/factor-research/compare?codes=a,b,c` | 对比（≤12）：KPI + 净值 + IC + 相关子矩阵 |
-| POST | `/api/v1/factor-research/compose` | 合成：`{weights:{code:w}, top_n, threshold}` |
+| GET | `/api/v1/factor-research/catalog` | 因子目录（含分类顺序/基准）+ 快照元信息 |
+| GET | `/api/v1/factor-research/leaderboard?start=&end=` | 排行榜：区间内全列 KPI/超额/RankIC + 双标签 + 综合分 |
+| GET | `/api/v1/factor-research/factor/{code}?ns=5,10,30&start=&end=&stocks_n=` | 单因子：多档持仓数净值/KPI/超额 + N 扫描 + 个股表 + 行业/市值分布 |
+| GET | `/api/v1/factor-research/compare?codes=a,b&start=&end=` | 对比（兼容形态，每因子 Top-30） |
+| POST | `/api/v1/factor-research/compare` | 对比：`{items:[{code,n}], start, end}`（每因子独立持仓数） |
+| POST | `/api/v1/factor-research/compose` | 合成：`{weights, top_n, thresholds?, threshold?, start?, end?}` |
+| POST | `/api/v1/factor-research/optimal-weights` | 网格搜索最优权重：`{codes, top_n, start?, end?}`（夏普/年化/超额各一组） |
 | GET | `/api/v1/factor-research/screening` | 筛选结果（保留清单/去重剔除/门槛剔除） |
+
+> valuation 的 TTM 字段（net_profit/revenue/pe/ps）若在源侧回归中损坏，可本地兜底：
+> `python3 backend/scripts/repair_valuation_ttm.py --survey 20260101`（体检）/ `--apply-from 20260101`（逐格修复）。
 
 ## 因子筛选（质量门槛 + 同源去重）
 

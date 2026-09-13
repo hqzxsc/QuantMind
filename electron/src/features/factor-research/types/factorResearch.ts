@@ -1,4 +1,4 @@
-/** 因子研究（factor-lib-demo 改造版）类型定义 —— 与 /api/v1/factor-research 响应一一对应 */
+/** 因子研究（factor-lib-demo 复刻版）类型定义 —— 与 /api/v1/factor-research 响应一一对应 */
 
 export interface FactorMeta {
   code: string;
@@ -10,21 +10,35 @@ export interface FactorMeta {
   description: string;
   formula: string;
   wind_source: string;
+  /** 静态标签（demo 原始口径；可用因子的实时标签见排行榜/单因子） */
   env_tag: string;
   time_tag: string;
   available: boolean;
   unavailable_reason: string;
 }
 
+export interface BenchRef {
+  symbol: string;
+  name: string;
+}
+
 export interface CatalogResponse {
   factors: FactorMeta[];
   l1_order: string[];
+  l2_order: Record<string, string[]>;
+  benchmarks: BenchRef[];
   meta: Record<string, unknown>;
 }
 
 export interface SeriesPoint {
   date: string;
   value: number;
+}
+
+export interface RangeMeta {
+  start: string | null;
+  end: string | null;
+  n_months: number;
 }
 
 export interface FactorKpi {
@@ -40,6 +54,12 @@ export interface FactorKpi {
   ic_win_rate?: number | null;
 }
 
+export interface ExcessKpi {
+  '000300.SH'?: number | null;
+  '000906.SH'?: number | null;
+  '000905.SH'?: number | null;
+}
+
 export interface LeaderboardRow extends FactorKpi {
   rank: number;
   code: string;
@@ -47,18 +67,62 @@ export interface LeaderboardRow extends FactorKpi {
   l1: string;
   l2: string;
   composite: number;
+  eff_z: number;
+  perf_z: number;
+  excess_300?: number | null;
+  excess_800?: number | null;
+  excess_500?: number | null;
+  /** 最新截面 Top-N 持仓的中位总市值（亿） */
+  median_mv_yi?: number | null;
+  /** 市值风格：大盘（≥500亿）/ 中盘（100-500亿）/ 小盘（<100亿） */
+  mv_style?: string | null;
+  /** 最新截面 Top-N 持仓的前三行业（申万二级） */
+  top_industries?: Array<{ name: string; count: number }> | null;
+  env_tag: string;
+  time_tag: string;
 }
 
 export interface LeaderboardResponse {
   leaderboard: LeaderboardRow[];
-  meta: Record<string, unknown>;
+  meta: Record<string, unknown> & { range?: RangeMeta };
 }
 
-export interface HoldingRow {
+export interface StockRow {
+  rank: number;
   symbol: string;
-  name?: string;
-  industry?: string;
-  score?: number;
+  name?: string | null;
+  industry?: string | null;
+  total_mv_yi?: number | null;
+  pe_ttm?: number | null;
+  pb?: number | null;
+  avg_amount_yi?: number | null;
+  score?: number | null;
+  raw?: number | null;
+}
+
+export interface FactorVariant {
+  n: number;
+  kpi: FactorKpi;
+  excess: ExcessKpi;
+  nav: SeriesPoint[];
+}
+
+export interface BenchSeries {
+  code: string;
+  name: string;
+  kpi?: FactorKpi;
+  nav: SeriesPoint[];
+}
+
+export interface NScanRow {
+  n: number;
+  final_nav: number;
+  annual_return: number;
+}
+
+export interface DistRow {
+  name: string;
+  count: number;
 }
 
 export interface FactorDetail {
@@ -70,21 +134,30 @@ export interface FactorDetail {
   description: string;
   formula: string;
   wind_source: string;
+  available: boolean;
   env_tag: string;
   time_tag: string;
-  kpi: FactorKpi;
-  nav: SeriesPoint[];
+  range: RangeMeta;
+  variants: FactorVariant[];
+  benchmarks: BenchSeries[];
+  nscan: NScanRow[];
   ic: SeriesPoint[];
-  benchmark: SeriesPoint[];
-  holdings: HoldingRow[];
-  holdings_date: string | null;
-  available: boolean;
+  ic_kpi: FactorKpi;
+  stocks: StockRow[];
+  stocks_date: string;
+  industry_dist: DistRow[];
+  cap_dist: DistRow[];
 }
 
 export interface CorrPair {
   factor_a: string;
   factor_b: string;
-  corr: number;
+  corr: number | null;
+}
+
+export interface CompareItemReq {
+  code: string;
+  n: number;
 }
 
 export interface CompareFactor {
@@ -92,7 +165,9 @@ export interface CompareFactor {
   name_cn: string;
   l1: string;
   l2: string;
+  n: number;
   kpi: FactorKpi;
+  excess: ExcessKpi;
   nav: SeriesPoint[];
   ic: SeriesPoint[];
 }
@@ -100,25 +175,60 @@ export interface CompareFactor {
 export interface CompareResponse {
   factors: CompareFactor[];
   corr: CorrPair[] | null;
-  benchmark: SeriesPoint[];
-}
-
-export interface ComposeResponse {
-  kpi: FactorKpi;
-  nav: SeriesPoint[];
-  turnover: SeriesPoint[];
-  benchmark: SeriesPoint[];
-  holdings: HoldingRow[];
-  holdings_date: string | null;
-  weights: Record<string, number>;
-  top_n: number;
-  threshold: number | null;
+  benchmarks: BenchSeries[];
+  range: RangeMeta;
 }
 
 export interface ComposeRequest {
   weights: Record<string, number>;
   top_n: number;
   threshold?: number | null;
+  thresholds?: Record<string, number> | null;
+  start?: string | null;
+  end?: string | null;
+}
+
+export interface ComposeHolding {
+  symbol: string;
+  name?: string;
+  industry?: string;
+  score?: number;
+}
+
+export interface ComposeResponse {
+  kpi: FactorKpi;
+  excess: ExcessKpi;
+  nav: SeriesPoint[];
+  turnover: SeriesPoint[];
+  benchmarks: BenchSeries[];
+  holdings: ComposeHolding[];
+  holdings_date: string | null;
+  weights: Record<string, number>;
+  thresholds: Record<string, number> | null;
+  top_n: number;
+  threshold: number | null;
+  range: RangeMeta;
+}
+
+export interface OptimalWinner {
+  weights: Record<string, number>;
+  sharpe: number | null;
+  annual_return: number;
+  max_drawdown: number;
+  win_rate: number;
+  excess_300: number | null;
+}
+
+export interface OptimalResponse {
+  objectives: {
+    sharpe: OptimalWinner | null;
+    annual_return: OptimalWinner | null;
+    excess_300: OptimalWinner | null;
+  };
+  n_combos: number;
+  n_months: number;
+  codes: string[];
+  elapsed_ms: number;
 }
 
 // ---------------------------------------------------------------------------

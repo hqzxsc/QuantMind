@@ -1,88 +1,127 @@
-/** 因子研究 —— 多因子对比页签：KPI 并排 + 净值/IC 叠加 + 相关性热力图 */
+/**
+ * 因子研究 —— 多因子对比页签：每因子可单独设持仓数，区间内净值/KPI/IC 叠加对比 + 相关热力图。
+ */
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { EChartsChart } from '../../../components/common/EChartsChart';
-import { getCompare } from '../services/factorResearchService';
+import { postCompare } from '../services/factorResearchService';
+import type { RangeParams } from '../services/factorResearchService';
 import type { CompareResponse } from '../types/factorResearch';
-import { Card, FACTOR_COLORS, IcChart, NavChart, fmtNum, fmtPct } from './common';
+import { Card, FACTOR_COLORS, fmtNum, fmtPct, IcChart, NavChart } from './common';
 
 interface Props {
   codes: string[];
   onRemove: (code: string) => void;
   nameOf: (code: string) => string;
+  range: RangeParams;
 }
 
-export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf }) => {
+export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf, range }) => {
   const [data, setData] = useState<CompareResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ns, setNs] = useState<Record<string, number>>({});
+  const [benchOn, setBenchOn] = useState(true);
+
+  const items = useMemo(
+    () => codes.map((c) => ({ code: c, n: ns[c] ?? 30 })),
+    [codes, ns],
+  );
 
   useEffect(() => {
-    if (!codes.length) {
+    if (!items.length) {
       setData(null);
       return;
     }
     let alive = true;
     setLoading(true);
     setError(null);
-    getCompare(codes)
+    postCompare(items, range)
       .then((d) => { if (alive) setData(d); })
       .catch((e: unknown) => { if (alive) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [codes.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(items), range.start, range.end]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const corrMatrix = useMemo(() => {
-    if (!data?.corr || !codes.length) return null;
-    const names = codes.filter((c) => data.factors.some((f) => f.code === c));
+    if (!data?.corr || !data.factors.length) return null;
+    const names = data.factors.map((f) => f.code);
     const idx = new Map(names.map((c, i) => [c, i]));
     const m: number[][] = names.map(() => names.map(() => NaN));
     for (const p of data.corr) {
       const i = idx.get(p.factor_a);
       const j = idx.get(p.factor_b);
       if (i === undefined || j === undefined) continue;
-      m[i][j] = p.corr;
-      m[j][i] = p.corr;
+      m[i][j] = p.corr ?? NaN;
+      m[j][i] = p.corr ?? NaN;
     }
     return { names, m };
-  }, [data, codes]);
+  }, [data]);
 
   const heatOption = useMemo(() => {
     if (!corrMatrix || corrMatrix.names.length < 2) return null;
     const { names, m } = corrMatrix;
     return {
       grid: { left: 76, right: 16, top: 10, bottom: 56 },
-      tooltip: { formatter: (p: any) => `${names[p.data[1]]} × ${names[p.data[0]]}<br/>相关 ${p.data[2]}` },
+      tooltip: { formatter: (p: { data: [number, number, number] }) => `${names[p.data[1]]} × ${names[p.data[0]]}<br/>相关 ${p.data[2]}` },
       xAxis: { type: 'category', data: names, axisLabel: { fontSize: 9, color: '#94a3b8', rotate: 40 }, axisTick: { show: false } },
       yAxis: { type: 'category', data: names, axisLabel: { fontSize: 9, color: '#94a3b8' }, axisTick: { show: false } },
       visualMap: { show: false, min: -1, max: 1, inRange: { color: ['#047857', '#e2e8f0', '#be123c'] } },
       series: [{
         type: 'heatmap',
         data: m.flatMap((row, i) => row.map((v, j) => [i, j, v])),
-        label: { show: names.length <= 8, fontSize: 9, color: '#0f172a', formatter: (p: any) => (p.data[2] === 1 ? '' : String(p.data[2])) },
+        label: { show: names.length <= 8, fontSize: 9, color: '#0f172a', formatter: (p: { data: [number, number, number] }) => (p.data[2] === 1 ? '' : String(p.data[2])) },
         itemStyle: { borderColor: '#fff', borderWidth: 1 },
       }],
     };
   }, [corrMatrix]);
 
   if (!codes.length) {
-    return <div className="flex-1 flex items-center justify-center text-xs text-slate-400">先从「排行榜」勾选 ≥2 个因子点击「带入对比」</div>;
+    return (
+      <div className="flex-1 flex items-center justify-center text-xs text-slate-400">
+        从左侧目录或排行榜勾选 ≥2 个因子加入对比
+      </div>
+    );
   }
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2">
-      {/* 已选因子 chips */}
-      <div className="flex items-center gap-1.5 flex-wrap">
+    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-0.5">
+      {/* 已选因子 + 持仓数 */}
+      <div className="flex items-center gap-2 flex-wrap rounded-xl border border-slate-200/80 bg-white px-3 py-1.5">
         {codes.map((c, i) => (
           <span
             key={c}
             className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold"
-            style={{ borderColor: `${FACTOR_COLORS[i % FACTOR_COLORS.length]}55`, color: FACTOR_COLORS[i % FACTOR_COLORS.length], backgroundColor: `${FACTOR_COLORS[i % FACTOR_COLORS.length]}10` }}
+            style={{
+              borderColor: `${FACTOR_COLORS[i % FACTOR_COLORS.length]}55`,
+              color: FACTOR_COLORS[i % FACTOR_COLORS.length],
+              backgroundColor: `${FACTOR_COLORS[i % FACTOR_COLORS.length]}10`,
+            }}
           >
             {nameOf(c)}
+            <span className="flex items-center gap-0.5 font-mono text-[10px]">
+              N
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={ns[c] ?? 30}
+                onChange={(e) => setNs({ ...ns, [c]: Math.max(1, Math.min(100, Number(e.target.value) || 30)) })}
+                className="w-11 rounded border border-slate-200 bg-white px-1 py-0 text-[10px] text-right"
+              />
+            </span>
             <button onClick={() => onRemove(c)} className="hover:opacity-70"><X className="w-3 h-3" /></button>
           </span>
         ))}
+        <div className="flex-1" />
+        <button
+          onClick={() => setBenchOn(!benchOn)}
+          className={`rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${
+            benchOn ? 'border-slate-300 bg-slate-100 text-slate-600' : 'border-slate-200 text-slate-400'
+          }`}
+        >
+          叠加沪深300
+        </button>
         <span className="text-[10px] text-slate-400">最多 12 个（超出自动截断）</span>
       </div>
 
@@ -93,17 +132,22 @@ export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf }) => {
       ) : data ? (
         <>
           {/* KPI 对照表 */}
-          <Card title="KPI 对照">
+          <Card
+            title="KPI 对照"
+            extra={<span className="text-[10px] text-slate-400">区间 {data.range.start} ~ {data.range.end} · 各自持仓数见上</span>}
+          >
             <table className="w-full text-[11px]">
               <thead>
                 <tr className="text-slate-400 font-bold">
                   <th className="text-left py-1">因子</th>
+                  <th className="text-right py-1 w-12">N</th>
                   <th className="text-right py-1">年化</th>
                   <th className="text-right py-1">夏普</th>
                   <th className="text-right py-1">最大回撤</th>
                   <th className="text-right py-1">月胜率</th>
-                  <th className="text-right py-1">IC 均值</th>
-                  <th className="text-right py-1">ICIR</th>
+                  <th className="text-right py-1">超额vs300</th>
+                  <th className="text-right py-1">RankIC</th>
+                  <th className="text-right py-1">IC_IR</th>
                 </tr>
               </thead>
               <tbody>
@@ -114,10 +158,14 @@ export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf }) => {
                       <span className="font-bold text-slate-700">{f.name_cn}</span>
                       <span className="ml-1.5 font-mono text-[10px] text-slate-400">{f.code}</span>
                     </td>
+                    <td className="py-1 text-right font-mono text-slate-500">{f.n}</td>
                     <td className={`py-1 text-right font-mono ${(f.kpi.annual_return || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmtPct(f.kpi.annual_return)}</td>
                     <td className="py-1 text-right font-mono text-slate-600">{fmtNum(f.kpi.sharpe)}</td>
                     <td className="py-1 text-right font-mono text-slate-500">{fmtPct(f.kpi.max_drawdown)}</td>
                     <td className="py-1 text-right font-mono text-slate-500">{fmtPct(f.kpi.win_rate)}</td>
+                    <td className={`py-1 text-right font-mono ${(f.excess['000300.SH'] || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                      {fmtPct(f.excess['000300.SH'])}
+                    </td>
                     <td className={`py-1 text-right font-mono ${(f.kpi.ic_mean || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmtNum(f.kpi.ic_mean, 3)}</td>
                     <td className="py-1 text-right font-mono text-slate-500">{fmtNum(f.kpi.ic_ir)}</td>
                   </tr>
@@ -128,23 +176,35 @@ export const CompareTab: React.FC<Props> = ({ codes, onRemove, nameOf }) => {
 
           {/* 净值叠加 + 相关热力图 */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
-            <Card title="净值对比" extra={<span className="text-[10px] text-slate-400">虚线=中证500</span>}>
+            <Card title="净值对比（区间内起点=1.0）" extra={<span className="text-[10px] text-slate-400">各因子按自身持仓数</span>}>
               <NavChart
                 series={[
-                  ...data.factors.map((f, i) => ({ name: f.name_cn, data: f.nav, color: FACTOR_COLORS[i % FACTOR_COLORS.length] })),
-                  { name: '中证500', data: data.benchmark, color: '#94a3b8' },
+                  ...data.factors.map((f, i) => ({
+                    name: `${f.name_cn}(top${f.n})`,
+                    data: f.nav,
+                    color: FACTOR_COLORS[i % FACTOR_COLORS.length],
+                  })),
+                  ...(benchOn
+                    ? data.benchmarks
+                        .filter((b) => b.code === '000300.SH')
+                        .map((b) => ({ name: b.name, data: b.nav, color: '#94a3b8', dashed: true }))
+                    : []),
                 ]}
                 height={230}
               />
             </Card>
-            <Card title="因子相关性（月频秩相关均值）" extra={<span className="text-[10px] text-slate-400">红=正相关 绿=负相关</span>}>
-              {heatOption ? <div style={{ height: 230 }}><EChartsChart option={heatOption} /></div> : <div className="h-[230px] flex items-center justify-center text-xs text-slate-400">需要 ≥2 个因子</div>}
+            <Card title="因子相关性（月频秩相关均值 · 全样本）" extra={<span className="text-[10px] text-slate-400">红=正相关 绿=负相关</span>}>
+              {heatOption ? (
+                <div style={{ height: 230 }}><EChartsChart option={heatOption} /></div>
+              ) : (
+                <div className="h-[230px] flex items-center justify-center text-xs text-slate-400">需要 ≥2 个因子</div>
+              )}
             </Card>
           </div>
 
           {/* IC 并排 */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
-            {data.factors.map((f, i) => (
+            {data.factors.map((f) => (
               <Card key={f.code} title={`${f.name_cn} · 月频 IC`} extra={<span className="text-[10px] text-slate-400">{f.code}</span>}>
                 <IcChart points={f.ic} height={140} />
               </Card>

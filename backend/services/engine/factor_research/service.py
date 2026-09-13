@@ -1,16 +1,53 @@
-"""因子研究 —— 服务层：目录 / 排行榜 / 单因子 / 对比 / 实时合成。
+"""因子研究 —— 服务层：目录 / 排行榜 / 单因子 / 对比 / 合成 / 最优权重 / 快照管理。
 
-所有数据来自 store 层快照；compose 在请求内用月末打分现算（73 因子 × ~80 期，
-向量化毫秒级），不在线重算原始因子。
+数据分层：
+- 月末名次面板（store.panel）→ 任意 N、任意区间、N 扫描、标签、综合分（scorecard.py）；
+- 月末打分长表（store.scores_for）→ 合成回测在线现算（与旧版一致，周初到周末毫秒级）；
+- 序列与元数据（ic.parquet / benchmarks.parquet / stock_snapshot.parquet）。
+
+区间语义：区间内相邻月末的持有期收益逐月复利，首月末净值 1.0；首月换手 100% 全额计费。
+
+快照管理：全部在本地 QuantDB 上计算（不上传任何数据）；未计算时前端提供
+「一键计算」入口（snapshot_status / start_build），构建即
+``python3 backend/scripts/build_factor_research.py`` 的后台子进程。
 """
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-from backend.services.engine.factor_research import analysis, store
+from backend.services.engine.factor_research import analysis, scorecard, store
 from backend.services.engine.factor_research.catalog import BY_CODE, FACTORS, L1_ORDER
+
+_TTL = 600
+_cache: dict = {}
+
+
+def _cached(key, builder):
+    """进程内 TTL 缓存（快照重建后 10 分钟内自动失效，与 store 层一致）。"""
+    now = time.time()
+    hit = _cache.get(key)
+    if hit and now - hit[0] < _TTL:
+        return hit[1]
+    val = builder()
+    _cache[key] = (now, val)
+    return val
+
+
+def _points(dates, values) -> list[dict]:
+    return [
+        {"date": str(pd.Timestamp(d).date()), "value": round(float(v), 6)}
+        for d, v in zip(dates, values, strict=False)
+        if np.isfinite(v)
+    ]
 
 
 def _instrument_names() -> dict[str, dict]:
@@ -27,12 +64,19 @@ def _instrument_names() -> dict[str, dict]:
         return {}
 
 
+# ---------------------------------------------------------------------------
+# 目录
+# ---------------------------------------------------------------------------
 def catalog() -> dict:
     m = store.metrics()
     meta = m.get("meta", {})
     computed = set(m.get("metrics", {}).keys())
     items = []
+    l2_order: dict[str, list[str]] = {}
     for f in FACTORS:
+        l2s = l2_order.setdefault(f["l1"], [])
+        if f["l2"] not in l2s:
+            l2s.append(f["l2"])
         items.append(
             {
                 "code": f["code"],
@@ -50,59 +94,276 @@ def catalog() -> dict:
                 "unavailable_reason": f["unavailable_reason"],
             }
         )
-    return {"factors": items, "l1_order": L1_ORDER, "meta": meta}
+    return {
+        "factors": items,
+        "l1_order": L1_ORDER,
+        "l2_order": l2_order,
+        "benchmarks": [
+            {"symbol": c, "name": scorecard.BENCH_NAMES[c]}
+            for c in scorecard.BENCH_ORDER
+        ],
+        "meta": meta,
+    }
 
 
-def leaderboard(sort: str = "composite") -> dict:
-    m = store.metrics()
-    rows = list(m.get("leaderboard", []))
-    for r in rows:
-        meta = BY_CODE.get(r["code"], {})
-        r["name_cn"] = meta.get("name_cn", r["code"])
-        r["l1"] = meta.get("l1", "")
-        r["l2"] = meta.get("l2", "")
-    if sort in {"annual_return", "sharpe", "ic_mean", "ic_ir", "max_drawdown"}:
-        rows.sort(key=lambda x: (x.get(sort) is None, -(x.get(sort) or 0)))
-    return {"leaderboard": rows, "meta": m.get("meta", {})}
+# ---------------------------------------------------------------------------
+# 区间公共上下文（排行/单因子/对比共用；带 TTL 缓存）
+# ---------------------------------------------------------------------------
+def _range_ctx(start: str | None, end: str | None) -> dict:
+    key = ("range", start or "", end or "")
+
+    def build() -> dict:
+        p = store.panel()
+        if p is None:
+            raise FileNotFoundError(
+                "factor_panel.parquet 缺失（请先跑 build_factor_research.py）"
+            )
+        bench = store.benchmark_table()
+        ic = store.ic_table()
+        mask = scorecard.month_mask(p.dates, start, end)
+        benches = (
+            scorecard.bench_series(bench, mask, p.dates) if bench is not None else {}
+        )
+        series30 = {c: scorecard.topn_series(p, p.index(c), 30, mask) for c in p.codes}
+        rdates = p.dates[mask]
+        bench_ret = None
+        prim = benches.get(scorecard.BENCH_PRIMARY)
+        if prim is not None and len(prim["nav"]) > 1:
+            nav = prim["nav"]
+            bench_ret = nav[1:] / nav[:-1] - 1
+        env = (
+            scorecard.env_tags({c: s["ret"] for c, s in series30.items()}, bench_ret)
+            if bench_ret is not None and len(bench_ret) >= 6
+            else {}
+        )
+        ttag = scorecard.time_tags(ic, p.codes, rdates) if ic is not None else {}
+        return {
+            "panel": p,
+            "mask": mask,
+            "rdates": rdates,
+            "benches": benches,
+            "ic": ic,
+            "series30": series30,
+            "bench_ret": bench_ret,
+            "env_tags": env,
+            "time_tags": ttag,
+        }
+
+    return _cached(key, build)
 
 
-def _series_from_long(df: pd.DataFrame | None, code: str, value_col: str) -> list[dict]:
-    if df is None or df.empty:
-        return []
-    sub = df[df["factor_code"] == code][["trade_date", value_col]].dropna()
-    return [
-        {"date": str(pd.Timestamp(d).date()), "value": round(float(v), 6)}
-        for d, v in zip(sub["trade_date"], sub[value_col], strict=False)
+def _range_meta(ctx: dict) -> dict:
+    rdates = ctx["rdates"]
+    return {
+        "start": str(pd.Timestamp(rdates[0]).date()) if len(rdates) else None,
+        "end": str(pd.Timestamp(rdates[-1]).date()) if len(rdates) else None,
+        "n_months": int(len(rdates)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 排行榜
+# ---------------------------------------------------------------------------
+def _holdings_profile(
+    p, fi: int, n: int, snap_idx: pd.DataFrame | None
+) -> tuple[float | None, str | None, list[dict]]:
+    """最新截面 Top-N 持仓画像：(中位市值亿, 市值风格, 前三行业)。
+
+    市值风格（按中位总市值）：≥500 亿大盘 · 100~500 亿中盘 · <100 亿小盘。
+    """
+    last = len(p.dates) - 1
+    mvs: list[float] = []
+    inds: dict[str, int] = {}
+    for s_ in p.sym[fi, last, :n]:
+        sym = str(s_)
+        if not sym or snap_idx is None or sym not in snap_idx.index:
+            continue
+        row = snap_idx.loc[sym]
+        mv = row.get("total_mv_yi")
+        if mv is not None and np.isfinite(mv):
+            mvs.append(float(mv))
+        ind = row.get("industry")
+        if isinstance(ind, str) and ind:
+            inds[ind] = inds.get(ind, 0) + 1
+    med = round(float(np.median(mvs)), 1) if mvs else None
+    style = None
+    if med is not None:
+        style = "大盘" if med >= 500 else ("中盘" if med >= 100 else "小盘")
+    top_ind = [
+        {"name": k, "count": v}
+        for k, v in sorted(inds.items(), key=lambda kv: -kv[1])[:3]
     ]
+    return med, style, top_ind
 
 
-def factor_detail(code: str) -> dict | None:
+def leaderboard(
+    start: str | None = None, end: str | None = None, n: int = 30
+) -> dict:
+    """排行榜。n=业绩 KPI 的持仓数（默认 30；标签恒按 top-30 基准自动判定）。"""
+    ctx = _range_ctx(start, end)
+    p, ic = ctx["panel"], ctx["ic"]
+    rdates = ctx["rdates"]
+    n = max(1, min(int(n or 30), scorecard.MAX_SCAN_N))
+    series = (
+        ctx["series30"]
+        if n == 30
+        else {c: scorecard.topn_series(p, p.index(c), n, ctx["mask"]) for c in p.codes}
+    )
+    snap = store.stock_snapshot()
+    snap_idx = snap.set_index("symbol") if snap is not None else None
+    rows = []
+    for code in p.codes:
+        meta = BY_CODE.get(code, {})
+        s = series[code]
+        kpi = dict(s["kpi"])
+        if ic is not None:
+            kpi.update(scorecard.ic_stats(ic, code, rdates))
+        ex = scorecard.excess_vs(ctx["benches"], s["kpi"])
+        med_mv, mv_style, top_ind = _holdings_profile(p, p.index(code), n, snap_idx)
+        rows.append(
+            {
+                "code": code,
+                "name_cn": meta.get("name_cn", code),
+                "l1": meta.get("l1", ""),
+                "l2": meta.get("l2", ""),
+                **kpi,
+                "excess_300": ex.get("000300.SH"),
+                "excess_800": ex.get("000906.SH"),
+                "excess_500": ex.get("000905.SH"),
+                "median_mv_yi": med_mv,
+                "mv_style": mv_style,
+                "top_industries": top_ind,
+                "env_tag": ctx["env_tags"].get(code, meta.get("env_tag", "")),
+                "time_tag": ctx["time_tags"].get(code, meta.get("time_tag", "")),
+            }
+        )
+    df = scorecard.composite_scores(pd.DataFrame(rows))
+    df = df.sort_values(["composite", "code"], ascending=[False, True]).reset_index(
+        drop=True
+    )
+    df["rank"] = np.arange(1, len(df) + 1)
+    out = store._sanitize(df.to_dict("records"))
+    m = store.metrics().get("meta", {})
+    return {
+        "leaderboard": out,
+        "meta": {**m, "range": _range_meta(ctx), "top_n": n},
+    }
+
+
+# ---------------------------------------------------------------------------
+# 单因子
+# ---------------------------------------------------------------------------
+def factor_detail(
+    code: str,
+    ns: list[int] | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    stocks_n: int = 30,
+) -> dict | None:
     meta = BY_CODE.get(code)
     if meta is None:
         return None
-    m = store.metrics()
-    kpi = m.get("metrics", {}).get(code, {})
-    nav_rows = _series_from_long(store.nav_table(), code, "nav")
-    ic_rows = _series_from_long(store.ic_table(), code, "ic")
-    bench = store.benchmark_table()
-    bench_rows = []
-    if bench is not None and not bench.empty:
-        bench_rows = [
-            {"date": str(pd.Timestamp(d).date()), "value": round(float(v), 6)}
-            for d, v in zip(bench["trade_date"], bench["nav"], strict=False)
-        ]
-    hold = store.holdings()
-    names = _instrument_names()
-    picks = hold.get("holdings", {}).get(code, [])
-    holdings_rows = [
+    ctx = _range_ctx(start, end)
+    p, ic = ctx["panel"], ctx["ic"]
+    if code not in p.ci:
+        return None
+    fi = p.index(code)
+    mask = ctx["mask"]
+
+    wanted = sorted(
+        {int(n) for n in (ns or [30]) if 1 <= int(n) <= scorecard.MAX_SCAN_N}
+    ) or [30]
+    variants = []
+    for n in wanted:
+        s = scorecard.topn_series(p, fi, n, mask)
+        variants.append(
+            {
+                "n": n,
+                "kpi": s["kpi"],
+                "excess": scorecard.excess_vs(ctx["benches"], s["kpi"]),
+                "nav": _points(s["dates"], s["nav"]),
+            }
+        )
+
+    benches = [
         {
-            "symbol": s,
-            "name": names.get(s, {}).get("name", s),
-            "industry": names.get(s, {}).get("industry", ""),
+            "code": c,
+            "name": scorecard.BENCH_NAMES[c],
+            "kpi": b["kpi"],
+            "nav": _points(b["dates"], b["nav"]),
         }
-        for s in picks
+        for c, b in ctx["benches"].items()
     ]
-    return {
+
+    nscan = scorecard.nscan(p, fi, mask)
+
+    ic_points: list[dict] = []
+    ic_kpi = {"ic_mean": None, "ic_std": None, "ic_ir": None, "ic_win_rate": None}
+    if ic is not None:
+        sub = ic[ic["factor_code"] == code].set_index("trade_date")["ic"]
+        sub = sub.reindex(pd.DatetimeIndex(ctx["rdates"])).dropna()
+        ic_points = _points(sub.index, sub.to_numpy(dtype=float))
+        ic_kpi = scorecard.ic_stats(ic, code, ctx["rdates"])
+
+    # 最新月末截面的 Top-N 个股表（始终为全样本最新截面）
+    last = len(p.dates) - 1
+    snap = store.stock_snapshot()
+    snap_idx = snap.set_index("symbol") if snap is not None else None
+    kk = min(int(stocks_n), p.fwd.shape[2])
+    syms = p.sym[fi, last, :kk]
+    scores = p.score[fi, last, :kk]
+    raws = p.raw[fi, last, :kk]
+    stocks = []
+    for r_i in range(kk):
+        sym = str(syms[r_i])
+        if not sym:
+            continue
+        row = {
+            "rank": r_i + 1,
+            "symbol": sym,
+            "score": round(float(scores[r_i]), 3) if np.isfinite(scores[r_i]) else None,
+            "raw": round(float(raws[r_i]), 4) if np.isfinite(raws[r_i]) else None,
+        }
+        if snap_idx is not None and sym in snap_idx.index:
+            srow = snap_idx.loc[sym]
+            row.update(
+                {
+                    "name": srow.get("name"),
+                    "industry": srow.get("industry"),
+                    "total_mv_yi": None
+                    if pd.isna(srow.get("total_mv_yi"))
+                    else round(float(srow["total_mv_yi"]), 1),
+                    "pe_ttm": None
+                    if pd.isna(srow.get("pe_ttm"))
+                    else round(float(srow["pe_ttm"]), 2),
+                    "pb": None
+                    if pd.isna(srow.get("pb"))
+                    else round(float(srow["pb"]), 2),
+                    "avg_amount_yi": None
+                    if pd.isna(srow.get("avg_amount_yi"))
+                    else round(float(srow["avg_amount_yi"]), 2),
+                }
+            )
+        stocks.append(row)
+
+    ind_count: dict[str, int] = {}
+    cap_count: dict[str, int] = {}
+    for row in stocks:
+        ind = row.get("industry") or "未知"
+        ind_count[ind] = ind_count.get(ind, 0) + 1
+        bucket = scorecard.cap_bucket(row.get("total_mv_yi"))
+        if bucket:
+            cap_count[bucket] = cap_count.get(bucket, 0) + 1
+    industry_dist = [
+        {"name": k, "count": v}
+        for k, v in sorted(ind_count.items(), key=lambda kv: -kv[1])
+    ]
+    cap_dist = [
+        {"name": label, "count": cap_count.get(label, 0)}
+        for label in scorecard.CAP_LABELS
+    ]
+
+    out = {
         "code": code,
         "name_cn": meta["name_cn"],
         "l1": meta["l1"],
@@ -111,41 +372,78 @@ def factor_detail(code: str) -> dict | None:
         "description": meta["description"],
         "formula": meta["formula"],
         "wind_source": meta["wind_source"],
-        "env_tag": meta["env_tag"],
-        "time_tag": meta["time_tag"],
-        "kpi": kpi,
-        "nav": nav_rows,
-        "ic": ic_rows,
-        "benchmark": bench_rows,
-        "holdings": holdings_rows,
-        "holdings_date": hold.get("date"),
         "available": bool(meta["available"]),
+        "env_tag": ctx["env_tags"].get(code, meta.get("env_tag", "")),
+        "time_tag": ctx["time_tags"].get(code, meta.get("time_tag", "")),
+        "range": _range_meta(ctx),
+        "variants": variants,
+        "benchmarks": benches,
+        "nscan": nscan,
+        "ic": ic_points,
+        "ic_kpi": ic_kpi,
+        "stocks": stocks,
+        "stocks_date": str(pd.Timestamp(p.dates[last]).date()),
+        "industry_dist": industry_dist,
+        "cap_dist": cap_dist,
     }
+    return store._sanitize(out)
 
 
-def compare(codes: list[str]) -> dict:
+# ---------------------------------------------------------------------------
+# 多因子对比
+# ---------------------------------------------------------------------------
+def compare(
+    items: list[dict] | list[str],
+    start: str | None = None,
+    end: str | None = None,
+) -> dict:
+    ctx = _range_ctx(start, end)
+    p = ctx["panel"]
+    norm: list[dict] = []
+    for it in items[:12]:
+        if isinstance(it, str):
+            norm.append({"code": it, "n": 30})
+        else:
+            norm.append({"code": str(it.get("code")), "n": int(it.get("n") or 30)})
     out = []
-    for code in codes[:12]:  # 对比上限 12 个，防止响应过大
-        d = factor_detail(code)
-        if d is None:
+    for it in norm:
+        code, n = it["code"], max(1, min(int(it["n"]), scorecard.MAX_SCAN_N))
+        meta = BY_CODE.get(code)
+        if meta is None or code not in p.ci:
             continue
+        s = scorecard.topn_series(p, p.index(code), n, ctx["mask"])
+        ic_points = []
+        if ctx["ic"] is not None:
+            sub = ctx["ic"][ctx["ic"]["factor_code"] == code].set_index("trade_date")[
+                "ic"
+            ]
+            sub = sub.reindex(pd.DatetimeIndex(ctx["rdates"])).dropna()
+            ic_points = _points(sub.index, sub.to_numpy(dtype=float))
         out.append(
             {
-                "code": d["code"],
-                "name_cn": d["name_cn"],
-                "l1": d["l1"],
-                "l2": d["l2"],
-                "kpi": d["kpi"],
-                "nav": d["nav"],
-                "ic": d["ic"],
+                "code": code,
+                "name_cn": meta["name_cn"],
+                "l1": meta["l1"],
+                "l2": meta["l2"],
+                "n": n,
+                "kpi": {
+                    **s["kpi"],
+                    **scorecard.ic_stats(ctx["ic"], code, ctx["rdates"]),
+                }
+                if ctx["ic"] is not None
+                else s["kpi"],
+                "excess": scorecard.excess_vs(ctx["benches"], s["kpi"]),
+                "nav": _points(s["dates"], s["nav"]),
+                "ic": ic_points,
             }
         )
+
     corr = store.corr_table()
     corr_sub = None
+    codes = [x["code"] for x in out]
     if corr is not None and not corr.empty and codes:
         s = set(codes)
         cs = corr[corr["factor_a"].isin(s) & corr["factor_b"].isin(s)]
-        # 转原生 float（parquet 读出的是 numpy 类型）；非有限值 → None（JSON 拒绝 NaN）
         corr_sub = [
             {
                 "factor_a": str(r["factor_a"]),
@@ -154,19 +452,20 @@ def compare(codes: list[str]) -> dict:
             }
             for r in cs.to_dict("records")
         ]
-    bench = store.benchmark_table()
-    bench_rows = []
-    if bench is not None and not bench.empty:
-        bench_rows = [
-            {"date": str(pd.Timestamp(d).date()), "value": round(float(v), 6)}
-            for d, v in zip(bench["trade_date"], bench["nav"], strict=False)
-        ]
-    return {"factors": out, "corr": corr_sub, "benchmark": bench_rows}
-
-
-def screening() -> dict:
-    """因子筛选清单（质量门槛 + 同源去重，含剔除原因）。"""
-    return store.screening()
+    benches = [
+        {
+            "code": c,
+            "name": scorecard.BENCH_NAMES[c],
+            "nav": _points(b["dates"], b["nav"]),
+        }
+        for c, b in ctx["benches"].items()
+    ]
+    return {
+        "factors": out,
+        "corr": corr_sub,
+        "benchmarks": benches,
+        "range": _range_meta(ctx),
+    }
 
 
 def correlation(codes: list[str] | None = None) -> dict:
@@ -188,16 +487,125 @@ def correlation(codes: list[str] | None = None) -> dict:
     }
 
 
+def screening() -> dict:
+    """因子筛选清单（质量门槛 + 同源去重，含剔除原因）。"""
+    return store.screening()
+
+
+# ---------------------------------------------------------------------------
+# 快照管理：状态探测 + 一键计算（全部本地计算，不上传任何数据）
+# ---------------------------------------------------------------------------
+_BUILD_LOG = "build.log"
+_BUILD_PID = "build.pid"
+
+
+def _build_running() -> int | None:
+    """返回正在运行的构建进程 PID（无则 None）。带 cmdline 校验防 PID 复用。"""
+    d = store.artifact_dir()
+    pf = d / _BUILD_PID
+    if not pf.exists():
+        return None
+    try:
+        pid = int(pf.read_text().strip())
+        os.kill(pid, 0)
+    except (ValueError, ProcessLookupError, PermissionError, OSError):
+        return None
+    try:  # PID 复用防护：必须是 build_factor_research 的进程
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="ignore")
+        if "build_factor_research" not in cmdline:
+            return None
+    except OSError:
+        pass
+    return pid
+
+
+def snapshot_status() -> dict:
+    """快照状态：是否已生成 / 构建中 / 日志进度。供前端「一键计算」入口。"""
+    d = store.artifact_dir()
+    meta: dict = {}
+    mf = d / "metrics.json"  # 构建元信息内嵌在 metrics.json 的 meta 字段
+    if mf.exists():
+        try:
+            meta = json.loads(mf.read_text(encoding="utf-8")).get("meta", {})
+        except Exception:  # noqa: BLE001 - 元信息损坏不阻塞状态查询
+            meta = {}
+    pid = _build_running()
+    log_tail: list[str] = []
+    step = ""
+    lf = d / _BUILD_LOG
+    if lf.exists():
+        try:
+            lines = lf.read_text(encoding="utf-8", errors="ignore").splitlines()
+            log_tail = [ln for ln in lines[-40:] if ln.strip()][-12:]
+            for ln in reversed(lines):
+                if ln.startswith("["):
+                    step = ln[:80]
+                    break
+        except OSError:
+            pass
+    return {
+        "exists": (d / "factor_panel.parquet").exists(),
+        "running": pid is not None,
+        "built_at": meta.get("built_at"),
+        "window": meta.get("window"),
+        "n_factors": meta.get("n_factors_computed"),
+        "n_dates": meta.get("n_dates"),
+        "step": step,
+        "log_tail": log_tail,
+    }
+
+
+def start_build() -> dict:
+    """启动快照构建（后台子进程；已在构建则直接返回运行中）。全部本地计算。"""
+    if (pid := _build_running()) is not None:
+        return {"started": False, "running": True, "pid": pid}
+    d = store.artifact_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    root = Path(__file__).resolve().parents[4]  # backend/services/engine/factor_research → 仓库根
+    script = root / "backend" / "scripts" / "build_factor_research.py"
+    if not script.exists():
+        return {"error": f"构建脚本缺失: {script}"}
+    log = open(d / _BUILD_LOG, "a", encoding="utf-8")  # noqa: SIM115 - 交给子进程持有
+    log.write(f"\n===== build started {pd.Timestamp.now().isoformat(timespec='seconds')} =====\n")
+    proc = subprocess.Popen(  # noqa: S603 - 固定脚本路径，无用户输入
+        [sys.executable, str(script)],
+        cwd=str(root),
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    (d / _BUILD_PID).write_text(str(proc.pid), encoding="utf-8")
+    return {"started": True, "running": True, "pid": proc.pid}
+
+
+# ---------------------------------------------------------------------------
+# 多因子合成（在线现算）
+# ---------------------------------------------------------------------------
+def _scores_in_range(
+    scores: pd.DataFrame, start: str | None, end: str | None
+) -> pd.DataFrame:
+    if not start and not end:
+        return scores
+    dates = pd.DatetimeIndex(sorted(pd.to_datetime(scores["trade_date"]).unique()))
+    mask = scorecard.month_mask(dates.to_numpy(), start, end)
+    keep = set(dates[mask])
+    return scores[pd.to_datetime(scores["trade_date"]).isin(keep)]
+
+
 def compose(
     weights: dict[str, float],
     top_n: int = 30,
     threshold: float | None = None,
+    thresholds: dict[str, float] | None = None,
     cost_rate: float | None = None,
+    start: str | None = None,
+    end: str | None = None,
 ) -> dict:
     """自定义权重合成 +（可选）阈值过滤 → 实时回测。
 
-    weights: {factor_code: 权重}（可正可负，内部按 Σ|w| 归一）
-    threshold: 合成打分下限（z 分位刻度；None=不过滤；0=只保留高于截面均值）
+    weights: {factor_code: 权重}（内部按 Σ|w| 归一）
+    threshold: 合成打分的过滤下限（全局，z 刻度；None=不过滤）
+    thresholds: 每因子过滤下限 {code: z}（选股前先按各因子阈值筛股）
     """
     weights = {
         c: float(w) for c, w in (weights or {}).items() if c in BY_CODE and w != 0
@@ -208,27 +616,56 @@ def compose(
     scores = store.scores_for(codes)
     if scores is None or scores.empty:
         return {"error": "快照缺失（请先运行 build_factor_research.py）"}
+    scores = _scores_in_range(scores, start, end)
+    if scores.empty:
+        return {"error": "所选区间内没有月末截面数据"}
+
+    # 每因子阈值：先筛股（保留同时满足全部已设阈值因子的股票）
+    th = {
+        c: float(v)
+        for c, v in (thresholds or {}).items()
+        if c in weights and v is not None
+    }
+    if th:
+        sub = scores[scores["factor_code"].isin(th)]
+        sub = sub.assign(_pass=sub["score"] >= sub["factor_code"].map(th))
+        g = sub.groupby(["trade_date", "symbol"], as_index=False).agg(
+            n=("_pass", "size"), ok=("_pass", "all")
+        )
+        keep = g[(g["n"] == len(th)) & g["ok"]][["trade_date", "symbol"]]
+        scores = scores.merge(keep, on=["trade_date", "symbol"], how="inner")
+        if scores.empty:
+            return {"error": "阈值过滤后无剩余股票（放宽容忍度或减少阈值因子）"}
+
     wsum = sum(abs(w) for w in weights.values())
-    scores["_contrib"] = scores["score"].astype("float64") * scores["factor_code"].map(
-        dict(weights)
-    ).astype("float64")
+    scores = scores.assign(
+        _contrib=scores["score"].astype("float64")
+        * scores["factor_code"].map(dict(weights)).astype("float64")
+    )
     comp = scores.groupby(["trade_date", "symbol"], as_index=False)["_contrib"].sum()
     comp["score"] = comp["_contrib"] / wsum
     wide = comp.pivot(index="trade_date", columns="symbol", values="score")
     wide.index = pd.to_datetime(wide.index)
     wide = wide.sort_index()
-    if threshold is not None:
-        wide = wide.where(wide >= float(threshold))
+
     fwd = store.fwd_returns()
     fwd_wide = fwd.pivot(index="trade_date", columns="symbol", values="fwd_ret")
     fwd_wide.index = pd.to_datetime(fwd_wide.index)
+    common = wide.index.intersection(fwd_wide.index)
+    wide, fwd_wide = wide.loc[common], fwd_wide.loc[common].sort_index()
+    if threshold is not None:
+        wide = wide.where(wide >= float(threshold))
+
     bt = analysis.backtest_topn(
         wide,
-        fwd_wide.sort_index(),
+        fwd_wide,
         top_n=int(top_n),
         cost_rate=cost_rate or analysis.COST_RATE,
     )
     k = analysis.kpi(bt["ret"], bt["nav"])
+    ctx = _range_ctx(start, end)
+    k_ex = scorecard.excess_vs(ctx["benches"], k)
+
     names = _instrument_names()
     last_date = max(bt["holdings"]) if bt["holdings"] else None
     latest = (
@@ -245,29 +682,170 @@ def compose(
         }
         for s, v in latest.head(int(top_n)).items()
     ]
-    nav_rows = [
-        {"date": str(pd.Timestamp(d).date()), "value": round(float(v), 6)}
-        for d, v in bt["nav"].items()
+    benches = [
+        {
+            "code": c,
+            "name": scorecard.BENCH_NAMES[c],
+            "nav": _points(b["dates"], b["nav"]),
+        }
+        for c, b in ctx["benches"].items()
     ]
-    turnover_rows = [
-        {"date": str(pd.Timestamp(d).date()), "value": round(float(v), 4)}
-        for d, v in bt["turnover"].items()
-    ]
-    bench = store.benchmark_table()
-    bench_rows = []
-    if bench is not None and not bench.empty:
-        bench_rows = [
-            {"date": str(pd.Timestamp(d).date()), "value": round(float(v), 6)}
-            for d, v in zip(bench["trade_date"], bench["nav"], strict=False)
-        ]
-    return {
+    out = {
         "kpi": k,
-        "nav": nav_rows,
-        "turnover": turnover_rows,
-        "benchmark": bench_rows,
+        "excess": k_ex,
+        "nav": _points(bt["nav"].index, bt["nav"].to_numpy()),
+        "turnover": _points(bt["turnover"].index, bt["turnover"].to_numpy()),
+        "benchmarks": benches,
         "holdings": latest_rows,
         "holdings_date": str(last_date.date()) if last_date is not None else None,
         "weights": weights,
+        "thresholds": th or None,
         "top_n": int(top_n),
         "threshold": threshold,
+        "range": _range_meta(ctx),
     }
+    return store._sanitize(out)
+
+
+# ---------------------------------------------------------------------------
+# 最优权重（粗网格 + 逐目标）
+# ---------------------------------------------------------------------------
+def _weight_grid(k: int) -> list[list[float]]:
+    """非负、和为 1 的粗网格（整数分份枚举，组合数 ≤ 900；k>10 时随机采样）。"""
+    if k > 10:
+        rng = np.random.default_rng(42)
+        w = rng.dirichlet(np.ones(k), size=800)
+        return [list(np.round(x, 3)) for x in w]
+    d = 2
+    for cand in range(2, 25):
+        n = 1
+        for i in range(k - 1):
+            n = n * (cand + k - 1 - i) // (i + 1)
+        if n <= 900:
+            d = cand
+        else:
+            break
+    combos: list[list[float]] = []
+
+    def rec(rem: int, parts: list[int]) -> None:
+        if len(parts) == k - 1:
+            combos.append([*parts, rem])
+            return
+        for x in range(rem + 1):
+            rec(rem - x, [*parts, x])
+
+    rec(d, [])
+    return [[c / d for c in combo] for combo in combos]
+
+
+def optimal_weights(
+    codes: list[str],
+    top_n: int = 30,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict:
+    """在所选因子上网格搜索（非负、和为 1），夏普/年化/超额各给一组最优权重。
+
+    候选池 = 各因子月末 top-150 的并集（面板限制），组合内缺失因子记 0 分（与 compose 同口径）；
+    展示口径以 compose 全样本精确回测为准。
+    """
+    t0 = time.time()
+    ctx = _range_ctx(start, end)
+    p = ctx["panel"]
+    codes = [c for c in codes if c in p.ci][:10]
+    if len(codes) < 1:
+        return {"error": "至少选 1 个可用因子"}
+    k = len(codes)
+    fis = [p.index(c) for c in codes]
+    idx = np.where(ctx["mask"])[0]
+    months = idx[:-1]
+    if len(months) < 6:
+        return {"error": "区间过短（至少 6 个月）"}
+
+    pools = []
+    for a in months:
+        sym_list: list[str] = []
+        for fi in fis:
+            sym_list.extend(s for s in p.sym[fi, a] if s)
+        syms = sorted(set(sym_list))
+        si = {s: i for i, s in enumerate(syms)}
+        S = np.zeros((len(syms), k), dtype=np.float32)
+        M = np.zeros((len(syms), k), dtype=np.float32)
+        F = np.full(len(syms), np.nan, dtype=np.float32)
+        for j, fi in enumerate(fis):
+            for r_i in range(p.sym.shape[2]):
+                s_ = p.sym[fi, a, r_i]
+                if not s_:
+                    continue
+                i = si[s_]
+                S[i, j] = p.score[fi, a, r_i]
+                M[i, j] = 1.0
+                fv = p.fwd[fi, a, r_i]
+                if np.isfinite(fv):
+                    F[i] = fv
+        pools.append((np.asarray(syms), S, M, F))
+
+    grid = _weight_grid(k)
+    W = np.asarray(grid, dtype=np.float64).T  # k × C
+    C = W.shape[1]
+    T = len(pools)
+    rets = np.full((T, C), np.nan)
+    prev_top: list[set] = [set() for _ in range(C)]
+    cost = analysis.COST_RATE
+    for t in range(T):
+        syms, S, M, F = pools[t]
+        P = (S @ W) / (M @ W)
+        kk = min(int(top_n), P.shape[0])
+        part = np.argpartition(-P, kk - 1, axis=0)[:kk]
+        for c_i in range(C):
+            sel = part[:, c_i]
+            f = F[sel]
+            r = float(np.nanmean(f)) if np.isfinite(f).any() else np.nan
+            cur = set(syms[sel].tolist())
+            to = 1.0 if not prev_top[c_i] else len(cur - prev_top[c_i]) / max(kk, 1)
+            rets[t, c_i] = (r - to * cost) if np.isfinite(r) else np.nan
+            prev_top[c_i] = cur
+
+    mean = np.nanmean(rets, axis=0)
+    sd = np.nanstd(rets, axis=0, ddof=1)
+    sharpe = np.where(sd > 0, mean / np.maximum(sd, 1e-12) * np.sqrt(12), np.nan)
+    nav_path = np.vstack([np.ones(C), np.nan_to_num(1 + rets, nan=1.0).cumprod(axis=0)])
+    nav_final = nav_path[-1]
+    years = max(T / 12.0, 1 / 12.0)
+    annual = np.where(nav_final > 0, np.power(nav_final, 1 / years) - 1, -1.0)
+    peak = np.maximum.accumulate(nav_path, axis=0)
+    mdd = (1 - nav_path / peak).max(axis=0)
+    win = np.nanmean(rets > 0, axis=0)
+    prim = ctx["benches"].get(scorecard.BENCH_PRIMARY, {}).get("kpi", {})
+    bench_ann = prim.get("annual_return")
+    excess = annual - bench_ann if bench_ann is not None else np.full(C, np.nan)
+
+    def _winner(values: np.ndarray) -> dict | None:
+        if not np.isfinite(values).any():
+            return None
+        i = int(np.nanargmax(values))
+        return {
+            "weights": {
+                c: round(float(w), 3) for c, w in zip(codes, W[:, i], strict=False)
+            },
+            "sharpe": round(float(sharpe[i]), 3) if np.isfinite(sharpe[i]) else None,
+            "annual_return": round(float(annual[i]), 4),
+            "max_drawdown": round(float(mdd[i]), 4),
+            "win_rate": round(float(win[i]), 4),
+            "excess_300": round(float(excess[i]), 4)
+            if np.isfinite(excess[i])
+            else None,
+        }
+
+    out = {
+        "objectives": {
+            "sharpe": _winner(sharpe),
+            "annual_return": _winner(annual),
+            "excess_300": _winner(excess),
+        },
+        "n_combos": int(C),
+        "n_months": int(T),
+        "codes": codes,
+        "elapsed_ms": int((time.time() - t0) * 1000),
+    }
+    return store._sanitize(out)

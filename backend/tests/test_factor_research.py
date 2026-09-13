@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from backend.services.engine.factor_research import analysis
+from backend.services.engine.factor_research import analysis, scorecard
 from backend.services.engine.factor_research.engine import rank_to_score
 from backend.services.engine.factor_research.financials import (
     _ttm_single_quarter,
@@ -146,3 +146,126 @@ def test_leaderboard_ranks_by_composite():
     lb = analysis.leaderboard(metrics)
     assert lb[0]["code"] == "A" and lb[0]["rank"] == 1
     assert lb[0]["composite"] >= lb[-1]["composite"]
+
+
+# ---------------------------------------------------------------------------
+# scorecard（月末名次面板 → 任意 N / 任意区间）
+# ---------------------------------------------------------------------------
+PANEL_MONTHS = ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30"]
+
+
+def _mk_panel(factor_data: dict) -> pd.DataFrame:
+    """factor_data: {code: {score: {sym: [每月]}, fwd: {sym: [每月]}, raw: 可选}}"""
+    rows = []
+    for code, d in factor_data.items():
+        syms = list(d["score"])
+        for mi, m in enumerate(PANEL_MONTHS):
+            ranked = sorted(syms, key=lambda s: -d["score"][s][mi])
+            for rk, s in enumerate(ranked, 1):
+                rows.append(
+                    {
+                        "factor_code": code,
+                        "trade_date": pd.Timestamp(m),
+                        "rank": rk,
+                        "symbol": s,
+                        "score": d["score"][s][mi],
+                        "raw": (d.get("raw") or {}).get(s, [0.0] * len(PANEL_MONTHS))[mi],
+                        "fwd_ret": d["fwd"][s][mi],
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def _const_panel() -> scorecard.Panel:
+    fd = {
+        "X": {
+            "score": {"A": [3, 3, 3, 3], "B": [2, 2, 2, 2], "C": [1, 1, 1, 1]},
+            "fwd": {
+                "A": [0.10, 0.20, 0.30, None],
+                "B": [0.04, 0.05, 0.06, None],
+                "C": [-0.05, -0.05, -0.05, None],
+            },
+        }
+    }
+    return scorecard.Panel(_mk_panel(fd))
+
+
+def test_panel_topn_returns_and_cost():
+    p = _const_panel()
+    mask = scorecard.month_mask(p.dates, None, None)
+    s1 = scorecard.topn_series(p, p.index("X"), 1, mask)
+    # 首月换手 100% → 10% − 0.2%；其后持仓不变换手 0
+    assert abs(s1["ret"][0] - (0.10 - 0.002)) < 1e-5
+    assert abs(s1["ret"][1] - 0.20) < 1e-5
+    assert abs(s1["nav"][-1] - (1 + 0.10 - 0.002) * 1.2 * 1.3) < 1e-4
+    s2 = scorecard.topn_series(p, p.index("X"), 2, mask)
+    assert abs(s2["ret"][0] - ((0.10 + 0.04) / 2 - 0.002)) < 1e-5
+    assert s2["nav"][-1] < s1["nav"][-1]  # 更强的个股集中在 top1
+
+
+def test_month_mask_slices_range():
+    p = _const_panel()
+    mask = scorecard.month_mask(p.dates, "2026-02", "2026-03")
+    assert int(mask.sum()) == 2
+    s = scorecard.topn_series(p, p.index("X"), 1, mask)
+    # 区间首月（2 月）全额计费持有到 3 月：20% − 0.2%
+    assert len(s["ret"]) == 1
+    assert abs(s["ret"][0] - (0.20 - 0.002)) < 1e-5
+    # 4 月不在区间内 → 不参与
+    mask2 = scorecard.month_mask(p.dates, "2026-04", None)
+    assert int(mask2.sum()) == 1
+
+
+def test_nscan_orders_by_n():
+    p = _const_panel()
+    mask = scorecard.month_mask(p.dates, None, None)
+    rows = scorecard.nscan(p, p.index("X"), mask, max_n=3)
+    assert [r["n"] for r in rows] == [1, 2, 3]
+    assert rows[0]["final_nav"] > rows[2]["final_nav"]  # top1 > top3（C 是拖累）
+
+
+def test_composite_scores_direction():
+    df = pd.DataFrame(
+        [
+            {"ic_mean": 0.08, "ic_ir": 0.5, "annual_return": 0.25, "sharpe": 1.5, "max_drawdown": 0.15, "win_rate": 0.6},
+            {"ic_mean": -0.05, "ic_ir": -0.3, "annual_return": -0.15, "sharpe": -0.8, "max_drawdown": 0.45, "win_rate": 0.4},
+        ]
+    )
+    out = scorecard.composite_scores(df)
+    assert out.loc[0, "composite"] > out.loc[1, "composite"]
+    assert out.loc[0, "eff_z"] > 0 and out.loc[1, "eff_z"] < 0
+
+
+def test_env_tags_bull_regime():
+    n = 18
+    bench = np.array([0.001] * 6 + [0.06] * (n - 6))
+    ra = bench + 0.02  # 牛市里超额更突出
+    rb = bench - 0.02
+    env = scorecard.env_tags({"A": ra, "B": rb}, bench)
+    assert env["A"] == "牛市进攻型"
+    assert env["B"] == "全天候型"
+
+
+def test_time_tags_recent_shift():
+    dates = pd.date_range("2024-01-31", periods=24, freq="ME")
+    rows = []
+    for i, d in enumerate(dates):
+        rows.append({"trade_date": d, "factor_code": "UP", "ic": 0.02 if i < 12 else 0.05})
+        rows.append({"trade_date": d, "factor_code": "DOWN", "ic": 0.05 if i < 12 else 0.02})
+        rows.append({"trade_date": d, "factor_code": "IDLE", "ic": 0.004})
+    df = pd.DataFrame(rows)
+    tags = scorecard.time_tags(df, ["UP", "DOWN", "IDLE"], dates.to_numpy())
+    assert tags["UP"] == "近期转强"
+    assert tags["DOWN"] == "近期失效"
+    assert tags["IDLE"] == "持续低效"
+
+
+def test_weight_grid_valid():
+    from backend.services.engine.factor_research.service import _weight_grid
+
+    for k in (2, 3, 5):
+        grid = _weight_grid(k)
+        assert 5 <= len(grid) <= 900
+        for w in grid:
+            assert abs(sum(w) - 1.0) < 1e-9
+            assert all(x >= 0 for x in w)

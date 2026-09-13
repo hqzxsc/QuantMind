@@ -3,11 +3,13 @@
 import { SERVICE_ENDPOINTS } from '../../../config/services';
 import type {
   CatalogResponse,
+  CompareItemReq,
   CompareResponse,
   ComposeRequest,
   ComposeResponse,
   FactorDetail,
   LeaderboardResponse,
+  OptimalResponse,
 } from '../types/factorResearch';
 
 const BASE = `${SERVICE_ENDPOINTS.USER_SERVICE}/factor-research`;
@@ -15,6 +17,16 @@ const BASE = `${SERVICE_ENDPOINTS.USER_SERVICE}/factor-research`;
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('access_token') || '';
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** 带状态码的接口错误（页面据此区分「快照未生成」与其它失败） */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
 }
 
 async function requestJson<T>(path: string, init: RequestInit = {}, timeoutMs = 60000): Promise<T> {
@@ -28,7 +40,7 @@ async function requestJson<T>(path: string, init: RequestInit = {}, timeoutMs = 
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
-      throw new Error(`因子研究接口失败 ${res.status}: ${detail.slice(0, 160)}`);
+      throw new ApiError(res.status, `因子研究接口失败 ${res.status}: ${detail.slice(0, 220)}`);
     }
     return (await res.json()) as T;
   } finally {
@@ -36,25 +48,56 @@ async function requestJson<T>(path: string, init: RequestInit = {}, timeoutMs = 
   }
 }
 
-/** 因子目录（82 个 + 快照元信息） */
+/** 区间参数（start/end 为 YYYY-MM-DD 或 YYYY-MM，null=开放端） */
+export interface RangeParams {
+  start?: string | null;
+  end?: string | null;
+}
+
+function rangeQuery(range?: RangeParams): string {
+  const qs = new URLSearchParams();
+  if (range?.start) qs.set('start', range.start);
+  if (range?.end) qs.set('end', range.end);
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
+/** 因子目录（82 个 + 分类顺序 + 基准 + 快照元信息） */
 export function getCatalog(): Promise<CatalogResponse> {
   return requestJson<CatalogResponse>('/catalog');
 }
 
-/** 排行榜 */
-export function getLeaderboard(sort = 'composite'): Promise<LeaderboardResponse> {
-  const qs = sort && sort !== 'composite' ? `?sort=${encodeURIComponent(sort)}` : '';
-  return requestJson<LeaderboardResponse>(`/leaderboard${qs}`);
+/** 排行榜（区间内重算 KPI/超额/IC + 持仓画像 + 标签 + 综合分；n=持仓数） */
+export function getLeaderboard(range?: RangeParams, n = 30): Promise<LeaderboardResponse> {
+  const qs = new URLSearchParams();
+  if (range?.start) qs.set('start', range.start);
+  if (range?.end) qs.set('end', range.end);
+  if (n && n !== 30) qs.set('n', String(n));
+  const s = qs.toString();
+  return requestJson<LeaderboardResponse>(`/leaderboard${s ? `?${s}` : ''}`, {}, 120000);
 }
 
-/** 单因子详情 */
-export function getFactorDetail(code: string): Promise<FactorDetail> {
-  return requestJson<FactorDetail>(`/factor/${encodeURIComponent(code)}`, {}, 90000);
+/** 单因子详情（ns=持仓数档位列表，如 [5,10,30]） */
+export function getFactorDetail(
+  code: string,
+  ns: number[],
+  range?: RangeParams,
+  stocksN = 30,
+): Promise<FactorDetail> {
+  const qs = new URLSearchParams();
+  qs.set('ns', ns.join(','));
+  qs.set('stocks_n', String(stocksN));
+  if (range?.start) qs.set('start', range.start);
+  if (range?.end) qs.set('end', range.end);
+  return requestJson<FactorDetail>(`/factor/${encodeURIComponent(code)}?${qs.toString()}`, {}, 90000);
 }
 
-/** 多因子对比 */
-export function getCompare(codes: string[]): Promise<CompareResponse> {
-  return requestJson<CompareResponse>(`/compare?codes=${encodeURIComponent(codes.join(','))}`, {}, 90000);
+/** 多因子对比（每因子可单独设持仓数） */
+export function postCompare(items: CompareItemReq[], range?: RangeParams): Promise<CompareResponse> {
+  const body: Record<string, unknown> = { items };
+  if (range?.start) body.start = range.start;
+  if (range?.end) body.end = range.end;
+  return requestJson<CompareResponse>('/compare', { method: 'POST', body: JSON.stringify(body) }, 120000);
 }
 
 /** 多因子合成回测 */
@@ -62,7 +105,41 @@ export function postCompose(req: ComposeRequest): Promise<ComposeResponse> {
   return requestJson<ComposeResponse>('/compose', { method: 'POST', body: JSON.stringify(req) }, 120000);
 }
 
+/** 网格搜索最优权重（夏普/年化/超额各一组） */
+export function postOptimalWeights(
+  codes: string[],
+  topN: number,
+  range?: RangeParams,
+): Promise<OptimalResponse> {
+  const body: Record<string, unknown> = { codes, top_n: topN };
+  if (range?.start) body.start = range.start;
+  if (range?.end) body.end = range.end;
+  return requestJson<OptimalResponse>('/optimal-weights', { method: 'POST', body: JSON.stringify(body) }, 180000);
+}
+
 /** 因子筛选结果（质量门槛 + 同源去重） */
 export function getScreening(): Promise<import('../types/factorResearch').ScreeningResponse> {
   return requestJson('/screening');
+}
+
+// ---------------------------------------------------------------------------
+// 快照管理（一键计算；全部本地计算，不上传任何数据）
+// ---------------------------------------------------------------------------
+export interface SnapshotStatus {
+  exists: boolean;
+  running: boolean;
+  built_at: string | null;
+  window: [string, string] | null;
+  n_factors: number | null;
+  n_dates: number | null;
+  step: string;
+  log_tail: string[];
+}
+
+export function getSnapshotStatus(): Promise<SnapshotStatus> {
+  return requestJson<SnapshotStatus>('/snapshot-status');
+}
+
+export function postBuildSnapshot(): Promise<{ started: boolean; running: boolean; pid?: number }> {
+  return requestJson('/build', { method: 'POST' }, 30000);
 }

@@ -1,36 +1,33 @@
-/** 因子研究 —— 多因子合成页签：自定义权重 + 阈值过滤 → 实时回测 */
+/**
+ * 因子研究 —— 多因子合成页签：逐因子权重 + 可选过滤阈值（z 刻度）→ 区间内实时回测；
+ * 「求最优权重」在所选因子上网格搜索（非负、和为 1），夏普 / 年化 / 超额各给一组。
+ */
 import React, { useMemo, useState } from 'react';
-import { Plus, Play, Trash2, Wand2 } from 'lucide-react';
-import { postCompose } from '../services/factorResearchService';
-import type { ComposeResponse, FactorMeta } from '../types/factorResearch';
-import { Card, IcChart, KpiTiles, NavChart, FACTOR_COLORS } from './common';
+import { Play, Trash2, Wand2 } from 'lucide-react';
+import { postCompose, postOptimalWeights } from '../services/factorResearchService';
+import type { RangeParams } from '../services/factorResearchService';
+import type { ComposeResponse, FactorMeta, OptimalResponse, OptimalWinner } from '../types/factorResearch';
+import { Card, FACTOR_COLORS, fmtNum, fmtPct, KpiTiles, NavChart } from './common';
 import { EChartsChart } from '../../../components/common/EChartsChart';
 
 interface Props {
   factors: FactorMeta[];
   codes: string[];
   onChangeCodes: (codes: string[]) => void;
+  range: RangeParams;
 }
 
-interface WeightRow {
-  code: string;
-  weight: number;
-}
-
-export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes }) => {
-  // 权重覆盖表（默认 1）；因子集合本身由页面级 codes 驱动，避免双份状态漂移
+export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes, range }) => {
   const [weights, setWeights] = useState<Record<string, number>>({});
+  const [thresholds, setThresholds] = useState<Record<string, string>>({});
   const [topN, setTopN] = useState(30);
   const [threshold, setThreshold] = useState<number | ''>('');
   const [result, setResult] = useState<ComposeResponse | null>(null);
+  const [optimal, setOptimal] = useState<OptimalResponse | null>(null);
   const [running, setRunning] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pick, setPick] = useState('');
-
-  const rows: WeightRow[] = useMemo(
-    () => codes.map((c) => ({ code: c, weight: weights[c] ?? 1 })),
-    [codes, weights],
-  );
 
   const nameOf = useMemo(() => {
     const m = new Map(factors.map((f) => [f.code, f.name_cn]));
@@ -42,31 +39,63 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes }) =
     [factors, codes],
   );
 
-  const update = (code: string, value: number) => {
-    setWeights({ ...weights, [code]: value });
-  };
+  const updateWeight = (code: string, value: number) => setWeights({ ...weights, [code]: value });
+  const updateThreshold = (code: string, value: string) =>
+    setThresholds({ ...thresholds, [code]: value });
+  const remove = (code: string) => onChangeCodes(codes.filter((c) => c !== code));
 
-  const remove = (code: string) => {
-    onChangeCodes(codes.filter((c) => c !== code));
+  const buildRequest = () => {
+    const w: Record<string, number> = {};
+    for (const c of codes) {
+      const v = weights[c] ?? 1;
+      if (v !== 0) w[c] = v;
+    }
+    const th: Record<string, number> = {};
+    for (const c of codes) {
+      const raw = (thresholds[c] ?? '').trim();
+      if (raw !== '') th[c] = Number(raw);
+    }
+    return { weights: w, top_n: topN, thresholds: Object.keys(th).length ? th : null,
+             threshold: threshold === '' ? null : Number(threshold),
+             start: range.start ?? null, end: range.end ?? null };
   };
 
   const run = async () => {
-    const weights: Record<string, number> = {};
-    for (const r of rows) if (r.weight !== 0) weights[r.code] = r.weight;
-    if (!Object.keys(weights).length) {
+    const req = buildRequest();
+    if (!Object.keys(req.weights).length) {
       setError('请至少添加一个因子并设置非零权重');
       return;
     }
     setRunning(true);
     setError(null);
     try {
-      const res = await postCompose({ weights, top_n: topN, threshold: threshold === '' ? null : Number(threshold) });
-      setResult(res);
+      setResult(await postCompose(req));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
     }
+  };
+
+  const runOptimal = async () => {
+    if (!codes.length) {
+      setError('请先添加因子');
+      return;
+    }
+    setOptimizing(true);
+    setError(null);
+    try {
+      setOptimal(await postOptimalWeights(codes, topN, range));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
+  const applyWinner = (w: OptimalWinner) => {
+    setWeights({ ...w.weights });
+    run();
   };
 
   const turnoverOption = useMemo(() => {
@@ -80,91 +109,105 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes }) =
     };
   }, [result]);
 
+  const OBJ_LABEL: Record<string, string> = { sharpe: '目标：夏普最大', annual_return: '目标：年化最大', excess_300: '目标：超额最大' };
+
   return (
     <div className="flex-1 min-h-0 flex gap-2">
       {/* 左：权重编辑器 */}
-      <div className="w-[300px] shrink-0 flex flex-col bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+      <div className="w-[320px] shrink-0 flex flex-col bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
-          <span className="text-xs font-extrabold text-slate-800">因子与权重</span>
+          <span className="text-xs font-extrabold text-slate-800">因子 · 权重 · 过滤阈值</span>
           <button
-            onClick={() => setWeights({})}
+            onClick={() => { setWeights({}); setThresholds({}); }}
             className="flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-700"
-            title="全部设为 1"
+            title="全部设为等权 1、清空阈值"
           >
-            <Wand2 className="w-3 h-3" /> 等权
+            <Wand2 className="w-3 h-3" /> 重置
           </button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-1.5">
-          {rows.map((r, i) => (
-            <div key={r.code} className="rounded-xl border border-slate-100 bg-slate-50/50 px-2 py-1.5">
+          {codes.map((c, i) => (
+            <div key={c} className="rounded-xl border border-slate-100 bg-slate-50/50 px-2 py-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-slate-700 truncate">
                   <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: FACTOR_COLORS[i % FACTOR_COLORS.length] }} />
-                  {nameOf(r.code)}
+                  {nameOf(c)}
                 </span>
-                <button onClick={() => remove(r.code)} className="text-slate-300 hover:text-rose-500">
+                <button onClick={() => remove(c)} className="text-slate-300 hover:text-rose-500">
                   <Trash2 className="w-3 h-3" />
                 </button>
               </div>
               <div className="flex items-center gap-2 mt-1">
-                <span className="font-mono text-[9px] text-slate-400">{r.code}</span>
+                <span className="font-mono text-[9px] text-slate-400 w-14 truncate">{c}</span>
                 <input
-                  type="range"
-                  min={-3}
-                  max={3}
-                  step={0.5}
-                  value={r.weight}
-                  onChange={(e) => update(r.code, Number(e.target.value))}
+                  type="range" min={-3} max={3} step={0.25}
+                  value={weights[c] ?? 1}
+                  onChange={(e) => updateWeight(c, Number(e.target.value))}
                   className="flex-1"
                 />
                 <input
-                  type="number"
-                  step={0.5}
-                  value={r.weight}
-                  onChange={(e) => update(r.code, Number(e.target.value))}
-                  className="w-14 rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] font-mono text-right"
+                  type="number" step={0.25}
+                  value={weights[c] ?? 1}
+                  onChange={(e) => updateWeight(c, Number(e.target.value))}
+                  className="w-12 rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] font-mono text-right"
+                />
+                <input
+                  type="number" step={0.25} placeholder="阈值"
+                  value={thresholds[c] ?? ''}
+                  onChange={(e) => updateThreshold(c, e.target.value)}
+                  title="过滤阈值（z 刻度）：该因子得分低于此值的股票先被剔除；留空=不过滤"
+                  className="w-12 rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] font-mono text-right placeholder:text-slate-300"
                 />
               </div>
             </div>
           ))}
-          {rows.length === 0 && <div className="text-[11px] text-slate-400 px-2 py-4 text-center">从下方下拉添加因子，或去「排行榜」勾选带入</div>}
+          {codes.length === 0 && (
+            <div className="text-[11px] text-slate-400 px-2 py-4 text-center">
+              从左侧目录勾选因子，或在下方下拉添加
+            </div>
+          )}
         </div>
         <div className="p-2 border-t border-slate-100 space-y-2">
-          <div className="flex items-center gap-1.5">
-            <Plus className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <select
-              value={pick}
-              onChange={(e) => {
-                const c = e.target.value;
-                setPick('');
-                if (c && !codes.includes(c)) {
-                  onChangeCodes([...codes, c]);
-                }
-              }}
-              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px]"
-            >
-              <option value="">添加因子…</option>
-              {addable.map((f) => (
-                <option key={f.code} value={f.code}>{f.l1} / {f.l2} · {f.name_cn}</option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={pick}
+            onChange={(e) => {
+              const c = e.target.value;
+              setPick('');
+              if (c && !codes.includes(c)) onChangeCodes([...codes, c]);
+            }}
+            className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px]"
+          >
+            <option value="">添加因子…</option>
+            {addable.map((f) => (
+              <option key={f.code} value={f.code}>{f.l1} / {f.l2} · {f.name_cn}</option>
+            ))}
+          </select>
           <div className="flex items-center gap-2 text-[11px]">
-            <label className="text-slate-500 shrink-0">持仓数</label>
+            <label className="text-slate-500 shrink-0">选股数</label>
             <input type="number" min={1} max={200} value={topN} onChange={(e) => setTopN(Number(e.target.value))}
-              className="w-16 rounded-md border border-slate-200 px-1.5 py-0.5 font-mono text-right" />
-            <label className="text-slate-500 shrink-0 ml-1" title="合成打分的下限（z 刻度）：0 ≈ 只买高于截面均值的股票">阈值</label>
+              className="w-14 rounded-md border border-slate-200 px-1.5 py-0.5 font-mono text-right" />
+            <label className="text-slate-500 shrink-0 ml-1" title="合成打分的下限（全局，z 刻度）：0 ≈ 只买高于截面均值的股票">合成阈值</label>
             <input
               type="number" step={0.25} placeholder="不过滤" value={threshold}
               onChange={(e) => setThreshold(e.target.value === '' ? '' : Number(e.target.value))}
-              className="w-16 rounded-md border border-slate-200 px-1.5 py-0.5 font-mono text-right placeholder:text-slate-300"
+              className="w-14 rounded-md border border-slate-200 px-1.5 py-0.5 font-mono text-right placeholder:text-slate-300"
             />
+          </div>
+          <div className="flex items-center gap-1.5">
             <button
               onClick={run}
               disabled={running}
-              className="ml-auto flex items-center gap-1 rounded-full bg-blue-600 text-white px-3 py-1 text-[11px] font-bold hover:bg-blue-700 disabled:opacity-50"
+              className="flex items-center gap-1 rounded-full bg-blue-600 text-white px-3 py-1 text-[11px] font-bold hover:bg-blue-700 disabled:opacity-50"
             >
               <Play className="w-3 h-3" /> {running ? '回测中…' : '运行回测'}
+            </button>
+            <button
+              onClick={runOptimal}
+              disabled={optimizing || !codes.length}
+              className="flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-bold text-violet-600 hover:bg-violet-100 disabled:opacity-40"
+              title="在所选因子上网格搜索非负、和为 1 的最优权重（忽略阈值）"
+            >
+              ⚙ {optimizing ? '搜索中…' : '求最优权重'}
             </button>
           </div>
           {error && <div className="text-[10px] text-rose-500">{error}</div>}
@@ -172,26 +215,76 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes }) =
       </div>
 
       {/* 右：结果 */}
-      <div className="flex-1 min-w-0 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2">
+      <div className="flex-1 min-w-0 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-0.5">
+        {optimal && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+            {(['sharpe', 'annual_return', 'excess_300'] as const).map((key) => {
+              const w = optimal.objectives[key];
+              if (!w) return null;
+              return (
+                <div key={key} className="rounded-2xl border border-violet-100 bg-violet-50/40 p-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-extrabold text-violet-600">{OBJ_LABEL[key]}</span>
+                    <button
+                      onClick={() => applyWinner(w)}
+                      className="rounded-full bg-violet-600 text-white px-2 py-0.5 text-[10px] font-bold hover:bg-violet-700"
+                    >
+                      应用并回测
+                    </button>
+                  </div>
+                  <div className="mt-1 space-y-0.5">
+                    {Object.entries(w.weights).filter(([, v]) => v > 0).map(([c, v]) => (
+                      <div key={c} className="flex items-center justify-between text-[10px]">
+                        <span className="text-slate-600 truncate">{nameOf(c)}</span>
+                        <span className="font-mono font-bold text-slate-700">{v.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-1 pt-1 border-t border-violet-100 flex items-center gap-2 text-[10px] font-mono text-slate-500">
+                    <span>夏普 {fmtNum(w.sharpe)}</span>
+                    <span>年化 {fmtPct(w.annual_return)}</span>
+                    <span>回撤 {fmtPct(w.max_drawdown)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {optimal && (
+          <div className="text-[10px] text-slate-400">
+            网格搜索 {optimal.n_combos} 组权重 · {optimal.n_months} 个月 · 用时 {optimal.elapsed_ms}ms ·
+            搜索在候选池（各因子月末前 150 名的并集）上评估，应用后以全样本精确回测为准
+          </div>
+        )}
+
         {result ? (
           <>
-            <KpiTiles kpi={result.kpi} />
+            <KpiTiles kpi={{ ...result.kpi, ...result.excess }} />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
-              <Card title="合成组合净值" extra={<span className="text-[10px] text-slate-400">虚线=中证500 · 双边成本 0.2%</span>}>
+              <Card
+                title="合成组合净值"
+                extra={<span className="text-[10px] text-slate-400">区间 {result.range.start} ~ {result.range.end} · 双边成本 0.2%</span>}
+              >
                 <NavChart
                   series={[
                     { name: '合成组合', data: result.nav },
-                    { name: '中证500', data: result.benchmark, color: '#94a3b8' },
+                    ...result.benchmarks
+                      .filter((b) => b.code === '000300.SH')
+                      .map((b) => ({ name: b.name, data: b.nav, color: '#94a3b8', dashed: true })),
                   ]}
                   height={200}
                 />
               </Card>
               <Card title="换手率（月末）" extra={<span className="text-[10px] text-slate-400">新进持仓占比</span>}>
-                {turnoverOption ? <div style={{ height: 200 }}><EChartsChart option={turnoverOption} /></div> : <div className="h-[200px] flex items-center justify-center text-xs text-slate-400">—</div>}
+                {turnoverOption
+                  ? <div style={{ height: 200 }}><EChartsChart option={turnoverOption} /></div>
+                  : <div className="h-[200px] flex items-center justify-center text-xs text-slate-400">—</div>}
               </Card>
             </div>
-            <Card title={`最新持仓（${result.holdings_date || '—'} · Top ${result.holdings.length}）`}
-              extra={<span className="text-[10px] text-slate-400">合成打分降序 · 阈值 {result.threshold ?? '无'}</span>}>
+            <Card
+              title={`最新持仓（${result.holdings_date || '—'} · Top ${result.holdings.length}）`}
+              extra={<span className="text-[10px] text-slate-400">合成打分降序 · 阈值 {result.threshold ?? '无'}</span>}
+            >
               <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-x-4">
                 {result.holdings.map((h, i) => (
                   <div key={h.symbol} className="flex items-center justify-between py-[3px] border-b border-slate-50">
@@ -208,13 +301,12 @@ export const ComposeTab: React.FC<Props> = ({ factors, codes, onChangeCodes }) =
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-slate-400">
             <Play className="w-8 h-8 text-slate-200" />
-            <span className="text-xs">配置权重与阈值后点击「运行回测」</span>
-            <span className="text-[10px] text-slate-300">口径：月末调仓 · Top-N 等权 · 双边成本 0.2% · 打分 = Σ w×因子分 / Σ|w|</span>
+            <span className="text-xs">配置权重/阈值后点击「运行回测」，或先「求最优权重」</span>
+            <span className="text-[10px] text-slate-300">
+              口径：月末调仓 · Top-N 等权 · 双边成本 0.2% · 打分 = Σ w×因子分 / Σ|w| · 阈值 z 刻度（≥1.0 约前 16%）
+            </span>
           </div>
         )}
-        {result?.kpi?.n_months ? (
-          <div className="text-[10px] text-slate-300 pb-1">回测 {result.kpi.n_months} 期 · 因子：{Object.keys(result.weights).join('、')}</div>
-        ) : null}
       </div>
     </div>
   );

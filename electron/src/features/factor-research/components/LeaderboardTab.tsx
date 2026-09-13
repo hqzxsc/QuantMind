@@ -1,86 +1,119 @@
-/** 因子研究 —— 排行榜页签：综合分排名 + 勾选带入对比/合成 */
+/**
+ * 因子研究 —— 排行榜页签：区间内全列排序（综合分 = 0.5×有效性 + 0.5×业绩）、
+ * 双标签展示与筛选、勾选带入对比 / 合成。
+ */
 import React, { useMemo, useState } from 'react';
 import { ArrowRightLeft, CheckSquare, Layers, Square, TrendingUp } from 'lucide-react';
 import type { LeaderboardRow } from '../types/factorResearch';
-import { fmtNum, fmtPct, Card } from './common';
+import { ALL_TAGS, Card, fmtNum, fmtPct, TagChip } from './common';
 
 interface Props {
   rows: LeaderboardRow[];
   loading: boolean;
   error: string | null;
   selected: string[];
+  tagFilter: string[];
+  n: number;
+  onNChange: (n: number) => void;
   onToggle: (code: string) => void;
+  onToggleTag: (tag: string) => void;
   onSendCompare: () => void;
   onSendCompose: () => void;
   onOpenSingle: (code: string) => void;
   meta: Record<string, unknown>;
 }
 
-type SortKey = 'composite' | 'annual_return' | 'sharpe' | 'ic_mean' | 'ic_ir';
+type Col = {
+  key: keyof LeaderboardRow | 'name';
+  label: string;
+  width?: string;
+  align?: 'left' | 'right';
+  fmt?: (v: unknown, row: LeaderboardRow) => string;
+  hint?: string;
+};
 
-const SORTS: Array<{ key: SortKey; label: string }> = [
-  { key: 'composite', label: '综合分' },
-  { key: 'annual_return', label: '年化' },
-  { key: 'sharpe', label: '夏普' },
-  { key: 'ic_mean', label: 'IC 均值' },
-  { key: 'ic_ir', label: 'ICIR' },
+const COLS: Col[] = [
+  { key: 'rank', label: '#', width: 'w-8', align: 'left' },
+  { key: 'name', label: '因子', align: 'left' },
+  { key: 'composite', label: '综合分', width: 'w-14', align: 'right', fmt: (v) => fmtNum(v as number, 3) },
+  { key: 'annual_return', label: '年化', width: 'w-14', align: 'right', fmt: (v) => fmtPct(v as number) },
+  { key: 'sharpe', label: '夏普', width: 'w-12', align: 'right', fmt: (v) => fmtNum(v as number) },
+  { key: 'max_drawdown', label: '最大回撤', width: 'w-16', align: 'right', fmt: (v) => fmtPct(v as number) },
+  { key: 'win_rate', label: '月胜率', width: 'w-14', align: 'right', fmt: (v) => fmtPct(v as number) },
+  { key: 'excess_300', label: '超额300', width: 'w-16', align: 'right', fmt: (v) => fmtPct(v as number) },
+  { key: 'excess_800', label: '超额800', width: 'w-16', align: 'right', fmt: (v) => fmtPct(v as number) },
+  { key: 'ic_mean', label: 'RankIC', width: 'w-14', align: 'right', fmt: (v) => fmtNum(v as number, 3) },
+  { key: 'ic_ir', label: 'IC_IR', width: 'w-12', align: 'right', fmt: (v) => fmtNum(v as number) },
+  { key: 'median_mv_yi', label: '中位市值(亿)', width: 'w-20', align: 'right', fmt: (v) => fmtNum(v as number, 0) },
 ];
 
 export const LeaderboardTab: React.FC<Props> = ({
-  rows, loading, error, selected, onToggle, onSendCompare, onSendCompose, onOpenSingle, meta,
+  rows, loading, error, selected, tagFilter, n, onNChange, onToggle, onToggleTag,
+  onSendCompare, onSendCompose, onOpenSingle, meta,
 }) => {
-  const [sortKey, setSortKey] = useState<SortKey>('composite');
-  const [l1, setL1] = useState<string>('全部');
+  const [sortKey, setSortKey] = useState<string>('composite');
+  const [asc, setAsc] = useState(false);
 
-  const l1Options = useMemo(() => ['全部', ...Array.from(new Set(rows.map((r) => r.l1)))], [rows]);
   const view = useMemo(() => {
-    const filtered = l1 === '全部' ? rows : rows.filter((r) => r.l1 === l1);
+    const filtered = tagFilter.length
+      ? rows.filter((r) => tagFilter.includes(r.env_tag) || tagFilter.includes(r.time_tag))
+      : rows;
     const sorted = [...filtered];
     sorted.sort((a, b) => {
-      if (sortKey === 'composite') return b.composite - a.composite;
-      const av = (a[sortKey] as number | null) ?? -Infinity;
-      const bv = (b[sortKey] as number | null) ?? -Infinity;
-      return bv - av;
+      if (sortKey === 'name') {
+        return asc ? a.name_cn.localeCompare(b.name_cn) : b.name_cn.localeCompare(a.name_cn);
+      }
+      const av = a[sortKey as keyof LeaderboardRow] as number | null | undefined;
+      const bv = b[sortKey as keyof LeaderboardRow] as number | null | undefined;
+      const na = av === null || av === undefined || Number.isNaN(av) ? -Infinity : Number(av);
+      const nb = bv === null || bv === undefined || Number.isNaN(bv) ? -Infinity : Number(bv);
+      return asc ? na - nb : nb - na;
     });
     return sorted;
-  }, [rows, sortKey, l1]);
+  }, [rows, sortKey, asc, tagFilter]);
 
-  const window_ = meta?.window as string[] | undefined;
+  const range = meta?.range as { start?: string; end?: string; n_months?: number } | undefined;
+
+  const clickSort = (key: string) => {
+    if (key === sortKey) {
+      setAsc(!asc);
+    } else {
+      setSortKey(key);
+      setAsc(key === 'max_drawdown'); // 回撤默认升序（最抗跌在前）
+    }
+  };
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2">
       {/* 工具条 */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-1 rounded-full bg-slate-100 border border-slate-200 p-0.5">
-          {SORTS.map((s) => (
+        <span className="flex items-center gap-1">
+          <span className="text-[10px] font-bold text-slate-400">持仓数</span>
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={n}
+            onChange={(e) => onNChange(Math.max(1, Math.min(100, Number(e.target.value) || 30)))}
+            className="w-14 rounded-lg border border-slate-200 px-1.5 py-0.5 text-[11px] font-mono text-right"
+          />
+          {[10, 30, 50].map((x) => (
             <button
-              key={s.key}
-              onClick={() => setSortKey(s.key)}
-              className={`rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${
-                sortKey === s.key ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              key={x}
+              onClick={() => onNChange(x)}
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                n === x ? 'border-blue-200 bg-blue-50 text-blue-600' : 'border-slate-200 text-slate-500 hover:bg-slate-50'
               }`}
             >
-              {s.label}
+              {x}
             </button>
           ))}
-        </div>
-        <div className="flex items-center gap-1 rounded-full bg-slate-100 border border-slate-200 p-0.5">
-          {l1Options.map((g) => (
-            <button
-              key={g}
-              onClick={() => setL1(g)}
-              className={`rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${
-                l1 === g ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {g}
-            </button>
-          ))}
-        </div>
-        <div className="flex-1" />
-        <span className="text-[11px] font-bold text-slate-400">
-          {window_ ? `${window_[0]} ~ ${window_[1]} · 月频 · Top30 等权` : ''}
         </span>
+        <span className="text-[10px] text-slate-300">|</span>
+        <span className="text-[11px] font-bold text-slate-400">
+          {range ? `${range.start} ~ ${range.end} · ${range.n_months} 个月末` : ''}
+        </span>
+        <div className="flex-1" />
         <button
           onClick={onSendCompare}
           disabled={selected.length < 2}
@@ -99,11 +132,49 @@ export const LeaderboardTab: React.FC<Props> = ({
         </button>
       </div>
 
+      {/* 说明 */}
+      <details className="rounded-xl border border-slate-200/80 bg-white px-3 py-1.5 text-[10px] text-slate-500">
+        <summary className="cursor-pointer font-bold text-slate-600 select-none">
+          综合分与标签口径（点击展开）
+        </summary>
+        <div className="mt-1.5 leading-relaxed space-y-1">
+          <p>
+            所有因子按综合得分排名。综合分 = 因子有效性(50%) + 实战业绩(50%)：分项指标在**全因子截面**标准化
+            (z-score) 后加权，方向已统一（数值越大越好）。有效性 = RankIC 均值与 IC_IR；业绩 = 年化 / 夏普 /
+            −最大回撤 / 月度胜率。业绩口径：top-N 等权（持仓数可切换）、月末调仓、0.2% 双边成本（按换手计）；
+            区间选择会整体重算。中位市值 / 市值风格（大盘≥500亿 · 中盘100-500亿 · 小盘&lt;100亿）与前三行业
+            按最新截面的 Top-N 持仓统计。
+          </p>
+          <p>
+            标签（每个因子 2 个，按当前区间自动判定，基准 top-30）：市场环境——沪深300 滚动 3 月涨跌 &gt;+5% 记牛、&lt;−5% 记熊、其余震荡，
+            因子在三环境的月均超额（组合−沪深300）在因子间 z-score，取最高者 → 牛市进攻型 / 熊市防御型 / 震荡占优型，
+            三项 z 均 &lt; 0.5 → 全天候型；时效——近 12 月 RankIC 均值与区间全样本之差：&gt;+0.012 近期转强、
+            &lt;−0.012 近期失效、两者 |RankIC| 都 &lt; 0.01 持续低效、其余长期稳定型。
+          </p>
+          <p>点击列头可改排序（如点「最大回撤」看最抗跌、点「年化」看最赚钱）；勾选因子后可一键带入对比 / 合成。</p>
+        </div>
+      </details>
+
+      {/* 标签筛选 */}
+      <div className="flex items-center gap-1 flex-wrap">
+        <span className="text-[10px] font-bold text-slate-400 mr-0.5">标签筛选</span>
+        {ALL_TAGS.map((t) => {
+          const on = tagFilter.includes(t);
+          return (
+            <button key={t} onClick={() => onToggleTag(t)} className="transition-transform hover:scale-105">
+              <span className={on ? 'ring-1 ring-indigo-400 rounded-full inline-block' : 'opacity-70'}>
+                <TagChip tag={t} />
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* 表格 */}
       <Card
         title={`因子排行榜（${view.length}）`}
         className="flex-1"
-        extra={<span className="text-[10px] text-slate-400">综合分 = 0.5×|IC| 分位 + 0.5×夏普分位 · 点击行看单因子</span>}
+        extra={<span className="text-[10px] text-slate-400">点击行看单因子 · 点列头排序</span>}
       >
         {error ? (
           <div className="h-full flex items-center justify-center text-xs text-rose-500">{error}</div>
@@ -115,16 +186,21 @@ export const LeaderboardTab: React.FC<Props> = ({
               <thead className="sticky top-0 bg-white z-10">
                 <tr className="text-slate-400 font-bold">
                   <th className="text-left py-1.5 pl-1 w-8"></th>
-                  <th className="text-left py-1.5 w-10">#</th>
-                  <th className="text-left py-1.5">因子</th>
-                  <th className="text-left py-1.5 w-24">大类/小类</th>
-                  <th className="text-right py-1.5 w-14">综合分</th>
-                  <th className="text-right py-1.5 w-16">年化</th>
-                  <th className="text-right py-1.5 w-12">夏普</th>
-                  <th className="text-right py-1.5 w-16">最大回撤</th>
-                  <th className="text-right py-1.5 w-12">月胜率</th>
-                  <th className="text-right py-1.5 w-14">IC 均值</th>
-                  <th className="text-right py-1.5 w-12">ICIR</th>
+                  {COLS.map((c) => (
+                    <th
+                      key={String(c.key)}
+                      onClick={() => clickSort(String(c.key))}
+                      className={`py-1.5 cursor-pointer select-none hover:text-slate-600 ${c.width || ''} ${
+                        c.align === 'right' ? 'text-right' : 'text-left'
+                      }`}
+                    >
+                      {c.label}
+                      {sortKey === String(c.key) && <span className="ml-0.5 text-indigo-500">{asc ? '↑' : '↓'}</span>}
+                    </th>
+                  ))}
+                  <th className="py-1.5 text-right w-14">市值风格</th>
+                  <th className="text-left py-1.5 pl-1">标签</th>
+                  <th className="text-left py-1.5 pl-1">前三行业（最新选股）</th>
                 </tr>
               </thead>
               <tbody>
@@ -143,19 +219,44 @@ export const LeaderboardTab: React.FC<Props> = ({
                       <td className="py-1.5">
                         <span className="font-bold text-slate-700">{r.name_cn}</span>
                         <span className="ml-1.5 font-mono text-[10px] text-slate-400">{r.code}</span>
+                        <span className="ml-1.5 text-[9px] text-slate-300">{r.l1.slice(0, 2)} / {r.l2}</span>
                       </td>
-                      <td className="py-1.5 text-slate-400 text-[10px]">{r.l1.slice(0, 2)} / {r.l2}</td>
-                      <td className="py-1.5 text-right font-mono font-bold text-slate-700">{fmtNum(r.composite, 3)}</td>
+                      <td className="py-1.5 text-right font-mono font-bold text-indigo-600">{fmtNum(r.composite, 3)}</td>
                       <td className={`py-1.5 text-right font-mono font-bold ${(r.annual_return || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                         {fmtPct(r.annual_return)}
                       </td>
                       <td className="py-1.5 text-right font-mono text-slate-600">{fmtNum(r.sharpe)}</td>
                       <td className="py-1.5 text-right font-mono text-slate-500">{fmtPct(r.max_drawdown)}</td>
                       <td className="py-1.5 text-right font-mono text-slate-500">{fmtPct(r.win_rate)}</td>
+                      <td className={`py-1.5 text-right font-mono ${(r.excess_300 || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                        {fmtPct(r.excess_300)}
+                      </td>
+                      <td className={`py-1.5 text-right font-mono ${(r.excess_800 || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                        {fmtPct(r.excess_800)}
+                      </td>
                       <td className={`py-1.5 text-right font-mono ${(r.ic_mean || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                         {fmtNum(r.ic_mean, 3)}
                       </td>
                       <td className="py-1.5 text-right font-mono text-slate-500">{fmtNum(r.ic_ir)}</td>
+                      <td className="py-1.5 text-right font-mono text-slate-600">{fmtNum(r.median_mv_yi, 0)}</td>
+                      <td className="py-1.5 text-right">
+                        {r.mv_style ? (
+                          <span className="rounded-full bg-slate-50 border border-slate-200 px-1.5 py-[1px] text-[9px] font-bold text-slate-500">
+                            {r.mv_style}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 pl-1">
+                        <span className="flex items-center gap-1">
+                          <TagChip tag={r.env_tag} small />
+                          <TagChip tag={r.time_tag} small />
+                        </span>
+                      </td>
+                      <td className="py-1.5 pl-1 text-[10px] text-slate-500 whitespace-nowrap">
+                        {(r.top_industries || []).map((x) => `${x.name} ${x.count}`).join('、') || '—'}
+                      </td>
                     </tr>
                   );
                 })}
@@ -166,7 +267,7 @@ export const LeaderboardTab: React.FC<Props> = ({
       </Card>
       <div className="text-[10px] text-slate-400 flex items-center gap-1">
         <TrendingUp className="w-3 h-3" />
-        口径：全 A 非 ST/退市池，月末调仓 Top30 等权，双边成本 0.2%，复权价 · 与 factor-lib-demo 一致
+        口径：全 A 非 ST/退市池，月末调仓 Top-N 等权（持仓数可切换），双边成本 0.2%（按换手计），前复权价 · 与 factor-lib-demo 一致
       </div>
     </div>
   );

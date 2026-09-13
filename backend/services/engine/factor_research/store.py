@@ -89,7 +89,22 @@ def corr_table() -> pd.DataFrame | None:
 
 
 def benchmark_table() -> pd.DataFrame | None:
+    """基准净值长表（trade_date, nav, index_code：沪深300/中证800/中证500）。"""
     return load_parquet("benchmarks.parquet")
+
+
+def panel():
+    """月末名次面板（scorecard.Panel；构建自 factor_panel.parquet，进程内缓存）。"""
+    from backend.services.engine.factor_research import scorecard
+
+    return _load(
+        "factor_panel.parquet", lambda p: scorecard.Panel(pd.read_parquet(p))
+    )
+
+
+def stock_snapshot() -> pd.DataFrame | None:
+    """最新截面个股元数据（名称/申万行业/市值/PE/PB/近一年日均成交额）。"""
+    return load_parquet("stock_snapshot.parquet")
 
 
 def scores_for(codes: list[str]) -> pd.DataFrame | None:

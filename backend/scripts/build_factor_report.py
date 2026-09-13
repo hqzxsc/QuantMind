@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import multiprocessing as mp
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -356,6 +357,13 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="快照输出路径（默认 <数据集>/report/factor_report.json）")
     ap.add_argument("--series-out", default=None, help="明细序列输出路径（默认与快照同目录）")
     args = ap.parse_args()
+
+    # 显式 spawn：Linux 默认 fork 与线程库（pyarrow/BLAS）混用会偶发死锁
+    # —— 实测出现过父进程卡 anon_pipe_write、worker 卡 futex、全体 0% CPU 的挂死。
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass
 
     cfg = DATASETS[args.dataset]
     factor_dir = dataset_dir(args.dataset)

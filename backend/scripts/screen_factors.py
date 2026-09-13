@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""因子筛选：质量门槛 + 同源去重（五库联合：alpha_library ∪ tdxgs ∪ jq110 ∪ alpha360 ∪ factor_research）
+"""因子筛选：质量门槛 + 同源去重（多库联合：alpha_library ∪ tdxgs ∪ jq110 ∪ alpha360 ∪ l1_factors ∪ l2_factors ∪ factor_research）
 
 输入（均已存在，无需重新计算因子值）：
   <dataset>/report/factor_report.json   —— 因子报告快照（IC/ICIR/换手 + 库内相关矩阵）
-      数据集：alpha_library(429) / tdxgs(88) / jq110(109) / alpha360(360)
+      数据集：alpha_library(429) / tdxgs(88) / jq110(109) / alpha360(360) /
+              l1_factors(110) / l2_factors(211，2022 起——缺分区的库在早期日期按「无数据」参与，
+              其列逐期成对排除，不再跳过整天）；l1_l2_factors 为两者拼接，不入筛选避免重复
   factor_research/{metrics.json,corr.parquet,monthly_scores.parquet}  —— 82 因子研究库
   <dataset>/dt=*/data.parquet            —— 月末采样做「跨库」相关（单遍联合，缓存 npz）
 
@@ -64,13 +66,22 @@ cluster_by_correlation = (
     _fr_clusters.cluster_by_correlation
 )  # 供 --method cluster 备用（默认不用）
 
-REPORT_DATASETS = ["alpha_library", "tdxgs", "jq110", "alpha360"]
+REPORT_DATASETS = [
+    "alpha_library",
+    "tdxgs",
+    "jq110",
+    "alpha360",
+    "l1_factors",
+    "l2_factors",
+]
 OURS = "factor_research"
 DATASET_LABEL = {
     "alpha_library": "Alpha 库（Alpha101 / GTJA191 / Alpha158）",
     "tdxgs": "TDXGS 通达信技术指标",
     "jq110": "JQ110 聚宽因子",
     "alpha360": "Alpha360 原始量价回溯",
+    "l1_factors": "L1 因子（量价/换手/波动等基础因子）",
+    "l2_factors": "L2 因子（逐笔微观结构，2022 起）",
     "factor_research": "因子研究（行情+财务+行为）",
 }
 
@@ -162,30 +173,29 @@ def _union_cross_corr(
         off += len(names)
     used = 0
     t_batch = time.time()
+    ds_names = [n for _, names in blocks for n in names]
     for d in dates:
         dt = pd.Timestamp(d).strftime("%Y%m%d")
         comb = None
-        ok = True
         for (ds, names), _span in zip(blocks, offsets, strict=True):
             f = root / "6_ml_datasets" / ds / f"dt={dt}" / "data.parquet"
             if not f.exists():
-                ok = False
-                break
+                continue  # 该库当日期无分区（如 L2 早于 2022）→ 其列本期为 NaN，成对排除
             try:
                 part = pd.read_parquet(f, columns=["symbol", *names]).set_index(
                     "symbol"
                 )
             except Exception:  # noqa: BLE001
-                ok = False
-                break
+                continue
             comb = part if comb is None else comb.join(part, how="inner")
-        if not ok or comb is None:
+        if comb is None:
             continue
+        comb = comb.reindex(columns=ds_names)  # 缺失库的列补 NaN
         our_d = groups[d].pivot_table(
             index="symbol", columns="factor_code", values="score", aggfunc="last"
         )
         our_d = our_d.reindex(columns=our_names)
-        comb = comb.join(our_d, how="inner")
+        comb = comb.join(our_d, how="inner").reindex(columns=[*ds_names, *our_names])
         if len(comb) < 60:
             continue
         rk = comb.rank()

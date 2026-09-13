@@ -72,7 +72,7 @@ def feature_keys(catalog_path: Path) -> list[str]:
 def normalize_symbol_column(df: pd.DataFrame, source_col: str, target_col: str = "symbol") -> pd.DataFrame:
     """标准化股票代码为 Prefix 格式（SH600000）。"""
     from backend.shared.stock_utils import StockCodeUtil
-    
+
     def prefix_symbol(value: object) -> str:
         if pd.isna(value):
             return ""
@@ -82,7 +82,7 @@ def normalize_symbol_column(df: pd.DataFrame, source_col: str, target_col: str =
         if text.isdigit():
             text = text.zfill(6)
         return StockCodeUtil.to_prefix(text)
-    
+
     df[target_col] = df[source_col].map(prefix_symbol)
     return df[df[target_col].str.match(r"^(SH|SZ|BJ)\d{6}$", na=False)].copy()
 
@@ -172,7 +172,7 @@ def add_daily_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     # 动量收益率（使用未复权价格）
     for n in (1, 3, 5, 10, 20, 60, 120):
         df[f"mom_ret_{n}d"] = safe_div(raw_close, g["close"].shift(n)) - 1
-    
+
     for n in (5, 10, 20, 60, 120):
         ma = _rolling_group(df, "adj_close", n, "mean")
         df[f"mom_ma_gap_{n}"] = safe_div(adj_close, ma) - 1
@@ -212,7 +212,7 @@ def add_daily_technical_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"vol_atr_{n}"] = df.groupby("symbol", observed=True)["vol_true_range"].transform(
             lambda s: s.rolling(n, min_periods=n).mean()
         )
-    
+
     for n in (5, 10, 20, 60):
         df[f"vol_std_{n}"] = df.groupby("symbol", observed=True)["mom_ret_1d"].transform(
             lambda s: s.rolling(n, min_periods=n).std()
@@ -226,12 +226,12 @@ def add_daily_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     log_lo = np.log(safe_div(adj_low, adj_open))
     gk_base = 0.5 * log_hl**2 - (2 * np.log(2) - 1) * log_co**2
     rs_base = np.log(safe_div(adj_high, adj_close)) * log_ho + np.log(safe_div(adj_low, adj_close)) * log_lo
-    
+
     for n in (10, 20):
         df[f"vol_parkinson_{n}"] = np.sqrt(_rolling_group(df.assign(_parkinson=parkinson_base), "_parkinson", n, "mean"))
         df[f"vol_gk_{n}"] = np.sqrt(_rolling_group(df.assign(_gk=gk_base.clip(lower=0)), "_gk", n, "mean"))
         df[f"vol_rs_{n}"] = np.sqrt(_rolling_group(df.assign(_rs=rs_base.clip(lower=0)), "_rs", n, "mean"))
-    
+
     df["vol_downside_20"] = df.groupby("symbol", observed=True)["mom_ret_1d"].transform(
         lambda s: s.clip(upper=0).rolling(20, min_periods=20).std()
     )
@@ -271,7 +271,7 @@ def add_daily_technical_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"liq_amihud_{n}"] = df.groupby("symbol", observed=True)["_amihud_base"].transform(
             lambda s: s.rolling(n, min_periods=n).mean()
         )
-    
+
     # 换手率（从银层继承）
     if "turnover_rate" in df.columns:
         df["liq_turnover_os"] = df["turnover_rate"]  # 当日换手率
@@ -294,55 +294,55 @@ def merge_three_factor(csmar_root: Path, df: pd.DataFrame, year: int) -> pd.Data
         factor_dirs = [d for d in csmar_root.glob("三因子模型指标(日)*") if d.is_dir()]
         if not factor_dirs:
             return df
-        
+
         factor_dir = factor_dirs[0]
         csv_files = list(factor_dir.glob("*.csv"))
         if not csv_files:
             return df
-        
+
         factor_df = pd.read_csv(csv_files[0], encoding="utf-8-sig")
         factor_df["TradingDate"] = pd.to_datetime(factor_df["TradingDate"], errors="coerce")
-        
+
         # 按日期聚合（取均值）
         factor_df = factor_df.groupby("TradingDate", as_index=False).agg({
             "RiskPremium1": "mean",
-            "SMB1": "mean", 
+            "SMB1": "mean",
             "HML1": "mean"
         })
-        
+
         factor_df = factor_df.rename(columns={
             "TradingDate": "trade_date",
             "RiskPremium1": "style_mkt_premium",
             "SMB1": "style_smb",
             "HML1": "style_hml"
         })
-        
+
         # 获取df中所有交易日，与三因子表对齐
         df_dates = df["trade_date"].unique()
         factor_dates = factor_df["trade_date"].unique()
-        
+
         # 创建完整日期索引并前向填充
         all_dates = pd.DataFrame({"trade_date": sorted(set(df_dates) | set(factor_dates))})
         all_dates["trade_date"] = pd.to_datetime(all_dates["trade_date"])
-        
+
         # 合并三因子到完整日期表
         all_dates = all_dates.merge(factor_df, on="trade_date", how="left")
-        
+
         # 前向填充缺失值（当日使用最近可用的因子值）
         all_dates[["style_mkt_premium", "style_smb", "style_hml"]] = all_dates[
             ["style_mkt_premium", "style_smb", "style_hml"]
         ].ffill()
-        
+
         # 三因子值滞后一天（T日特征使用T-1日因子）
         all_dates[["style_mkt_premium", "style_smb", "style_hml"]] = all_dates[
             ["style_mkt_premium", "style_smb", "style_hml"]
         ].shift(1)
-        
+
         # 再次前向填充第一个交易日的缺失（用第一行可用值）
         all_dates[["style_mkt_premium", "style_smb", "style_hml"]] = all_dates[
             ["style_mkt_premium", "style_smb", "style_hml"]
         ].ffill()
-        
+
         # 合并到df
         df = df.merge(all_dates, on="trade_date", how="left")
     except Exception:
@@ -350,11 +350,11 @@ def merge_three_factor(csmar_root: Path, df: pd.DataFrame, year: int) -> pd.Data
         for col in ("style_smb", "style_hml", "style_mkt_premium"):
             if col not in df.columns:
                 df[col] = np.nan
-    
+
     return df
 
 
-def inherit_from_yearly(df: pd.DataFrame, yearly_path: Path, target_date: pd.Timestamp, 
+def inherit_from_yearly(df: pd.DataFrame, yearly_path: Path, target_date: pd.Timestamp,
                         columns: list[str]) -> pd.DataFrame:
     """从年度宽表继承指定字段。
     
@@ -363,17 +363,17 @@ def inherit_from_yearly(df: pd.DataFrame, yearly_path: Path, target_date: pd.Tim
     """
     if not yearly_path.exists():
         return df
-    
+
     try:
         yearly = pd.read_parquet(yearly_path)
         yearly["trade_date"] = pd.to_datetime(yearly["trade_date"])
-        
+
         # 只保留需要的列
         inherit_cols = ["symbol", "trade_date"] + [c for c in columns if c in yearly.columns]
-        
+
         # 获取目标日期的数据
         day_data = yearly[yearly["trade_date"] == target_date][inherit_cols].copy()
-        
+
         # 若目标日期无数据，或指定继承列全部为空，从前一交易日继承
         need_fallback = day_data.empty
         if not day_data.empty:
@@ -384,7 +384,7 @@ def inherit_from_yearly(df: pd.DataFrame, yearly_path: Path, target_date: pd.Tim
             else:
                 # 所有继承列都为空，需要fallback
                 need_fallback = True
-        
+
         if need_fallback:
             available_dates = sorted(yearly["trade_date"].unique())
             past_dates = [d for d in available_dates if d < target_date]
@@ -393,13 +393,13 @@ def inherit_from_yearly(df: pd.DataFrame, yearly_path: Path, target_date: pd.Tim
                 day_data = yearly[yearly["trade_date"] == prev_date][inherit_cols].copy()
                 # 继承时将日期替换为目标日期
                 day_data["trade_date"] = target_date
-        
+
         if day_data.empty:
             return df
-        
+
         # 合并到df
         df = df.merge(day_data, on=["symbol", "trade_date"], how="left", suffixes=("", "_inherit"))
-        
+
         # 用继承值填充
         for col in columns:
             if f"{col}_inherit" in df.columns:
@@ -407,7 +407,7 @@ def inherit_from_yearly(df: pd.DataFrame, yearly_path: Path, target_date: pd.Tim
                 df = df.drop(columns=[f"{col}_inherit"])
     except Exception:
         pass
-    
+
     return df
 
 
@@ -416,12 +416,12 @@ def merge_style(df: pd.DataFrame) -> pd.DataFrame:
     df["style_ln_mv_total"] = np.log(pd.to_numeric(df.get("total_mv"), errors="coerce").where(lambda s: s > 0))
     df["style_ln_mv_float"] = np.log(pd.to_numeric(df.get("float_mv"), errors="coerce").where(lambda s: s > 0))
     df["style_size_percentile"] = df.groupby("trade_date", observed=True)["style_ln_mv_total"].rank(pct=True)
-    
+
     # 占位：估值因子需要ASOF合并，暂置NaN
     for col in ("style_bp", "style_ep_ttm", "style_valuation_composite", "style_value_percentile"):
         if col not in df.columns:
             df[col] = np.nan
-    
+
     return df
 
 
@@ -470,16 +470,16 @@ def main() -> None:
 
     # 加载银层数据
     df = load_base_with_lookback(args.silver_dir, year)
-    
+
     # 计算技术指标
     df = add_daily_technical_features(df)
-    
+
     # 计算风格因子
     df = merge_style(df)
-    
+
     # 合并三因子模型指标
     df = merge_three_factor(args.csmar_root, df, year)
-    
+
     # 从年度宽表继承行业分类和Beta
     yearly_path = DEFAULT_OUTPUT_DIR / f"model_features_{year}.parquet"
     inherit_cols = [
@@ -489,7 +489,7 @@ def main() -> None:
     ]
     df_target = df[df["trade_date"] == target_date].copy()
     df_target = inherit_from_yearly(df_target, yearly_path, target_date, inherit_cols)
-    
+
     # 将继承的字段合并回原df
     if not df_target.empty:
         inherit_merge_cols = ["symbol", "trade_date"] + [c for c in inherit_cols if c in df_target.columns]
@@ -501,16 +501,16 @@ def main() -> None:
 
     # 筛选L1列
     local_keys = select_local_l1_columns(df, keys)
-    
+
     # 提取目标日期数据
     out = df[df["trade_date"] == target_date][["symbol", "trade_date", *local_keys]].copy()
     out = out.drop_duplicates(["symbol", "trade_date"], keep="last")
-    
+
     # 过滤B股
     b_mask = out["symbol"].str.match(r"^SH9\d{5}$", na=False) | out["symbol"].str.match(r"^SZ2\d{5}$", na=False)
     if b_mask.any():
         out = out[~b_mask].copy()
-    
+
     out = out.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
 
     # 写入输出

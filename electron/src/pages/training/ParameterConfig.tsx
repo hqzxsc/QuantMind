@@ -1,7 +1,6 @@
 import React from 'react';
 import { Card, Divider, Input, Button, Row, Col, InputNumber, Select, Alert, Typography, Tag, Radio, Switch, Tooltip } from 'antd';
 import { Settings2, MonitorPlay, TreePine, Cpu, Ruler } from 'lucide-react';
-import { clsx } from 'clsx';
 import {
   TrainingParams,
   TrainingContext,
@@ -88,11 +87,10 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
   onWfaChange,
 }) => {
   const benchmarkOptions = MARKET_BENCHMARKS[market] || MARKET_BENCHMARKS.CN;
-  const isMultiHorizon = (target.horizonDaysList?.length ?? 0) >= 2;
   const isSingleLgb = params.model_types.length === 1 && params.model_type === 'lightgbm';
   const isReturnTarget = target.mode === 'return';
   // 分位推理：后端仅支持 A 股单 LightGBM 回归模型（train.py _validate_quantile_config）
-  const quantileDisabled = market !== 'CN' || !isSingleLgb || isMultiHorizon || !isReturnTarget;
+  const quantileDisabled = market !== 'CN' || !isSingleLgb || !isReturnTarget;
   // WFA 诊断：后端仅支持树模型 + 线性，其余直接 skip（train.py _train_wfa_single）
   const wfaSupported = ['lightgbm', 'xgboost', 'catboost', 'linear'].includes(params.model_type);
   // 行业编码：仅 CatBoost 声明 cat_features 做类别处理，其余模型无此口径
@@ -738,7 +736,7 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                   训练三个 LightGBM 分位模型并做验证集校准。P50 保持作为交易信号；区间仅用于个股推理展示。
                 </div>
               </div>
-              <Tooltip title="训练三个 LightGBM 分位模型并做验证集校准，用于输出收益率的 P10/P50/P90 区间（仅支持 A 股单模型，且不可与多周期训练同时开启）">
+              <Tooltip title="训练三个 LightGBM 分位模型并做验证集校准，用于输出收益率的 P10/P50/P90 区间（仅支持 A 股单模型）">
                 <Switch
                   checked={params.prediction_mode === 'quantile'}
                   disabled={quantileDisabled}
@@ -746,75 +744,9 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                 />
               </Tooltip>
             </div>
-            {isMultiHorizon ? (
-              <div className="mt-2 text-[11px] text-amber-600">多周期训练模式下，后端按周期分别产出模型且融合子任务不生成分位模型，故禁用收益率分位推理。</div>
-            ) : (market !== 'CN' || !isSingleLgb || !isReturnTarget) ? (
+            {(market !== 'CN' || !isSingleLgb || !isReturnTarget) ? (
               <div className="mt-2 text-[11px] text-amber-600">首版仅支持 A 股单 LightGBM；目标类型还需选择“回归目标（未来收益率）”。</div>
             ) : null}
-          </div>
-
-          {/* ── 多周期训练 ── */}
-          <div className="rounded-2xl border border-indigo-100 bg-white px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="space-y-0.5">
-                <div className="text-xs font-semibold text-slate-700">多周期训练</div>
-                <div className="text-[11px] text-slate-400 leading-relaxed">
-                  一次训练产出下方选定的多个周期模型，并自动创建 ICIR 加权融合模型，利用跨周期一致性提升选股稳定性。开启后第二步「T+N 参数」不再生效（周期以此处选择为准）。
-                </div>
-              </div>
-              <Switch
-                checked={(target.horizonDaysList?.length ?? 0) >= 2}
-                onChange={(checked) => {
-                  if (checked) {
-                    // 多周期与收益率分位推理/WFA 互斥：开启多周期时强制关掉，
-                    // 避免提交矛盾配置（后端也会 422 拒绝）。
-                    onTargetChange({ ...target, horizonDays: target.horizonDays, horizonDaysList: [1, 3, 5, 10] });
-                    if (params.prediction_mode === 'quantile') {
-                      onParamsChange({ ...params, prediction_mode: 'point' });
-                    }
-                    if (wfa?.enabled) {
-                      onWfaChange?.({ ...(wfa || { enabled: false, strategy: 'rolling', nWindows: 4, trainYears: 3, valMonths: 12, stepMonths: 12 }), enabled: false });
-                    }
-                  } else {
-                    const { horizonDaysList, ...rest } = target;
-                    onTargetChange({ ...rest });
-                  }
-                }}
-              />
-            </div>
-            {(target.horizonDaysList?.length ?? 0) >= 2 && (
-              <>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {[1, 3, 5, 10].map((h) => (
-                    <Button
-                      key={h}
-                      size="small"
-                      type={target.horizonDaysList?.includes(h) ? 'primary' : 'default'}
-                      className={clsx('h-8 rounded-xl font-bold px-3', target.horizonDaysList?.includes(h) && 'bg-indigo-600')}
-                      onClick={() => {
-                        const cur = target.horizonDaysList ?? [];
-                        const next = cur.includes(h) ? cur.filter((x) => x !== h) : [...cur, h].sort((a, b) => a - b);
-                        onTargetChange({ ...target, horizonDays: next[0] ?? target.horizonDays, horizonDaysList: next });
-                      }}
-                    >
-                      T+{h}
-                    </Button>
-                  ))}
-                </div>
-                <div className="mt-2 text-[11px] text-slate-400 font-mono">
-                  将产出 {target.horizonDaysList?.length ?? 0} 个模型 + 1 个融合模型（串行训练，总耗时约等于单任务时长预算，各周期分摊）
-                </div>
-                {wfa?.enabled && (
-                  <Alert
-                    className="mt-2 rounded-lg border-amber-100 bg-amber-50/60"
-                    type="warning"
-                    showIcon
-                    message="多周期训练已自动关闭 WFA 诊断"
-                    description="避免 4 周期 × 4 窗口 = 16 次训练导致超时；如需 WFA，请先关闭多周期再开启。"
-                  />
-                )}
-              </>
-            )}
           </div>
 
           {/* ── Walk-Forward 稳定性诊断 ── */}
@@ -829,15 +761,12 @@ export const ParameterConfig: React.FC<ParameterConfigProps> = ({
                 </div>
                 <Switch
                   checked={!!wfa?.enabled}
-                  disabled={!wfaSupported || isMultiHorizon}
+                  disabled={!wfaSupported}
                   onChange={(checked) => onWfaChange({ ...(wfa || { enabled: false, strategy: 'rolling', nWindows: 4, trainYears: 3, valMonths: 12, stepMonths: 12 }), enabled: checked })}
                 />
               </div>
               {!wfaSupported && (
                 <div className="mt-2 text-[11px] text-amber-600">WFA 诊断仅支持树模型与线性模型（LightGBM / XGBoost / CatBoost / Ridge），当前模型后端会直接跳过。</div>
-              )}
-              {isMultiHorizon && (
-                <div className="mt-2 text-[11px] text-amber-600">多周期训练已开启，WFA 诊断不可用（后端拒绝 WFA+多周期组合）。</div>
               )}
 
               {wfa?.enabled && (

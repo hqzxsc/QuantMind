@@ -19,7 +19,8 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Optional
+from collections.abc import Awaitable, Callable
 
 import redis.asyncio as aioredis
 
@@ -50,7 +51,7 @@ FIELD_TIMESTAMP = "timestamp"
 # 成分股提供者类型: async (sector_id) -> list[str]
 ConstituentsProvider = Callable[[str], Awaitable[list[str]]]
 # 订阅回调类型: (payload: dict) -> None 或 coroutine
-SectorUpdateCallback = Callable[[dict[str, Any]], Optional[Awaitable[None]]]
+SectorUpdateCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
 
 
 # ---- 工具函数 ----

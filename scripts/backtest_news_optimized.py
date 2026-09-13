@@ -846,8 +846,8 @@ def generate_report(result: dict, metrics: dict, names: dict[str, str]):
     P()
     P("## 收益指标")
     P()
-    P(f"| 指标 | 数值 |")
-    P(f"|------|------|")
+    P("| 指标 | 数值 |")
+    P("|------|------|")
     P(f"| 累计收益率 | {metrics['total_ret']*100:+.2f}% |")
     if metrics["annual_ret"]:
         P(f"| 年化收益率 | {metrics['annual_ret']*100:+.2f}% |")
@@ -859,8 +859,8 @@ def generate_report(result: dict, metrics: dict, names: dict[str, str]):
     P()
     P("## 交易统计")
     P()
-    P(f"| 指标 | 数值 |")
-    P(f"|------|------|")
+    P("| 指标 | 数值 |")
+    P("|------|------|")
     P(f"| 总交易次数 | {metrics['n_trades']} (做多 {metrics['n_long']} / 做空 {metrics['n_short']}) |")
     P(f"| 胜率 | {metrics['win_rate']*100:.1f}% |")
     P(f"| 平均持仓天数 | {metrics['avg_hold_days']:.1f} 天 |")
@@ -870,16 +870,16 @@ def generate_report(result: dict, metrics: dict, names: dict[str, str]):
     P()
     P("## 出场原因分析")
     P()
-    P(f"| 原因 | 次数 | 盈亏 | 胜率 |")
-    P(f"|------|------|------|------|")
+    P("| 原因 | 次数 | 盈亏 | 胜率 |")
+    P("|------|------|------|------|")
     for reason, stats in sorted(metrics["reason_stats"].items()):
         wr = stats["win"] / stats["count"] * 100 if stats["count"] else 0
         P(f"| {reason} | {stats['count']} | {stats['pnl']:+,.0f} | {wr:.1f}% |")
     P()
     P("## 板块分析")
     P()
-    P(f"| 板块 | 次数 | 盈亏 | 胜率 |")
-    P(f"|------|------|------|------|")
+    P("| 板块 | 次数 | 盈亏 | 胜率 |")
+    P("|------|------|------|------|")
     for board, stats in sorted(metrics["board_stats"].items(), key=lambda x: -x[1]["pnl"]):
         wr = stats["win"] / stats["count"] * 100 if stats["count"] else 0
         P(f"| {board} | {stats['count']} | {stats['pnl']:+,.0f} | {wr:.1f}% |")
@@ -891,8 +891,8 @@ def generate_report(result: dict, metrics: dict, names: dict[str, str]):
     month_map = defaultdict(list)
     for d in metrics["dates"]:
         month_map[d[:7]].append(d)
-    P(f"| 月份 | 交易日 | 收益 |")
-    P(f"|------|--------|------|")
+    P("| 月份 | 交易日 | 收益 |")
+    P("|------|--------|------|")
     for m, ds in sorted(month_map.items()):
         if len(ds) < 2:
             continue
@@ -904,8 +904,8 @@ def generate_report(result: dict, metrics: dict, names: dict[str, str]):
     P("## 最大盈利 Top 10")
     P()
     top_win = sorted(completed, key=lambda x: -x["pnl"])[:10]
-    P(f"| 股票 | 方向 | 入场日 | 出场日 | 持仓天 | 盈亏 | 原因 |")
-    P(f"|------|------|--------|--------|--------|------|------|")
+    P("| 股票 | 方向 | 入场日 | 出场日 | 持仓天 | 盈亏 | 原因 |")
+    P("|------|------|--------|--------|--------|------|------|")
     for t in top_win:
         name = names.get(t["symbol"], t["symbol"])
         P(f"| {name} {t['symbol']} | {t['side']} | {t['entry_date']} | {t['exit_date']} | {t['hold_days']} | {t['pnl']:+,.0f} | {t['exit_reason']} |")
@@ -913,8 +913,8 @@ def generate_report(result: dict, metrics: dict, names: dict[str, str]):
     P("## 最大亏损 Top 10")
     P()
     top_loss = sorted(completed, key=lambda x: x["pnl"])[:10]
-    P(f"| 股票 | 方向 | 入场日 | 出场日 | 持仓天 | 盈亏 | 原因 |")
-    P(f"|------|------|--------|--------|--------|------|------|")
+    P("| 股票 | 方向 | 入场日 | 出场日 | 持仓天 | 盈亏 | 原因 |")
+    P("|------|------|--------|--------|--------|------|------|")
     for t in top_loss:
         name = names.get(t["symbol"], t["symbol"])
         P(f"| {name} {t['symbol']} | {t['side']} | {t['entry_date']} | {t['exit_date']} | {t['hold_days']} | {t['pnl']:+,.0f} | {t['exit_reason']} |")

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -365,10 +366,27 @@ def main() -> None:
     root = project_root()
     load_dotenv(root / ".env", override=True)
 
+    # feature_snapshots parquet 桥接已废弃：训练/推理特征统一直读
+    # QuantDB 6_ml_datasets/*，不再从 PG 同步旧 model_features parquet。
+    if os.getenv("QM_LEGACY_FEATURE_SNAPSHOTS", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        LOGGER.warning(
+            "feature_snapshots parquet 桥接已废弃，训练/推理已迁移至 QuantDB 直读；"
+            "本脚本不再同步（确需回溯旧行为请设 QM_LEGACY_FEATURE_SNAPSHOTS=1）。"
+        )
+        return
+
     engine = create_engine(get_database_url(args.database_url))
     specs = [
-        # fundamental_aligned 已废弃(转向 QuantDB features_daily)，不再从 PG 拉该 parquet
-        SyncSpec("feature_snapshots", root / "db" / "feature_snapshots" / "model_features_2026.parquet"),
+        # 遗留回溯：仅在 QM_LEGACY_FEATURE_SNAPSHOTS=1 时启用
+        SyncSpec(
+            "feature_snapshots",
+            root / "db" / "feature_snapshots" / f"model_features_{datetime.now().year}.parquet",
+        ),
     ]
     any_synced = False
     for spec in specs:

@@ -61,8 +61,8 @@ class EasyQuotationAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         if field != "realtime_quote":

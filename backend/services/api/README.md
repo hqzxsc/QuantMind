@@ -67,7 +67,7 @@
 
 ## 管理端模型推理更新（2026-02-27）
 - 管理后台手动推理接口 `POST /api/v1/admin/models/run-inference` 新增 `model_file` 参数（默认 `model.bin`）。
-- 接口会将 `model_file` 限制在 `models/production/model_qlib/` 目录内并校验存在性，避免路径越界与误调用。
+- 接口会将 `model_file` 限制在 `models/production/` 目录内并校验存在性，避免路径越界与误调用。
 - 前端管理端默认传入 `model_file=model.bin`（参数保留兼容；实际执行入口仍为 `inference.py`）。
 - 新增推理前置检查接口 `GET /api/v1/admin/models/precheck-inference`：除模型目录/文件存在性外，额外校验目标交易日数据就绪状态（最新交易日、当日入库、模型维度完整性与覆盖阈值）。
 - 日期口径统一为“双日期”：
@@ -85,8 +85,9 @@
   - 不传 `tenant_id/user_id` 时默认可查看管理员权限范围内全部用户推理批次；
   - `GET /api/v1/admin/models/predictions/{run_id}` 与 `/export` 统一按 `run_id(+tenant_id/user_id/date)` 拉取批次，并从 `engine_signal_scores` 输出 symbol 明细。
 - “明日信号生成”触发入口统一为两种：管理员手动触发 `POST /api/v1/admin/models/run-inference` 与 Celery Beat 08:55 自动兜底（`engine.tasks.auto_inference_if_needed`）。
-- `run-inference` 返回体新增标准字段：`fallback_used`、`fallback_reason`、`failure_stage`，用于标记是否走 alpha158 兜底及失败阶段。
-- `run-inference` 返回体补充字段：`active_model_id`、`active_data_source`，用于标记本次实际生效模型与数据源（`model_qlib/db/qlib_data` 或 `alpha158/db/qlib_data`）。
+- `run-inference` 返回体新增标准字段：`fallback_used`、`fallback_reason`、`failure_stage`，用于标记是否走兜底及失败阶段。
+- `run-inference` 返回体补充字段：`active_model_id`、`active_data_source`，用于标记本次实际生效模型与数据源。
+- 系统内置 `model_qlib/alpha158` 兜底模型已废弃：不再有隐式系统模型，用户模型失败时不再补位（如需兜底须显式配置 `FALLBACK_MODEL_ID` 与目录）。
 - 管理仪表盘 `GET /api/v1/admin/dashboard/metrics` 在空库/缺表场景下会自动降级为 0 指标，避免后台页面出现 500 与连带的浏览器 CORS 误报。
 - 新增特征字典接口：`GET /api/v1/admin/models/feature-catalog`，优先读取 `qm_feature_set_*` 注册表（`qm_feature_category/qm_feature_definition/qm_feature_set_version/qm_feature_set_item`），若注册表不可用则回退 `config/features/model_training_feature_catalog_v1.json`。
 - 短信发送失败错误语义增强：`/api/v1/sms/send` 与 `/api/v1/users/me/phone/send-code` 在短信 SDK/配置缺失时返回 `503` 且给出明确错误（如“短信服务依赖未安装”），避免统一 400 导致排障困难。
@@ -223,7 +224,7 @@
 - 修复（2026-04-20）：`POST /api/v1/models/inference/run` 在 `use_default_model=true` 且未显式传 `model_id` 时，不再将默认模型回填为显式 ID 解析；改为走默认模型链路解析，确保产出的 `model_source` 为 `user_default`（而非 `explicit_model_id`），与自动托管就绪度口径一致。
 - 修复（2026-04-20）：当 `POST /api/v1/models/inference/run` 显式传入 `model_id`，且该 ID 实际就是当前默认模型时，接口会将来源口径归一为 `user_default`，避免“手动推理覆盖最新批次后自动托管误判为非生产批次”。
 - 推理返回值中若缺少 `model_source/effective_model_id`，API 会自动回退到已解析的模型上下文，保证返回契约稳定。
-- `model_qlib` / LightGBM 推理脚本属于运行时依赖，模型推理 / 训练 / runner 统一使用 `quantmind-ml-runtime:latest`。
+- LightGBM 推理脚本属于运行时依赖，模型推理 / 训练 / runner 统一使用 `quantmind-ml-runtime:latest`。
 
 ## 多用户模型注册与切换（2026-04-04）
 
@@ -257,7 +258,7 @@
 
 - 用户注册（邮箱/手机号）成功后，`AuthService` 会自动补齐个人中心默认资产：
   - 策略模板：固定同步前 10 个系统模板（按模板加载顺序）；
-  - 系统模型：补齐 `alpha158` 与 `model_qlib` 两个模型记录（展示名分别为 `Alpha158_Base`、`Qlib_Base_Signal`）。
+  - 系统模型：不再补齐 `alpha158` / `model_qlib`（系统内置兜底模型已废弃）；仅当配置 `PRIMARY_MODEL_ID` 时才注册该主模型。
 - 存量用户同步策略：
   - 登录成功后同样会执行一次幂等补齐，确保历史账号自动追平默认资产。
   - 策略列表接口 `GET /api/v1/strategies` 在无筛选参数时也会触发模板补齐（幂等）。

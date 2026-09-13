@@ -161,7 +161,7 @@ class TestSymbolNormalization:
 
 
 class TestSltpConfig:
-    GET_REDIS_PATH = "backend.services.trade.redis_client.get_redis"
+    GET_REDIS_PATH = "backend.services.trade_shared.redis_client.get_redis"
 
     def test_load_default_when_redis_empty(self):
         mock_redis = MagicMock()

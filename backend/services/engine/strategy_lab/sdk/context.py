@@ -14,32 +14,32 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
+from collections.abc import Callable, Iterable, Sequence
 
 import pandas as pd
+
+from backend.shared.stock_pool.builtins import BUILTIN_CODES
 
 from .position import Position
 
 # ---------------------------------------------------------------------------
 # Attribute schema — declared centrally so we can validate user code.
 # ---------------------------------------------------------------------------
-_ALLOWED_UNIVERSES: frozenset[str] = frozenset(
-    {
-        "csi300",
-        "csi500",
-        "csi800",
-        "csi1000",
-        "hs300_ext",
-        "all_a",
-        "hk_main",
-        "us_sp500",
-    }
-)
+# P2：股票池白名单由 shared.stock_pool.builtins 派生（唯一事实源）。
+# 改造前这里硬编码 8 个池，与 quantdb_hub.UNIVERSE_MAP 不一致
+# （多了 hs300_ext/hk_main/us_sp500，少了 sse50/gem/star），
+# 导致「SDK 能写、回测解析静默查空」。现在两边同源。
+_ALLOWED_UNIVERSES: frozenset[str] = frozenset(BUILTIN_CODES)
 _ALLOWED_EXECUTION_MODELS: frozenset[str] = frozenset({"a_share_strict", "simple"})
 _ALLOWED_ENGINES: frozenset[str] = frozenset({"qlib"})
 
 _DEFAULTS: dict[str, Any] = {
     "universe": None,
+    # 策略股票池（P5）：一行代码限定范围，如 ctx.stock_pool = "pool:csi1000"。
+    # 语义为 universe ∩ 股票池；None/all 时不过滤。解析入口与模拟盘共用
+    # backend.shared.stock_pool.strategy.apply_pool_to_universe。
+    "stock_pool": None,
     "start": None,
     "end": None,
     "cash": None,
@@ -194,6 +194,13 @@ class Context:
                     raise ValueError("universe list must contain non-empty strings")
             else:
                 raise TypeError(f"universe must be str or list[str], got {type(value).__name__}")
+        elif key == "stock_pool":
+            # 用户代码环境只校验格式不查 DB（DB 解析在 runner 侧经 PoolResolver）。
+            from backend.shared.stock_pool.strategy import validate_pool_ref_format
+
+            err = validate_pool_ref_format(value)
+            if err is not None:
+                raise ValueError(err)
         elif key in {"start", "end"}:
             try:
                 _coerce_date(value)

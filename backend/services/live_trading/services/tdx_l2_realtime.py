@@ -139,12 +139,12 @@ def _z_score(values: dict[str, float]) -> dict[str, float]:
     vs = list(values.values())
     n = len(vs)
     if n < 3:
-        return {k: 0.0 for k in values}
+        return dict.fromkeys(values, 0.0)
     mean = sum(vs) / n
     var = sum((v - mean) ** 2 for v in vs) / (n - 1)
     std = math.sqrt(var)
     if std < 1e-12:
-        return {k: 0.0 for k in values}
+        return dict.fromkeys(values, 0.0)
     return {k: max(-3.0, min(3.0, (v - mean) / std)) for k, v in values.items()}
 
 

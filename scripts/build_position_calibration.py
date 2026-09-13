@@ -186,7 +186,7 @@ def rank_ic(scores: pd.Series, rets: pd.Series) -> float:
 
 
 async def main(model_id: str | None, horizon: int, days: int | None) -> None:
-    print(f"[1/5] 加载 instrument 元数据（行业/市值/板块）...")
+    print("[1/5] 加载 instrument 元数据（行业/市值/板块）...")
     meta = load_instrument_meta()
     print(f"      instrument: {len(meta)} 只")
 
@@ -239,7 +239,7 @@ async def main(model_id: str | None, horizon: int, days: int | None) -> None:
     print(f"      权重: {weights}")
 
     # ── 赔率查找表：b(score_pct_bucket, industry) = avg_win/avg_loss ──
-    print(f"[5/5] 计算赔率查找表 b(bucket, industry)...")
+    print("[5/5] 计算赔率查找表 b(bucket, industry)...")
     df["bucket"] = (df["pct_market"] * N_BUCKETS).clip(0, N_BUCKETS - 1).astype(int)
     payoff: dict[str, dict[str, float]] = {}
     for (ind, bucket), g in df.groupby(["industry", "bucket"]):
@@ -288,7 +288,7 @@ async def main(model_id: str | None, horizon: int, days: int | None) -> None:
     with open(f"{OUT_DIR}/payoff_table.json", "w", encoding="utf-8") as f:
         json.dump(payoff_out, f, ensure_ascii=False, indent=2)
 
-    print(f"\n完成。产物:")
+    print("\n完成。产物:")
     print(f"  {OUT_DIR}/ic_weights.json   权重={weights}")
     print(f"  {OUT_DIR}/payoff_table.json 覆盖行业={len(payoff)} 全局b={overall_b}")
 

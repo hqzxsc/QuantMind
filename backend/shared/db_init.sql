@@ -2242,11 +2242,70 @@ DELETE FROM qm_user_models
 WHERE model_id IN ('model_qlib', 'alpha158', 'sys-model_qlib', 'sys-alpha158');
 
 -- ========================
+-- 64. QM_STOCK_POOL 全局股票池 v2（回测/训练/推理/模拟盘/实盘唯一事实源）
+-- 与 backend/shared/stock_pool/migrations/001_create_stock_pool.sql 保持一致。
+-- 成员唯一事实源 = 前缀式 TXT（/data/stock_pool/<code>.txt，一行一个，保存即生效）；
+-- 本表只存元信息；qm_stock_pool_binding 记录长生命周期引用（被引用不可删）。
+-- ========================
+CREATE TABLE IF NOT EXISTS qm_stock_pool (
+    pool_id         TEXT PRIMARY KEY,
+    code            TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    market          TEXT NOT NULL DEFAULT 'CN',
+    pool_type       TEXT NOT NULL DEFAULT 'static',
+    scope           TEXT NOT NULL DEFAULT 'global',
+    tenant_id       TEXT,
+    owner_user_id   TEXT,
+    status          TEXT NOT NULL DEFAULT 'active',
+    file_path       TEXT,
+    symbol_count    INTEGER NOT NULL DEFAULT 0,
+    checksum        TEXT,
+    source_kind     TEXT,
+    source_ref      TEXT,
+    is_system       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by      TEXT,
+    updated_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_qm_stock_pool_code
+    ON qm_stock_pool (scope, COALESCE(tenant_id, ''), code);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_list
+    ON qm_stock_pool (market, pool_type, status);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_scope
+    ON qm_stock_pool (scope, tenant_id, owner_user_id);
+
+CREATE TABLE IF NOT EXISTS qm_stock_pool_binding (
+    id              BIGSERIAL PRIMARY KEY,
+    pool_id         TEXT NOT NULL REFERENCES qm_stock_pool(pool_id) ON DELETE CASCADE,
+    target_type     TEXT NOT NULL,
+    target_id       TEXT NOT NULL,
+    mode            TEXT NOT NULL DEFAULT 'filter',
+    priority        INTEGER NOT NULL DEFAULT 100,
+    tenant_id       TEXT,
+    user_id         TEXT,
+    created_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (pool_id, target_type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_binding_target
+    ON qm_stock_pool_binding (target_type, target_id);
+
+CREATE INDEX IF NOT EXISTS idx_qm_stock_pool_binding_pool
+    ON qm_stock_pool_binding (pool_id);
+
+-- ========================
 -- 默认管理员（admin / admin123）
 -- NOTE: 幂等，仅在不存在时创建，不覆盖用户已改密码；display_name / 头像由启动期 seed_data.py 负责
 -- ========================
 INSERT INTO users (user_id, tenant_id, username, email, password_hash, is_active, is_admin, is_verified, is_locked, login_count, created_at, updated_at, is_deleted)
-VALUES ('admin', 'default', 'admin', 'admin@quantmind.local',
+VALUES ('00000001', 'default', 'admin', 'admin@quantmind.local',
         '$2b$12$B/yjK9cT.wx4BlB9j.r/t.dADjCbmutIXoDM7PdKZmV6ypuYiiUvW',
         TRUE, TRUE, TRUE, FALSE, 0, NOW(), NOW(), FALSE)
 ON CONFLICT (user_id) DO NOTHING;

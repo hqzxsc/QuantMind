@@ -351,15 +351,15 @@ async def field_coverage(current_user: dict = Depends(require_admin)):
 # 告警
 # ---------------------------------------------------------------------------
 class AckRequest(BaseModel):
-    note: Optional[str] = None
+    note: str | None = None
 
 
 @router.get("/quality-alerts")
 async def list_quality_alerts(
-    severity: Optional[str] = None,
-    market: Optional[str] = None,
-    field: Optional[str] = None,
-    acknowledged: Optional[bool] = None,
+    severity: str | None = None,
+    market: str | None = None,
+    field: str | None = None,
+    acknowledged: bool | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: dict = Depends(require_admin),

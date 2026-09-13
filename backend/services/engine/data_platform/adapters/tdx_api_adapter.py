@@ -148,7 +148,7 @@ class TdxApiAdapter(OfflineDataSourceAdapter):
             "volume", "amount", "adj_factor", "source",
         ]]
 
-    def fetch_realtime(self, symbol: str) -> Optional[dict]:
+    def fetch_realtime(self, symbol: str) -> dict | None:
         market, code = _to_market_code(symbol)
         data = self._get("/api/quote", {"market": market, "code": code})
         rows = data.get("data") if isinstance(data, dict) else None

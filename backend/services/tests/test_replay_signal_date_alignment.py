@@ -82,7 +82,7 @@ class TestSignalDateAlignment:
         _PRED_FRAME_CACHE.clear()
         loader = ReplaySignalLoader()
         with patch(
-            "backend.services.trade.simulation.replay.signal_generator."
+            "backend.services.simulation.replay.signal_generator."
             "get_local_market_data",
             return_value=market,
         ):

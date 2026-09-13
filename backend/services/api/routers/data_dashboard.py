@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/data-dashboard", tags=["DataDashboard"])
 
 
-def _parse_date(s: Optional[str]) -> Optional[date]:
+def _parse_date(s: str | None) -> date | None:
     if not s:
         return None
     try:
@@ -110,8 +110,8 @@ async def get_field_data(
     market: str = Query(..., description="A / HK / US"),
     field: str = Query(..., description="字段名，如 daily_kline, financial_report, dividend"),
     symbol: str = Query(..., description="股票代码"),
-    start: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    start: str | None = Query(None, description="YYYY-MM-DD"),
+    end: str | None = Query(None, description="YYYY-MM-DD"),
     days: int = Query(365, ge=1, le=2000),
     current_user: dict = Depends(get_current_user),
 ):
@@ -276,7 +276,7 @@ async def get_meta(
 @router.get("/search")
 async def search_stocks(
     keyword: str = Query(..., description="搜索关键词"),
-    market: Optional[str] = Query(None, description="A / HK / US，不指定则全市场"),
+    market: str | None = Query(None, description="A / HK / US，不指定则全市场"),
     limit: int = Query(20, ge=1, le=100),
     current_user: dict = Depends(get_current_user),
 ):

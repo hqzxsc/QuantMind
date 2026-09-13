@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover
     _MOOTDX_AVAILABLE = False
 
 
-def _tdx_dir() -> Optional[str]:
+def _tdx_dir() -> str | None:
     return os.getenv("QM_TDX_DIR")
 
 

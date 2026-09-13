@@ -33,9 +33,9 @@ def test_trade_response_serializes_naive_datetimes_as_utc_iso():
     )
 
     dumped = payload.model_dump(mode="json")
-    assert dumped["executed_at"] == "2026-04-09T05:12:00+00:00"
-    assert dumped["created_at"] == "2026-04-09T05:12:01+00:00"
-    assert dumped["updated_at"] == "2026-04-09T05:12:02+00:00"
+    assert dumped["executed_at"] == "2026-04-08T21:12:00+00:00"
+    assert dumped["created_at"] == "2026-04-08T21:12:01+00:00"
+    assert dumped["updated_at"] == "2026-04-08T21:12:02+00:00"
 
 
 def test_order_response_serializes_naive_datetimes_as_utc_iso():
@@ -75,7 +75,7 @@ def test_order_response_serializes_naive_datetimes_as_utc_iso():
     )
 
     dumped = payload.model_dump(mode="json")
-    assert dumped["submitted_at"] == "2026-04-09T05:12:00+00:00"
+    assert dumped["submitted_at"] == "2026-04-08T21:12:00+00:00"
     assert dumped["filled_at"] == "2026-04-09T05:12:01+00:00"
-    assert dumped["created_at"] == "2026-04-09T05:11:59+00:00"
-    assert dumped["updated_at"] == "2026-04-09T05:12:02+00:00"
+    assert dumped["created_at"] == "2026-04-08T21:11:59+00:00"
+    assert dumped["updated_at"] == "2026-04-08T21:12:02+00:00"

@@ -413,6 +413,33 @@ async def save_pool_file(body: SavePoolFileRequest, request: Request):
                 logger.warning("Rollback pool object delete failed: key=%s", result.get("object_key"))
             return SavePoolFileResponse(success=False, error=f"保存股票池失败: 数据库写入失败 ({db_error})")
 
+        # P4 轻量治理：把这份旧式池文件同时登记为一等池记录（scope=user），
+        # 于是它能被 PoolResolver 以 pool:<code> 解析、出现在统一池列表里。
+        # best-effort：失败只告警，旧链路（文件 + stock_pool_files）完全不受影响。
+        try:
+            from backend.shared.stock_pool.legacy_bridge import (
+                register_legacy_pool_file,
+            )
+
+            registered = await register_legacy_pool_file(
+                user_id=canonical_user_id,
+                tenant_id=body.tenant_id,
+                pool_name=body.pool_name,
+                file_key=result["object_key"],
+                file_url=result["url"],
+                code_hash=result.get("code_hash"),
+                members=list(body.pool or []),
+            )
+            if registered and registered.get("pool_id"):
+                logger.info(
+                    "旧池文件已登记为一等池: pool_id=%s code=%s members=%s",
+                    registered.get("pool_id"),
+                    registered.get("code"),
+                    registered.get("members"),
+                )
+        except Exception as reg_err:  # noqa: BLE001
+            logger.warning("旧池文件登记为一等池失败（旧链路不受影响）: %s", reg_err)
+
         return SavePoolFileResponse(
             success=True,
             pool_name=body.pool_name,

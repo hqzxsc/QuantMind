@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import date
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
+from collections.abc import Iterable
 
 import pandas as pd
 
@@ -78,7 +79,7 @@ class OfflineDataSourceAdapter(ABC):
         """获取该市场的标的清单（symbol/name/exchange/list_date/delist_date 等）。"""
 
     # ---- 可选 ----
-    def fetch_realtime(self, symbol: str) -> Optional[dict[str, Any]]:
+    def fetch_realtime(self, symbol: str) -> dict[str, Any] | None:
         raise InvalidFieldRequest(f"{self.name} 不支持 realtime")
 
     def fetch_minute(
@@ -99,8 +100,8 @@ class OfflineDataSourceAdapter(ABC):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs: Any,
     ) -> pd.DataFrame:
         """通用字段拉取入口，未覆盖的字段抛 InvalidFieldRequest。"""

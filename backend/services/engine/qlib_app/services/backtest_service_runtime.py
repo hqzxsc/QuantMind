@@ -80,6 +80,21 @@ task_logger.info(
 )
 
 
+def _qlib_universe(universe):
+    """Qlib universe 兼容层：池 instruments 文件路径 → 符号列表。
+
+    - qlib 的 `D.instruments(str)` 只认市场短名（csi300/all/…），不认任意
+      文件路径；池物化文件又是 `sym\\tSTART\\tEND` 标准格式，整行不能当代码。
+    - 文件路径一律经 `read_instruments_file` 只取首列转成 list（qlib 原生支持
+      list）；市场名 / 'all' 原样透传，走 qlib 原生路径。
+    """
+    if universe and isinstance(universe, str) and os.path.isfile(universe):
+        from backend.shared.stock_pool.materializer import read_instruments_file
+
+        return read_instruments_file(universe)
+    return universe
+
+
 class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
     """Qlib 回测运行逻辑 mixin"""
 
@@ -142,6 +157,64 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                 region=getattr(request, "qlib_region", None),
             )
             self._set_deterministic_seed(self._resolve_seed(request.seed))
+
+            # --- Global Stock Pool Resolution [START] ---
+            # P3：pool_id 优先于 universe。解析 → 物化 instruments 文件 →
+            # 覆盖 universe（后续 isfile 分支与 SimpleSignal 都能直接吃文件路径）。
+            # 成员来自池 TXT（保存即生效）。空池**必须显式失败**，
+            # 不能静默退化成全市场（那正是改造前的坑）。
+            if getattr(request, "pool_id", None):
+                from backend.shared.stock_pool.materializer import (
+                    materialize_snapshot,
+                )
+                from backend.shared.stock_pool.resolver import (
+                    ResolveContext,
+                    resolver as pool_resolver,
+                )
+
+                snapshot = await pool_resolver.resolve(
+                    request.pool_id,
+                    ResolveContext(
+                        tenant_id=getattr(request, "tenant_id", None),
+                        user_id=getattr(request, "user_id", None),
+                    ),
+                    strict=True,
+                )
+                request.pool_checksum = snapshot.checksum
+                request.pool_warnings = list(snapshot.warnings or [])
+
+                if snapshot.unfiltered:
+                    task_log.info(
+                        "pool_resolved_unfiltered",
+                        "股票池解析为不过滤（等价 universe=all）",
+                        pool_id=request.pool_id,
+                    )
+                else:
+                    pool_path = materialize_snapshot(
+                        snapshot,
+                        start_date=request.start_date,
+                        end_date=request.end_date,
+                    )
+                    if not pool_path:
+                        raise ValueError(
+                            f"股票池 {request.pool_id} 解析为空池，拒绝回测"
+                            "（避免静默退化为全市场）。"
+                            f"告警: {'; '.join(snapshot.warnings) or '无'}"
+                        )
+                    request.universe = pool_path
+                    task_log.info(
+                        "pool_resolved",
+                        "股票池已物化并覆盖 universe",
+                        pool_id=request.pool_id,
+                        pool_code=snapshot.code,
+                        symbol_count=len(snapshot.symbols),
+                        checksum=snapshot.checksum,
+                        instruments_path=pool_path,
+                    )
+
+                for _w in request.pool_warnings:
+                    task_log.warning("pool_warning", _w, pool_id=request.pool_id)
+            # --- Global Stock Pool Resolution [END] ---
 
             # --- Storage Resolution [START] ---
             try:
@@ -701,7 +774,7 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                 if pred_instruments:
                     vectorized_universe = pred_instruments[: int(os.getenv("QLIB_SIGNAL_MAX_INSTRUMENTS", "2000"))]
                 else:
-                    vectorized_universe = D.instruments(request.universe)
+                    vectorized_universe = D.instruments(_qlib_universe(request.universe))
 
                 price_df = D.features(
                     vectorized_universe,
@@ -1273,7 +1346,7 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
         raw_prefix = {self._to_qlib_prefix_code(c) for c in pred_codes}
         try:
             qlib_instruments = D.list_instruments(
-                D.instruments(str(request.universe) or "all"), as_list=True
+                D.instruments(_qlib_universe(str(request.universe) or "all")), as_list=True
             )
         except Exception:
             qlib_instruments = []
@@ -1751,28 +1824,6 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
                 meta["resolved_pred_path"] = str(candidate)
                 return str(candidate), meta
 
-        # 融合模型（model_file=ensemble_config.json）无 pred.pkl 时，
-        # 自动用子模型 pred 融合生成，避免 AI-IDE 回测因缺信号失败。
-        model_file = str(meta.get("model_file") or "").strip()
-        if "ensemble_config" in model_file:
-            try:
-                from backend.services.engine.services.prediction_artifact import (
-                    generate_ensemble_pred,
-                )
-
-                generated = generate_ensemble_pred(model_dir=storage)
-                meta["resolved_pred_path"] = str(generated)
-                meta["ensemble_pred_generated"] = True
-                return str(generated), meta
-            except Exception as gen_err:
-                task_logger.warning(
-                    "ensemble_pred_generation_failed",
-                    "融合模型 pred 自动生成失败",
-                    model_dir=str(storage),
-                    error=str(gen_err),
-                )
-                meta["ensemble_pred_generation_error"] = str(gen_err)
-
         meta["resolved_pred_path"] = str(candidate_paths[0]) if candidate_paths else ""
         meta["fallback_reason"] = "pred_pkl_not_found_in_model_storage"
         return None, meta
@@ -1888,14 +1939,10 @@ class QlibBacktestServiceRuntimeMixin(QlibBacktestServiceQueryMixin):
             feature = f"${feature}"
 
         try:
-            # If universe is a local file path, read instruments directly
+            # universe 是池文件路径时走兼容层解析（只取首列符号）；
+            # 市场名 / 'all' 原样走 qlib 原生路径
             if request.universe and os.path.isfile(request.universe):
-                instrument_list = []
-                with open(request.universe, encoding="utf-8") as fp:
-                    for line in fp:
-                        code = line.strip()
-                        if code and not code.startswith("#"):
-                            instrument_list.append(code)
+                instrument_list = _qlib_universe(request.universe)
                 instrument_list = exclude_bj_instruments(instrument_list)
                 task_logger.info(
                     "pool_loaded",

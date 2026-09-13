@@ -27,7 +27,6 @@ _SHARED_FIELDS: dict[str, Any] = {
     "features": (Any, None),
     "feature_categories": (Any, None),
     "target_horizon_days": (Any, None),
-    "horizons": (Any, None),
     "target_mode": (Any, None),
     "label_formula": (Any, None),
     "effective_trade_date": (Any, None),

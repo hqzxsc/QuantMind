@@ -68,8 +68,8 @@ class EastMoneyProvider:
     def get_historical(
         self,
         symbol: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         period: str = "daily",
         adjust: str = "qfq",
     ) -> pd.DataFrame:
@@ -113,7 +113,7 @@ class EastMoneyProvider:
             })
         return pd.DataFrame(records)
 
-    def get_realtime_quote(self, symbol: str) -> Dict[str, Any]:
+    def get_realtime_quote(self, symbol: str) -> dict[str, Any]:
         """获取实时行情"""
         secid = self._symbol_to_secid(symbol)
 
@@ -145,7 +145,7 @@ class EastMoneyProvider:
             "timestamp": datetime.now().isoformat(),
         }
 
-    def search(self, keyword: str, limit: int = 20) -> List[Dict[str, str]]:
+    def search(self, keyword: str, limit: int = 20) -> list[dict[str, str]]:
         """搜索股票"""
         params = {
             "input": keyword,

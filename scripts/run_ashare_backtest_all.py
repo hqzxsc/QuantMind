@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """批量回测全部 A 股策略模板，结果写入 JSON（在 quantmind 容器内运行）。
 
 - 顺序执行（单个 qlib 回测会占满 ~10 核，串行避免拖垮线上服务）；

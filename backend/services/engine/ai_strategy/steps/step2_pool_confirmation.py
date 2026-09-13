@@ -159,7 +159,7 @@ def _strip_invalid_columns(sql: str, valid_columns: set[str]) -> str:
         "desc", "join", "left", "right", "inner", "outer", "on", "group",
         "having", "as", "case", "when", "then", "else", "end", "distinct",
         "cast", "coalesce", "max", "min", "sum", "avg", "count", "ilike",
-        "true", "false", "desc", "nulls", "last", "first",
+        "true", "false", "nulls", "last", "first",
     }
 
     invalid_cols = identifiers - valid_columns - sql_keywords

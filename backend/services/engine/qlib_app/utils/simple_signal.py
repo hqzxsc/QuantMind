@@ -88,7 +88,9 @@ class SimpleSignal(Signal):
                     continue
                 if "\t" in code:
                     code = code.split("\t", 1)[0].strip()
-                instruments.append(code.upper())
+                # 小写 qlib 口径：与 D.instruments(市场名) 返回风格一致，
+                # 否则 pred 会被对齐成大写、qlib 交易层（小写）匹配不到导致 0 成交
+                instruments.append(code.lower())
         return _exclude_bj_instruments(instruments)
 
     def _get_universe_instruments(self) -> list[str]:

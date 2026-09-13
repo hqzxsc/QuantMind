@@ -37,7 +37,7 @@ class ProgressTracker:
 
     is_running: bool = False
     is_complete: bool = False
-    error: Optional[str] = None
+    error: str | None = None
 
     current_stage: str = ""
     completed_stages: list[str] = field(default_factory=list)

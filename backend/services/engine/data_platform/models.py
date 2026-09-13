@@ -82,18 +82,18 @@ class OHLCVRow:
 class FundamentalRow:
     symbol: str
     report_date: date
-    ann_date: Optional[date] = None
-    pe_ttm: Optional[float] = None
-    pb: Optional[float] = None
-    ps_ttm: Optional[float] = None
-    total_mv: Optional[float] = None
-    float_mv: Optional[float] = None
-    roe: Optional[float] = None
-    roa: Optional[float] = None
-    eps: Optional[float] = None
-    bps: Optional[float] = None
-    revenue: Optional[float] = None
-    net_profit: Optional[float] = None
+    ann_date: date | None = None
+    pe_ttm: float | None = None
+    pb: float | None = None
+    ps_ttm: float | None = None
+    total_mv: float | None = None
+    float_mv: float | None = None
+    roe: float | None = None
+    roa: float | None = None
+    eps: float | None = None
+    bps: float | None = None
+    revenue: float | None = None
+    net_profit: float | None = None
     source: str = ""
 
 
@@ -104,8 +104,8 @@ class SymbolMeta:
     exchange: str
     name: str
     market: str
-    list_date: Optional[date] = None
-    delist_date: Optional[date] = None
+    list_date: date | None = None
+    delist_date: date | None = None
     is_active: bool = True
     sector: str = ""
     industry: str = ""
@@ -117,14 +117,14 @@ class RealtimeQuote:
     symbol: str
     ts: datetime
     last: float
-    open: Optional[float] = None
-    high: Optional[float] = None
-    low: Optional[float] = None
-    pre_close: Optional[float] = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    pre_close: float | None = None
     bid_price: list[float] = field(default_factory=list)
     bid_volume: list[float] = field(default_factory=list)
     ask_price: list[float] = field(default_factory=list)
     ask_volume: list[float] = field(default_factory=list)
-    volume: Optional[float] = None
-    amount: Optional[float] = None
+    volume: float | None = None
+    amount: float | None = None
     source: str = ""

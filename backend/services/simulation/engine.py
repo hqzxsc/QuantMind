@@ -4,6 +4,7 @@ Simulation Engine - 统一模拟盘引擎
 """
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -50,6 +51,7 @@ from backend.services.simulation.services.simulation_manager import (
 )
 from backend.services.trade_shared.trade_config import settings
 from backend.shared.database_manager_v2 import get_db_manager
+from backend.shared.stock_utils import StockCodeUtil
 from backend.shared.strategy_storage import get_strategy_storage_service
 
 logger = logging.getLogger(__name__)
@@ -104,6 +106,7 @@ class SimulationEngine:
         run_id: str | None = None,
         params_override: dict[str, Any] | None = None,
         market: str | None = None,
+        pool_id: str | None = None,
     ) -> ExecutionReport:
         """
         执行一次模拟盘调仓周期。
@@ -168,6 +171,55 @@ class SimulationEngine:
                     len(signals),
                 )
 
+                # 1.6 全局股票池过滤（P3）：严格语义，池为空或零命中即终止本轮，
+                # 绝不放行全市场信号（否则模拟盘会买进池外标的）。
+                override_pool = (
+                    params_override.get("pool_id")
+                    if isinstance(params_override, dict)
+                    else None
+                )
+                effective_pool_id = pool_id or override_pool
+                if effective_pool_id:
+                    from backend.shared.stock_pool.filters import (
+                        filter_signals_by_pool,
+                    )
+                    from backend.shared.stock_pool.resolver import (
+                        ResolveContext,
+                        resolver as pool_resolver,
+                    )
+
+                    pool_snapshot = await pool_resolver.resolve(
+                        str(effective_pool_id),
+                        ResolveContext(tenant_id=tenant, user_id=uid),
+                    )
+                    outcome = filter_signals_by_pool(
+                        [
+                            {"symbol": s.symbol, "score": getattr(s, "score", 0.0), "_ref": s}
+                            for s in signals
+                        ],
+                        pool_snapshot,
+                    )
+                    if outcome.empty_pool or outcome.empty_result:
+                        reason = "; ".join(outcome.warnings) or "池过滤后无信号"
+                        logger.error(
+                            "SimulationEngine: 池过滤失败 pool_id=%s tenant=%s user=%s: %s",
+                            effective_pool_id,
+                            tenant,
+                            uid,
+                            reason,
+                        )
+                        report.error = f"股票池过滤失败: {reason}"
+                        return report
+                    signals = [row["_ref"] for row in outcome.kept]
+                    report.signal_count = len(signals)
+                    logger.info(
+                        "SimulationEngine: 池过滤 pool_id=%s kept=%d dropped=%d checksum=%s",
+                        outcome.pool_id,
+                        len(outcome.kept),
+                        outcome.dropped,
+                        outcome.pool_checksum,
+                    )
+
                 # 2. 加载策略配置
                 strategy_config = await self._load_strategy_config(
                     db=db,
@@ -177,11 +229,7 @@ class SimulationEngine:
                     market=market,
                 )
 
-                # 3. 批量获取行情（按市场选择行情源）
-                symbols = [s.symbol for s in signals]
-                quotes = await self._fetch_quotes(symbols, market=market)
-
-                # 4. 获取当前账户状态（按市场隔离）
+                # 3. 获取当前账户状态（按市场隔离）
                 account_data = await self.account_manager.get_account(
                     user_id=int(uid) if uid.isdigit() else 0,
                     tenant_id=tenant,
@@ -198,6 +246,16 @@ class SimulationEngine:
                     return report
 
                 account = self._build_account(account_data)
+
+                # 4. 批量获取行情（信号 + 现有持仓，一次分区直读）
+                position_symbols = [
+                    str(sym)
+                    for sym, pos in (account.positions or {}).items()
+                    if int(float((pos or {}).get("volume") or 0)) > 0
+                ]
+                symbols = list(dict.fromkeys([s.symbol for s in signals] + position_symbols))
+                bars = await self._load_bars(symbols, market=market)
+                quotes = self._quotes_from_bars(bars)
 
                 # 5. 调仓计算
                 orders = self.rebalance_calculator.calculate(
@@ -216,7 +274,7 @@ class SimulationEngine:
                     )
                     return report
 
-                # 6. 模拟撮合
+                # 6. 模拟撮合（ashare_matcher + 当日不复权日 K）
                 exec_engine = SimulationExecutionEngine(db, self.account_manager)
                 for order in orders:
                     result = await self._execute_order(
@@ -228,6 +286,7 @@ class SimulationEngine:
                         strategy_id=strategy_id,
                         market=market,
                         run_id=exec_run_id,
+                        bar=self._bar_for_symbol(bars, order.symbol),
                     )
                     report.orders.append(self._order_to_dict(order, result))
                     if result.success:
@@ -343,15 +402,29 @@ class SimulationEngine:
         """
         if not symbols:
             return {}
+        bars = await self._load_bars(symbols, as_of=as_of, market=market)
+        return self._quotes_from_bars(bars)
 
+    async def _load_bars(
+        self,
+        symbols: list[str],
+        as_of: date | None = None,
+        market: Any = None,
+    ) -> dict[str, Any]:
+        if not symbols:
+            return {}
         market_data = get_local_market_data(market)
         trade_date = as_of or datetime.now().date()
-        # 直读本地分区是同步磁盘 IO，放线程里跑，避免阻塞事件循环
-        bars = await asyncio.to_thread(market_data.load_date, trade_date, symbols)
+        latest = await asyncio.to_thread(market_data.latest_trade_date, trade_date)
+        if latest is not None:
+            trade_date = latest
+        return await asyncio.to_thread(market_data.load_date, trade_date, symbols)
 
+    @staticmethod
+    def _quotes_from_bars(bars: dict[str, Any]) -> dict[str, Quote]:
         quotes: dict[str, Quote] = {}
         for sym, bar in bars.items():
-            quotes[sym] = Quote(
+            quote = Quote(
                 symbol=sym,
                 current_price=bar.close,
                 is_limit_up=(bar.close >= bar.limit_up) if math.isfinite(bar.limit_up) else False,
@@ -359,9 +432,22 @@ class SimulationEngine:
                 is_suspended=bar.suspended,
                 pre_close=bar.pre_close if bar.pre_close > 0 else None,
             )
-
-        logger.info("SimulationEngine: 本地行情 %d/%d", len(quotes), len(symbols))
+            quotes[sym] = quote
+            prefix = StockCodeUtil.to_prefix(sym)
+            if prefix and prefix != sym:
+                quotes[prefix] = quote
+        logger.info("SimulationEngine: 本地行情 %d bars", len(bars))
         return quotes
+
+    @staticmethod
+    def _bar_for_symbol(bars: dict[str, Any], symbol: str) -> Any:
+        if symbol in bars:
+            return bars[symbol]
+        suffix = StockCodeUtil.to_suffix(symbol)
+        if suffix in bars:
+            return bars[suffix]
+        prefix = StockCodeUtil.to_prefix(symbol)
+        return bars.get(prefix)
 
     def _build_account(self, data: dict[str, Any]) -> SimulationAccount:
         """构建账户对象"""
@@ -381,6 +467,7 @@ class SimulationEngine:
         strategy_id: str,
         market: Any = None,
         run_id: str = "",
+        bar: Any = None,
     ) -> ExecutionResult:
         """执行单个订单（虚拟撮合；成功后按开关镜像一笔真单到 QMT）"""
         from backend.services.simulation.models.order import (
@@ -403,10 +490,14 @@ class SimulationEngine:
         db.add(sim_order)
         await db.flush()
 
-        # 执行订单（按市场规则决定佣金/T+1/账户维度）
-        result = await exec_engine.execute_order(
-            sim_order, market=getattr(market, "value", None)
-        )
+        if bar is not None:
+            result = await exec_engine.execute_from_bar(
+                sim_order, bar, market=getattr(market, "value", None)
+            )
+        else:
+            result = await exec_engine.execute_order(
+                sim_order, market=getattr(market, "value", None)
+            )
         if result.success:
             await exec_engine.apply_filled(sim_order, result)
             # 双轨镜像：虚拟成交已生效，按开关/白名单/限额向大 QMT 补一笔真单。

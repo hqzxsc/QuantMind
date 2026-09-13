@@ -11,7 +11,8 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 import pandas as pd
 

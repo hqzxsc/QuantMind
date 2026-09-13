@@ -2,7 +2,7 @@
 
 api 容器（``_build_config_yaml``）与训练容器（``train.py main()``）import 同一个包，
 config.yaml 的 key 天然一致。B1 只做 ``TrainingConfig``（config.yaml 层）类型化；
-入参编排层（``pause_others/horizons/...``）保持现状，见 REFACTOR_TRAINING_B §3.3。
+入参编排层（``pause_others/...``）保持现状，见 REFACTOR_TRAINING_B §3.3。
 """
 
 from backend.shared.training.per_model import (

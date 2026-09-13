@@ -132,8 +132,8 @@ export const ModelHubCard: React.FC<ModelHubCardProps> = ({
           </button>
         </div>
 
-        {/* 策略描述 */}
-        <p className="text-xs text-slate-500 line-clamp-2 h-8 leading-relaxed mb-3">
+        {/* 策略描述（限制单行，超出省略） */}
+        <p className="text-xs text-slate-500 line-clamp-1 leading-relaxed mb-3">
           {model.description || '创作者暂未填写详细描述。'}
         </p>
 

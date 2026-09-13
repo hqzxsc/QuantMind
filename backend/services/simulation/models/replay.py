@@ -68,6 +68,7 @@ class OrderOrigin(str, enum.Enum):
     SIGNAL = "signal"
     MANUAL = "manual"
     STOP_LOSS = "stop_loss"
+    CODE = "code"  # 策略代码模式（code_runner 用户 hooks 产物）
 
 
 class ReplaySession(Base, TimestampMixin):

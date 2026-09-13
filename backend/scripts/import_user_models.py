@@ -75,6 +75,14 @@ async def import_models(root: Path, *, dry_run: bool = False, refresh: bool = Fa
             if not isinstance(metadata, dict):
                 raise ValueError("metadata.json 不是 JSON 对象")
 
+            # 融合模型能力已下线，不再导入
+            if str(metadata.get("model_type") or "").lower() == "ensemble" or str(
+                metadata.get("framework") or ""
+            ).lower() == "ensemble":
+                log.info("[SKIP] %s: 融合模型已下线", model_dir.name)
+                summary["skipped"] += 1
+                continue
+
             model_file = _find_model_file(model_dir, metadata)
             if not model_file:
                 raise ValueError(f"未找到模型文件（{MODEL_FILE_EXTENSIONS}）")

@@ -42,6 +42,8 @@ import { FeatureDriversPanel } from '../components/FeatureDriversPanel';
 import { ModelConsensusPanel } from '../components/ModelConsensusPanel';
 import { InferenceHistoryPanel } from '../../../components/inference/InferenceHistoryPanel';
 import { useInferenceCenter, type SuggestionItem } from '../adapter';
+import { StockPoolPickerModal } from '../../../components/backtest/StockPoolPickerModal';
+import type { StockPoolOption } from '../../../services/stockPoolOptionService';
 
 const { Text } = Typography;
 
@@ -59,6 +61,12 @@ export const InferenceCenterShell: React.FC = () => {
   const location = useLocation();
   const adapter = useInferenceCenter();
   const { market: currentMarket, calendar: marketCalendar, currencySymbol, defaultSymbol } = adapter;
+
+  // 单日推理股票池（仅 A 股）：null=全市场，否则 pool:<code> 引用；只裁信号，不进 pred.parquet
+  const [inferPoolRef, setInferPoolRef] = useState<string | null>(null);
+  const [inferPoolName, setInferPoolName] = useState('');
+  const [inferPoolId, setInferPoolId] = useState<string | null>(null);
+  const [inferPoolPickerOpen, setInferPoolPickerOpen] = useState(false);
 
   // 顶层 Tab：'cross-section'（市场截面推理）| 'individual'（个股预测推理）
   const initialTopTab = (location.state as any)?.tab === 'cross-section' ? 'cross-section' : 'cross-section';
@@ -331,9 +339,15 @@ export const InferenceCenterShell: React.FC = () => {
         message.error('前置检查未通过，请先处理阻断项');
         return;
       }
-      const runInfo = await modelTrainingService.runModelInference(selectedModel.model_id, inferenceDateStr);
+      const runInfo = await modelTrainingService.runModelInference(
+        selectedModel.model_id,
+        inferenceDateStr,
+        inferPoolRef ?? undefined,
+      );
       setLastInferenceRun(runInfo);
-      message.success(`截面推理已完成: 产物已入库（样本数: ${runInfo.signals_count}）`);
+      message.success(
+        `截面推理已完成: 产物已入库（样本数: ${runInfo.signals_count}${inferPoolName ? `，股票池: ${inferPoolName}` : ''}）`,
+      );
       void refreshCrossSectionPanel(selectedModel.model_id);
       void loadInferenceHistory(selectedModel.model_id);
     } catch (err: any) {
@@ -623,6 +637,40 @@ export const InferenceCenterShell: React.FC = () => {
                     <span className="text-xs font-bold text-slate-700">目标</span>
                     <span className="text-[13px] font-black text-blue-700 font-mono">T+{horizonDays}</span>
                   </div>
+                  {currentMarket === 'CN' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!inferPoolRef) setInferPoolPickerOpen(true);
+                        else {
+                          setInferPoolRef(null);
+                          setInferPoolName('');
+                          setInferPoolId(null);
+                        }
+                      }}
+                      title={inferPoolRef ? `股票池: ${inferPoolName || inferPoolRef}（点击恢复全市场）` : '全市场（点击选择股票池）'}
+                      className={clsx(
+                        'border rounded-xl px-3 h-9 flex items-center gap-1.5 whitespace-nowrap transition-colors',
+                        inferPoolRef ? 'bg-blue-50 border-blue-300' : 'bg-slate-50 border-slate-200 hover:border-blue-200',
+                      )}
+                    >
+                      <Layers size={12} className={inferPoolRef ? 'text-blue-600' : 'text-slate-400'} />
+                      <span className="text-xs font-bold text-slate-700">股票池</span>
+                      <span className={clsx('text-[13px] font-black max-w-[160px] truncate', inferPoolRef ? 'text-blue-700' : 'text-slate-500')}>
+                        {inferPoolRef ? (inferPoolName || inferPoolRef) : '全市场'}
+                      </span>
+                    </button>
+                  )}
+                  {currentMarket === 'CN' && inferPoolRef && (
+                    <button
+                      type="button"
+                      onClick={() => setInferPoolPickerOpen(true)}
+                      title="更换股票池"
+                      className="border border-blue-200 bg-white rounded-xl px-2 h-9 flex items-center whitespace-nowrap text-xs font-bold text-blue-600 hover:bg-blue-50 transition-colors"
+                    >
+                      更换
+                    </button>
+                  )}
                   <div className={clsx(
                     'border rounded-xl px-3 h-9 flex items-center whitespace-nowrap',
                     selectedModel.is_default ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'
@@ -1050,6 +1098,21 @@ export const InferenceCenterShell: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      {currentMarket === 'CN' && (
+        <StockPoolPickerModal
+          open={inferPoolPickerOpen}
+          onClose={() => setInferPoolPickerOpen(false)}
+          selectedPoolId={inferPoolId}
+          market="CN"
+          title="推理股票池"
+          onSelect={(pool: StockPoolOption) => {
+            setInferPoolRef(`pool:${pool.code}`);
+            setInferPoolName(pool.name);
+            setInferPoolId(pool.pool_id);
+            setInferPoolPickerOpen(false);
+          }}
+        />
       )}
     </div>
   );

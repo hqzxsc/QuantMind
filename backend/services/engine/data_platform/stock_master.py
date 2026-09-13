@@ -291,11 +291,11 @@ def refresh_market(market: str, engine: Engine) -> dict[str, Any]:
 def list_stocks(
     engine: Engine,
     *,
-    market: Optional[str] = None,
-    exchange: Optional[str] = None,
-    industry: Optional[str] = None,
-    sector: Optional[str] = None,
-    search: Optional[str] = None,
+    market: str | None = None,
+    exchange: str | None = None,
+    industry: str | None = None,
+    sector: str | None = None,
+    search: str | None = None,
     limit: int = 50,
     offset: int = 0,
     only_active: bool = True,
@@ -354,10 +354,10 @@ def list_stocks(
 def list_symbols(
     engine: Engine,
     *,
-    market: Optional[str] = None,
-    exchange: Optional[str] = None,
-    industry: Optional[str] = None,
-    sector: Optional[str] = None,
+    market: str | None = None,
+    exchange: str | None = None,
+    industry: str | None = None,
+    sector: str | None = None,
     limit: int = 5000,
 ) -> list[str]:
     """只返回 symbol 列表，给 sweep 用。"""
@@ -369,7 +369,7 @@ def list_symbols(
     return [it["symbol"] for it in data["items"]]
 
 
-def facets(engine: Engine, market: Optional[str] = None) -> dict[str, Any]:
+def facets(engine: Engine, market: str | None = None) -> dict[str, Any]:
     """返回该市场的 exchange / industry / sector distinct 列表。"""
     market_clause = ""
     params: dict[str, Any] = {}

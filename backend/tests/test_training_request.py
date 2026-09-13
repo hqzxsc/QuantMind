@@ -86,13 +86,7 @@ def test_features_and_params_shapes_verbatim():
     assert req.lgb_params == {} and req.xgb_params == {}
 
 
-def test_horizons_target_mode_wfa_verbatim():
-    # horizons 条目校验在 schema；“至少 2 个不同周期”需去重后判定，留函数推导侧（原样）
-    req = TrainingRequest.validate_request({"horizons": [3]})
-    assert req.horizons == [3]
-    assert "non-integer value" in _detail(
-        TrainingRequest.validate_request, {"horizons": ["x"]}
-    )
+def test_target_mode_wfa_verbatim():
     assert "target_mode must be one of" in _detail(
         TrainingRequest.validate_request, {"target_mode": "x"}
     )

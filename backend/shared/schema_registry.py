@@ -61,29 +61,29 @@ SCHEMA_SPECS: tuple[SchemaSpec, ...] = (
     SchemaSpec(
         key="trade.core",
         service="quantmind-trade",
-        base_module="backend.services.trade.models.base",
+        base_module="backend.services.trade_shared.models.base",
         bootstrap_modules=(
-            "backend.services.trade.models.order",
-            "backend.services.trade.models.trade",
-            "backend.services.trade.models.risk_rule",
-            "backend.services.trade.models.preflight_snapshot",
-            "backend.services.trade.models.real_account_snapshot",
+            "backend.services.trade_shared.models.order",
+            "backend.services.trade_shared.models.trade",
+            "backend.services.trade_shared.models.risk_rule",
+            "backend.services.trade_shared.models.preflight_snapshot",
+            "backend.services.trade_shared.models.real_account_snapshot",
         ),
     ),
     SchemaSpec(
         key="trade.portfolio",
         service="quantmind-trade",
-        base_module="backend.services.trade.portfolio.models",
+        base_module="backend.services.trade_shared.portfolio.models",
     ),
     SchemaSpec(
         key="trade.simulation",
         service="quantmind-trade",
-        base_module="backend.services.trade.simulation.models",
+        base_module="backend.services.simulation.models",
         bootstrap_modules=(
-            "backend.services.trade.simulation.models.order",
-            "backend.services.trade.simulation.models.trade",
-            "backend.services.trade.simulation.models.fund_snapshot",
-            "backend.services.trade.simulation.models.replay",
+            "backend.services.simulation.models.order",
+            "backend.services.simulation.models.trade",
+            "backend.services.simulation.models.fund_snapshot",
+            "backend.services.simulation.models.replay",
         ),
     ),
     SchemaSpec(
@@ -126,11 +126,21 @@ def load_registered_schemas(
 def detect_duplicate_tables(
     schema_keys: Iterable[str] | None = None,
 ) -> dict[str, list[str]]:
-    seen: dict[str, list[str]] = {}
+    """返回跨「不同 metadata 对象」重复定义的表名。
+
+    同一 Base/metadata 被多个 schema key 共享（如 api.community 与 api.user
+    共用同一 Base）时，表只会定义一次，不应视为重复。
+    """
+    seen: dict[str, list[tuple[str, int]]] = {}
     for schema in load_registered_schemas(schema_keys):
+        meta_id = id(schema.metadata)
         for table_name in schema.metadata.tables:
-            seen.setdefault(table_name, []).append(schema.key)
-    return {table: owners for table, owners in seen.items() if len(owners) > 1}
+            seen.setdefault(table_name, []).append((schema.key, meta_id))
+    return {
+        table: [key for key, _ in owners]
+        for table, owners in seen.items()
+        if len({meta_id for _, meta_id in owners}) > 1
+    }
 
 
 def registry_summary(schema_keys: Iterable[str] | None = None) -> list[dict]:

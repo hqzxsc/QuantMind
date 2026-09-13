@@ -144,13 +144,18 @@ class ExecutionResult:
     run_id: str = ""
     error: str = ""
     signals: list[dict] = field(default_factory=list)
-    fallback_used: bool = False  # True = alpha158 兜底脚本实际执行
+    fallback_used: bool = False  # True = 兜底模型脚本实际执行
     fallback_reason: str = ""  # 触发兜底的原因描述
     failure_stage: str = ""  # main_script/fallback_script/output_parse
     active_model_id: str = ""
     active_data_source: str = ""
     data_trade_date: str = ""
     prediction_trade_date: str = ""
+    # 由 InferenceRouterService 在执行后写入的执行元信息（此处声明默认值，
+    # 避免只在 router 链路赋值、直接读取时 AttributeError）
+    execution_mode: str = ""
+    model_switch_used: bool = False
+    model_switch_reason: str = ""
 
 
 class InferenceScriptRunner:
@@ -164,6 +169,9 @@ class InferenceScriptRunner:
     2. 兜底模型推理脚本（默认 inference.py）
        - exit 0 → 兜底成功，结果标记 fallback_used=True
        - 非 0   → 兜底失败，返回错误
+
+    注：系统内置 model_qlib/兜底模型已废弃，仅在显式配置
+    fallback_model_dir/fallback_model_id 时兜底才有意义。
     """
 
     # exit code 2: 数据质量不足，触发兜底
@@ -185,10 +193,11 @@ class InferenceScriptRunner:
     ):
         self.enable_fallback = enable_fallback
         # `models_production` 为历史兼容参数，等价于 primary_model_dir。
+        # 系统内置 model_qlib/alpha158 已废弃，不再有隐式默认模型。
         resolved_primary = (
             primary_model_dir
             or models_production
-            or os.getenv("MODELS_PRODUCTION", "/app/models/production/model_qlib")
+            or os.getenv("MODELS_PRODUCTION", "/app/models/production")
         )
         self.primary_model_dir = Path(resolved_primary)
         # 兜底模型目录：容器内 /app/models/production/alpha158，便携包为
@@ -202,17 +211,13 @@ class InferenceScriptRunner:
             str(primary_data_dir or os.getenv("QLIB_PRIMARY_DATA_PATH", ""))
         )
         self.fallback_data_dir = self._normalize_provider_uri(
-            str(
-                fallback_data_dir
-                or os.getenv("QLIB_FALLBACK_DATA_PATH", "")
-            ),
-            prefer_alpha158=True,
+            str(fallback_data_dir or os.getenv("QLIB_FALLBACK_DATA_PATH", ""))
         )
         self.primary_model_id = str(
-            primary_model_id or os.getenv("PRIMARY_MODEL_ID", "model_qlib")
+            primary_model_id or os.getenv("PRIMARY_MODEL_ID", "")
         )
         self.fallback_model_id = str(
-            fallback_model_id or os.getenv("FALLBACK_MODEL_ID", "alpha158")
+            fallback_model_id or os.getenv("FALLBACK_MODEL_ID", "")
         )
         self.primary_script_name = str(
             primary_script_name or os.getenv("INFERENCE_PRIMARY_SCRIPT", "inference.py")
@@ -223,9 +228,7 @@ class InferenceScriptRunner:
         )
 
     @staticmethod
-    def _normalize_provider_uri(
-        provider_uri: str, *, prefer_alpha158: bool = False
-    ) -> str:
+    def _normalize_provider_uri(provider_uri: str) -> str:
         """
         规范化 Qlib provider uri，避免相对路径在子进程 cwd 下被错误解析。
 
@@ -741,6 +744,56 @@ class InferenceScriptRunner:
 
         return env
 
+    def _pool_filter_signals(
+        self,
+        signals: list[dict],
+        *,
+        pool_id: str | None,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+    ) -> tuple[list[dict] | None, str | None]:
+        """按全局股票池裁剪信号。返回 (kept, error_reason)：
+
+        - 未指定池 → (signals, None)，不做任何过滤；
+        - 池为空或零命中 → (None, 原因)，调用方须显式失败，
+          **绝不静默退化为全市场**（与「单股补推」的宽松兜底刻意不同）。
+        """
+        if not pool_id:
+            return signals, None
+
+        from backend.shared.stock_pool.filters import filter_signals_by_pool
+        from backend.shared.stock_pool.resolver import (
+            ResolveContext,
+            resolver as pool_resolver,
+        )
+
+        snapshot = pool_resolver.resolve_sync(
+            pool_id,
+            ResolveContext(tenant_id=tenant_id, user_id=user_id),
+            strict=True,
+        )
+        outcome = filter_signals_by_pool(signals, snapshot)
+        if outcome.empty_pool or outcome.empty_result:
+            reason = "; ".join(outcome.warnings) or "池过滤后无信号"
+            logger.error(
+                "[InferenceScriptRunner] 池过滤失败 pool_id=%s run_id=%s: %s",
+                pool_id,
+                run_id,
+                reason,
+            )
+            return None, reason
+        logger.info(
+            "[InferenceScriptRunner] 池过滤: kept=%d dropped=%d pool_id=%s "
+            "checksum=%s run_id=%s",
+            len(outcome.kept),
+            outcome.dropped,
+            outcome.pool_id,
+            outcome.pool_checksum,
+            run_id,
+        )
+        return outcome.kept, None
+
     def _execute_fallback(
         self,
         date: str,
@@ -752,8 +805,9 @@ class InferenceScriptRunner:
         fallback_reason: str,
         prediction_trade_date: str,
         persist: bool = True,
+        pool_id: str | None = None,
     ) -> ExecutionResult:
-        """执行 inference_alpha158.py 兜底推理脚本。persist=False 时只返回内存信号，不写库不发布。"""
+        """执行兜底模型推理脚本。persist=False 时只返回内存信号，不写库不发布。"""
         fallback_path = self.fallback_model_dir / self.fallback_script_name
         if not fallback_path.is_file():
             return ExecutionResult(
@@ -790,7 +844,7 @@ class InferenceScriptRunner:
             publish_notification(
                 user_id="system",
                 tenant_id="default",
-                title="触发 Alpha158 兜底模型",
+                title="触发兜底模型",
                 content=f"由于 [{fallback_reason}] 触发了兜底机制，请尽快排查主模型和数据状态。",
                 type="system",
                 level="error",
@@ -835,7 +889,7 @@ class InferenceScriptRunner:
                 exit_code=-1,
                 stdout=(exc.stdout or b"").decode("utf-8", errors="replace"),
                 stderr=(exc.stderr or b"").decode("utf-8", errors="replace"),
-                error=f"alpha158 兜底脚本超时 ({_SCRIPT_TIMEOUT_SEC}s)",
+                error=f"兜底模型脚本超时 ({_SCRIPT_TIMEOUT_SEC}s)",
                 run_id=run_id,
                 fallback_used=True,
                 fallback_reason=fallback_reason,
@@ -851,7 +905,7 @@ class InferenceScriptRunner:
                 exit_code=-1,
                 stdout="",
                 stderr="",
-                error=f"alpha158 兜底脚本启动失败: {exc}",
+                error=f"兜底模型脚本启动失败: {exc}",
                 run_id=run_id,
                 fallback_used=True,
                 fallback_reason=fallback_reason,
@@ -864,20 +918,20 @@ class InferenceScriptRunner:
 
         fb_stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
         fb_stderr = (
-            v10_stderr + "\n--- alpha158 fallback ---\n" + (proc.stderr or b"").decode("utf-8", errors="replace")
+            v10_stderr + "\n--- fallback ---\n" + (proc.stderr or b"").decode("utf-8", errors="replace")
         ).strip()
         fb_exitcode = proc.returncode
 
         if fb_exitcode != 0:
             logger.error(
-                f"[InferenceScriptRunner] alpha158 兜底脚本失败 exit={fb_exitcode}, run_id={run_id}"
+                f"[InferenceScriptRunner] 兜底模型脚本失败 exit={fb_exitcode}, run_id={run_id}"
             )
             return ExecutionResult(
                 success=False,
                 exit_code=fb_exitcode,
                 stdout=fb_stdout,
                 stderr=fb_stderr,
-                error=f"alpha158 兜底脚本返回非零退出码: {fb_exitcode}",
+                error=f"兜底模型脚本返回非零退出码: {fb_exitcode}",
                 run_id=run_id,
                 fallback_used=True,
                 fallback_reason=fallback_reason,
@@ -895,7 +949,7 @@ class InferenceScriptRunner:
                 exit_code=0,
                 stdout=fb_stdout,
                 stderr=fb_stderr,
-                error="alpha158 兜底未能写入合法的 JSON 信号数组",
+                error="兜底模型未能写入合法的 JSON 信号数组",
                 run_id=run_id,
                 fallback_used=True,
                 fallback_reason=fallback_reason,
@@ -907,8 +961,33 @@ class InferenceScriptRunner:
             )
 
         logger.info(
-            f"[InferenceScriptRunner] alpha158 兜底成功，{len(signals)} 条信号, run_id={run_id}"
+            f"[InferenceScriptRunner] 兜底模型成功，{len(signals)} 条信号, run_id={run_id}"
         )
+        # 兜底路径同样必须过池（否则池过滤会被 exit=2 兜底静默绕过）
+        kept, pool_error = self._pool_filter_signals(
+            signals,
+            pool_id=pool_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            run_id=run_id,
+        )
+        if kept is None:
+            return ExecutionResult(
+                success=False,
+                exit_code=0,
+                stdout=fb_stdout,
+                stderr=fb_stderr,
+                error=pool_error or "池过滤后无信号",
+                run_id=run_id,
+                fallback_used=True,
+                fallback_reason=fallback_reason,
+                failure_stage="pool_filter",
+                active_model_id=self.fallback_model_id,
+                active_data_source=self.fallback_data_dir,
+                data_trade_date=date,
+                prediction_trade_date=prediction_trade_date,
+            )
+        signals = kept
         if persist:
             self._persist_and_publish(
                 run_id,
@@ -919,6 +998,8 @@ class InferenceScriptRunner:
                 active_model_id=self.fallback_model_id,
                 data_trade_date=date,
                 market="CN",  # alpha158 兜底仅 CN 链路
+                # 兜底+池组合同样局部覆盖，避免池 run 清空同日全市场信号
+                partial=bool(pool_id),
             )
 
         if persist and redis_client is not None:
@@ -955,6 +1036,7 @@ class InferenceScriptRunner:
         redis_client=None,
         symbols: list[str] | None = None,
         persist: bool = True,
+        pool_id: str | None = None,
     ) -> ExecutionResult:
         """
         执行 inference.py 脚本，解析信号输出，写库并发布 Redis Stream。
@@ -969,6 +1051,9 @@ class InferenceScriptRunner:
                       的股票落库与返回，用于「单股补推」；为 None 时全市场（原行为）。
         persist     : 为 False 时跳过 _persist_and_publish 与 Redis 标记，仅返回
                       内存信号（个股独立轻路线：结果只在前端缓存，不记入后端/DB）。
+        pool_id     : 全局股票池引用（P3）。非空时把信号裁到池内，**严格语义**：
+                      池解析为空或信号零命中都会显式失败，不会静默退化为全市场。
+                      过滤发生在 symbols 之前，两者可叠加。
         """
         script_path = self.primary_model_dir / self.primary_script_name
         primary_meta = self._read_primary_metadata()
@@ -989,7 +1074,7 @@ class InferenceScriptRunner:
                 run_id = f"run_{date.replace('-', '')}_{uuid.uuid4().hex[:8]}"
                 fallback_reason = f"主模型推理脚本不存在: {script_path}"
                 logger.warning(
-                    "[InferenceScriptRunner] 主模型脚本缺失，触发 alpha158 兜底, run_id=%s, reason=%s",
+                    "[InferenceScriptRunner] 主模型脚本缺失，触发 兜底模型, run_id=%s, reason=%s",
                     run_id,
                     fallback_reason,
                 )
@@ -1014,6 +1099,7 @@ class InferenceScriptRunner:
                     fallback_reason=fallback_reason,
                     prediction_trade_date=prediction_trade_date,
                     persist=persist,
+                    pool_id=pool_id,
                 )
 
         if data_source in ("parquet", "quantdb_factors"):
@@ -1068,7 +1154,7 @@ class InferenceScriptRunner:
         if not readiness.get("ready", False):
             fallback_reason = f"主模型维度门禁未通过: {readiness.get('detail', 'N/A')}"
             logger.warning(
-                "[InferenceScriptRunner] 主模型数据维度不足，触发 alpha158 兜底, run_id=%s, reason=%s",
+                "[InferenceScriptRunner] 主模型数据维度不足，触发 兜底模型, run_id=%s, reason=%s",
                 run_id,
                 fallback_reason,
             )
@@ -1093,6 +1179,7 @@ class InferenceScriptRunner:
                 fallback_reason=fallback_reason,
                 prediction_trade_date=prediction_trade_date,
                 persist=persist,
+                pool_id=pool_id,
             )
 
         # 注入平台环境变量
@@ -1174,7 +1261,7 @@ class InferenceScriptRunner:
         exit_code = proc.returncode
 
         if exit_code != 0:
-            # exit code 2 = 数据质量不足 → 尝试 alpha158 兜底
+            # exit code 2 = 数据质量不足 → 尝试 兜底模型
             if exit_code == self._EXIT_DATA_QUALITY:
                 fallback_reason = (
                     stderr.strip().splitlines()[-1]
@@ -1182,7 +1269,7 @@ class InferenceScriptRunner:
                     else "v10 数据质量不足"
                 )
                 logger.warning(
-                    f"[InferenceScriptRunner] v10 数据质量不足 (exit=2)，启动 alpha158 兜底, run_id={run_id}"
+                    f"[InferenceScriptRunner] v10 数据质量不足 (exit=2)，启动 兜底模型, run_id={run_id}"
                 )
                 if not self.enable_fallback or model_market not in ("CN", "A"):
                     return ExecutionResult(
@@ -1205,6 +1292,7 @@ class InferenceScriptRunner:
                     fallback_reason=fallback_reason,
                     prediction_trade_date=prediction_trade_date,
                     persist=persist,
+                    pool_id=pool_id,
                 )
 
             logger.error(
@@ -1238,6 +1326,33 @@ class InferenceScriptRunner:
                 active_model_id=self.primary_model_id,
                 active_data_source=self.primary_data_dir,
             )
+
+        # --- 全局股票池过滤（P3）[START] ---
+        # 严格语义：池为空或零命中都视为失败，绝不静默退化为全市场。
+        # 放在「单股补推」之前，因此两者可叠加（先按池裁，再按指定股票裁）。
+        kept, pool_error = self._pool_filter_signals(
+            signals,
+            pool_id=pool_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            run_id=run_id,
+        )
+        if kept is None:
+            return ExecutionResult(
+                success=False,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                error=pool_error or "池过滤后无信号",
+                run_id=run_id,
+                failure_stage="pool_filter",
+                active_model_id=self.primary_model_id,
+                active_data_source=self.primary_data_dir,
+                data_trade_date=date,
+                prediction_trade_date=prediction_trade_date,
+            )
+        signals = kept
+        # --- 全局股票池过滤（P3）[END] ---
 
         # 单股补推：非空 symbols 时仅保留目标股票，后续落库/返回只针对这些股票。
         # 推理脚本仍对全池出分（不改子进程与模板），只裁剪写库与返回，
@@ -1284,6 +1399,11 @@ class InferenceScriptRunner:
         # universe_tag 标注市场（HK 推理 → 'HK'），老行 NULL=CN；A 股路径值 'CN' 与历史等价。
         # persist=False（个股独立路线）时跳过，只返回内存信号。
         persist_market = "CN" if model_market in ("A", "") else model_market
+        # 写库 + 发布 Redis Stream（partial=单股补推/股票池时局部覆盖，不整桶删除）。
+        # persist=False（个股独立路线）时跳过，只返回内存信号。
+        # 股票池推理必须局部覆盖：整桶删除会把同日全市场 run 的信号清空，
+        # 导致推理历史的分布统计查不到明细（09-11 全市场 5189 行被池 run 清空事故）。
+        pool_scoped = bool(pool_id)
         if persist:
             self._persist_and_publish(
                 run_id,
@@ -1293,7 +1413,7 @@ class InferenceScriptRunner:
                 signals,
                 active_model_id=self.primary_model_id,
                 data_trade_date=date,
-                partial=partial_applied,
+                partial=(partial_applied or pool_scoped),
                 market=persist_market,
             )
 
@@ -1660,7 +1780,7 @@ class InferenceScriptRunner:
         将推理结果写入 engine_signal_scores 并发布到 Redis Stream。
 
         存储策略：按模型桶覆盖（同 tenant/user/date/model），保证同日不同模型可并存。
-        partial=True（单股补推）时只覆盖目标 symbol 的行，不整桶删除当日全市场信号。
+        partial=True（单股补推/股票池）时只覆盖目标 symbol 的行，不整桶删除当日全市场信号。
 
         Args:
             data_trade_date: 推理日期（数据截止日期），若不传则默认等于 prediction_trade_date
@@ -1936,7 +2056,7 @@ class InferenceScriptRunner:
         )
 
         # ── Step 0.2: 删除当日旧推理结果（覆盖策略）───────────────────
-        # partial（单股补推）时只删目标 symbol 的旧行，保留当日全市场信号。
+        # partial（单股补推/股票池）时只删目标 symbol 的旧行，保留当日全市场信号。
         # 注意：unique 键含 run_id，新 run 会另插一行，同 symbol 当日可能并存多行，
         # 读侧按最新 created_at 取最新（与个股分数曲线口径一致）。
         _sym_filter = " AND symbol = ANY(:partial_symbols)" if partial else ""
@@ -1960,7 +2080,7 @@ class InferenceScriptRunner:
         )
         if partial:
             logger.info(
-                f"[InferenceScriptRunner] 单股补推局部覆盖: 仅替换 {len(symbols)} 只标的的旧信号, run_id={run_id}"
+                f"[InferenceScriptRunner] 局部覆盖: 仅替换 {len(symbols)} 只标的的旧信号(单股补推/股票池), run_id={run_id}"
             )
         else:
             # 同步清除旧 feature_runs 记录（保留最新 run_id）

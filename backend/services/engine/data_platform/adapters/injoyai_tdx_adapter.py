@@ -103,7 +103,7 @@ class InjoyaiTdxAdapter(OfflineDataSourceAdapter):
         client = self._get_client()
         code = symbol.split(".", 1)[0]
         if freq != "1min":
-            raise InvalidFieldRequest(f"injoyai_tdx 当前仅支持 1min")
+            raise InvalidFieldRequest("injoyai_tdx 当前仅支持 1min")
         try:
             raw = client.minute(code=code, count=240)
         except Exception as exc:  # noqa: BLE001
@@ -125,7 +125,7 @@ class InjoyaiTdxAdapter(OfflineDataSourceAdapter):
             "volume", "amount", "adj_factor", "source",
         ]]
 
-    def fetch_realtime(self, symbol: str) -> Optional[dict]:
+    def fetch_realtime(self, symbol: str) -> dict | None:
         client = self._get_client()
         code = symbol.split(".", 1)[0]
         try:

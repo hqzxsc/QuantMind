@@ -1,5 +1,9 @@
 # QuantMind 因子与特征参考
 
+> **说明（2026）**：本文为历史特征参考。Alpha158/扩展微结构特征现由 QuantDB
+> `6_ml_datasets/alpha_library`（Alpha101+GTJA191+Alpha158，429 列）与
+> `l2_factors` 直接提供；原 `Alpha158Ext` 处理器已移除。
+
 ## 1. Alpha158vwap 基础因子 (158 维)
 
 Qlib 内置 Alpha158 处理器，默认输出 158 维特征，涵盖：

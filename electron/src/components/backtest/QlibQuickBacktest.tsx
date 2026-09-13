@@ -7,7 +7,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
   Play, RefreshCw, BarChart3, Settings2, Info, AlertCircle, Copy, Check, ExternalLink, CalendarRange, Cpu,
-  ChevronDown,
+  ChevronDown, Layers,
 } from 'lucide-react';
 
 import type { BacktestConfig } from '../../services/backtestService';
@@ -27,19 +27,21 @@ import { getDefaultStrategyParams, sanitizeStrategyParams } from '../../shared/q
 import { getStoredTailTradeMode, setStoredTailTradeMode, getTailTradeDealPrice, getTailTradeSignalLagDays, ALLOW_FEATURE_SIGNAL_FALLBACK } from '../../shared/qlib/tailTradeMode';
 import { strategyManagementService } from '../../services/strategyManagementService';
 import { modelTrainingService, UserModelRecord } from '../../services/modelTrainingService';
+import type { StockPoolOption } from '../../services/stockPoolOptionService';
+import { StockPoolPickerModal } from './StockPoolPickerModal';
 import { useAppSelector } from '../../store';
 import { selectCurrentMarket } from '../../store/slices/uiSlice';
 import { getMarketConfig } from '../../config/marketConfig';
 import dayjs from 'dayjs';
 import { message } from 'antd';
 
-const MARKET_UNIVERSE_PRESETS: Record<string, { label: string; value: string }[]> = {
+const MARKET_UNIVERSE_PRESETS: Record<string, { label: string; value: string; custom?: boolean }[]> = {
   CN: [
     { label: '全部', value: 'all' },
     { label: '沪深300', value: 'csi300' },
     { label: '中证500', value: 'csi500' },
-    { label: '中证800', value: 'csi800' },
     { label: '中证1000', value: 'csi1000' },
+    { label: '自定义', value: '__custom__', custom: true },
   ],
   HK: [
     { label: '全部港股', value: 'all' },
@@ -82,6 +84,18 @@ export const QlibQuickBacktest: React.FC = () => {
 
   // 基础配置
   const [universePath, setUniversePath] = useState<string>('all');
+  // 自定义股票池（自定义按钮 → 共用弹窗选择，全局股票池只读接口）
+  const [customPoolOpen, setCustomPoolOpen] = useState(false);
+  const [selectedCustomPool, setSelectedCustomPool] = useState<StockPoolOption | null>(null);
+  const customPoolActive = universePath.startsWith('pool:');
+
+  const openCustomPools = () => setCustomPoolOpen(true);
+
+  const selectCustomPool = (pool: StockPoolOption) => {
+    setSelectedCustomPool(pool);
+    setUniversePath(`pool:${pool.code}`);
+    setCustomPoolOpen(false);
+  };
   const [startDate, setStartDate] = useState<string>(BACKTEST_CONFIG.QLIB.DEFAULT_START);
   const [endDate, setEndDate] = useState<string>(BACKTEST_CONFIG.QLIB.DEFAULT_END);
   const [initialCapital, setInitialCapital] = useState(1000000);
@@ -374,6 +388,8 @@ export const QlibQuickBacktest: React.FC = () => {
         end_date: endDate,
         initial_capital: initialCapital,
         user_id: normalizeUserId(resolvedUserId),
+        // 全局股票池引用：后端 pool_id 优先于 universe 解析并物化
+        pool_id: universePath.startsWith('pool:') ? universePath : undefined,
         strategy_type: strategyType,
         strategy_params: strategyParams,
         benchmark_symbol: benchmark,
@@ -807,6 +823,26 @@ export const QlibQuickBacktest: React.FC = () => {
               <label className="block text-sm font-medium text-gray-600 mb-2">股票池 (Symbols)</label>
               <div className="grid grid-cols-5 gap-2">
                 {UNIVERSE_PRESETS.map((preset) => {
+                  if (preset.custom) {
+                    return (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        onClick={openCustomPools}
+                        title="从自定义股票池中选择"
+                        className={`px-2 py-2 text-xs font-medium rounded-xl border transition-all flex items-center justify-center gap-1 truncate ${
+                          customPoolActive
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white text-gray-600 border-gray-300 hover:border-blue-300 hover:text-blue-600'
+                        }`}
+                      >
+                        <Layers className="w-3 h-3 shrink-0" />
+                        <span className="truncate">
+                          {customPoolActive && selectedCustomPool ? selectedCustomPool.name : preset.label}
+                        </span>
+                      </button>
+                    );
+                  }
                   const active = universePath === preset.value;
                   return (
                     <button
@@ -1006,6 +1042,13 @@ export const QlibQuickBacktest: React.FC = () => {
           </motion.div>
         </div>
       </div>
+      <StockPoolPickerModal
+        open={customPoolOpen}
+        onClose={() => setCustomPoolOpen(false)}
+        selectedPoolId={selectedCustomPool?.pool_id}
+        market="CN"
+        onSelect={selectCustomPool}
+      />
       {showErrorLog && (
         <ErrorLogModal
           error={error}

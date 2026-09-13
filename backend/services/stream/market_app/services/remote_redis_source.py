@@ -84,13 +84,13 @@ class RemoteRedisDataSource(DataSourceAdapter):
 
         client = self._get_client()
         normalized_map = {self._normalize_symbol(s): s for s in symbols}
-        
+
         # 批量构建查询 Key 列表 (全路径组合，增加容错性)
         # 每个 normalized symbol 会产生 3 个 candidate snapshot keys:
         # 1. market:snapshot:sh600000 (规范小写前缀)
         # 2. market:snapshot:SH600000 (规范大写前缀)
         # 3. stock:600000.SH (Legacy 后缀格式)
-        
+
         pipeline_keys = []
         symbol_key_count = 3
         for n in normalized_map.keys():
@@ -98,7 +98,7 @@ class RemoteRedisDataSource(DataSourceAdapter):
             prefix = n[:2].lower() # sh
             code = n[2:] # 600000
             legacy = f"{code}.{n[:2].upper()}" # 600000.SH
-            
+
             pipeline_keys.append(f"market:snapshot:{prefix}{code}")
             pipeline_keys.append(f"market:snapshot:{n}")
             pipeline_keys.append(f"stock:{legacy}")
@@ -124,7 +124,7 @@ class RemoteRedisDataSource(DataSourceAdapter):
                 if candidate:
                     data = candidate
                     break
-            
+
             if not data:
                 continue
 

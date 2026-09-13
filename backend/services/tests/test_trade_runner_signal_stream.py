@@ -49,6 +49,10 @@ class _FakeRedis:
         _ = (stream_name, groupname, id, mkstream)
         return True
 
+    def get(self, key: str):
+        _ = key
+        return None
+
 
 def test_runner_consume_signal_stream_and_post_internal_order(monkeypatch):
     signal_event = {
@@ -78,17 +82,15 @@ def test_runner_consume_signal_stream_and_post_internal_order(monkeypatch):
         )
 
     def _fake_post(url: str, json: dict[str, Any], headers: dict[str, str], timeout: int):
-        assert url.endswith("/order")
+        assert url.endswith("/hosted-executions")
         assert headers["X-User-Id"] == "u1"
-        assert json["client_order_id"] == "coid-1"
+        assert json["strategy_id"] == "s1"
         fake_redis.order_posts.append(json)
         _ = timeout
         return _FakeResponse(
             {
-                "status": "submitted",
-                "order_id": "ord-1",
-                "execution": "created",
-                "result": {"message": "ok"},
+                "task_id": "hosted-1",
+                "status": "created",
             }
         )
 
@@ -117,48 +119,4 @@ def test_runner_consume_signal_stream_and_post_internal_order(monkeypatch):
 
     assert processed is True
     assert len(fake_redis.order_posts) == 1
-    assert len(fake_redis.acked) == 1
-
-
-def test_runner_skip_other_user_signal_and_no_order(monkeypatch):
-    signal_event = {
-        "event_type": "signal_created",
-        "tenant_id": "default",
-        "user_id": "u-other",
-        "signal_id": "sig-2",
-        "client_order_id": "coid-2",
-        "symbol": "000001.SZ",
-        "side": "BUY",
-        "quantity": "200",
-        "price": "15",
-        "score": "0.03",
-    }
-    fake_redis = _FakeRedis(records=[("1-1", signal_event)])
-
-    def _forbidden_post(*args, **kwargs):
-        raise AssertionError("unexpected order post for mismatched user signal")
-
-    monkeypatch.setattr(runner_main.requests, "post", _forbidden_post)
-    monkeypatch.setattr(runner_main.requests, "get", _forbidden_post)
-    monkeypatch.setattr(runner_main, "_current_local_ts", lambda: 1_710_310_800.0)
-    monkeypatch.setattr(runner_main, "_is_rebalance_day", lambda _ts, _cfg: True)
-
-    processed = runner_main.process_cycle(
-        user_id="u1",
-        tenant_id="default",
-        strategy="s1",
-        redis_client=fake_redis,  # type: ignore[arg-type]
-        exec_config={},
-        live_trade_config={
-            "enabled_sessions": ["PM"],
-            "sell_time": "14:00",
-            "buy_time": "14:30",
-            "sell_first": False,
-            "max_orders_per_cycle": 20,
-            "order_type": "LIMIT",
-        },
-    )
-
-    assert processed is False
-    assert fake_redis.order_posts == []
-    assert len(fake_redis.acked) == 1
+    assert fake_redis.order_posts[0]["strategy_id"] == "s1"

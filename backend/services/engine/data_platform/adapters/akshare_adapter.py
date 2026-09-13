@@ -179,8 +179,8 @@ class AkshareAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         if ak is None:
@@ -376,7 +376,7 @@ class AkshareAdapter(OfflineDataSourceAdapter):
             try:
                 raw = ak.option_current_em()
                 if raw is None or raw.empty:
-                    raise DataUnavailable(f"akshare options_chain empty")
+                    raise DataUnavailable("akshare options_chain empty")
                 df = raw.copy()
                 df["symbol"] = symbol.upper()
                 df["source"] = self.name

@@ -125,6 +125,10 @@ async def _proxy(request: Request, user: dict | None = None) -> Response:
     "/api/v1/stocks/{p:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], include_in_schema=False
 )
 @router.api_route("/api/v1/stocks", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], include_in_schema=False)
+@router.api_route("/api/v1/stock-pools", methods=["GET", "OPTIONS"], include_in_schema=False)
+@router.api_route(
+    "/api/v1/stock-pools/{p:path}", methods=["GET", "OPTIONS"], include_in_schema=False
+)
 @router.api_route(
     "/api/v1/rd-agent/{p:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], include_in_schema=False
 )

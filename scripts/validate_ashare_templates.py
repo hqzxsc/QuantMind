@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """校验生成的 A 股策略模板（在 quantmind 容器内运行）。
 
 校验内容：

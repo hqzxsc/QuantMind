@@ -19,6 +19,16 @@ from data.splits import _EXECUTION_LAG_DAYS
 logger = logging.getLogger("quantmind.train")
 
 
+def _to_prefix_symbol(sym: str) -> str:
+    """转前缀式（SH600036）：后缀式取点后拼接；其余原样大写。"""
+    s = str(sym or "").strip().upper()
+    if "." in s:
+        code, exch = s.split(".", 1)
+        if code and exch:
+            return exch + code
+    return s
+
+
 def _load_local_parquet(
     local_dir: Path,
     year: int,
@@ -98,6 +108,7 @@ def load_data(
     factor_source: str | None = None,
     quantdb_dir: str | None = None,
     factor_field_sources: dict[str, str] | None = None,
+    pool_symbols: list[str] | None = None,
 ) -> tuple:
     local_root = Path(local_dir).expanduser() if local_dir else None
     if local_root is None:
@@ -162,6 +173,30 @@ def load_data(
             df["trade_date"].min() if not df.empty else "N/A",
             df["trade_date"].max() if not df.empty else "N/A",
         )
+        # 池尽早过滤（P3）：直读返回全市场（1053 万行），114 列 float64 在
+        # 后续复制展开期峰值会触发容器 mem_limit（Exit 137）；池内成分先过滤，
+        # 后续 downcast/漂移/标签全量受益。直读 symbol 为前缀式。
+        if pool_symbols and market_upper == "CN" and "symbol" in df.columns:
+            _wanted_early = {
+                _to_prefix_symbol(s) for s in pool_symbols if str(s).strip()
+            }
+            if not _wanted_early:
+                raise RuntimeError("pool_symbols 非空但无法解析出任何代码")
+            _before_early = len(df)
+            df = df[
+                df["symbol"].astype(str).str.upper().isin(_wanted_early)
+            ].copy()
+            logger.info(
+                "After early pool filter: %d rows (pool=%d symbols, before=%d)",
+                len(df),
+                len(_wanted_early),
+                _before_early,
+            )
+            if df.empty:
+                raise RuntimeError(
+                    "股票池过滤后无数据：池内标的在训练区间/数据源内无记录"
+                    "（请检查池成分与训练时间窗是否匹配）"
+                )
         # 与 core parquet 分支一致：数值列统一降为 float32，降低内存峰值。
         # Direct QuantDB 读取默认 float64，325 列 × 440 万行 ≈ 11.5GB；
         # 后续 drop/holiday 过滤/sort_values 各复制一次，峰值会突破
@@ -290,11 +325,6 @@ def load_data(
             df = df[df["trade_date"].notna()].copy()
             logger.info(f"Raw concat size: {len(df)} rows. Date range: {df['trade_date'].min()} to {df['trade_date'].max()}")
 
-        # 过滤北交所代码（4/8开头）——仅 A 股
-        df["symbol"] = df["symbol"].astype(str).str.zfill(6)
-        df = df[~df["symbol"].str.startswith(("4", "8"))].copy()
-        logger.info(f"After symbol filter: {len(df)} rows")
-
         # 过滤 ST/*ST 股票
         if "is_st" in df.columns:
             before = len(df)
@@ -342,6 +372,48 @@ def load_data(
                     logger.warning("instrument_detail.parquet not found (searched: %s)", ", ".join(str(d) for d in _sector_dirs))
             except Exception as e:
                 logger.warning("Failed to merge industry data (non-fatal): %s", e)
+
+    # ── 过滤北交所（4/8 开头，仅 A 股） ──
+    # 必须在所有加载分支之后：此前缩在 CN-parquet 分支内，直读因子源模式
+    # 会把北交所带进训练集。双口径（前缀式/6 位数字）判定。
+    if market_upper == "CN" and "symbol" in df.columns:
+        _bj_sym6 = (
+            df["symbol"].astype(str).str.upper().str.replace(r"^(SH|SZ|BJ)", "", regex=True)
+        )
+        _bj_mask = ~_bj_sym6.str.startswith(("4", "8"))
+        _bj_removed = int((~_bj_mask).sum())
+        if _bj_removed:
+            df = df[_bj_mask].copy()
+        logger.info(f"After BJ filter: {len(df)} rows (removed {_bj_removed} BJ rows)")
+
+    # ── 全局股票池过滤（P3）：编排器已把池解析成 6 位代码列表随 config.yaml 传入 ──
+    # 必须在所有加载分支之后（直读因子源 / core parquet / 年度 parquet 都走这里）：
+    # 此前缩在 CN-parquet 分支内，直读模式（l1_factors）会静默训成全市场模型。
+    # 严格语义：池非空但零命中时直接报错，避免静默错配。
+    if pool_symbols and market_upper == "CN":
+        wanted = {str(s).split(".")[0].zfill(6) for s in pool_symbols if str(s).strip()}
+        if not wanted:
+            raise RuntimeError("pool_symbols 非空但无法解析出任何代码")
+        if "symbol" not in df.columns:
+            raise RuntimeError("股票池过滤需要 symbol 列，但当前数据无该列")
+        before_pool = len(df)
+        # 双口径匹配：直读分支 symbol 为前缀式（SH600036），parquet 分支为
+        # 6 位数字——zfill 对 8 位前缀是空操作，单用 6 位集合会零命中误杀。
+        _sym_up = df["symbol"].astype(str).str.upper()
+        _sym6 = _sym_up.str.replace(r"^(SH|SZ|BJ)", "", regex=True)
+        _wanted_prefix = {_to_prefix_symbol(s) for s in pool_symbols if str(s).strip()}
+        df = df[_sym6.isin(wanted) | _sym_up.isin(_wanted_prefix)].copy()
+        logger.info(
+            "After pool filter: %d rows (pool=%d symbols, before=%d)",
+            len(df),
+            len(wanted),
+            before_pool,
+        )
+        if df.empty:
+            raise RuntimeError(
+                f"股票池过滤后无数据：池内 {len(wanted)} 只标的在训练区间/数据源内无记录"
+                "（请检查池成分与训练时间窗是否匹配）"
+            )
 
     # ── 丢弃 features_daily.return_Nd：这些列是【未来 N 日收益】 ──
     # return_1d[T] == pct_change[T+1]，当特征使用会直接泄漏标签。

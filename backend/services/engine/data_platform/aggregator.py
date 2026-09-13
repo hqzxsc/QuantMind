@@ -78,7 +78,7 @@ class AggregationResult:
 class FieldRoutingTable:
     """YAML 路由表加载/查询。"""
 
-    def __init__(self, path: Optional[Path] = None) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         self.path = Path(path) if path else DEFAULT_ROUTING_PATH
         self._mtime = -1.0
         self._cfg: dict[str, Any] = {}
@@ -139,10 +139,10 @@ class FieldAggregator:
     def __init__(
         self,
         *,
-        registry: Optional[SourceRegistry] = None,
-        routing: Optional[FieldRoutingTable] = None,
-        monitor: Optional[HealthMonitor] = None,
-        cleaner: Optional[Any] = None,  # 避免循环导入，运行时注入 DataCleaner
+        registry: SourceRegistry | None = None,
+        routing: FieldRoutingTable | None = None,
+        monitor: HealthMonitor | None = None,
+        cleaner: Any | None = None,  # 避免循环导入，运行时注入 DataCleaner
     ) -> None:
         self.registry = registry or get_registry()
         self.routing = routing or FieldRoutingTable()
@@ -156,8 +156,8 @@ class FieldAggregator:
         market: str,
         field: str,
         symbol: str,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs: Any,
     ) -> AggregationResult:
         route = self.routing.get_route(market, field)
@@ -171,8 +171,8 @@ class FieldAggregator:
         self,
         route: FieldRoute,
         symbol: str,
-        start: Optional[date],
-        end: Optional[date],
+        start: date | None,
+        end: date | None,
         **kwargs: Any,
     ) -> AggregationResult:
         tried: list[str] = []
@@ -214,8 +214,8 @@ class FieldAggregator:
         self,
         route: FieldRoute,
         symbol: str,
-        start: Optional[date],
-        end: Optional[date],
+        start: date | None,
+        end: date | None,
         **kwargs: Any,
     ) -> AggregationResult:
         collected: list[tuple[str, pd.DataFrame]] = []
@@ -286,8 +286,8 @@ class FieldAggregator:
         source: str,
         route: FieldRoute,
         symbol: str,
-        start: Optional[date],
-        end: Optional[date],
+        start: date | None,
+        end: date | None,
         **kwargs: Any,
     ) -> pd.DataFrame:
         adapter = self.registry.get(source)

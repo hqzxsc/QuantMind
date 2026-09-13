@@ -38,15 +38,6 @@ export interface UserModelRecord {
   activated_at?: string | null;
 }
 
-export interface CreateEnsembleParams {
-  source_model_ids: string[];
-  display_name?: string;
-  weight_strategy?: 'equal' | 'icir' | 'manual' | 'recent_ic';
-  manual_weights?: Record<string, number>;
-  fusion_strategy?: 'linear' | 'majority_vote' | 'periodic_hierarchy' | 'confidence_gate';
-  strategy_config?: Record<string, number>;
-}
-
 export interface ModelShapSummaryItem {
   rank: number;
   feature: string;
@@ -615,11 +606,6 @@ class ModelTrainingService {
     return resp.data;
   }
 
-  async createEnsemble(params: CreateEnsembleParams): Promise<UserModelRecord> {
-    const resp = await this.client.post<UserModelRecord>('/models/ensemble/create', params);
-    return resp.data;
-  }
-
   async getModelShapSummary(modelId: string): Promise<ModelShapSummaryResponse> {
     const resp = await this.client.get<ModelShapSummaryResponse>(`/models/${encodeURIComponent(modelId)}/shap-summary`);
     const data = resp.data as any;
@@ -816,10 +802,12 @@ class ModelTrainingService {
     };
   }
 
-  async runModelInference(modelId: string, inferenceDate: string): Promise<InferenceExecutionResult> {
+  async runModelInference(modelId: string, inferenceDate: string, poolId?: string): Promise<InferenceExecutionResult> {
     const resp = await this.client.post<InferenceExecutionResult>('/models/inference/run', {
       model_id: modelId,
       inference_date: inferenceDate,
+      // 单日推理股票池（P3）：pool:<code> 引用，后端严格裁剪信号，不进 pred.parquet
+      ...(poolId?.trim() ? { pool_id: poolId.trim() } : {}),
     }, { timeout: 300000 }); // 推理可能需要较长时间，5分钟超时
     const data = resp.data as any;
     const normalized = this.normalizeInferenceRun(data);
@@ -1025,19 +1013,6 @@ class ModelTrainingService {
 
   async deleteBacktestHistory(modelId: string, runId: string): Promise<void> {
     await this.client.delete(`/admin/models/backtest/history/${modelId}/${runId}`);
-  }
-
-  async runMultiHorizonBacktest(params: {
-    model_id: string;
-    start_date: string;
-    end_date: string;
-    horizons?: number[];
-    sample_interval?: number;
-    cost?: TradingCostParams;
-    exclude_limit_moves?: boolean;
-  }): Promise<any> {
-    const resp = await this.client.post('/admin/models/backtest/multi-horizon', params, { timeout: 600000 });
-    return resp.data;
   }
 
   // ── 批量多日推理 ──

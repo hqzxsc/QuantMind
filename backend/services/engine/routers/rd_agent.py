@@ -37,8 +37,8 @@ async def _require_owned_factor(factor_id: str, request: Request) -> dict:
 @router.get("/factors")
 async def list_factors(
     request: Request,
-    user_id: Optional[str] = Query(None, description="已废弃：身份取自 JWT，仅用于防伪校验"),
-    status: Optional[str] = Query(None, description="按状态过滤: pending/backtesting/completed/failed"),
+    user_id: str | None = Query(None, description="已废弃：身份取自 JWT，仅用于防伪校验"),
+    status: str | None = Query(None, description="按状态过滤: pending/backtesting/completed/failed"),
     limit: int = Query(50, ge=1, le=200),
 ):
     """列出当前用户已生成的因子"""
@@ -63,8 +63,8 @@ async def get_factor(factor_id: str, request: Request):
 async def backtest_factor(
     factor_id: str,
     request: Request,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ):
     """对 RD-Agent 因子发起轻量验证（异步跑 IC/夏普，回填到因子表）"""
     factor = await _require_owned_factor(factor_id, request)
@@ -103,8 +103,8 @@ async def backtest_factor(
 async def _run_lightweight_backtest(
     factor_id: str,
     factor_code: str,
-    start_date: Optional[str],
-    end_date: Optional[str],
+    start_date: str | None,
+    end_date: str | None,
 ) -> None:
     """轻量回测：execfile 因子代码 → 用 Qlib 数据算 IC/夏普回填"""
     try:

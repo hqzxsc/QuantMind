@@ -124,6 +124,7 @@
 - `trading/tabs/SettingsCenter.tsx` 在接收 `access_key/secret_key` 后会统一 `trim()`，避免复制或接口返回内容携带尾随空白影响本地 Agent 配置。
 - `ModelTrainingPage.tsx` 已改为“训练工作台”而非演示页：
   - 页面外壳已对齐回测中心风格，并复用 `config/pageLayout.ts` 的统一边距、标题栏和容器配置；
+  - 第 1 步新增训练股票池选择（`全市场` / `自定义`弹窗，共用 `StockPoolPickerModal`），以 `pool:<code>` 经 `pool_id` 透传后端 `resolve_training_pool` 解析成 DataCfg 池字段，空池拒绝提交；选择持久化进草稿，执行页摘要同步展示；
   - 第 1 步特征选择改为折叠面板，默认展开动量模块，并始终只保留一个模块展开；
   - 第 2 步单独展示 `T+N` 训练目标与标签 horizon，不再复用回测周期字段；
   - 支持 `T+1 / T+3 / T+5 / T+10` 快捷预设，并实时预览标签公式与生效日期；
@@ -137,7 +138,7 @@
   - 草稿会自动保存到本地 `localStorage`，便于刷新后恢复训练配置；恢复提示已做去重，避免开发环境下的双重提示；
   - 训练提交改为用户态接口 `POST /api/v1/models/run-training`，并全量透传 `target/label/context/early_stopping` 等字段；
   - 训练状态轮询改为 `GET /api/v1/models/training-runs/{run_id}`，查询按 `tenant_id + user_id + run_id` 严格隔离；
-  - 第 3 步参数配置新增 `display_name`，用于模型命名与管理页展示，默认示例为 `19_T3_Alpha158_Base`，并会写入请求预览、训练结果和模型元数据；
+  - 第 3 步参数配置新增 `display_name`，用于模型命名与管理页展示，默认示例为 `19_T3_L1_Base`，并会写入请求预览、训练结果和模型元数据；
   - 训练页主滚动区底部已预留 30px 安全留白，避免被底部浮动导航栏遮挡，保证每一步内容都能完整滚动查看；
   - 结果展示严格以后端 `result.metrics/artifacts/summary/metadata` 为准：若回调结果缺关键字段，页面显示“结果不完整/失败原因”，不再填充默认 `rmse/auc` 占位值。
   - 结果区新增 `model_registration` 展示（`syncing/ready/failed`），并支持一键“设为默认模型”（`PATCH /api/v1/models/default`）。
@@ -165,7 +166,7 @@
 - `trading/tabs/StrategyManagement.tsx` 的实盘策略模型区域已简化为只读展示：
   - 页面不再提供单独的策略绑定选择/保存/解除入口；
   - 默认模型直接读取模型管理页设置的用户默认模型，并自动作为当前生效模型；
-  - 若未设置默认模型，则回退到系统兜底模型 `model_qlib`。
+  - 若未设置默认模型，则不再回退系统模型（系统内置 `model_qlib` 已废弃）。
   - 默认模型名称会以更弱化的 inline pill 形式与策略标签同排展示，仅保留模型名称本身。
 - `ModelRegistryPage.tsx` 已新增模型操作限制：系统内置模型（`tenant_id === 'system'`）不再提供“归档”功能入口，且在代码逻辑层也同步拦截了对系统模型的归档操作。
 - `ModelRegistryPage.tsx` 的排名结果 Drawer 已修复 Electron 顶部拖拽区域（`window-drag`）对关闭按钮的点击拦截问题：
@@ -206,5 +207,6 @@
   - 若当前选中模型就是用户默认模型，推理中心会额外显示“生成生产批次”按钮；该入口调用 `/models/inference/run` 时通过 `use_default_model=true` 让后端按默认模型链路解析，从而生成 `user_default` 来源的推理批次，可直接参与自动托管准入。
   - 原有按钮已改名为“生成调试批次”，仍保留显式指定当前模型执行语义，生成的批次来源保持为 `explicit_model_id`，用于调试与手动比对。
   - 开关提示与成功 toast 也已统一改用“自动生产批次 / 生产批次生成完成”术语，不再混用“自动推理 / 默认模型身份推理”。
+  - `InferenceCenterPage.tsx` 单日推理新增推理股票池选择（`全市场` / `自定义`弹窗，共用 `StockPoolPickerModal`），以 `pool:<code>` 经 `pool_id` 透传 `/models/inference/run`；后端在主/兜底两条路径严格裁剪信号（空池或零命中显式失败），仅写信号表/Redis，不进模型 `pred.parquet`。
 - `ResearchPlatformPage.tsx` 左侧筛选区改为固定不跟随滚动：外层框架在桌面宽度（`xl` 及以上）不再整体滚动，改为右侧主内容列独立滚动（`overflow-y-auto`），左栏高度由网格行 `minmax(0,1fr)` 撑满并保留自身内部滚动；内容区底部按 `--dock-height` 预留高度，避免固定后的左栏“恢复默认 / 应用筛选”操作条被底部悬浮 Dock 遮挡。窄屏（低于 `xl`）仍保留原有整页滚动行为。
 - `ResearchPlatformPage.tsx` 工具栏的「紧凑 / 标准 / 宽松」三档表格密度按钮已移除，候选池表格密度固定为标准的 antd `size="middle"`（原默认为 `compact`），`tableDensity` 状态一并清理。

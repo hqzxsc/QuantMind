@@ -42,11 +42,6 @@ SOURCE_GRAPH = {
         "admin_training_utils.py:submit_training_job",
         "admin_training_utils.py:_build_default_metadata",
     ],
-    "(c) multi-horizon T+1/3/5": [
-        "admin_training_utils.py:submit_training_job",  # parent run
-        "admin_training_utils.py:submit_training_job",  # 3 child runs
-        "admin_training_utils.py:_build_default_metadata",
-    ],
     "(d) WFA standalone": [
         "admin_training_utils.py:submit_training_job",
         "admin_training_utils.py:_build_default_metadata",
@@ -105,10 +100,6 @@ def test_path_a_feature_lightgbm_utc():
 
 def test_path_b_classification_utc():
     _assert_path_locations("(b) classification")
-
-
-def test_path_c_multi_horizon_utc():
-    _assert_path_locations("(c) multi-horizon T+1/3/5")
 
 
 def test_path_d_wfa_utc():

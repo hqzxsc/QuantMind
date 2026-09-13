@@ -630,7 +630,7 @@ async def get_model_directory_detail(
     current_user: dict = Depends(require_admin),
 ):
     """
-    返回指定模型目录（相对 models/ 的路径，如 production/model_qlib）的完整元数据。
+    返回指定模型目录（相对 models/ 的路径）的完整元数据。
     """
     abs_path = os.path.abspath(os.path.join(MODELS_ROOT, model_path))
     # 防止路径穿越

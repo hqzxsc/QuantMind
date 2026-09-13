@@ -71,7 +71,8 @@ def load_signals() -> dict[str, list[tuple[str, float]]]:
 
 
 def load_st_symbols() -> set[str]:
-    import os, psycopg2
+    import os
+    import psycopg2
     conn = psycopg2.connect(
         host=os.getenv("POSTGRES_HOST", "quantmind-db"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -412,7 +413,8 @@ def report(result, signals, klines, names=None):
 
 
 def load_names():
-    import os, psycopg2
+    import os
+    import psycopg2
     conn = psycopg2.connect(
         host=os.getenv("POSTGRES_HOST", "quantmind-db"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),

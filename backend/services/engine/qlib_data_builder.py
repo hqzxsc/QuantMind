@@ -98,7 +98,7 @@ class QlibDataBuilder:
         market: str,
         data_dir: str | Path | None = None,
         qlib_dir: str | Path | None = None,
-    ) -> "QlibDataBuilder":
+    ) -> QlibDataBuilder:
         """根据市场创建对应数据中枢的构建器。
 
         market: CN / US / HK / CRYPTO / FUTURES
@@ -398,8 +398,15 @@ class QlibDataBuilder:
     def _build_universe_instruments(
         self, inst_dir: Path, start_date: str, end_date: str, known: set[str]
     ) -> None:
-        """为 csi300/csi500/... 生成 Qlib instruments 文件。"""
-        universes = getattr(self._hub, "UNIVERSE_MAP", {}) or {}
+        """为内置 A 股股票池生成 Qlib instruments 文件。
+
+        P2：池目录直读 shared.stock_pool.builtins（唯一事实源），
+        不再依赖 hub 上的 UNIVERSE_MAP 属性；只处理 CN 且有指数来源的池，
+        避免把 HK/US 池写进 A 股 qlib 缓存。
+        """
+        from backend.shared.stock_pool.builtins import cn_index_symbols
+
+        universes = cn_index_symbols()
         for universe in universes:
             try:
                 df = self._hub.fetch_universe_stocks(universe)

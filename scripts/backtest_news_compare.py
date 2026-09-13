@@ -109,8 +109,8 @@ print("=" * 80)
 print("三模式策略对比")
 print("=" * 80)
 print()
-print(f"| 指标 | follow (顺势) | fade (全做空) | long_only (只做多) |")
-print(f"|------|---------------|---------------|---------------------|")
+print("| 指标 | follow (顺势) | fade (全做空) | long_only (只做多) |")
+print("|------|---------------|---------------|---------------------|")
 for metric, label in [
     ("total_ret", "累计收益"),
     ("max_dd", "最大回撤"),
@@ -131,8 +131,8 @@ for metric, label in [
     print(f"| {label} | {vals[0]} | {vals[1]} | {vals[2]} |")
 
 print()
-print(f"| 出场原因 | follow | fade | long_only |")
-print(f"|----------|--------|------|-----------|")
+print("| 出场原因 | follow | fade | long_only |")
+print("|----------|--------|------|-----------|")
 for reason, key in [("stop_loss", "stop_loss_pnl"), ("trailing_stop", "trailing_pnl"), ("max_hold", "max_hold_pnl")]:
     vals = []
     for m in ["follow", "fade", "long_only"]:
@@ -143,4 +143,4 @@ for reason, key in [("stop_loss", "stop_loss_pnl"), ("trailing_stop", "trailing_
 # 保存
 with open((_find_repo_root(Path(__file__).resolve()) / "data") / "strategy_comparison.json", "w") as f:
     json.dump(results, f, ensure_ascii=False, indent=2)
-print(f"\n结果已保存到 data/strategy_comparison.json")
+print("\n结果已保存到 data/strategy_comparison.json")

@@ -13,7 +13,6 @@ export const PRESET_FILTER_MAP: Record<string, any> = {
   题材活跃: { turnoverTop: 0.25, amountTop: 0.25 },
   低位反弹: { maGap20Bottom: 0.25, rsiBottom: 0.25 },
   高波动: { volStd20Top: 0.25 },
-  低估值: { peBottom: 0.25, pbBottom: 0.3 },
 };
 
 export const DEFAULT_RESEARCH_FILTERS: ResearchFiltersState = {

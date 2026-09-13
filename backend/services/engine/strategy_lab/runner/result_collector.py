@@ -93,7 +93,7 @@ class RunResult:
         return json.dumps(self.to_dict(), ensure_ascii=False, default=str)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "RunResult":
+    def from_dict(cls, d: dict[str, Any]) -> RunResult:
         m = d.get("metrics") or {}
         eq = [EquityPoint(**p) for p in d.get("equity") or []]
         tr = [TradeRecord(**t) for t in d.get("trades") or []]

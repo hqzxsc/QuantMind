@@ -431,7 +431,7 @@ def check_status():
     # 检查最近几天的数据可用性
     if cal:
         last_5 = cal[-5:]
-        print(f"\n  最近 5 个交易日:")
+        print("\n  最近 5 个交易日:")
         for d in last_5:
             # 随机检查一只股票
             sample = list(inst.keys())[:1]

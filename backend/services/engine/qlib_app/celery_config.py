@@ -112,12 +112,6 @@ if AUTO_INFERENCE_ENABLED:
             "schedule": crontab(minute="30", hour="2", day_of_week="1-6"),
             "kwargs": {"horizon_days": 5, "limit": 500},
         },
-        # 时间平滑历史：每日 03:00 聚合近5日推理分数供融合平滑
-        "build-smooth-history-daily": {
-            "task": "engine.tasks.build_smooth_history",
-            "schedule": crontab(minute="0", hour="3", day_of_week="1-6"),
-            "kwargs": {"lookback_days": 5},
-        },
     }
 
 if NEWS_ENRICH_ENABLED:

@@ -1,5 +1,7 @@
 """Generate 3-model comparison MD report. Runs backtests sequentially in one process."""
-import sys, math, json
+import sys
+import math
+import json
 from datetime import date
 from collections import defaultdict
 from pathlib import Path
@@ -19,7 +21,8 @@ OUT = Path("/tmp/L2_三模型对比回测报告.md")
 
 def load_signals_sync(model_id):
     """Load signals using psycopg2 (synchronous, no event-loop issues)."""
-    import os, psycopg2
+    import os
+    import psycopg2
     from collections import defaultdict
     from backend.shared.stock_utils import StockCodeUtil
     conn = psycopg2.connect(
@@ -161,8 +164,8 @@ def main():
     w(f"| 止损 | 持仓亏损 {BO.STOP_LOSS*100:.0f}% 卖出 |")
     w(f"| 大盘过滤 | 上证 < MA{BO.MA_WINDOW} 不新买入 |")
     w(f"| 滑点 | {BO.SLIPPAGE*100:.1f}% |")
-    w(f"| 交易延迟 | T+1 |")
-    w(f"| ST 剔除 | 是 |")
+    w("| 交易延迟 | T+1 |")
+    w("| ST 剔除 | 是 |")
     w(f"| 持仓上限 | {BO.TOP_N} 只，等权 |")
     w(f"| 初始资金 | {BO.INIT_CASH:,.0f} 元 |")
     w()

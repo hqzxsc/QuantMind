@@ -21,7 +21,8 @@ import logging
 import threading
 from abc import ABC, abstractmethod
 from datetime import date, datetime, time, timedelta
-from typing import Callable, Optional
+from typing import Optional
+from collections.abc import Callable
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ class WeekdayFallbackCalendar(TradingCalendar):
 class _DbBackedCalendar(TradingCalendar):
     """DB 优先 + 周末降级。子类只需配置 market/tz/时段。"""
 
-    def __init__(self, db_loader: Optional[Callable[[str, date], Optional[dict]]] = None) -> None:
+    def __init__(self, db_loader: Callable[[str, date], dict | None] | None = None) -> None:
         super().__init__()
         self._db_loader = db_loader
 
@@ -152,7 +153,7 @@ _CAL_LOCK = threading.Lock()
 def get_calendar(
     market: str,
     *,
-    db_loader: Optional[Callable[[str, date], Optional[dict]]] = None,
+    db_loader: Callable[[str, date], dict | None] | None = None,
 ) -> TradingCalendar:
     m = (market or "").upper()
     with _CAL_LOCK:

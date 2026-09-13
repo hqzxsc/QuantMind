@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """生成 50 个 A 股 AI-IDE 策略模板（<id>.py + <id>.json）。
 
 背景：素材来自 `~/桌面/TradingView策略-重爬1001/策略分析/`（531 条结构化策略）。

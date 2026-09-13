@@ -684,30 +684,30 @@ async def preflight_check(
             # 回滚事务以清除 aborted 状态
             await db.rollback()
 
-        # 11.4 资金快照任务配置（非阻断，便于排障）
-        snapshot_enabled = str(os.getenv("SIM_FUND_SNAPSHOT_ENABLED", "true")).strip().lower() != "false"
-        interval_raw = str(os.getenv("SIM_FUND_SNAPSHOT_INTERVAL_SECONDS", "300")).strip()
+        # 11.4 权益结算任务配置（非阻断，便于排障）
+        settle_enabled = str(os.getenv("SIM_EQUITY_SETTLE_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}
+        interval_raw = str(os.getenv("SIM_EQUITY_SETTLE_INTERVAL_SECONDS", "30")).strip()
         try:
             interval_seconds = int(interval_raw)
         except Exception:
-            interval_seconds = 300
-        snapshot_config_ok = (not snapshot_enabled) or interval_seconds > 0
+            interval_seconds = 30
+        settle_config_ok = (not settle_enabled) or interval_seconds > 0
         add_check(
             "simulation_snapshot_worker_config",
-            "模拟盘资金快照任务",
-            snapshot_config_ok,
+            "模拟盘权益结算任务",
+            settle_config_ok,
             False,
             (
                 f"已启用（interval={interval_seconds}s）"
-                if snapshot_enabled and snapshot_config_ok
+                if settle_enabled and settle_config_ok
                 else (
-                    "已关闭（SIM_FUND_SNAPSHOT_ENABLED=false）"
-                    if not snapshot_enabled
-                    else "配置异常（SIM_FUND_SNAPSHOT_INTERVAL_SECONDS 应大于 0）"
+                    "已关闭（SIM_EQUITY_SETTLE_ENABLED=false）"
+                    if not settle_enabled
+                    else "配置异常（SIM_EQUITY_SETTLE_INTERVAL_SECONDS 应大于 0）"
                 )
             ),
             {
-                "enabled": snapshot_enabled,
+                "enabled": settle_enabled,
                 "interval_seconds": interval_seconds,
             },
         )

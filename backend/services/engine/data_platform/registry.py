@@ -21,15 +21,15 @@ class SourceRegistry:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._classes: dict[str, Type[OfflineDataSourceAdapter]] = {}
+        self._classes: dict[str, type[OfflineDataSourceAdapter]] = {}
         self._instances: dict[str, OfflineDataSourceAdapter] = {}
 
     def register(
         self,
-        adapter_cls: Type[OfflineDataSourceAdapter],
+        adapter_cls: type[OfflineDataSourceAdapter],
         *,
-        name: Optional[str] = None,
-    ) -> Type[OfflineDataSourceAdapter]:
+        name: str | None = None,
+    ) -> type[OfflineDataSourceAdapter]:
         with self._lock:
             n = (name or adapter_cls.name or "").strip()
             if not n:
@@ -76,7 +76,7 @@ class SourceRegistry:
 # ---------------------------------------------------------------------------
 # 模块级单例
 # ---------------------------------------------------------------------------
-_registry: Optional[SourceRegistry] = None
+_registry: SourceRegistry | None = None
 _registry_lock = threading.Lock()
 
 
@@ -89,10 +89,10 @@ def get_registry() -> SourceRegistry:
     return _registry
 
 
-def register_source(name: Optional[str] = None):
+def register_source(name: str | None = None):
     """类装饰器：@register_source("baostock")"""
 
-    def _wrap(cls: Type[OfflineDataSourceAdapter]) -> Type[OfflineDataSourceAdapter]:
+    def _wrap(cls: type[OfflineDataSourceAdapter]) -> type[OfflineDataSourceAdapter]:
         get_registry().register(cls, name=name)
         return cls
 

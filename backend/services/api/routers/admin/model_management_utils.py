@@ -48,8 +48,8 @@ _ENGINE_INTERNAL_SECRET = get_internal_call_secret()
 # 每日推理分布式锁：TTL 30 分钟，防止 Admin 手动触发与 Celery Beat 09:15 并发冲突
 _INFERENCE_LOCK_TTL_SEC = int(os.getenv("INFERENCE_LOCK_TTL_SEC", "1800"))
 _INFERENCE_LOCK_KEY_PREFIX = "qm:lock:inference:daily"
-# 生产模型目录（兼容旧逻辑）
-MODELS_PRODUCTION = os.path.join(MODELS_ROOT, "production", "model_qlib")
+# 生产模型根目录（系统内置 model_qlib 已废弃，不再指向具体模型子目录）
+MODELS_PRODUCTION = os.path.join(MODELS_ROOT, "production")
 FEATURE_CATALOG_FALLBACK = os.path.join(os.getcwd(), "config", "features", "model_training_feature_catalog_v1.json")
 FEATURE_SNAPSHOT_DIR = Path(
     os.getenv("TRAINING_LOCAL_DATA_PATH", str(Path(os.getcwd()) / "db" / "feature_snapshots"))

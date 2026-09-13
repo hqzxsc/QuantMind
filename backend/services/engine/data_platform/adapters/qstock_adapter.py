@@ -120,7 +120,7 @@ class QstockAdapter(OfflineDataSourceAdapter):
             "list_date", "delist_date", "is_active", "source",
         ]]
 
-    def fetch_realtime(self, symbol: str) -> Optional[dict]:
+    def fetch_realtime(self, symbol: str) -> dict | None:
         if qs is None:
             raise DataUnavailable("qstock not installed")
         try:
@@ -147,8 +147,8 @@ class QstockAdapter(OfflineDataSourceAdapter):
         field: str,
         symbol: str,
         *,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
+        start: date | None = None,
+        end: date | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         if field == "money_flow":

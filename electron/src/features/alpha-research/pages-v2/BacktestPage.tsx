@@ -260,7 +260,7 @@ export const BacktestPage: React.FC = () => {
               </p>
               <p className="text-muted-foreground">
                 <strong className="text-foreground">custom</strong> 模式仅使用因子库中的自定义因子；
-                <strong className="text-foreground">combined</strong> 模式将自定义因子与 Alpha158(20) 基线因子组合使用。
+                <strong className="text-foreground">combined</strong> 模式将自定义因子与基线因子组合使用。
                 回测仅使用已缓存的因子，未缓存因子将自动跳过。
               </p>
             </div>
@@ -352,7 +352,7 @@ export const BacktestPage: React.FC = () => {
                   }`}
                 >
                   Combined
-                  <span className="block text-xs font-normal mt-0.5">自定义 + Alpha158(20)</span>
+                  <span className="block text-xs font-normal mt-0.5">自定义 + 基线因子</span>
                 </button>
               </div>
             </div>

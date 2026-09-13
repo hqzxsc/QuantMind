@@ -295,30 +295,6 @@ class SetDefaultModelRequest(BaseModel):
     model_id: str
 
 
-class EnsembleCreateRequest(BaseModel):
-    source_model_ids: list[str] = Field(
-        ..., min_length=2, description="源模型 ID 列表（至少 2 个）"
-    )
-    display_name: str = Field(
-        default="", description="融合模型显示名（可选，自动生成）"
-    )
-    weight_strategy: str = Field(
-        default="equal",
-        description="权重策略: equal / icir / manual / recent_ic",
-    )
-    manual_weights: dict[str, float] | None = Field(
-        default=None, description="manual 策略下各源模型权重"
-    )
-    fusion_strategy: str = Field(
-        default="linear",
-        description="融合算法: linear / majority_vote / periodic_hierarchy / confidence_gate",
-    )
-    strategy_config: dict[str, float] | None = Field(
-        default=None,
-        description="融合算法参数（如 periodic_boundary / confidence_threshold）",
-    )
-
-
 class SetStrategyBindingRequest(BaseModel):
     model_id: str
 
@@ -326,6 +302,11 @@ class SetStrategyBindingRequest(BaseModel):
 class InferenceRunRequest(BaseModel):
     model_id: str
     inference_date: date = Field(..., description="推理基准日期 YYYY-MM-DD")
+    pool_id: str | None = Field(
+        default=None,
+        description="全局股票池引用（P3），如 pool:csi300 / my_pool / list:SH600036。"
+        "非空时只对池内标的落信号；池为空或零命中会显式失败，不会退化为全市场。",
+    )
 
 
 class InferenceSettingsRequest(BaseModel):
@@ -497,9 +478,10 @@ def _get_model_data_dir(model_dir: Path, metadata: dict | None = None) -> str:
     1. metadata.json 中的 qlib_data_path 字段（绝对路径）
     2. metadata.json 中的 context.market 字段映射到对应 qlib 数据目录
     3. metadata.json 中的 data_source 字段判断：
-       - "qlib" -> db/qlib_data
-       - "parquet" 或其他 -> db/feature_snapshots
-    4. 默认值 -> db/feature_snapshots
+       - "quantdb_factors" -> QuantDB 因子源目录（新链路默认）
+       - "qlib" -> qlib 数据目录
+       - "parquet" -> db/feature_snapshots（遗留冻结，仅旧模型）
+    4. 默认值 -> QuantDB 因子源目录
     """
     # QuantDB-bound models are pinned to the raw factor root.  This must be
     # evaluated before historical qlib_data_path/context compatibility hints.
@@ -532,6 +514,9 @@ def _get_model_data_dir(model_dir: Path, metadata: dict | None = None) -> str:
         data_source = str(metadata.get("data_source", "")).lower()
         if data_source == "qlib":
             return resolve_qlib_provider_uri()
+        if data_source == "parquet":
+            # 遗留并冻结：仅存量旧模型使用，新模型一律 quantdb_factors
+            return "db/feature_snapshots"
 
     # 尝试从模型目录读取 metadata.json
     meta_file = model_dir / "metadata.json"
@@ -560,11 +545,21 @@ def _get_model_data_dir(model_dir: Path, metadata: dict | None = None) -> str:
             data_source = str(meta.get("data_source", "")).lower()
             if data_source == "qlib":
                 return resolve_qlib_provider_uri()
+            if data_source == "parquet":
+                # 遗留并冻结：仅存量旧模型使用，新模型一律 quantdb_factors
+                return "db/feature_snapshots"
         except Exception:
             pass
 
-    # 默认值
-    return "db/feature_snapshots"
+    # 默认值：无数据源元数据的模型按 QuantDB 直读处理（旧快照入口已废弃）
+    try:
+        from backend.services.engine.inference.script_runner import (
+            _resolve_quantdb_data_dir,
+        )
+
+        return _resolve_quantdb_data_dir()
+    except Exception:  # pragma: no cover - 兜底
+        return os.getenv("QUANTDB_DATA_DIR", "/data/quantdb")
 
 
 def _render_next_run(next_run_at: Any) -> str | None:
@@ -1495,7 +1490,7 @@ async def trigger_backfill(
                     # 在 qm_model_inference_runs 无任何痕迹，排查无从下手）
                     if result is not None and not getattr(result, "success", False):
                         try:
-                            _rid = str(getattr(result, "run_id") or "")
+                            _rid = str(result.run_id or "")
                             if _rid:
                                 _now = datetime.now(ZoneInfo("Asia/Shanghai"))
                                 await model_inference_persistence.create_run(
@@ -1999,17 +1994,6 @@ def _build_precheck_items(
                 model_file_exists = True
                 model_file_path = candidate
                 break
-    # ensemble 模型：ensemble_config.json 或 inference.py 算作模型文件
-    if not model_file_exists:
-        meta = runner._read_primary_metadata()
-        model_type = str(meta.get("model_type") or "").lower()
-        if model_type == "ensemble":
-            for name in ("ensemble_config.json", "inference.py"):
-                candidate = model_dir / name
-                if candidate.is_file():
-                    model_file_exists = True
-                    model_file_path = candidate
-                    break
     items.append(
         {
             "key": "model_file",
@@ -2255,6 +2239,7 @@ async def _execute_single_day_inference(
     batch_id: str | None = None,
     symbols: list[str] | None = None,
     persist: bool = True,
+    pool_id: str | None = None,
 ) -> dict[str, Any]:
     """单日推理执行体：预检 → 数据回退 → 执行 → 落库 → 返回 run payload。
 
@@ -2424,6 +2409,7 @@ async def _execute_single_day_inference(
                 resolved_model=resolved.to_dict(),
                 symbols=symbols,
                 persist=persist,
+                pool_id=pool_id,
             )
         )
     except Exception as exc:
@@ -2593,6 +2579,7 @@ async def run_model_inference(
         requested_date=payload.inference_date,
         tenant_id=tenant_id,
         user_id=user_id,
+        pool_id=getattr(payload, "pool_id", None),
     )
 
 
@@ -4673,51 +4660,3 @@ async def training_complete_callback(
     x_internal_call_secret: str = Header(default="", alias="X-Internal-Call-Secret"),
 ):
     return await complete_training_run(run_id, result, x_internal_call_secret)
-
-
-@router.post("/ensemble/create", summary="创建多模型融合模型（用户态）")
-async def create_ensemble_model(
-    payload: EnsembleCreateRequest,
-    current_user: dict[str, Any] = Depends(get_current_user),
-):
-    """将多个已训练模型融合为一个持久化融合模型。
-
-    融合模型像普通模型一样注册、推理、选股、回测。支持权重策略：
-      - equal   等权
-      - icir    按源模型 Val Rank ICIR 归一化加权
-      - manual  手动指定权重（自动归一化到和为 1）
-    """
-    if payload.weight_strategy not in ("equal", "icir", "manual", "recent_ic"):
-        raise HTTPException(
-            status_code=422,
-            detail="weight_strategy 应为 equal / icir / manual / recent_ic",
-        )
-    if payload.weight_strategy == "manual" and not payload.manual_weights:
-        raise HTTPException(
-            status_code=422, detail="manual 策略必须提供 manual_weights"
-        )
-    if payload.fusion_strategy not in (
-        "linear",
-        "majority_vote",
-        "periodic_hierarchy",
-        "confidence_gate",
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail="fusion_strategy 应为 linear / majority_vote / periodic_hierarchy / confidence_gate",
-        )
-
-    tenant_id, user_id = _owner_scope(current_user)
-    try:
-        return await model_registry_service.register_ensemble_model(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            source_model_ids=payload.source_model_ids,
-            display_name=payload.display_name,
-            weight_strategy=payload.weight_strategy,
-            manual_weights=payload.manual_weights,
-            fusion_strategy=payload.fusion_strategy,
-            strategy_config=payload.strategy_config,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))

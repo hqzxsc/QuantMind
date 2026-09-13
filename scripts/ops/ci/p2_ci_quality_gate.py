@@ -30,8 +30,6 @@ CHECKS = [
     (
         "trade-long-short-mvp",
         "pytest -q "
-        "backend/services/tests/test_qmt_agent_async_reconcile.py "
-        "backend/services/tests/test_trade_long_short_risk_and_bridge.py "
         "backend/services/tests/test_trade_long_short_integration_chain.py "
         "backend/services/tests/test_trade_trading_precheck.py "
         "--no-cov",

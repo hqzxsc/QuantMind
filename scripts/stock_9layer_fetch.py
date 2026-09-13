@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """单股 9 层深分一键取数（parquet 直读，host 与容器通用）
 用法:
     python3 scripts/stock_9layer_fetch.py 000733.SZ          # 全量
@@ -9,8 +8,13 @@
       5_technical_derived / 2_base_sector / 6_ml_datasets）。
       PG 端（模型信号/新闻）由 runbook 手动命令接管，本脚本不管。
 """
-import sys, os, json, glob, argparse
-import duckdb, pandas as pd
+import sys
+import os
+import json
+import glob
+import argparse
+import duckdb
+import pandas as pd
 
 # 数据根目录：宿主机为 <proj>/data/quantdb，容器内为 /data/quantdb
 # 注意: host 上 /data/quantdb 可能是空目录，必须优先项目本地路径
@@ -69,7 +73,7 @@ def main():
     out = {"code": SYM}
 
     # 最新分区
-    l2_dt = latest_partition(f"6_ml_datasets/l2_factors")
+    l2_dt = latest_partition("6_ml_datasets/l2_factors")
     print(f"[info] QuantDB 根: {QS}")
     print(f"[info] L2 最新分区: {l2_dt}")
     out["l2_dt"] = l2_dt

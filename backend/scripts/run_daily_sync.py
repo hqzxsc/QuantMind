@@ -400,17 +400,26 @@ def show_status():
         print(f"Qlib Stocks:       {status.get('qlib_stocks', 'N/A')}")
         print("=" * 50)
 
-        # Check feature parquet
-        parquet_path = PROJECT_ROOT / "db" / "feature_snapshots" / "model_features_2026.parquet"
-        if parquet_path.exists():
-            import os
-            stat = parquet_path.stat()
-            mtime = datetime.fromtimestamp(stat.st_mtime)
-            size_mb = stat.st_size / (1024 * 1024)
-            print(f"\n📁 Feature Parquet")
-            print(f"Path:              {parquet_path}")
-            print(f"Size:              {size_mb:.1f} MB")
-            print(f"Last Modified:     {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+        # Check QuantDB 因子源覆盖（旧 feature_snapshots parquet 已废弃）
+        try:
+            from backend.services.engine.data_platform.quantdb_factor_reader import (
+                QuantDBFactorReader,
+            )
+
+            reader = QuantDBFactorReader(market="CN")
+            print("\n📁 QuantDB 因子源 (6_ml_datasets)")
+            for source in ("l1_factors", "l2_factors", "l1_l2_factors"):
+                status = reader.describe(source)
+                if status.files == 0:
+                    print(f"{source:16s} N/A")
+                else:
+                    print(
+                        f"{source:16s} {status.files} partitions  "
+                        f"{status.min_date} ~ {status.max_date}  "
+                        f"{len(status.columns)} cols"
+                    )
+        except Exception as e:
+            print(f"\nQuantDB 因子源状态读取失败: {e}")
         print()
     except Exception as e:
         print(f"Error getting status: {e}")

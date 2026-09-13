@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,8 +33,29 @@ import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FEATURE_PARQUET = PROJECT_ROOT / "db" / "feature_snapshots" / "model_features_2026.parquet"
-QUANTDB_DIR = PROJECT_ROOT / "data" / "quantdb"
+LEGACY_SNAPSHOT_DIR = PROJECT_ROOT / "db" / "feature_snapshots"
+QUANTDB_DIR = Path(
+    os.getenv("QM_QUANTDB_DATA_DIR", "").strip() or (PROJECT_ROOT / "data" / "quantdb")
+)
+
+
+def _resolve_legacy_feature_parquet() -> Path | None:
+    """旧入口 model_features_*.parquet 已废弃。
+
+    本工具仅作迁移过渡期的 quantdb↔旧快照数值一致性校验；迁移完成后
+    旧文件不存在即视为已完成，无需再跑。
+    """
+    try:
+        from backend.shared.feature_source import warn_legacy_feature_snapshots
+
+        warn_legacy_feature_snapshots("validate_feature_parquet")
+    except Exception:  # noqa: BLE001
+        pass
+    candidates = sorted(LEGACY_SNAPSHOT_DIR.glob("model_features_20[0-9][0-9].parquet"))
+    return candidates[-1] if candidates else None
+
+
+FEATURE_PARQUET = _resolve_legacy_feature_parquet()
 
 # quantdb amount 列的单位是万元，换算成元
 AMOUNT_UNIT_SCALE = 1e4
@@ -93,6 +115,10 @@ def _load_quantdb_valuation(dt: str) -> pd.DataFrame | None:
 
 
 def _load_model_features(trade_date: str, columns: list[str]) -> pd.DataFrame:
+    if FEATURE_PARQUET is None:
+        raise FileNotFoundError(
+            "旧 model_features_*.parquet 已不存在；旧入口迁移已完成，无需再用本工具校验"
+        )
     df = pd.read_parquet(FEATURE_PARQUET, columns=columns)
     df = df[df["trade_date"] == trade_date].copy()
     df["k"] = _normalize_model_symbol(df["symbol"])
@@ -329,6 +355,10 @@ def coverage_report() -> pd.DataFrame:
         "liq_turnover_tl",
         "is_st",
     ]
+    if FEATURE_PARQUET is None:
+        raise FileNotFoundError(
+            "旧 model_features_*.parquet 已不存在；旧入口迁移已完成，无需再用本工具校验"
+        )
     available = set(pd.read_parquet(FEATURE_PARQUET, columns=["symbol"]).columns)
     del available
     import pyarrow.parquet as pq
@@ -391,8 +421,11 @@ def main() -> int:
     parser.add_argument("--coverage-report", action="store_true", help="输出逐日覆盖率")
     args = parser.parse_args()
 
-    if not FEATURE_PARQUET.exists():
-        _log(f"[error] 找不到特征表 {FEATURE_PARQUET}")
+    if FEATURE_PARQUET is None or not FEATURE_PARQUET.exists():
+        _log(
+            f"[error] 找不到旧特征表 {FEATURE_PARQUET}；"
+            "旧入口已迁移到 QuantDB，无需该校验"
+        )
         return 1
 
     if args.coverage_report:

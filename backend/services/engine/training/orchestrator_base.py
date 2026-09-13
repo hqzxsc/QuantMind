@@ -10,23 +10,18 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Awaitable, Set
+from typing import Any, Set
+from collections.abc import Awaitable
 
 logger = logging.getLogger(__name__)
 
 
 class TrainingOrchestrator(ABC):
-    """训练编排器基类。子类必须实现单周期/多周期训练。"""
+    """训练编排器基类。子类必须实现单周期训练。"""
 
     @abstractmethod
     async def launch_training_job(self, run_id: str, payload: dict | None = None) -> None:
         """编排单周期训练任务（推送数据 → 训练 → 注册模型）。"""
-
-    @abstractmethod
-    async def launch_multi_horizon_job(
-        self, parent_run_id: str, child_run_ids: list[str], payload: dict | None = None
-    ) -> None:
-        """编排多周期训练（串行跑各 child，全部成功后创建融合模型）。"""
 
 
 def get_orchestrator(node_id: str | None = None) -> TrainingOrchestrator:
@@ -75,7 +70,7 @@ class TrainingTaskRegistry:
     """
 
     def __init__(self) -> None:
-        self._tasks: Set[asyncio.Task[Any]] = set()
+        self._tasks: set[asyncio.Task[Any]] = set()
 
     def register(self, coro_or_task: Any) -> asyncio.Task[Any]:
         """注册一个协程或已创建的 task 到 registry。

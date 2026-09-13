@@ -65,8 +65,6 @@ export const MODEL_TYPE_OPTIONS: ModelTypeOption[] = [
 export interface TrainingTarget {
   mode: TargetMode;
   horizonDays: number;
-  /** 多周期训练：非空数组时一次产出多个周期模型（如 [1,3,5,10]），horizonDays 仅作主显示周期 */
-  horizonDaysList?: number[];
 }
 
 export type EnsembleMethod = 'none' | 'stacking';
@@ -216,6 +214,8 @@ export interface TrainingRequestPayload {
   effectiveTradeDate: string;
   trainingWindow: string;
   wfa?: WfaConfig;
+  /** 全局股票池引用（如 pool:csi300），为空表示全市场训练 */
+  pool_id?: string | null;
 }
 
 export interface TrainingResult {
@@ -290,17 +290,6 @@ export interface TrainingResult {
   };
   wfa?: WfaDiagnosticResult;
   drift?: PsiDriftResult;
-  multiHorizon?: {
-    horizons: string[];
-    child_run_ids: string[];
-    child_model_ids: string[];
-    fusion_model_id: string;
-    child_results?: Array<{
-      run_id: string;
-      target_horizon_days: number;
-      result: any;
-    }>;
-  };
   completedAt: string;
 }
 
@@ -317,6 +306,10 @@ export interface TrainingDraft {
   params: TrainingParams;
   context: TrainingContext;
   wfa?: WfaConfig;
+  /** 股票池引用（如 pool:csi300），为空表示全市场 */
+  poolRef?: string | null;
+  poolName?: string | null;
+  poolId?: string | null;
   lastSavedAt: string;
 }
 
@@ -844,9 +837,6 @@ export const parseTrainingConfig = (source: string): ImportedTrainingConfig => {
   const target: TrainingTarget = {
     mode: targetMode,
     horizonDays,
-    ...(Array.isArray(config.target.horizonDaysList)
-      ? { horizonDaysList: config.target.horizonDaysList.filter((item): item is number => Number.isInteger(item) && item >= 1) }
-      : {}),
   };
   const context = { ...DEFAULT_CONTEXT, ...config.context } as TrainingContext;
   const displayName = typeof config.displayName === 'string' ? config.displayName : '';
@@ -932,8 +922,7 @@ export const MODEL_SHORT_NAMES: Record<string, string> = {
 
 export const buildAutoDisplayName = (referenceDate: Dayjs, target: TrainingTarget, featureCount: number, version = DEFAULT_MODEL_VERSION, market?: string, modelType?: string) => {
   const dateToken = referenceDate.format('DD');
-  const horizons = target.horizonDaysList?.filter((h) => h >= 1) ?? [];
-  const returnToken = horizons.length >= 2 ? `T${horizons.join('_')}` : `T${target.horizonDays}`;
+  const returnToken = `T${target.horizonDays}`;
   const dimensionToken = `Alpha${Math.max(1, featureCount)}`;
   const marketSuffix = market ? `_${market.toUpperCase()}` : '';
   const modelPrefix = modelType ? `${MODEL_SHORT_NAMES[modelType] ?? modelType.toUpperCase()}_` : '';
@@ -1042,6 +1031,7 @@ export const buildTrainingRequest = (
   displayName: string,
   market?: string,
   wfa?: WfaConfig,
+  poolId?: string | null,
 ): TrainingRequestPayload => {
   const finalFeatures = Array.from(new Set(selectedFeatures));
   const labelFormula = buildLabelFormula(target);
@@ -1065,6 +1055,7 @@ export const buildTrainingRequest = (
     effectiveTradeDate,
     trainingWindow,
     wfa: wfa?.enabled ? wfa : undefined,
+    pool_id: poolId?.trim() || null,
   };
 };
 
@@ -1204,6 +1195,12 @@ export const buildBackendTrainingPayload = (
     payload.meta_alpha = request.params.meta_alpha ?? 1.0;
   }
 
+  // 全局股票池引用：后端 resolve_training_pool 解析成 DataCfg 池字段；
+  // 为空表示全市场训练（保持旧行为）
+  if (request.pool_id?.trim()) {
+    payload.pool_id = request.pool_id.trim();
+  }
+
   // WFA 稳定性诊断配置
   if (request.wfa?.enabled) {
     payload.wfa = {
@@ -1219,14 +1216,6 @@ export const buildBackendTrainingPayload = (
   // 特征截面预处理：按交易日截面 中位数填充缺失 + 分位缩尾 + Z-score
   if (request.params.preprocessingEnabled) {
     payload.preprocessing = { enabled: true, winsor: true };
-  }
-
-  // 多周期训练：一次产出 T+1/T+3/T+5/T+10 等周期的模型（编排器按周期展开为多个任务）
-  const horizons = request.target.horizonDaysList?.filter((h) => h >= 1) ?? [];
-  if (horizons.length >= 2) {
-    payload.horizons = horizons;
-    // 多周期下 WFA 成本 4×4=16 次训练，禁用避免超时
-    delete payload.wfa;
   }
 
   // 训练节点（local=本机 Docker，autodl-xxx=AutoDL 远程 GPU）
@@ -1377,7 +1366,6 @@ export const parseTrainingResult = (
     },
     wfa: (rawResult.wfa as WfaDiagnosticResult) || undefined,
     drift: (rawResult.drift as PsiDriftResult) || undefined,
-    multiHorizon: (rawResult.multi_horizon as TrainingResult['multiHorizon']) || undefined,
     completedAt: new Date().toISOString(),
   };
 };

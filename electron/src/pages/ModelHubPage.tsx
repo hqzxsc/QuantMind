@@ -332,9 +332,9 @@ export const ModelHubPage: React.FC = () => {
               ))}
             </div>
 
-            {/* 分页控制器 */}
+            {/* 分页控制器：右下角，避开底部 Dock 导航栏遮挡 */}
             {total > pageSize && (
-              <div className="flex justify-center mt-8 mb-4">
+              <div className="flex justify-end mt-8 mb-20 pr-1">
                 <Pagination
                   current={page}
                   pageSize={pageSize}

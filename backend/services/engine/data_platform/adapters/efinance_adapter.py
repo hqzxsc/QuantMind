@@ -151,7 +151,7 @@ class EfinanceAdapter(OfflineDataSourceAdapter):
             "list_date", "delist_date", "is_active", "source",
         ]]
 
-    def fetch_realtime(self, symbol: str) -> Optional[dict]:
+    def fetch_realtime(self, symbol: str) -> dict | None:
         if ef is None:
             raise DataUnavailable("efinance not installed")
         try:

@@ -31,7 +31,7 @@ class _FakeDb:
         return _FakeResult(self._rows)
 
 
-GET_REDIS_PATH = "backend.services.trade.redis_client.get_redis"
+GET_REDIS_PATH = "backend.services.trade_shared.redis_client.get_redis"
 GET_SESSION_PATH = "backend.shared.database_manager_v2.get_session"
 
 

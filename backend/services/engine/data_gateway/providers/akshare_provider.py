@@ -28,8 +28,8 @@ class AkShareProvider:
     def get_historical(
         self,
         symbol: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         period: str = "daily",
         adjust: str = "qfq",
         days: int = 365,
@@ -77,7 +77,7 @@ class AkShareProvider:
 
         return pd.DataFrame()
 
-    def get_realtime_quote(self, symbol: str) -> Dict[str, Any]:
+    def get_realtime_quote(self, symbol: str) -> dict[str, Any]:
         """获取实时行情，失败时用最近历史数据兜底"""
         ak = self._get_client()
         symbol = self._normalize_symbol(symbol)
@@ -137,7 +137,7 @@ class AkShareProvider:
 
         return {}
 
-    def search(self, keyword: str, limit: int = 20) -> List[Dict[str, str]]:
+    def search(self, keyword: str, limit: int = 20) -> list[dict[str, str]]:
         """搜索股票"""
         ak = self._get_client()
         df = ak.stock_info_a_code_name()
@@ -147,7 +147,7 @@ class AkShareProvider:
         df = df[mask].head(limit)
         return df.rename(columns={"code": "symbol"}).to_dict("records")
 
-    def get_market_overview(self) -> Dict[str, Any]:
+    def get_market_overview(self) -> dict[str, Any]:
         """获取市场概览（涨跌分布、成交额等）"""
         ak = self._get_client()
         df = ak.stock_zh_a_spot_em()
@@ -171,7 +171,7 @@ class AkShareProvider:
             "timestamp": datetime.now().isoformat(),
         }
 
-    def get_index_realtime(self) -> List[Dict[str, Any]]:
+    def get_index_realtime(self) -> list[dict[str, Any]]:
         """获取主要指数实时行情"""
         ak = self._get_client()
         try:
@@ -203,7 +203,7 @@ class AkShareProvider:
             logger.warning("Failed to get index realtime: %s", e)
             return []
 
-    def get_hot_sectors(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_hot_sectors(self, limit: int = 10) -> list[dict[str, Any]]:
         """获取热门板块"""
         ak = self._get_client()
         try:

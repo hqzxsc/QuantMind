@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """跑通 A 股策略模板的真实回测（在 quantmind 容器内运行）。
 
 用途：验证 strategy_templates/as*.py|.json 能被回测链路端到端加载——

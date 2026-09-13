@@ -23,6 +23,7 @@ from .system_update import router as system_update_router
 from .node_history import router as node_history_router
 from .system_events import router as system_events_router
 from .finbert import router as finbert_router
+from .stock_pool import router as stock_pool_router
 
 admin_router = APIRouter()
 admin_router.include_router(
@@ -90,4 +91,7 @@ admin_router.include_router(
 )
 admin_router.include_router(
     finbert_router, prefix="/finbert", tags=["Admin-FinBERT"]
+)
+admin_router.include_router(
+    stock_pool_router, prefix="/stock-pools", tags=["Admin-StockPool"]
 )

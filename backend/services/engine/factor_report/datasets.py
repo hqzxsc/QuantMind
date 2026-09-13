@@ -54,6 +54,30 @@ DATASETS: dict[str, dict] = {
         "library_rule": "l2_membership",
         "universe": "A股全市场 · L1+L2 合并因子",
     },
+    "tdxgs": {
+        "label": "TDXGS 通达信技术指标（88）",
+        "dir_parts": ("6_ml_datasets", "tdxgs"),
+        "label_mode": "close_fwd",
+        "meta_cols": _ID_COLS + _OHLCV_COLS,
+        "library_rule": "fixed:tdxgs",
+        "universe": "A股全市场 · 通达信/同花顺技术指标（MyTT 口径）",
+    },
+    "jq110": {
+        "label": "JQ110 聚宽因子（109）",
+        "dir_parts": ("6_ml_datasets", "jq110"),
+        "label_mode": "close_fwd",
+        "meta_cols": _ID_COLS + _OHLCV_COLS,
+        "library_rule": "fixed:jq110",
+        "universe": "A股全市场 · 聚宽策略因子（动量/情绪/技术/风险/风格）",
+    },
+    "alpha360": {
+        "label": "Alpha360 原始量价回溯（360）",
+        "dir_parts": ("6_ml_datasets", "alpha360"),
+        "label_mode": "close_fwd",
+        "meta_cols": _ID_COLS + _OHLCV_COLS,
+        "library_rule": "fixed:alpha360",
+        "universe": "A股全市场 · 60 日原始量价序列（DL 用）",
+    },
 }
 
 DEFAULT_DATASET = "alpha_library"

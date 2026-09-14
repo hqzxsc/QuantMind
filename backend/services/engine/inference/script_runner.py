@@ -234,8 +234,7 @@ class InferenceScriptRunner:
 
         规则：
         1) 若能在候选路径中命中真实目录，返回该绝对路径；
-        2) 相对路径默认转换为 <仓库根>/<path>（容器内即 /app/<path>）；
-        3) prefer_alpha158 时在候选列表头部追加 metadata 中的默认路径。
+        2) 相对路径默认转换为 <仓库根>/<path>（容器内即 /app/<path>）。
         """
         raw = str(provider_uri or "").strip()
         if not raw:

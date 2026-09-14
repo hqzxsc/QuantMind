@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import shlex
+import re
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,8 @@ def _env_or(key: str, default: str) -> str:
 _PASSWORD_FIELD = "ssh_password"
 _KEY_FIELD = "ssh_key"
 _PUBLIC_FIELDS = (
-    "id", "name", "host", "port", "user", "work_dir", "docker_image", "gpus",
+    "id", "name", "host", "port", "user", "work_dir", "docker_image", "gpus", "exec_mode",
+    "quantdb_dir",
 )
 
 
@@ -81,6 +83,31 @@ def _sanitize_node_for_output(node: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _normalize_node_id(raw: str) -> str:
+    """训练调度要求 id 以 autodl 开头；名称 autodl4090 可直接当 id。"""
+    slug = re.sub(r"[^a-z0-9]+", "-", (raw or "").strip().lower()).strip("-")
+    if not slug:
+        return ""
+    if slug.startswith("autodl"):
+        return slug
+    return f"autodl-{slug}"
+
+
+def _default_exec_mode(node: dict[str, Any]) -> str:
+    mode = str(node.get("exec_mode") or "").strip()
+    if mode in ("native_python", "ssh_docker"):
+        return mode
+    image = str(node.get("docker_image") or "").strip()
+    return "ssh_docker" if image else "native_python"
+
+
+def _default_quantdb_dir(node: dict[str, Any], exec_mode: str) -> str:
+    qd = str(node.get("quantdb_dir") or "").strip()
+    if qd:
+        return qd
+    return "/root/autodl-fs/quantdb" if exec_mode == "native_python" else "/data/quantdb"
+
+
 def save_training_node(node: dict[str, Any]) -> dict[str, Any]:
     """新增或更新一个训练节点。
 
@@ -88,9 +115,9 @@ def save_training_node(node: dict[str, Any]) -> dict[str, Any]:
     - ssh_password / ssh_key 为空字符串时表示"保持不变"（不回显明文）。
     - 校验：id/host/user/port 必填，密码与 key 至少其一（首次创建时）。
     """
-    node_id = str(node.get("id") or "").strip()
+    node_id = _normalize_node_id(str(node.get("id") or node.get("name") or "").strip())
     if not node_id:
-        raise ValueError("节点 id 不能为空")
+        raise ValueError("节点 id 不能为空（需以 autodl 开头，或填写名称以便自动生成）")
     host = str(node.get("host") or "").strip()
     if not host:
         raise ValueError("节点 host 不能为空")
@@ -106,6 +133,7 @@ def save_training_node(node: dict[str, Any]) -> dict[str, Any]:
         key = str(node.get(_KEY_FIELD) or "").strip()
         if not pwd and not key:
             raise ValueError("新增节点必须提供 ssh_password 或 ssh_key 之一")
+        exec_mode = _default_exec_mode(node)
         nodes.append({
             "id": node_id,
             "name": str(node.get("name") or node_id).strip(),
@@ -114,20 +142,27 @@ def save_training_node(node: dict[str, Any]) -> dict[str, Any]:
             "user": user,
             _PASSWORD_FIELD: pwd,
             _KEY_FIELD: key,
-            "work_dir": str(node.get("work_dir") or "/workspace").strip(),
-            "docker_image": str(node.get("docker_image") or "quantmind-oss:latest").strip(),
+            "work_dir": str(node.get("work_dir") or "/root/workspace").strip(),
+            "docker_image": str(node.get("docker_image") or "").strip(),
             "gpus": str(node.get("gpus") or "all").strip(),
+            "exec_mode": exec_mode,
+            "quantdb_dir": _default_quantdb_dir(node, exec_mode),
         })
     else:
         existing["name"] = str(node.get("name") or existing.get("name") or node_id).strip()
         existing["host"] = host
         existing["port"] = int(node.get("port") or existing.get("port") or 22)
         existing["user"] = str(node.get("user") or existing.get("user") or "root").strip()
-        existing["work_dir"] = str(node.get("work_dir") or existing.get("work_dir") or "/workspace").strip()
+        existing["work_dir"] = str(node.get("work_dir") or existing.get("work_dir") or "/root/workspace").strip()
         existing["docker_image"] = str(
-            node.get("docker_image") or existing.get("docker_image") or "quantmind-oss:latest"
+            node.get("docker_image") if node.get("docker_image") is not None else existing.get("docker_image") or ""
         ).strip()
         existing["gpus"] = str(node.get("gpus") or existing.get("gpus") or "all").strip()
+        if node.get("exec_mode") or node.get("docker_image") is not None:
+            existing["exec_mode"] = _default_exec_mode({**existing, **node})
+        existing["quantdb_dir"] = _default_quantdb_dir(
+            {**existing, **node}, str(existing.get("exec_mode") or "native_python")
+        )
         # 密码/密钥留空 = 保持不变
         if node.get(_PASSWORD_FIELD):
             existing[_PASSWORD_FIELD] = str(node[_PASSWORD_FIELD]).strip()
@@ -203,6 +238,7 @@ def load_training_nodes() -> list[dict[str, Any]]:
         "work_dir": _env_or("TRAINING_AUTODL_WORK_DIR", "/workspace"),
         "docker_image": _env_or("TRAINING_AUTODL_DOCKER_IMAGE", "quantmind-oss:latest"),
         "gpus": _env_or("TRAINING_AUTODL_GPUS", "all"),
+        "exec_mode": _env_or("TRAINING_AUTODL_EXEC_MODE", "ssh_docker"),
     }]
 
 
@@ -225,21 +261,24 @@ set -e
 echo "===SYS==="
 nproc
 uptime
-echo "mem:$(free -m | grep -iE 'mem|内存' | awk '{print $2, $3}')"
+echo "mem:$(free -m | awk 'NR==2{print $2, $3}')"
 echo "disk:$(df -P / | awk 'NR==2{print $2, $3}')"
-echo "net:$(cat /proc/net/dev | awk '/eth0|ens|enp/{gsub(/:/,\"\"); rx+=$2; tx+=$10} END{print rx, tx}')"
 echo "rx1:$(cat /sys/class/net/*/statistics/rx_bytes 2>/dev/null | awk '{s+=$1} END{print s+0}')"
 echo "tx1:$(cat /sys/class/net/*/statistics/tx_bytes 2>/dev/null | awk '{s+=$1} END{print s+0}')"
 echo "===GPU==="
 if command -v nvidia-smi >/dev/null 2>&1; then
-  nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name --format=csv,noheader,nounits 2>&1 || echo "gpu-error"
+  nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name --format=csv,noheader,nounits 2>/dev/null || echo "gpu-error"
 else
   echo "no-gpu"
 fi
 echo "===DOCKER==="
-docker ps --filter name=qm-train- --format '{{.Names}}|{{.Status}}' 2>/dev/null || echo "no-docker"
+if command -v docker >/dev/null 2>&1; then
+  docker ps --filter name=qm-train- --format '{{.Names}}|{{.Status}}' 2>/dev/null || echo "no-docker"
+else
+  echo "no-docker"
+fi
 echo "===NET==="
-cat /proc/loadavg 2>/dev/null | awk '{print $1}'
+awk '{print $1}' /proc/loadavg 2>/dev/null
 """
 
     @staticmethod
@@ -249,8 +288,10 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
             args += ["sshpass", "-p", node["ssh_password"]]
         args += ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
         args += ["-p", str(node.get("port") or 22)]
-        if node.get("ssh_key"):
-            args += ["-i", node["ssh_key"]]
+        key = str(node.get("ssh_key") or "").strip()
+        # 容器内若配置了 Windows 本机路径，-i 会直接失败；有密码时跳过无效密钥。
+        if key and Path(key).exists():
+            args += ["-i", key]
         args.append(f"{node.get('user') or 'root'}@{node['host']}")
         return args
 
@@ -261,6 +302,8 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
             "id": node.get("id"),
             "name": node.get("name") or node.get("id"),
             "host": node.get("host"),
+            "type": "remote",
+            "exec_mode": node.get("exec_mode") or "native_python",
             "online": False,
         }
         # 免 Docker 节点(executor=process):探测包内 runtime/GPU/活跃训练任务
@@ -351,8 +394,8 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
         out = stdout.decode(errors="replace")
         return cls._parse(out, result)
 
-    @staticmethod
-    def _parse(out: str, result: dict[str, Any]) -> dict[str, Any]:
+    @classmethod
+    def _parse(cls, out: str, result: dict[str, Any]) -> dict[str, Any]:
         result["online"] = True
         sections: dict[str, str] = {}
         current = None
@@ -436,9 +479,9 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
 
         # 网络延迟：ping 一次网关（尽力而为）
         result["ping_ms"] = None
-        # 注意：_parse 是 @staticmethod，不能用 cls（曾致 NameError → 远程节点永远 offline）
-        result = NodeStatus.assess_readiness(result)
-        return result
+        # 不要写 cls：历史上 _parse 曾被标成 staticmethod，cls 未定义会导致
+        # collect_all 吞掉远程节点，前端永久显示「未连接」。
+        return NodeStatus.assess_readiness(result)
 
     @classmethod
     async def collect_local(cls) -> dict[str, Any]:
@@ -743,10 +786,28 @@ cat /proc/loadavg 2>/dev/null | awk '{print $1}'
             tasks.append(cls.collect(n))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         out: list[dict[str, Any]] = []
-        for r in results:
+        for i, r in enumerate(results):
             if isinstance(r, dict):
                 out.append(r)
-            elif isinstance(r, Exception):
-                logger.warning("采集节点状态异常: %s", r)
+                continue
+            logger.warning("采集节点状态异常: %s", r)
+            if i == 0:
+                out.append({
+                    "id": "local",
+                    "name": "本地 Docker",
+                    "online": False,
+                    "readiness": "offline",
+                    "readiness_label": "离线 / 未连接",
+                    "error": str(r),
+                })
+            else:
+                n = nodes[i - 1]
+                out.append(cls.assess_readiness({
+                    "id": n.get("id"),
+                    "name": n.get("name") or n.get("id"),
+                    "host": n.get("host"),
+                    "online": False,
+                    "error": str(r),
+                }))
         return out
 

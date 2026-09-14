@@ -4,7 +4,7 @@ import { Button } from '../components-v2/ui/Button';
 import { Badge } from '../components-v2/ui/Badge';
 import { Factor, FactorQuality, UniverseInfo } from '../types-v2';
 import { formatNumber, getQualityBadgeClass } from '../utils-v2';
-import { getFactors, getFactorDetail, getUniverses, UNIVERSE_LABELS } from '../services-v2/api';
+import { getFactors, getFactorDetail, getUniverses, getFactoryFactors, classifyQuality, UNIVERSE_LABELS } from '../services-v2/api';
 import { alphaAgentService, MarketInfo } from '../services/alphaAgentService';
 import {
   Database,
@@ -18,6 +18,8 @@ import {
   AlertCircle,
   Play,
   X,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useTaskContext } from '../context-v2/TaskContext';
 
@@ -46,11 +48,9 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
   const [universes, setUniverses] = useState<UniverseInfo[]>([]);
   const [markets, setMarkets] = useState<MarketInfo[]>([]);
   const [selectedFactor, setSelectedFactor] = useState<any | null>(null);
+  const [copiedExpr, setCopiedExpr] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [libraries, setLibraries] = useState<string[]>([]);
-  const [selectedLibrary, setSelectedLibrary] = useState<string>('');
-  const [metadata, setMetadata] = useState<any>(null);
 
   useEffect(() => {
     alphaAgentService.listMarkets().then(setMarkets).catch(() => {});
@@ -61,7 +61,7 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
 
   useEffect(() => {
     loadFactors();
-  }, [selectedLibrary, marketFilter, universeFilter]);
+  }, [marketFilter, universeFilter]);
 
   useEffect(() => {
     filterFactors();
@@ -71,12 +71,14 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
     setIsLoading(true);
     setError(null);
     try {
-      const resp = await getFactors({
-        library: selectedLibrary || undefined,
-        market: marketFilter !== 'all' ? marketFilter : undefined,
-        universe: universeFilter !== 'all' ? universeFilter : undefined,
-        limit: 200,
-      });
+      const [resp, factoryResp] = await Promise.all([
+        getFactors({
+          market: marketFilter !== 'all' ? marketFilter : undefined,
+          universe: universeFilter !== 'all' ? universeFilter : undefined,
+          limit: 200,
+        }),
+        getFactoryFactors().catch(() => null),
+      ]);
       if (resp.success && resp.data) {
         const apiFactors: Factor[] = resp.data.factors.map((f: any) => {
           const bt = f.backtestResults || {};
@@ -104,9 +106,31 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
             sharpeRatio: f.sharpeRatio,
           };
         });
-        setFactors(apiFactors);
-        setLibraries(resp.data.libraries || []);
-        setMetadata(resp.data.metadata || null);
+        // 因子工厂产出（只读、共享）：并入列表，禁用回测/训练操作
+        const generatedAt = factoryResp?.data?.generatedAt ?? '';
+        const factoryFactors: Factor[] = (factoryResp?.data?.factors ?? []).map((f) => ({
+          factorId: f.factorId,
+          factorName: f.factorName,
+          factorExpression: f.factorExpression,
+          factorDescription: `因子工厂产出 · 字段 ${f.field || '—'} · 覆盖率 ${(f.coverage * 100).toFixed(0)}%`,
+          quality: classifyQuality(f.ic),
+          market: 'a_share',
+          universe: 'all_a',
+          ic: f.ic,
+          icir: f.icir,
+          rankIc: 0,
+          rankIcir: 0,
+          sharpeRatio: 0,
+          annualReturn: 0,
+          maxDrawdown: 0,
+          round: 0,
+          direction: f.ic >= 0 ? '正向' : '反向',
+          createdAt: generatedAt,
+          readOnly: true,
+          source: 'factor_factory',
+          coverage: f.coverage,
+        }));
+        setFactors([...factoryFactors, ...apiFactors]);
       }
     } catch (err: any) {
       console.error('Failed to load factors from API:', err);
@@ -123,7 +147,7 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
     } finally {
       setIsLoading(false);
     }
-  }, [selectedLibrary, marketFilter, universeFilter]);
+  }, [marketFilter, universeFilter]);
 
   const filterFactors = () => {
     let filtered = factors;
@@ -148,6 +172,35 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
     setFilteredFactors(filtered);
   };
 
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleCopyExpression = async () => {
+    const expr = selectedFactor?.factorExpression || selectedFactor?.factor_expression || '';
+    if (!expr) return;
+    if (await copyToClipboard(expr)) {
+      setCopiedExpr(true);
+      setTimeout(() => setCopiedExpr(false), 1500);
+    }
+  };
+
   const handleExport = () => {
     const dataStr = JSON.stringify(factors, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
@@ -160,6 +213,11 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
   };
 
   const handleSelectFactor = async (factor: Factor) => {
+    // 工厂因子只读、无明细接口，直接用列表数据
+    if (factor.readOnly) {
+      setSelectedFactor(factor);
+      return;
+    }
     // Try to load full detail from API
     try {
       const resp = await getFactorDetail(factor.factorId);
@@ -190,27 +248,10 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
             因子库
           </h1>
           <p className="text-muted-foreground mt-1">
-            浏览和管理挖掘的因子
-            {metadata?.total_factors != null && (
-              <span className="ml-2 text-xs">
-                (更新于 {metadata.last_updated ? new Date(metadata.last_updated).toLocaleString('zh-CN') : '未知'})
-              </span>
-            )}
+            浏览和管理挖掘的因子（含因子工厂批量产出，只读）
           </p>
         </div>
         <div className="flex gap-3">
-          {libraries.length > 1 && (
-            <select
-              value={selectedLibrary}
-              onChange={(e) => setSelectedLibrary(e.target.value)}
-              className="rounded-lg border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="">最新因子库</option>
-              {libraries.map((lib) => (
-                <option key={lib} value={lib}>{lib}</option>
-              ))}
-            </select>
-          )}
           <Button variant="outline" onClick={loadFactors} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
             刷新
@@ -233,58 +274,42 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="glass card-hover">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-muted-foreground">总因子数</div>
-                <div className="text-2xl font-bold mt-1">{stats.total}</div>
-              </div>
-              <div className="p-3 rounded-lg bg-primary/20">
-                <BarChart3 className="h-6 w-6 text-primary" />
-              </div>
+          <CardContent className="p-4 flex flex-col items-center justify-center text-center gap-1">
+            <div className="p-3 rounded-lg bg-primary/20">
+              <BarChart3 className="h-6 w-6 text-primary" />
             </div>
+            <div className="text-sm text-muted-foreground">总因子数</div>
+            <div className="text-2xl font-bold">{stats.total}</div>
           </CardContent>
         </Card>
 
         <Card className="glass card-hover">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-muted-foreground">高质量</div>
-                <div className="text-2xl font-bold mt-1 text-success">{stats.high}</div>
-              </div>
-              <div className="p-3 rounded-lg bg-success/20">
-                <TrendingUp className="h-6 w-6 text-success" />
-              </div>
+          <CardContent className="p-4 flex flex-col items-center justify-center text-center gap-1">
+            <div className="p-3 rounded-lg bg-success/20">
+              <TrendingUp className="h-6 w-6 text-success" />
             </div>
+            <div className="text-sm text-muted-foreground">高质量</div>
+            <div className="text-2xl font-bold text-success">{stats.high}</div>
           </CardContent>
         </Card>
 
         <Card className="glass card-hover">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-muted-foreground">中等质量</div>
-                <div className="text-2xl font-bold mt-1 text-warning">{stats.medium}</div>
-              </div>
-              <div className="p-3 rounded-lg bg-warning/20">
-                <BarChart3 className="h-6 w-6 text-warning" />
-              </div>
+          <CardContent className="p-4 flex flex-col items-center justify-center text-center gap-1">
+            <div className="p-3 rounded-lg bg-warning/20">
+              <BarChart3 className="h-6 w-6 text-warning" />
             </div>
+            <div className="text-sm text-muted-foreground">中等质量</div>
+            <div className="text-2xl font-bold text-warning">{stats.medium}</div>
           </CardContent>
         </Card>
 
         <Card className="glass card-hover">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-muted-foreground">低质量</div>
-                <div className="text-2xl font-bold mt-1 text-destructive">{stats.low}</div>
-              </div>
-              <div className="p-3 rounded-lg bg-destructive/20">
-                <BarChart3 className="h-6 w-6 text-destructive" />
-              </div>
+          <CardContent className="p-4 flex flex-col items-center justify-center text-center gap-1">
+            <div className="p-3 rounded-lg bg-destructive/20">
+              <BarChart3 className="h-6 w-6 text-destructive" />
             </div>
+            <div className="text-sm text-muted-foreground">低质量</div>
+            <div className="text-2xl font-bold text-destructive">{stats.low}</div>
           </CardContent>
         </Card>
       </div>
@@ -404,6 +429,11 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
                     <Badge className={getQualityBadgeClass(factor.quality)}>
                       {factor.quality === 'high' ? '高' : factor.quality === 'medium' ? '中' : '低'}
                     </Badge>
+                    {factor.readOnly && (
+                      <span className="inline-flex items-center rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                        工厂
+                      </span>
+                    )}
                     {factor.market && (
                       <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${MARKET_COLORS[factor.market] || 'bg-secondary text-muted-foreground'}`}>
                         {MARKET_LABELS[factor.market] || factor.market}
@@ -456,25 +486,31 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
               </div>
               {/* Action buttons */}
               <div className="flex items-center gap-2 pt-1 border-t border-border/30">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs flex-1"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    try {
-                      await startBacktestTask({
-                        factorId: factor.factorId,
-                        universe: factor.universe || 'csi300',
-                      });
-                      onNavigate?.('backtest');
-                    } catch (err) {
-                      console.error('Backtest failed:', err);
-                    }
-                  }}
-                >
-                  <Play className="h-3 w-3 mr-1" /> 回测
-                </Button>
+                {factor.readOnly ? (
+                  <span className="text-xs text-muted-foreground flex-1">
+                    工厂因子为批量产出（只读），请在训练/特征目录中使用
+                  </span>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs flex-1"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await startBacktestTask({
+                          factorId: factor.factorId,
+                          universe: factor.universe || 'csi300',
+                        });
+                        onNavigate?.('backtest');
+                      } catch (err) {
+                        console.error('Backtest failed:', err);
+                      }
+                    }}
+                  >
+                    <Play className="h-3 w-3 mr-1" /> 回测
+                  </Button>
+                )}
               </div>
               {factor.createdAt && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -539,6 +575,9 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
                       </span>
                     )}
                   </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    质量按 |IC| 分级（≥0.05 高 / ≥0.02 中）；IC 为负表示因子与收益负相关，可反向使用。
+                  </p>
                 </div>
                 <Button variant="ghost" onClick={() => setSelectedFactor(null)}>
                   <X className="w-4 h-4" />
@@ -556,7 +595,18 @@ export const FactorLibraryPage: React.FC<{ onNavigate?: (page: string) => void }
 
               {/* Expression */}
               <div>
-                <h4 className="text-sm font-medium mb-2">因子表达式</h4>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-medium">因子表达式</h4>
+                  <button
+                    type="button"
+                    onClick={handleCopyExpression}
+                    className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground hover:text-primary hover:bg-secondary/40 transition-colors"
+                    title="拷贝因子表达式"
+                  >
+                    {copiedExpr ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedExpr ? '已拷贝' : '拷贝'}
+                  </button>
+                </div>
                 <div className="rounded-lg bg-secondary/30 p-4">
                   <code className="text-sm font-mono break-all">
                     {selectedFactor.factorExpression || selectedFactor.factor_expression || ''}

@@ -8,6 +8,7 @@
 from __future__ import annotations
 import os as _qm_os
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,24 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger("quantmind.train")
+
+
+def _output_dir(cfg: dict | None) -> Path:
+    out = (cfg or {}).get("output") or {}
+    raw = str(out.get("workspace") or "").strip()
+    if raw:
+        return Path(raw)
+    rp = str(out.get("result_path") or "").strip()
+    if rp:
+        p = Path(rp)
+        return p.parent if p.suffix else p
+    env = str(os.getenv("QM_TRAIN_WORKSPACE") or "").strip()
+    if env:
+        return Path(env)
+    hardcoded = Path("/workspace")
+    if hardcoded.exists() and os.access(hardcoded, os.W_OK):
+        return hardcoded
+    return Path.cwd()
 
 _TREE_MODEL_TYPES = {"lightgbm", "xgboost", "catboost", "linear", "random_forest"}
 
@@ -119,7 +138,7 @@ class DLAdapter:
     ):
         model_cfg = cfg.get("model", {})
         dl_params = model_cfg.get("dl_params", {})
-        output_dir = Path(_qm_os.environ.get("TRAINING_WORKSPACE_DIR") or "/workspace")
+        output_dir = _output_dir(cfg)
         model, train_m, val_m, dl_metadata = _train_nativetft(
             model_type, train_df, val_df, features, dl_params, output_dir, hardware=hardware
         )
@@ -168,7 +187,7 @@ class DLAdapter:
     ):
         model_cfg = cfg.get("model", {})
         dl_params = model_cfg.get("dl_params", {})
-        output_dir = Path(_qm_os.environ.get("TRAINING_WORKSPACE_DIR") or "/workspace")
+        output_dir = _output_dir(cfg)
         model, train_m, val_m, dl_metadata = _train_dl(
             model_type, train_df, val_df, features, dl_params, output_dir, hardware=hardware
         )

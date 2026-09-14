@@ -412,6 +412,42 @@ def _huntly_sqlite() -> sqlite3.Connection:
     return conn
 
 
+def _huntly_read(fn: Callable[[sqlite3.Connection], Any]) -> Any:
+    """在 Huntly SQLite 上执行只读操作 fn(conn)，遇「撕裂读」自动换模式重试。
+
+    Huntly 的库是**活库** —— Java 侧持续写入，且 journal_mode=delete（提交时
+    原地改页）。这里以 immutable=1 读取（跳过锁协商，避免被写锁阻塞十几秒），
+    代价是**可能读到写了一半的页**，sqlite 报 `database disk image is malformed`。
+    实测该库 `PRAGMA integrity_check` = ok，报错纯属并发撕裂、与库损坏无关。
+
+    撕裂是瞬时的，改用 mode=ro（走锁协商取一致快照）重试即得正确结果；
+    两个模式都失败才向上抛。fn 必须是幂等的只读操作（可能被执行两次）。
+    """
+    last_exc: sqlite3.DatabaseError | None = None
+    for mode in ("immutable=1", "mode=ro"):
+        try:
+            conn = sqlite3.connect(
+                f"file:{HUNTLY_SQLITE_PATH}?{mode}",
+                uri=True,
+                timeout=5.0,
+                check_same_thread=False,
+            )
+            try:
+                conn.row_factory = sqlite3.Row
+                return fn(conn)
+            finally:
+                conn.close()
+        except sqlite3.DatabaseError as exc:
+            last_exc = exc
+            logger.warning(
+                "Huntly SQLite 读取异常（%s，疑似写入期撕裂读）: %s —— 换模式重试",
+                mode,
+                exc,
+            )
+    assert last_exc is not None
+    raise last_exc
+
+
 def _huntly_dt_to_iso(s: str | None) -> str | None:
     """Huntly 把时间存成 'YYYY-MM-DD HH:MM:SS.fff' 上海本地时间. 转 UTC ISO 给前端."""
     if not s or s.startswith("0001-"):
@@ -476,10 +512,9 @@ def _sqlite_page_ids_in_range(
     sql = f"SELECT id FROM page{where_sql} ORDER BY connected_at DESC LIMIT ?"
     params.append(int(limit))
     try:
-        with _huntly_sqlite() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, params)
-            return [int(r["id"]) for r in cur.fetchall()]
+        return _huntly_read(
+            lambda conn: [int(r["id"]) for r in conn.execute(sql, params).fetchall()]
+        )
     except sqlite3.Error as e:
         logger.warning("sqlite 候选 ID 查询失败: %s", e)
         return []
@@ -544,10 +579,9 @@ def _sqlite_keyword_ids(
     sql = f"SELECT DISTINCT p.id FROM page p{where_sql} ORDER BY p.connected_at DESC LIMIT ?"
     params.append(int(limit))
     try:
-        with _huntly_sqlite() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, params)
-            return [int(r["id"]) for r in cur.fetchall()]
+        return _huntly_read(
+            lambda conn: [int(r["id"]) for r in conn.execute(sql, params).fetchall()]
+        )
     except sqlite3.Error as e:
         logger.warning("sqlite 关键词 ID 查询失败: %s", e)
         return []
@@ -657,12 +691,14 @@ def _list_articles_from_sqlite(
     )
 
     try:
-        with _huntly_sqlite() as conn:
+        def _q(conn):
             cur = conn.cursor()
             cur.execute(sql_count, params)
-            total = int(cur.fetchone()[0])
+            total_n = int(cur.fetchone()[0])
             cur.execute(sql_list, params + [int(limit), int(offset)])
-            rows = cur.fetchall()
+            return total_n, cur.fetchall()
+
+        total, rows = _huntly_read(_q)
     except sqlite3.Error as e:
         logger.error("huntly sqlite query failed: %s", e)
         raise HTTPException(status_code=502, detail=f"Huntly DB 查询失败: {e}")
@@ -869,10 +905,11 @@ async def admin_list_folders(request: Request):
     subscribe_map: dict[int, str] = {}
     if _huntly_sqlite_available():
         try:
-            with _huntly_sqlite() as sconn:
-                cur = sconn.cursor()
-                cur.execute("SELECT id, subscribe_url FROM connector")
-                for row in cur.fetchall():
+            rows = _huntly_read(
+                lambda c: c.execute("SELECT id, subscribe_url FROM connector").fetchall()
+            )
+            if True:
+                for row in rows:
                     try:
                         subscribe_map[int(row["id"])] = str(row["subscribe_url"] or "")
                     except Exception:
@@ -1001,11 +1038,9 @@ async def admin_create_source(payload: dict):
     existing_connector_ids: set[int] = set()
     if _huntly_sqlite_available():
         try:
-            with _huntly_sqlite() as conn:
-                existing_connector_ids = {
-                    int(row["id"])
-                    for row in conn.execute("SELECT id FROM connector")
-                }
+            existing_connector_ids = _huntly_read(
+                lambda c: {int(row["id"]) for row in c.execute("SELECT id FROM connector")}
+            )
         except Exception as exc:
             logger.warning("RSS follow 前读取 connector 快照失败: %s", exc)
 
@@ -1019,21 +1054,23 @@ async def admin_create_source(payload: dict):
 
     if not connector_id and _huntly_sqlite_available():
         try:
-            with _huntly_sqlite() as conn:
+
+            def _resolve_connector_id(conn: sqlite3.Connection) -> int | None:
                 # 已存在的源优先按 URL 找到；新建源则取本次请求后新增的 id。
                 row = conn.execute(
                     "SELECT id FROM connector WHERE subscribe_url = ? ORDER BY id DESC LIMIT 1",
                     (subscribe_url,),
                 ).fetchone()
-                if row is None:
-                    candidates = [
-                        int(item["id"])
-                        for item in conn.execute("SELECT id FROM connector")
-                        if int(item["id"]) not in existing_connector_ids
-                    ]
-                    connector_id = max(candidates) if candidates else None
-                else:
-                    connector_id = int(row["id"])
+                if row is not None:
+                    return int(row["id"])
+                candidates = [
+                    int(item["id"])
+                    for item in conn.execute("SELECT id FROM connector")
+                    if int(item["id"]) not in existing_connector_ids
+                ]
+                return max(candidates) if candidates else None
+
+            connector_id = _huntly_read(_resolve_connector_id)
         except Exception as exc:
             logger.warning("RSS follow 后解析 connector id 失败: %s", exc)
 

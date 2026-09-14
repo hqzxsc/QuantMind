@@ -92,7 +92,9 @@ const AdminTrainingDatasets = lazy(() => import('./features/admin/components/Adm
 const AdminAutoDLNodes = lazy(() => import('./features/admin/components/AdminAutoDLNodes').then(m => ({ default: m.AdminAutoDLNodes })));
 const AdminSystemSettings = lazy(() => import('./features/admin/components/AdminSystemSettings').then(m => ({ default: m.AdminSystemSettings })));
 const AdminStockPool = lazy(() => import('./features/admin/components/AdminStockPool'));
-const ComingSoonPage = lazy(() => import('./features/admin/components/ComingSoonPage').then(m => ({ default: m.ComingSoonPage })));
+const AdminRiskControl = lazy(() => import('./features/admin/components/AdminRiskControl').then(m => ({ default: m.AdminRiskControl })));
+const AdminOrderManagement = lazy(() => import('./features/admin/components/AdminOrderManagement').then(m => ({ default: m.AdminOrderManagement })));
+const AdminInferenceMonitor = lazy(() => import('./features/admin/components/AdminInferenceMonitor').then(m => ({ default: m.AdminInferenceMonitor })));
 const AlphaResearchPage = lazy(() => import('./features/alpha-research/pages/AlphaResearchPage'));
 const SkillsCenterPage = lazy(() => import('./features/skills-center/pages/SkillsCenterPage'));
 const FactorResearchPage = lazy(() => import('./features/factor-research/pages/FactorResearchPage'));
@@ -757,10 +759,9 @@ export default function App() {
                     <Route path="feature-catalog" element={<Suspense fallback={<Spin size="large" />}><AdminFeatureCatalog /></Suspense>} />
                     <Route path="autodl-nodes" element={<Suspense fallback={<Spin size="large" />}><AdminAutoDLNodes /></Suspense>} />
                     <Route path="training-datasets" element={<Suspense fallback={<Spin size="large" />}><AdminTrainingDatasets /></Suspense>} />
-                    {/* 待开发页面占位 */}
-                    <Route path="inference" element={<ComingSoonPage title="推理监控" />} />
-                    <Route path="orders" element={<ComingSoonPage title="订单管理" />} />
-                    <Route path="risk" element={<ComingSoonPage title="风险控制" />} />
+                    <Route path="inference" element={<Suspense fallback={<Spin size="large" />}><AdminInferenceMonitor /></Suspense>} />
+                    <Route path="orders" element={<Suspense fallback={<Spin size="large" />}><AdminOrderManagement /></Suspense>} />
+                    <Route path="risk" element={<Suspense fallback={<Spin size="large" />}><AdminRiskControl /></Suspense>} />
                     <Route path="quotes" element={<Suspense fallback={<Spin size="large" />}><AdminDataPlatform /></Suspense>} />
                     <Route path="settings" element={<Suspense fallback={<Spin size="large" />}><AdminSystemSettings /></Suspense>} />
                   </Route>

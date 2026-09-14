@@ -431,3 +431,153 @@ export interface StrategyTemplateUpsertRequest {
     live_config_tips?: string[];
     markets?: string[];
 }
+
+export type RiskRuleType =
+    | 'position_stop_loss'
+    | 'position_take_profit'
+    | 'market_index_move'
+    | 'max_order_size'
+    | 'min_order_size'
+    | 'max_position_size'
+    | 'max_daily_trades';
+
+export interface RiskRuleAdmin {
+    id: number;
+    rule_name: string;
+    rule_type: RiskRuleType | string;
+    description?: string | null;
+    is_active: boolean;
+    parameters: Record<string, any>;
+    applies_to_all: boolean;
+    user_ids?: number[] | null;
+    priority: number;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface RiskRuleUpsertRequest {
+    rule_name: string;
+    rule_type: string;
+    description?: string;
+    is_active?: boolean;
+    parameters: Record<string, any>;
+    applies_to_all: boolean;
+    user_ids?: number[] | null;
+    priority?: number;
+}
+
+export interface RiskEventAdmin {
+    id: number;
+    rule_id?: number | null;
+    rule_type: string;
+    tenant_id: string;
+    user_id: number;
+    trade_date: string;
+    symbol: string;
+    action: string;
+    status: string;
+    trigger_price?: number | null;
+    cost_price?: number | null;
+    pnl_pct?: number | null;
+    quantity?: number | null;
+    order_ids?: string[] | null;
+    message?: string | null;
+    created_at: string;
+}
+
+export interface AdminOrderHistoryItem {
+    id: string;
+    mode: string;
+    source: 'hosted' | 'risk' | string;
+    tenant_id: string;
+    user_id: string;
+    strategy_id?: string | null;
+    symbol: string;
+    side: string;
+    quantity: number;
+    price?: number | null;
+    average_price?: number | null;
+    status: string;
+    created_at?: string | null;
+    filled_at?: string | null;
+    remarks?: string | null;
+}
+
+export interface AdminPlannedOrderItem {
+    id: string;
+    kind: 'rebalance_job' | 'hosted_task' | 'schedule' | string;
+    mode: string;
+    tenant_id: string;
+    user_id: string;
+    strategy_id?: string | null;
+    phase?: string | null;
+    status: string;
+    trade_date?: string | null;
+    planned_at?: string | null;
+    window_end_at?: string | null;
+    title: string;
+    detail?: string | null;
+}
+
+export interface AdminInferenceDispatchItem {
+    id: string;
+    trigger_source?: string | null;
+    tenant_id?: string | null;
+    user_id: string;
+    strategy_id?: string | null;
+    model_id?: string | null;
+    data_trade_date?: string | null;
+    prediction_trade_date?: string | null;
+    status: string;
+    reason_code?: string | null;
+    reason_label?: string | null;
+    reason_detail?: string | null;
+    run_id?: string | null;
+    created_at?: string | null;
+}
+
+export interface AdminInferenceSettingItem {
+    tenant_id: string;
+    user_id: string;
+    model_id: string;
+    schedule_time?: string | null;
+    last_run_id?: string | null;
+    next_run_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface AdminInferenceMonitor {
+    schedule: {
+        enabled: boolean;
+        cron: string;
+        timezone: string;
+        next_run_at?: string | null;
+        task: string;
+    };
+    summary: {
+        total: number;
+        success: number;
+        failed: number;
+        skipped: number;
+        today_success: number;
+        today_failed: number;
+        today_skipped: number;
+        latest_at?: string | null;
+    };
+    settings: AdminInferenceSettingItem[];
+    items: AdminInferenceDispatchItem[];
+}
+
+export interface RiskDryRunItem {
+    rule_id?: number | null;
+    rule_name: string;
+    rule_type: string;
+    symbol: string;
+    action: string;
+    quantity: number;
+    trigger_price?: number | null;
+    cost_price?: number | null;
+    pnl_pct?: number | null;
+    status: string;
+    message: string;
+}

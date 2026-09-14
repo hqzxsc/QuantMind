@@ -26,6 +26,7 @@ cp -r skills/<skill-name> ~/.claude/skills/
 | [quantmind-deploy](quantmind-deploy/) | 部署运维：一键/快速/手动部署、数据库初始化、健康检查、问题排查、AutoDL 云端 GPU 训练 | 部署、一键部署、部署失败、装不上 |
 | [quantdb-sdk](quantdb-sdk/) | QuantDB 数据 SDK：API Key 配置、数据集目录、字段查询、K线/财务/因子远程查询 | quantdb、数据key、数据集、查询K线 |
 | [quantdb-fields](quantdb-fields/) | QuantDB 字段单位速查：各数据集实测单位、口径与陷阱（volume=股、amount=万元、L2 逐笔等） | 字段单位、成交量单位、数据口径、逐笔、十档盘口 |
+| [quantdb-data-structure](quantdb-data-structure/) | QuantDB 数据结构：目录组织、Hive 分区、parquet 路径、代码格式、quantdb_hub 入口、quantdb vs quantcustom | quantdb 结构、数据目录、dt 分区、parquet 路径、数据在哪里 |
 
 ### 研究与分析
 
@@ -75,8 +76,9 @@ cp -r skills/<skill-name> ~/.claude/skills/
 
 ## 关联网关容器
 
-- 富途 OpenD 网关：`docker compose up -d futu-opend`（官方原包，API 端口 11111）
+- 富途 OpenD 网关：compose **未内置**该服务，按 [install-futu-opend](install-futu-opend/) 在本地/服务器安装启动（API 端口 11111）
 - IB Gateway：`docker compose up -d ib-gateway`（.env 配置 IB_ACCOUNT/IB_PASSWORD，端口 4001=实盘 / 4002=模拟）
+- QwenPaw（QuantBot）：`docker compose up -d qwenpaw`，端口 8088 **默认仅绑定 127.0.0.1**；需外部（浏览器/Electron）直连时在 `.env` 设 `QWENPAW_BIND=0.0.0.0` 并配合安全组限制来源 IP
 
 ## 技能开发约定
 

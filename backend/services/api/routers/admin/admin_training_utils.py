@@ -354,6 +354,7 @@ def _normalize_payload(payload: dict[str, Any], allowed_features: list[str]) -> 
         # DataCfg 池字段（成分在编排器侧解析后随 config.yaml 进容器）。
         # 为空表示全市场训练（保持旧行为）。
         "pool_id": str(payload.get("pool_id") or "").strip() or None,
+        "node_id": str(payload.get("node_id") or "local").strip() or "local",
     }
     # Stacking 集成参数 + Optuna 超参搜索 + 截面预处理（显式透传）
     if "n_folds" in payload:
@@ -851,13 +852,22 @@ async def get_training_run_for_owner(run_id: str, current_user: dict[str, Any]) 
         except Exception:
             pass
 
-    if effective_status not in {"completed", "failed"} and live_status in {
+    # 远端编排（AutoDL）常只把终态写进 Redis，DB 会一直停在 pending。
+    # 若仍以 DB 为准，前端会把已失败任务显示成「训练中」。
+    if live_status in {"completed", "failed"}:
+        effective_status = live_status
+    elif effective_status not in {"completed", "failed"} and live_status in {
         "pending",
         "provisioning",
         "running",
         "waiting_callback",
     }:
         effective_status = live_status
+
+    if effective_status == "failed" and not normalized_result.get("error"):
+        last_line = str(live_snapshot.get("last_line") or "").strip()
+        if last_line:
+            normalized_result["error"] = last_line
 
     merged_logs = _merge_log_text(record.logs or "", live_logs)
 

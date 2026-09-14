@@ -64,6 +64,33 @@ _COLUMN_RENAMES: dict[str, str] = {
 # volinstock / vol_in_stock → volume，仅在 volume 列不存在时才重命名
 _VOLUME_ALIASES = {"volinstock", "vol_in_stock"}
 
+# features_daily 2026-09 起新增列：以字符串存储，需转数值后才能参与计算/过滤。
+# 仅对下列「数值语义」列做 pd.to_numeric，文本/分类列（industry_name/main_business/
+# industry_code 等）保持原样。
+_NUMERIC_STRING_COLUMNS: set[str] = {
+    # 标记位 0/1
+    "in_hs300", "is_hsgt", "is_margin", "is_kcb_creatable",
+    "is_st", "is_quit_risk", "is_hk",
+    # 市值 / 股本
+    "total_cap_yi", "float_mv_yi", "free_float_shares",
+    # 价格（元，zt/dt 为不复权口径）
+    "ipo_price", "zt_price", "dt_price",
+    # 交易行为
+    "hs_turnover", "seal_strength", "zaf", "ever_zt_count", "year_zt_days",
+    # 估值 / 风险
+    "beta_now", "dyna_pe", "static_pe_ttm", "div_yield", "pb_mrq",
+    # 分类编码（数值型）
+    "sector_code", "region_area_code",
+}
+
+
+def _coerce_numeric_strings(df: pd.DataFrame) -> pd.DataFrame:
+    """把已知「字符串数值列」转成数值（缺失/非法转 NaN），不改变文本列。"""
+    for col in _NUMERIC_STRING_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
 
 def _dt_conditions(start: date | None, end: date | None, col: str = "dt") -> list[str]:
     """生成 dt 列的过滤条件（dt 在 Hive partitioning 中为整数 YYYYMMDD）。"""
@@ -978,6 +1005,54 @@ class QuantDBDataHub:
         )
         return self._normalize_columns(df)
 
+    def fetch_ml_columns(
+        self,
+        dataset: str,
+        columns: list[str],
+        start: date | None = None,
+        end: date | None = None,
+        symbols: list[str] | None = None,
+    ) -> pd.DataFrame:
+        """按列裁剪读取 ``6_ml_datasets/<dataset>`` 的指定特征列。
+
+        仅 SELECT symbol + 指定列 + dt（避免 l1/l2 等宽表整表扫描），返回含
+        ``symbol`` / ``trade_date``(datetime) + 指定列 的 DataFrame，可直接与
+        K 线按 ``symbol`` + ``trade_date`` 对齐。
+
+        Args:
+            dataset: features_daily / l1_factors / l2_factors / alpha_library
+            columns: 需要读取的特征列名（不含 symbol/dt/trade_date）
+            symbols: 可选，限定股票（后缀格式），减少读取量（debug 场景）
+        """
+        rel = f"6_ml_datasets/{dataset}"
+        dates = self._partition_dates(rel, start, end)
+        if not dates:
+            return pd.DataFrame()
+        reserved = {"symbol", "dt", "trade_date"}
+        quoted = [f'"{c}"' for c in columns if c not in reserved]
+        if not quoted:
+            return pd.DataFrame()
+        cols = ", ".join(["symbol", *quoted])
+        where_sql = ""
+        bind: list | None = None
+        if symbols:
+            placeholders = ", ".join("?" for _ in symbols)
+            where_sql = f"symbol IN ({placeholders})"
+            bind = [str(s) for s in symbols]
+        df = self._read_partitioned(
+            rel, dates, cols=cols, where_sql=where_sql, order_by="symbol, dt", bind=bind
+        )
+        if df.empty:
+            return df
+        if "dt" in df.columns:
+            df = df.rename(columns={"dt": "trade_date"})
+            df["trade_date"] = pd.to_datetime(
+                df["trade_date"].astype(str), format="%Y%m%d", errors="coerce"
+            )
+        if "symbol" in df.columns:
+            df["symbol"] = df["symbol"].astype(str)
+        return _coerce_numeric_strings(df)
+
     # ------------------------------------------------------------------
     # 融资融券
     # ------------------------------------------------------------------
@@ -1043,7 +1118,7 @@ class QuantDBDataHub:
         # 删除元数据列
         meta_cols = ["release_id", "published_at"]
         df = df.drop(columns=[c for c in meta_cols if c in df.columns], errors="ignore")
-        return df
+        return _coerce_numeric_strings(df)
 
     def _read_daily_kline_from_files(
         self,
@@ -1196,27 +1271,39 @@ class QuantDBDataHub:
 
     @staticmethod
     def _fallback_l1_categories() -> dict:
-        """L1 因子类别兜底（当 catalog 文件不可用时）。"""
+        """L1 因子类别兜底（当 catalog 文件不可用时，与 catalog 的 15 类对齐）。"""
         return {
             "categories": [
-                {"id": "momentum", "name": "动量", "feature_count": 24,
+                {"id": "base", "name": "基础行情", "feature_count": 6,
+                 "sample_features": ["turn_1", "turn_5", "amt_log", "amt_ma_5", "amt_close_pos"]},
+                {"id": "momentum", "name": "动量", "feature_count": 38,
                  "sample_features": ["mom_ret_1d", "mom_ret_5d", "mom_ret_20d", "mom_ma_gap_5", "mom_rsi_14"]},
-                {"id": "volatility", "name": "波动率", "feature_count": 11,
-                 "sample_features": ["vol_std_5", "vol_std_20", "vol_atr_14", "vol_parkinson_10", "vol_gk_20"]},
-                {"id": "liquidity", "name": "流动性", "feature_count": 12,
-                 "sample_features": ["liq_volume", "liq_amount", "liq_volume_ma_5", "liq_obv_20", "liq_mfi_14"]},
-                {"id": "technical", "name": "技术指标", "feature_count": 6,
-                 "sample_features": ["tech_bb_width", "tech_bb_pos", "tech_cci_20", "tech_adx_14", "tech_vol_price_corr_20"]},
-                {"id": "fundamental", "name": "基本面", "feature_count": 12,
-                 "sample_features": ["fun_turnover_1", "fun_mv", "fun_pe", "fun_pb", "fun_roe"]},
-                {"id": "style", "name": "风格因子", "feature_count": 9,
-                 "sample_features": ["style_beta_20", "style_idio_vol_20", "style_residual_ret_20", "style_size_20", "style_value_20"]},
-                {"id": "industry", "name": "行业因子", "feature_count": 14,
+                {"id": "volatility", "name": "波动率", "feature_count": 58,
+                 "sample_features": ["vol_std_5", "vol_std_20", "vol_atr_14", "vol_parkinson_20", "vol_gk_20"]},
+                {"id": "liquidity", "name": "成交量与流动性", "feature_count": 42,
+                 "sample_features": ["amt_net_flow_5", "amt_z_20", "amt_ratio_1_5", "amt_skew_20", "mfi_14"]},
+                {"id": "moneyflow", "name": "资金流", "feature_count": 62,
+                 "sample_features": ["amt_net_flow_20", "obv_slope_20", "amt_up_ratio_5", "amt_vol_ratio_20", "amt_high_days_10"]},
+                {"id": "style", "name": "风格因子", "feature_count": 19,
+                 "sample_features": ["style_beta_20", "style_idio_vol_20", "style_residual_ret_20", "style_beta_60", "style_idio_vol_60"]},
+                {"id": "industry", "name": "行业因子", "feature_count": 32,
                  "sample_features": ["ind_ret_5", "ind_strength_20", "ind_dispersion_20", "ind_breadth_up_20", "ind_crowding_20"]},
-                {"id": "chip", "name": "筹码", "feature_count": 9,
-                 "sample_features": ["chip_profit_ratio_20", "chip_concentration_20", "chip_peak_distance", "chip_floating_ratio", "chip_cost_90_width"]},
-                {"id": "concept", "name": "概念", "feature_count": 11,
-                 "sample_features": ["concept_hot_score", "concept_momentum_top3", "concept_exposure_top1", "concept_rotation_score", "concept_crowding_max"]},
+                {"id": "microstructure", "name": "微观结构", "feature_count": 175,
+                 "sample_features": ["amt_close_pos", "tech_close_to_high_20", "vol_amp_1", "tech_max_drawdown_20", "amt_net_flow_5"]},
+                {"id": "gtja191", "name": "GTJA Alpha191 (价量因子)", "feature_count": 16,
+                 "sample_features": ["gtja_016", "gtja_103", "gtja_158", "gtja_191", "gtja_001"]},
+                {"id": "chip", "name": "筹码分布", "feature_count": 8,
+                 "sample_features": ["chip_profit_ratio_20", "chip_concentration_20", "chip_floating_ratio", "chip_cost_90_width", "chip_profit_delta_5"]},
+                {"id": "concept", "name": "概念热度", "feature_count": 10,
+                 "sample_features": ["concept_hot_score", "concept_momentum_top3", "concept_rotation_score", "concept_crowding_max", "concept_flow_rank"]},
+                {"id": "technical", "name": "技术指标", "feature_count": 27,
+                 "sample_features": ["tech_bb_width", "tech_bb_pos", "tech_cci_20", "tech_adx_14", "tech_max_drawdown_20"]},
+                {"id": "fundamental", "name": "基本面", "feature_count": 28,
+                 "sample_features": ["fun_bp", "fun_ep", "fun_roe", "fun_peg", "fun_np_growth"]},
+                {"id": "holding", "name": "持仓结构", "feature_count": 8,
+                 "sample_features": ["fun_float_mv", "fun_total_mv", "fun_mv_rank", "style_beta_20", "ind_crowding_20"]},
+                {"id": "custom", "name": "自建因子", "feature_count": 5,
+                 "sample_features": []},
             ]
         }
 

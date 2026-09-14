@@ -264,6 +264,9 @@ class SimulationEngine:
                     quotes=quotes,
                     account=account,
                 )
+                orders = self._apply_risk_buy_locks(
+                    orders, tenant=tenant, user_id=uid, trade_date=datetime.now().date()
+                )
                 report.order_count = len(orders)
 
                 if not orders:
@@ -457,6 +460,39 @@ class SimulationEngine:
             positions=data.get("positions", {}) or {},
         )
 
+    def _apply_risk_buy_locks(
+        self,
+        orders: list[Order],
+        *,
+        tenant: str,
+        user_id: str,
+        trade_date: date,
+    ) -> list[Order]:
+        """Drop strategy buys blocked by an intraday risk lock."""
+        try:
+            from backend.services.live_trading.services.risk_lock import (
+                filter_buy_orders,
+                load_risk_locks,
+            )
+
+            locks = load_risk_locks(self.redis, tenant, user_id, trade_date)
+            if not locks.account_frozen and not locks.symbols:
+                return orders
+            kept = filter_buy_orders(orders, locks)
+            dropped = len(orders) - len(kept)
+            if dropped:
+                logger.info(
+                    "SimulationEngine: 风控禁买过滤 tenant=%s user=%s dropped=%d frozen=%s",
+                    tenant,
+                    user_id,
+                    dropped,
+                    locks.account_frozen,
+                )
+            return kept
+        except Exception as exc:
+            logger.warning("SimulationEngine: 读取风控禁买锁失败: %s", exc)
+            return orders
+
     async def _execute_order(
         self,
         db: AsyncSession,
@@ -486,6 +522,8 @@ class SimulationEngine:
             quantity=order.quantity,
             price=order.price,
             strategy_id=int(strategy_id) if strategy_id.isdigit() else None,
+            remarks=(str(order.reason).strip()[:500] if getattr(order, "reason", None) else None)
+            or "策略托管自动调仓",
         )
         db.add(sim_order)
         await db.flush()

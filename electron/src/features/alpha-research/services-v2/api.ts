@@ -59,7 +59,7 @@ function emptyMetrics(): RealtimeMetrics {
   };
 }
 
-function classifyQuality(ic: number | null | undefined): 'high' | 'medium' | 'low' {
+export function classifyQuality(ic: number | null | undefined): 'high' | 'medium' | 'low' {
   if (ic == null) return 'low';
   const v = Math.abs(ic);
   if (v >= 0.05) return 'high';
@@ -183,6 +183,10 @@ export interface MiningStartParams {
   librarySuffix?: string;
   qualityGateEnabled?: boolean;
   parallelEnabled?: boolean;
+  /** L1 因子类别方向（多选，label） */
+  directions?: string[];
+  /** 类别选择模式：selected=取第一条，random=随机一条 */
+  directionMode?: 'selected' | 'random';
 }
 
 export async function startMining(
@@ -196,6 +200,10 @@ export async function startMining(
   if (params.market) qs.set('market', params.market);
   if (params.universe) qs.set('universe', params.universe);
   if (params.dataSource) qs.set('data_source', params.dataSource);
+  for (const d of params.directions ?? []) {
+    if (d && d.trim()) qs.append('directions', d.trim());
+  }
+  if (params.directionMode) qs.set('direction_mode', params.directionMode);
   const res = await apiClient.post(`/alpha-agent/evolve?${qs.toString()}`);
   const data = res.data?.data ?? {};
   const taskId: string = data.task_id ?? '';
@@ -317,6 +325,34 @@ export async function getFactorDetail(
   return makeOk({ factor: { ...normalizeAgentFactor(raw), raw } });
 }
 
+/** 因子工厂产出的表达式因子（只读、共享，非某用户挖掘结果） */
+export interface FactoryFactor {
+  factorId: string;
+  factorName: string;
+  factorExpression: string;
+  ic: number;
+  icir: number;
+  coverage: number;
+  field: string;
+}
+
+export async function getFactoryFactors(): Promise<
+  ApiResponse<{ factors: FactoryFactor[]; generatedAt: string | null }>
+> {
+  const res = await apiClient.get(`/alpha-agent/factory-factors`);
+  const data = res.data?.data ?? {};
+  const factors: FactoryFactor[] = (data.factors ?? []).map((raw: any) => ({
+    factorId: raw.factor_id ?? '',
+    factorName: raw.factor_name ?? 'unnamed',
+    factorExpression: raw.factor_expression ?? raw.factor_formulation ?? '',
+    ic: raw.ic_value ?? 0,
+    icir: raw.metadata?.icir ?? raw.icir ?? 0,
+    coverage: raw.metadata?.coverage ?? raw.coverage ?? 0,
+    field: raw.metadata?.field ?? '',
+  }));
+  return makeOk({ factors, generatedAt: data.generated_at ?? null });
+}
+
 export async function explainFactor(
   factorId: string,
 ): Promise<ApiResponse<{ explanation: string; cached: boolean }>> {
@@ -417,6 +453,7 @@ export async function getUniverses(): Promise<
         name: info?.name ?? UNIVERSE_LABELS[id as UniverseId] ?? id,
         indexSymbol: info?.indexSymbol ?? info?.index_symbol ?? null,
         stockCount: info?.count ?? 0,
+        isSystem: info?.is_system ?? info?.isSystem ?? true,
       }),
     );
     return makeOk({ universes });
@@ -442,6 +479,9 @@ export interface BacktestStartParams {
   configPath?: string;
   universe?: string;
   dataSource?: 'qlib_bin' | 'h5';
+  /** 回测窗口起止（YYYY-MM-DD）；缺省后端默认近一年 */
+  startDate?: string;
+  endDate?: string;
 }
 
 export async function startBacktest(
@@ -457,6 +497,8 @@ export async function startBacktest(
   const qs = new URLSearchParams();
   if (params.universe) qs.set('universe', params.universe);
   if (params.dataSource) qs.set('data_source', params.dataSource);
+  if (params.startDate) qs.set('start_date', params.startDate);
+  if (params.endDate) qs.set('end_date', params.endDate);
   const query = qs.toString();
   const res = await apiClient.post(
     `/alpha-agent/factors/${factorId}/backtest${query ? `?${query}` : ''}`,

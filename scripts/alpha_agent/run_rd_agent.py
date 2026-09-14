@@ -76,8 +76,42 @@ async def persist_factors(factors: list[dict], task_id: str, user_id: str, marke
     return count
 
 
-def compute_factor_ic(factor_code: str, data_path: str) -> dict:
+def _near_one_year_window() -> tuple[str, str]:
+    """近一年回测窗口（end=数据最新交易日，start=end 往前一年）。
+
+    优先从 QuantDB 交易日历取最新交易日，失败则退回今天。
+    """
+    import pandas as pd
+
+    end_ts = None
+    try:
+        from backend.services.engine.data_platform.quantdb_hub import QuantDBDataHub
+
+        cal = QuantDBDataHub.get_instance().fetch_calendar()
+        if cal is not None and not cal.empty:
+            for col in ("trade_date", "date", "time", "cal_date", "TradingDate"):
+                if col in cal.columns:
+                    end_ts = pd.to_datetime(cal[col]).max()
+                    break
+    except Exception:
+        end_ts = None
+    if end_ts is None or pd.isna(end_ts):
+        end_ts = pd.Timestamp.today().normalize()
+    return (end_ts - pd.DateOffset(years=1)).strftime("%Y-%m-%d"), end_ts.strftime("%Y-%m-%d")
+
+
+def compute_factor_ic(
+    factor_code: str,
+    data_path: str,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict:
     """执行因子代码并计算 IC 指标
+
+    Args:
+        factor_code: 因子源码（含 calculate_*）
+        data_path: daily_pv.h5 路径
+        start/end: 可选回测窗口（YYYY-MM-DD）；给定时只在该窗口内计算 IC
 
     Returns dict with: ic, rank_ic, icir, rank_icir (or empty dict on failure)
     """
@@ -96,9 +130,26 @@ import sys, os, tempfile, traceback
 
 os.chdir(tempfile.gettempdir())
 
+# 清理上一因子残留的结果文件，避免误读陈旧 result.h5
+for _f in list(os.listdir('.')):
+    if _f.endswith('.h5') and _f != 'daily_pv.h5':
+        try:
+            os.remove(_f)
+        except OSError:
+            pass
+
 try:
-    # Execute factor code
-    {factor_code}
+    # Execute factor code（用 repr 内联，避免多行代码缩进破坏 try 结构）
+    exec({factor_code!r}, globals())
+
+    # 若因子代码未自执行（无 __main__ 守卫）或未产出 result.h5，则显式调用 calculate_*()
+    _has_result = any(f.endswith('.h5') and 'result' in f.lower() for f in os.listdir('.'))
+    if not _has_result:
+        _fns = [v for k, v in globals().items() if k.startswith('calculate_') and callable(v)]
+        if _fns:
+            _res = _fns[0]()
+            if _res is not None and hasattr(_res, 'to_hdf'):
+                _res.to_hdf('result.h5', key='data', mode='w')
 
     # Find the result H5 file
     result_files = [f for f in os.listdir('.') if f.endswith('.h5') and 'result' in f.lower()]
@@ -117,6 +168,19 @@ try:
 
     # Load price data for returns
     price_df = pd.read_hdf("{data_path}")
+    # 可选：切片到回测窗口（end=最新交易日，start=end-N年）
+    _start = {start!r}
+    _end = {end!r}
+    if _start or _end:
+        _di = price_df.index.get_level_values(0)
+        if _start:
+            price_df = price_df[_di >= pd.Timestamp(_start)]
+            _di = price_df.index.get_level_values(0)
+        if _end:
+            price_df = price_df[_di <= pd.Timestamp(_end)]
+        if price_df.empty:
+            print("EMPTY_WINDOW")
+            sys.exit(1)
     if 'close' in price_df.columns.get_level_values(0):
         close = price_df['close']
     elif '$close' in price_df.columns.get_level_values(0):
@@ -128,9 +192,31 @@ try:
     returns = close.groupby(level=1).pct_change().shift(-1)
 
     # Align factor and returns
-    factor_values = factor_df.stack()
+    # 因子结果为 MultiIndex(datetime, instrument) + 单列：直接取首列，
+    # 不能用 stack()（会多出一层列名索引）。
+    if isinstance(factor_df, pd.DataFrame):
+        factor_values = factor_df.iloc[:, 0]
+    else:
+        factor_values = factor_df
+    if factor_values.index.nlevels != 2:
+        print("BAD_FACTOR_INDEX")
+        sys.exit(1)
     factor_values.index.names = ['datetime', 'instrument']
     returns.index.names = ['datetime', 'instrument']
+
+    # 统一 instrument 大小写：因子代码可能假设大写（SH600036），而 daily_pv.h5 用小写
+    # （sh600036），不统一会导致对齐交集为空、IC 无法计算。
+    def _upper_instrument(_s):
+        _names = list(_s.index.names)
+        if 'instrument' in _names:
+            _lvl = _names.index('instrument')
+            _lvs = _s.index.levels[_lvl]
+            if _lvs.dtype == object:
+                _s.index = _s.index.set_levels(_lvs.str.upper(), level=_lvl)
+        return _s
+
+    factor_values = _upper_instrument(factor_values)
+    returns = _upper_instrument(returns)
 
     common_idx = factor_values.index.intersection(returns.index)
     if len(common_idx) < 100:
@@ -149,34 +235,53 @@ try:
         print("INSUFFICIENT_CLEAN_DATA")
         sys.exit(1)
 
-    # Compute IC (Spearman rank correlation)
-    from scipy import stats
-    ic_values = []
-    for dt in f.index.get_level_values(0).unique():
-        f_dt = f.loc[dt] if dt in f.index.get_level_values(0) else None
-        r_dt = r.loc[dt] if dt in r.index.get_level_values(0) else None
-        if f_dt is not None and r_dt is not None and len(f_dt) > 5:
-            common = f_dt.index.intersection(r_dt.index)
-            if len(common) > 5:
-                corr, _ = stats.spearmanr(f_dt.loc[common], r_dt.loc[common])
-                if np.isfinite(corr):
-                    ic_values.append(corr)
+    # Compute IC：向量化日度 Spearman（秩的 Pearson），避免逐日 spearmanr 过慢
+    df_ic = pd.DataFrame({{"f": f.values, "r": r.values}})
+    df_ic["date"] = f.index.get_level_values(0)
+    df_ic = df_ic[np.isfinite(df_ic["f"]) & np.isfinite(df_ic["r"])]
+    if len(df_ic) < 100:
+        print("INSUFFICIENT_CLEAN_DATA")
+        sys.exit(1)
 
-    if not ic_values:
+    g = df_ic.groupby("date")
+    df_ic["fr"] = g["f"].rank(method="average")
+    df_ic["rr"] = g["r"].rank(method="average")
+    g = df_ic.groupby("date")
+    means = g[["fr", "rr"]].transform("mean")
+    df_ic["fc"] = df_ic["fr"] - means["fr"]
+    df_ic["rc"] = df_ic["rr"] - means["rr"]
+    df_ic["fcr"] = df_ic["fc"] * df_ic["rc"]
+    df_ic["fc2"] = df_ic["fc"] ** 2
+    df_ic["rc2"] = df_ic["rc"] ** 2
+    sums = g[["fcr", "fc2", "rc2"]].transform("sum")
+    counts = g["fcr"].transform("count")
+    n = (counts - 1).clip(lower=1)
+    cov = sums["fcr"] / n
+    var_f = sums["fc2"] / n
+    var_r = sums["rc2"] / n
+    denom = np.sqrt(var_f * var_r)
+    df_ic["corr"] = np.where(
+        denom > 1e-12, cov / np.where(denom > 1e-12, denom, 1.0), np.nan
+    )
+    ic_by_day = g["corr"].first().dropna()
+    ic_by_day = ic_by_day[np.isfinite(ic_by_day)]
+
+    if len(ic_by_day) == 0:
         print("NO_IC_VALUES")
         sys.exit(1)
 
-    ic = np.mean(ic_values)
-    rank_ic = np.median(ic_values)
-    icir = np.mean(ic_values) / (np.std(ic_values) + 1e-8)
-    rank_icir = rank_ic / (np.std(ic_values) + 1e-8)
+    ic = float(ic_by_day.mean())
+    rank_ic = float(ic_by_day.median())
+    std = float(ic_by_day.std(ddof=1)) if len(ic_by_day) > 1 else 0.0
+    icir = ic / (std + 1e-8)
+    rank_icir = rank_ic / (std + 1e-8)
 
     print(f"IC={{ic:.4f}}")
     print(f"RANK_IC={{rank_ic:.4f}}")
     print(f"ICIR={{icir:.4f}}")
     print(f"RANK_ICIR={{rank_icir:.4f}}")
     print(f"OBSERVATIONS={{len(f)}}")
-    print(f"IC_DATES={{len(ic_values)}}")
+    print(f"IC_DATES={{len(ic_by_day)}}")
 
 except Exception as e:
     print(f"ERROR: {{e}}")
@@ -276,55 +381,106 @@ def main():
             logger.info("  Factor %d: %s (expr: %s)", i, f["name"],
                          f.get("formulation", "")[:80] or "N/A")
 
-        # Persist
-        count = asyncio.run(persist_factors(factors, args.task_id, args.user_id, args.market, args.universe))
-        logger.info("Persisted %d factors to database", count)
-
-        # Compute IC metrics for persisted factors
-        # Use market-specific data path
+        # Persist 因子 + 回填 IC —— 必须在同一事件循环内完成，
+        # 否则跨 asyncio.run 复用 DB engine 会报 "attached to a different loop"。
+        # 数据路径优先本次任务实际生成的 daily_pv.h5（A股由 _ensure_data_file 生成）。
         market_data_paths = {
             "crypto": "/app/db/crypto_data/5min_pv.h5",
             "hong_kong": "/app/db/hk_data/daily_pv.h5",
             "us_stock": "/app/db/us_data/daily_pv.h5",
             "futures": "/app/db/futures_data/daily_pv.h5",
         }
-        data_path = market_data_paths.get(args.market, "/app/alphaagent/scenarios/qlib/experiment/factor_data_template/daily_pv_all.h5")
-        if Path(data_path).exists():
-            logger.info("Computing IC metrics for %d factors...", len(factors))
-            from backend.services.engine.qlib_app.services.rd_agent_persistence import RDAgentFactorPersistence
-            persistence = RDAgentFactorPersistence()
+        local_h5 = Path(log_dir) / "git_ignore_folder" / "factor_implementation_source_data" / "daily_pv.h5"
+        if local_h5.exists():
+            data_path = str(local_h5)
+        else:
+            data_path = market_data_paths.get(
+                args.market,
+                "/app/alphaagent/scenarios/qlib/experiment/factor_data_template/daily_pv_all.h5",
+            )
+        logger.info("IC data path resolved: %s (exists=%s)", data_path, Path(data_path).exists())
 
-            async def update_metrics():
-                for f in factors:
-                    code = f.get("code", "")
-                    if not code:
-                        continue
-                    try:
-                        import hashlib
-                        raw_id = f"{args.task_id}:{f['name']}"
-                        factor_id = hashlib.md5(raw_id.encode()).hexdigest()
+        # 回测窗口默认近一年（仅 A 股；其他市场数据日历不同，保持全样本）
+        if args.market == "a_share":
+            ic_start, ic_end = _near_one_year_window()
+            logger.info("IC window (recent 1y): %s ~ %s", ic_start, ic_end)
+        else:
+            ic_start, ic_end = None, None
 
-                        metrics = compute_factor_ic(code, data_path)
+        import hashlib
+
+        from backend.services.engine.qlib_app.services.rd_agent_persistence import (
+            RDAgentFactorPersistence,
+        )
+
+        async def _persist_and_metrics() -> int:
+            p = RDAgentFactorPersistence()
+            await p.ensure_tables()
+            saved = 0
+            for f in factors:
+                try:
+                    fid = hashlib.md5(f"{args.task_id}:{f['name']}".encode()).hexdigest()
+                    metadata: dict = {
+                        "source": "rd_agent",
+                        "market": args.market,
+                        "task_id": args.task_id,
+                        "category": f.get("category", args.market),
+                    }
+                    if f.get("formulation"):
+                        metadata["formulation"] = f["formulation"]
+                    if f.get("description"):
+                        metadata["description"] = f["description"]
+                    if f.get("feedback"):
+                        metadata["feedback"] = f["feedback"][:2000]
+
+                    status = "pending"
+                    ic_value = None
+                    rank_ic = None
+                    if Path(data_path).exists() and f.get("code"):
+                        metrics = await asyncio.to_thread(
+                            compute_factor_ic, f["code"], data_path, ic_start, ic_end
+                        )
                         if metrics:
-                            ic = metrics.get("ic", 0)
-                            await persistence.update_factor_metrics(
-                                factor_id=factor_id,
-                                ic_value=ic,
-                                status="completed",
-                                metadata={
-                                    "rank_ic": metrics.get("rank_ic", 0),
-                                    "icir": metrics.get("icir", 0),
-                                    "rank_icir": metrics.get("rank_icir", 0),
-                                },
+                            status = "completed"
+                            ic_value = metrics.get("ic")
+                            rank_ic = metrics.get("rank_ic")
+                            metadata.update({
+                                "icir": metrics.get("icir", 0),
+                                "rank_icir": metrics.get("rank_icir", 0),
+                                "data_source": "task_h5",
+                            })
+                            logger.info(
+                                "  %s: IC=%.4f, RankIC=%.4f, ICIR=%.4f",
+                                f["name"], ic_value or 0, rank_ic or 0,
+                                metrics.get("icir", 0),
                             )
-                            logger.info("  %s: IC=%.4f, RankIC=%.4f, ICIR=%.4f",
-                                        f["name"], ic, metrics.get("rank_ic", 0), metrics.get("icir", 0))
                         else:
-                            logger.info("  %s: IC computation skipped (no code or data)", f["name"])
-                    except Exception as e:
-                        logger.warning("  %s: IC computation failed: %s", f["name"], e)
+                            logger.info("  %s: IC computation empty", f["name"])
 
-            asyncio.run(update_metrics())
+                    await p.save_factor(
+                        factor_id=fid,
+                        factor_name=f["name"],
+                        factor_code=f.get("code", ""),
+                        user_id=args.user_id,
+                        metadata=metadata,
+                        market=args.market,
+                        universe=args.universe,
+                        factor_formulation=f.get("formulation", ""),
+                    )
+                    await p.update_factor_metrics(
+                        factor_id=fid,
+                        status=status,
+                        ic_value=ic_value,
+                        rank_ic=rank_ic,
+                        metadata=metadata,
+                    )
+                    saved += 1
+                except Exception as e:
+                    logger.warning("Failed to persist factor %s: %s", f["name"], e)
+            return saved
+
+        count = asyncio.run(_persist_and_metrics())
+        logger.info("Persisted %d factors to database", count)
 
         # Write result JSON for launcher to read
         result_file = Path(log_dir) / "result.json"
